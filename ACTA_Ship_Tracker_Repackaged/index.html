@@ -1,0 +1,117 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>B5 ACTA Ship Tracker</title>
+  <style>
+    body {
+      font-family: 'Arial Black', sans-serif;
+      padding: 20px;
+    }
+    .section {
+      margin-bottom: 20px;
+    }
+    .trait {
+      margin-bottom: 5px;
+    }
+    .weapon-block {
+      margin-bottom: 10px;
+    }
+    .arc-title {
+      font-weight: bold;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>B5 ACTA Ship Tracker</h1>
+  <div class="section">
+    <label for="shipSelect">Choose a Ship:</label>
+    <select id="shipSelect" onchange="renderShip()"></select>
+  </div>
+
+  <div class="section" id="statsSection"></div>
+  <div class="section" id="traitsSection"></div>
+  <div class="section" id="weaponsSection"></div>
+  <div class="section">
+    <label for="actionSelect">Choose Action:</label>
+    <select id="actionSelect"></select>
+    <button onclick="executeAction()">Execute</button>
+  </div>
+
+  <script>
+    const ships = {"Hyperion Cruiser": {"Hull": 5, "Turns": 2, "Turn Angle": "45\u00b0", "Craft": "Aurora Starfury\u00a0(1)", "Craft2": NaN, "Damage": 28, "Crew": 32, "Trait1": "Anti-Fighter 2", "Trait2": "Interceptors 2", "Trait3": "Jump Engine", "Trait4": NaN, "Trait5": NaN}, "Sharlin War Cruiser": {"Hull": 5, "Turns": 1, "Turn Angle": "45\u00b0", "Craft": "Nial (4)", "Craft2": "Flyer (1)", "Damage": 60, "Crew": 66, "Trait1": "Advanced Anti-Fighter 5", "Trait2": "Advanced Jump Engine", "Trait3": "Flight Computer", "Trait4": "Lumbering", "Trait5": "Stealth +5"}};
+    const weapons = {"Hyperion": {"Boresight": [{"name": "Heavy Laser Cannon", "range": "18", "ad": "4", "traits": ["Beam", "Double Damage"]}], "Forward": [{"name": "Medium Pulse Cannon", "range": "10", "ad": "4", "traits": []}, {"name": "Plasma Cannon", "range": "8", "ad": "4", "traits": ["Armord Piercing", "Twin-Linked"]}], "Port": [{"name": "Medium Pulse Cannon", "range": "10", "ad": "8", "traits": []}], "Starboard": [{"name": "Medium Pulse Cannon", "range": "10", "ad": "8", "traits": []}], "Aft": [{"name": "Medium Pulse Cannon", "range": "10", "ad": "2", "traits": []}], "Boresight Aft": [{"name": "Heavy Laser Cannon", "range": "18", "ad": "2", "traits": ["Beam", "Double Damage"]}]}, "Sharlin": {"Arc": [{"name": "Weapon name", "range": "Range", "ad": "AD", "traits": ["Weapon Traits"]}], "Forward": [{"name": "Neutron Laser", "range": "30", "ad": "8", "traits": ["Beam", "Double Damage", "precise"]}, {"name": "Fusion Cannon", "range": "18", "ad": "8", "traits": ["mini-beam"]}], "Port": [{"name": "Fusion Cannon", "range": "18", "ad": "8", "traits": ["mini-beam"]}], "Starboard": [{"name": "Fusion Cannon", "range": "18", "ad": "8", "traits": ["mini-beam"]}], "Aft": [{"name": "Neutron Laser", "range": "30", "ad": "6", "traits": ["Beam", "Double Damage", "precise"]}, {"name": "Fusion Cannon", "range": "18", "ad": "8", "traits": ["mini-beam"]}]}};
+    const shipTraits = {"Adaptive Armour": "Halve Damage and Crew, round down.", "Advanced Anti-Fighter X": "As anti-fighter but +1 to roll", "Advanced Jump Engine": NaN, "Afterburner": "All Power to Engines! doubles Speed", "Agile": "Need only move \u00bc of speed beforeturning, 1\u201d between turns", "Anti-Fighter X": "Has X dice to roll against fighters hulls to destroy them, 2\u201d range", "Carrier X": "Can launch or recover X squadrons per turn", "Command +X": "Plus X to initiative. Not cumulative, lost when crippled or skeleton crewed.", "Dodge X": "1d6 per hit, if result >= X, attack missed. Lost if Adrift or not moved.", "Escort": "May lend Anti-Fighter dice to ships within 8\u201d and LOS", "Fleet Carrier": "Plus 1 bonus to dogfight. Repair destroyed flights within 30\u201d. See rules.", "Flight Computer": "Crew Quality never less than 4, no penalties for being reduced to Skeleton Crew", "Gravitiv Energy Grid  X": "Reduces damage and crew taken by X. critical hits not affected", "Interceptors X": NaN, "Jump Engine": NaN, "Lumbering": "May not continue move after turning, one turn only; may not be lost", "Self Repairing X": "Plus 1 to Damage Control. In the end phase, 1d6 rolled,  listed Damage repaired", "Scout": "36\u201d range. Instead of special action my roll CQ 8+ to reduce stealth by 1 or to allow friendly ships to re-roll one weapon AD against target that turn (not beams).", "Shields X/X": "Stops X hits (hits multiplied by double etc), regenerates second number.", "Stealth X": "After an Attack has been declared only hits on X, if distance > 20\u201d add 1 to X, if < 8\u201d minus 1,  if target has already been hit \u20131 again"};
+    const weaponTraits = {"Accurate": "Ignores Dodge value", "Armor Piercing": "Plus 1 to Attack Dice", "Beam": "Ignores Interceptors; hits on 4+, if hit, re-rolluntil no hits is scored; may only split fire iftargets are within 4 inches", "Double Damage": "Damage and Crew x2, including CriticalDamage, always cause one Damage, even ifit is a Bulkhead hit", "Energy Mine": "Nominate point within range, all objects within 3 inches receive damage, which ignores Stealth,Interceptors and Dodge traits. Cannot causecrits", "Gravitic Shifter": "May turn enemy ship 45 degrees, opposed Crew Quality  check", "Mass Driver": "Target must be Adrift or not moved. IgnoresShields, Interceptors and GEG.", "Mini Beam": "Hits on 4+, ignores interceptor", "One-Shot": "May only be used once. Not used if Stealthroll failed", "Orbital Bomb": "May only be fired at planetary targets (troops and emplacements)", "Precise": "+1 on Attack Table", "Quad Damage": "Damage and Crew damage  x 4, including criticaldamage. Causes 2 damage on Bulkhead hit.", "Slow Loading": "May only fire every other turn, not fired if Stealth roll failed", "Super Armor Piercing": "Plus 2 to Attack Dice", "Triple Damage": "Damage and Crew damage  x 3, including criticaldamage. Causes 1 damage on Bulkhead hit.", "Twin-Linked": "Missed Attack dice may be re-rolled", "Weak": "Minus 1 Attack Dice"};
+    const actions = [{"name": "Activate Jump Gate", "effect": " (auto or opposed against Crew Quality 6) activate a jump gate."}, {"name": "All Hands on Deck", "effect": " (auto) +1 to Damage Control roll, can do any number of repairs."}, {"name": "All Power To Engines", "effect": " (auto) +50% to speed, no turns allowed. Another SA possible if in a"}, {"name": "gravity well", "effect": NaN}, {"name": "All Stop", "effect": " (auto) move between 0 and half, another SA possible if in gravity well. No turns may  be attempted."}, {"name": "All Stop and Pivot", "effect": " (auto) Ship must have used the All Stop! Special Action in the previous turn. The ship may not be moved any distance and may only fire one weapons system. It may then be turned double its normal turn rate, in any direction."}, {"name": "Close Blast Doors and Activate Defense Grid", "effect": " (auto) Turns reduced by 1. Only 1 weapon system may fire. Ships with only one weapons system may not fire at all. For each point of Damage or Crew, roll 1d6, 5+ damage ignored."}, {"name": "Come About", "effect": " (9) one additional turn OR one turn of 45 degrees extra. Ships with Lumbering may only increase an existing turn by 45 deg. They may not gain an extra turn."}, {"name": "Concentrate All Firepower", "effect": " (8) 1 target, all misses can be re-rolled once. Weapons with Beam, Energy Mine or Twin-Linked may not benefit."}, {"name": "Give Me Ramming Speed", "effect": " (9) Crippled ship may add 50% to speed, only one turn, to ram another ship. Opposed crew quality checks. If you lose, you missed. If you win, both take damage, \u00bd opponent\u2019s starting damage in points, with Super AP and Triple Damage. Dodge, Interceptors and Stealth do not count. All other traits do."}, {"name": "Initiate Jump Point", "effect": " (auto) speed is halved, cannot fire weapons. Cannot enter jump point in same turn it is opened."}, {"name": "Intensify Defensive Fire", "effect": " (8) Half AD on all weapons in all fire arcs. Double the number of dice used for Interceptors and Anti-Fighter traits"}, {"name": "Launch Breaching Pods and Shuttles", "effect": " (automatic) you may use any and all Troops on board to launch a boarding action on a nearby enemy ship. Enemy must be stationary, and within 4\u201d of your own. A boarding action may be launched in the Attack Phase."}, {"name": "Run Silent", "effect": " (8) if crew quality check passed, ship gains Stealth +3 for this turn. May not fire, speed is halved, may not turn. If failed, restrictions remain, but no Stealth bonus."}, {"name": "Scramble! Scramble", "effect": " (7) two flights of auxiliary craft may be launched. If the ship has the Carrier trait, it may launch one more flight than normal. "}, {"name": "Stand Down and Prepare to be Boarded", "effect": "(opposed) Both players make an opposed Crew Quality check. If you beat your opponent, his crew will surrender. His ship stays motionless on the table. If it is attacked, control passes to your opponent. If your ships are more than 10\u201d away in the initiative phase of any turn, you opponent may regain control on a Crew"}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": NaN}, {"name": NaN, "effect": "Quality check of 10+."}];
+
+    function init() {
+      const selector = document.getElementById('shipSelect');
+      for (const name in ships) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        selector.appendChild(opt);
+      }
+      const actionSel = document.getElementById('actionSelect');
+      for (const action of actions) {
+        const opt = document.createElement('option');
+        opt.value = action.name;
+        opt.textContent = action.name;
+        actionSel.appendChild(opt);
+      }
+      renderShip();
+    }
+
+    function renderShip() {
+      const name = document.getElementById('shipSelect').value;
+      const ship = ships[name];
+      const statsDiv = document.getElementById('statsSection');
+      const traitsDiv = document.getElementById('traitsSection');
+      const weaponsDiv = document.getElementById('weaponsSection');
+      statsDiv.innerHTML = '';
+      traitsDiv.innerHTML = '';
+      weaponsDiv.innerHTML = '';
+
+      statsDiv.innerHTML = `<h2>${name}</h2>
+        <p>Hull: ${ship.Hull} | Turns: ${ship.Turns} (${ship['Turn Angle']})</p>
+        <p>Damage: ${ship.Damage} | Crew: ${ship.Crew}</p>
+        <p>Craft: ${ship['Craft']} ${ship['Craft2'] || ''}</p>`;
+
+      const traits = [ship.Trait1, ship.Trait2, ship.Trait3, ship.Trait4, ship.Trait5].filter(Boolean);
+      traitsDiv.innerHTML = '<h3>Ship Traits</h3>' + traits.map(trait => {
+        const explain = shipTraits[trait] || 'No description';
+        return `<div class="trait" title="${explain}">${trait}</div>`;
+      }).join('');
+
+      const shipWeapons = weapons[name] || {};
+      for (const arc of ['Boresight', 'Forward', 'Port', 'Starboard', 'Aft', 'Boresight Aft']) {
+        if (!shipWeapons[arc]) continue;
+        weaponsDiv.innerHTML += `<div class="arc-title">${arc}:</div>`;
+        for (const w of shipWeapons[arc]) {
+          const traitsHTML = (w.traits || []).map(t => {
+            const expl = weaponTraits[t] || 'No description';
+            return `<span title="${expl}">${t}</span>`;
+          }).join(', ');
+          weaponsDiv.innerHTML += `
+            <div class="weapon-block">
+              <b>${w.name}</b> (Range ${w.range}, AD ${w.ad})<br/>
+              Traits: ${traitsHTML}
+            </div>`;
+        }
+      }
+    }
+
+    function executeAction() {
+      const action = document.getElementById('actionSelect').value;
+      const found = actions.find(a => a.name === action);
+      if (found) alert(`${found.name}:\n${found.effect}`);
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
