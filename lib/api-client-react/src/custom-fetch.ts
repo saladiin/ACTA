@@ -17,6 +17,16 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _extraHeaders: Record<string, string> | null = null;
+
+/**
+ * Set extra headers that are merged into every request.
+ * Useful for dev-mode overrides such as impersonating a user.
+ * Pass `null` to clear.
+ */
+export function setExtraHeaders(headers: Record<string, string> | null): void {
+  _extraHeaders = headers;
+}
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -347,6 +357,13 @@ export async function customFetch<T = unknown>(
 
   if (responseType === "json" && !headers.has("accept")) {
     headers.set("accept", DEFAULT_JSON_ACCEPT);
+  }
+
+  // Merge any extra headers (e.g. dev-mode user override)
+  if (_extraHeaders) {
+    for (const [key, value] of Object.entries(_extraHeaders)) {
+      headers.set(key, value);
+    }
   }
 
   // Attach bearer token when an auth getter is configured and no

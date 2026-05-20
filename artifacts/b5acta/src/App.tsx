@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/reac
 
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { DevModeToggle } from "@/components/dev-mode-toggle";
 
 import Home from "@/pages/home";
 import SignInPage from "@/pages/sign-in";
@@ -145,6 +146,7 @@ function ClerkProviderWithRoutes() {
             <Route component={NotFound} />
           </Switch>
           <Toaster />
+          <DevModeToggle />
         </TooltipProvider>
       </QueryClientProvider>
     </ClerkProvider>
