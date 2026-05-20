@@ -1,7 +1,7 @@
 import { useState, useRef, Suspense, useMemo } from "react";
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Canvas, useLoader } from "@react-three/fiber";
+import { Canvas, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF } from "@react-three/drei";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -15,10 +15,12 @@ import {
   useSubmitTurn,
   useListFleets,
   useListFleetShips,
+  useListShipModels,
   getGetGameQueryKey,
   getListTurnsQueryKey,
   getListFleetShipsQueryKey,
 } from "@workspace/api-client-react";
+import type { ShipModel } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
@@ -168,6 +170,73 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
   );
 }
 
+// ── Staged (drag-placed) units ────────────────────────────────────────────────
+interface StagedUnitData {
+  id: string;
+  name: string;
+  modelFilename: string;
+  faction: string;
+  hullPoints: number;
+  speed: number;
+  weaponRange: number;
+  weaponDamage: number;
+  x: number;
+  z: number;
+}
+
+function StagedUnit3D({ unit, onRemove }: { unit: StagedUnitData; onRemove: () => void }) {
+  const color = "#f59e0b";
+  return (
+    <group position={[unit.x, 0, unit.z]} onClick={onRemove}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <circleGeometry args={[1.2, 48]} />
+        <meshStandardMaterial color={color} transparent opacity={0.15} depthWrite={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <ringGeometry args={[1.15, 1.2, 48]} />
+        <meshStandardMaterial color={color} transparent opacity={0.45} emissive={color} emissiveIntensity={0.2} />
+      </mesh>
+      <group position={[0, 2, 0]}>
+        <Suspense fallback={<ShipModelFallback color={color} />}>
+          <ShipModel3D filename={unit.modelFilename} color={color} />
+        </Suspense>
+      </group>
+      <Text position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
+        {unit.name.slice(0, 14)}
+      </Text>
+    </group>
+  );
+}
+
+// Captures camera + renderer refs from inside the Canvas for raycasting
+function CameraCapture({ refs }: { refs: React.MutableRefObject<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null> }) {
+  const { camera, gl } = useThree();
+  refs.current = { camera, gl: gl as unknown as THREE.WebGLRenderer };
+  return null;
+}
+
+function screenToBoard(
+  clientX: number,
+  clientY: number,
+  refs: React.MutableRefObject<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>
+): [number, number] | null {
+  if (!refs.current) return null;
+  const { camera, gl } = refs.current;
+  const canvas = (gl as any).domElement as HTMLCanvasElement;
+  const rect = canvas.getBoundingClientRect();
+  const nx = ((clientX - rect.left) / rect.width) * 2 - 1;
+  const ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(new THREE.Vector2(nx, ny), camera);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const hit = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(plane, hit)) return null;
+  return [
+    Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, hit.x)),
+    Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, hit.z)),
+  ];
+}
+
 export default function GameBoard() {
   const params = useParams<{ id: string }>();
   const gameId = parseInt(params.id ?? "0");
@@ -177,10 +246,24 @@ export default function GameBoard() {
 
   const { data: gameData, isLoading } = useGetGame(gameId, { query: { queryKey: getGetGameQueryKey(gameId) } });
   const { data: fleets } = useListFleets();
+  const { data: shipModels } = useListShipModels();
   const acceptGame = useAcceptGame();
   const declineGame = useDeclineGame();
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
+
+  // Staging / armory
+  const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
+  const draggedShipRef = useRef<ShipModel | null>(null);
+  const [stagedUnits, setStagedUnits] = useState<StagedUnitData[]>([]);
+  const [selectedFaction, setSelectedFaction] = useState<string>("");
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const factions = useMemo(() => [...new Set((shipModels ?? []).map(m => m.faction))].sort(), [shipModels]);
+  const filteredModels = useMemo(
+    () => (selectedFaction && selectedFaction !== "__all__" ? (shipModels ?? []).filter(m => m.faction === selectedFaction) : (shipModels ?? [])),
+    [shipModels, selectedFaction]
+  );
 
   const [selectedUnit, setSelectedUnit] = useState<number | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ q: number; r: number } | null>(null);
@@ -276,8 +359,37 @@ export default function GameBoard() {
     <Layout title={`${game.challengerName ?? "?"} vs ${game.opponentName ?? "?"}`}>
       <div className="flex flex-col lg:flex-row h-full min-h-[calc(100dvh-4rem)]">
         {/* 3D Board */}
-        <div className="flex-1 relative min-h-[400px] lg:min-h-0 bg-black">
+        <div
+          className="flex-1 relative min-h-[400px] lg:min-h-0 bg-black"
+          onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setIsDragOver(true); }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={e => {
+            e.preventDefault();
+            setIsDragOver(false);
+            const ship = draggedShipRef.current;
+            if (!ship) return;
+            const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+            if (!pos) return;
+            const [x, z] = pos;
+            setStagedUnits(prev => [...prev, {
+              id: `staged-${Date.now()}`,
+              name: ship.name,
+              modelFilename: ship.filename,
+              faction: ship.faction,
+              hullPoints: ship.hullPoints,
+              speed: ship.speed,
+              weaponRange: ship.weaponRange,
+              weaponDamage: ship.weaponDamage,
+              x, z,
+            }]);
+            draggedShipRef.current = null;
+          }}
+        >
+          {isDragOver && (
+            <div className="absolute inset-0 border-2 border-primary/60 pointer-events-none z-10 rounded-sm" />
+          )}
           <Canvas camera={{ position: [0, 40, 50], fov: 45 }} shadows>
+            <CameraCapture refs={threeRef} />
             <ambientLight intensity={0.4} />
             <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
             <pointLight position={[0, 10, 0]} intensity={0.5} color="#f59e0b" />
@@ -291,6 +403,13 @@ export default function GameBoard() {
                 isSelected={selectedUnit === unit.id}
                 onClick={() => handleUnitClick(unit.id)}
                 myUserId={myUserId}
+              />
+            ))}
+            {stagedUnits.map(unit => (
+              <StagedUnit3D
+                key={unit.id}
+                unit={unit}
+                onRemove={() => setStagedUnits(prev => prev.filter(u => u.id !== unit.id))}
               />
             ))}
             <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} minDistance={8} maxDistance={90} />
@@ -324,6 +443,56 @@ export default function GameBoard() {
 
         {/* Sidebar panel */}
         <div className="w-full lg:w-72 border-t lg:border-t-0 lg:border-l border-border bg-card flex flex-col">
+
+          {/* ── ARMORY ── */}
+          <div className="p-3 border-b border-border space-y-2">
+            <p className="text-xs font-mono text-primary uppercase tracking-widest">Armory</p>
+            <Select value={selectedFaction} onValueChange={setSelectedFaction}>
+              <SelectTrigger className="bg-background text-xs h-8">
+                <SelectValue placeholder="All factions…" />
+              </SelectTrigger>
+              <SelectContent className="bg-card border-border">
+                <SelectItem value="__all__">All factions</SelectItem>
+                {factions.map(f => (
+                  <SelectItem key={f} value={f}>{f}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="space-y-1 max-h-52 overflow-y-auto pr-0.5">
+              {filteredModels.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-2">No ships</p>
+              )}
+              {filteredModels.map(ship => (
+                <div
+                  key={ship.id}
+                  draggable
+                  onDragStart={e => {
+                    draggedShipRef.current = ship;
+                    e.dataTransfer.effectAllowed = "copy";
+                    e.dataTransfer.setData("text/plain", ship.name);
+                  }}
+                  onDragEnd={() => { draggedShipRef.current = null; }}
+                  className="flex items-center justify-between px-2 py-1.5 rounded border border-border bg-background hover:border-primary/40 hover:bg-primary/5 cursor-grab active:cursor-grabbing select-none transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-mono text-foreground truncate">{ship.name}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{ship.faction}</p>
+                  </div>
+                  <div className="flex gap-1.5 text-[10px] font-mono text-muted-foreground shrink-0 ml-2">
+                    <span title="Hull">{ship.hullPoints}hp</span>
+                    <span title="Speed">{ship.speed}"</span>
+                    <span title="Points" className="text-amber-500/80">{ship.pointCost}pt</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {stagedUnits.length > 0 && (
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-[10px] text-muted-foreground font-mono">{stagedUnits.length} staged — click to remove</p>
+                <button className="text-[10px] text-muted-foreground hover:text-destructive font-mono" onClick={() => setStagedUnits([])}>clear all</button>
+              </div>
+            )}
+          </div>
 
           {/* Pending challenge actions */}
           {game.status === "pending" && isOpponent && (
