@@ -2,7 +2,7 @@ import { useState, useRef, Suspense } from "react";
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader } from "@react-three/fiber";
-import { OrbitControls, Text } from "@react-three/drei";
+import { OrbitControls, Text, useGLTF } from "@react-three/drei";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // @ts-ignore
@@ -55,31 +55,27 @@ function HexTile({ q, r, highlight, onClick }: { q: number; r: number; highlight
   );
 }
 
-function ShipModel3D({ filename, color }: { filename: string; color: string }) {
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  let obj: THREE.Group | null = null;
-  try {
-    obj = useLoader(OBJLoader, `${basePath}/api/models/${filename}`);
-  } catch {
-    return (
-      <mesh>
-        <boxGeometry args={[0.6, 0.2, 1.2]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-    );
-  }
-  if (!obj) {
-    return (
-      <mesh>
-        <boxGeometry args={[0.6, 0.2, 1.2]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-    );
-  }
+function ObjModel({ url, color }: { url: string; color: string }) {
+  const obj = useLoader(OBJLoader, url) as THREE.Group;
   const cloned = obj.clone();
   cloned.traverse((child: any) => {
     if (child.isMesh) {
       child.material = new THREE.MeshStandardMaterial({ color });
+    }
+  });
+  return <primitive object={cloned} scale={[0.4, 0.4, 0.4]} />;
+}
+
+function GlbModel({ url, color }: { url: string; color: string }) {
+  const { scene } = useGLTF(url);
+  const cloned = scene.clone();
+  cloned.traverse((child: any) => {
+    if (child.isMesh) {
+      child.material = new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.4,
+        roughness: 0.5,
+      });
     }
   });
   return <primitive object={cloned} scale={[0.4, 0.4, 0.4]} />;
@@ -92,6 +88,16 @@ function ShipModelFallback({ color }: { color: string }) {
       <meshStandardMaterial color={color} />
     </mesh>
   );
+}
+
+function ShipModel3D({ filename, color }: { filename: string; color: string }) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const url = `${basePath}/api/models/${filename}`;
+  const isGlb = filename.toLowerCase().endsWith(".glb") || filename.toLowerCase().endsWith(".gltf");
+  if (isGlb) {
+    return <GlbModel url={url} color={color} />;
+  }
+  return <ObjModel url={url} color={color} />;
 }
 
 function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
