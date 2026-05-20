@@ -202,22 +202,25 @@ interface StagedUnitData {
   weaponDamage: number;
   x: number;
   z: number;
+  heading: number; // degrees, 0 = +Z axis, clockwise
   locked: boolean;
 }
 
 function StagedUnit3D({
-  unit, isSelected, onClick,
+  unit, isSelected, onClick, onPointerDown,
 }: {
   unit: StagedUnitData;
   isSelected: boolean;
   onClick: (e: any) => void;
+  onPointerDown?: (e: any) => void;
 }) {
   const baseColor = unit.locked ? "#22c55e" : "#f59e0b";
   const ringOpacity = isSelected ? 0.8 : unit.locked ? 0.55 : 0.45;
   const fillOpacity = isSelected ? 0.28 : 0.15;
+  const headingRad = (unit.heading * Math.PI) / 180;
 
   return (
-    <group position={[unit.x, 0, unit.z]} onClick={onClick}>
+    <group position={[unit.x, 0, unit.z]} onClick={onClick} onPointerDown={onPointerDown}>
       {/* Selection pulse ring */}
       {isSelected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
@@ -233,13 +236,22 @@ function StagedUnit3D({
         <ringGeometry args={[1.15, 1.2, 48]} />
         <meshStandardMaterial color={baseColor} transparent opacity={ringOpacity} emissive={baseColor} emissiveIntensity={0.25} />
       </mesh>
-      <group position={[0, 2, 0]}>
+      {/* Heading arrow — points in the direction the ship is facing */}
+      <mesh
+        position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
+        rotation={[Math.PI / 2, 0, -headingRad]}
+      >
+        <coneGeometry args={[0.18, 0.45, 6]} />
+        <meshStandardMaterial color={baseColor} emissive={baseColor} emissiveIntensity={0.5} />
+      </mesh>
+      {/* Ship model, rotated to match heading */}
+      <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <Suspense fallback={<ShipModelFallback color={baseColor} />}>
           <ShipModel3D filename={unit.modelFilename} tint={baseColor} />
         </Suspense>
       </group>
       <Text
-        position={[0, 3.7, 0]}
+        position={[0, 3.9, 0]}
         fontSize={0.38}
         color={unit.locked ? "#86efac" : "white"}
         anchorX="center"
@@ -249,6 +261,18 @@ function StagedUnit3D({
       >
         {unit.locked ? `🔒 ${unit.name.slice(0, 11)}` : unit.name.slice(0, 14)}
       </Text>
+      {/* Heading degrees label when selected and unlocked */}
+      {isSelected && !unit.locked && (
+        <Text
+          position={[0, 3.4, 0]}
+          fontSize={0.28}
+          color="#94a3b8"
+          anchorX="center"
+          anchorY="middle"
+        >
+          {`${Math.round(unit.heading)}°  R / ⇧R`}
+        </Text>
+      )}
     </group>
   );
 }
@@ -302,6 +326,7 @@ export default function GameBoard() {
   const draggedShipRef = useRef<ShipModel | null>(null);
   const [stagedUnits, setStagedUnits] = useState<StagedUnitData[]>([]);
   const [selectedStagedId, setSelectedStagedId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   const [selectedFaction, setSelectedFaction] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -312,11 +337,18 @@ export default function GameBoard() {
       if (e.key === "l" || e.key === "L") {
         e.preventDefault();
         setStagedUnits(prev => prev.map(u => u.id === selectedStagedId ? { ...u, locked: !u.locked } : u));
+      } else if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        const delta = e.shiftKey ? -15 : 15;
+        setStagedUnits(prev => prev.map(u => {
+          if (u.id !== selectedStagedId || u.locked) return u;
+          return { ...u, heading: ((u.heading + delta) % 360 + 360) % 360 };
+        }));
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         setStagedUnits(prev => {
           const target = prev.find(u => u.id === selectedStagedId);
-          if (target?.locked) return prev; // locked units are immune
+          if (target?.locked) return prev;
           return prev.filter(u => u.id !== selectedStagedId);
         });
         setSelectedStagedId(null);
@@ -441,6 +473,15 @@ export default function GameBoard() {
         {/* 3D Board */}
         <div
           className="flex-1 relative min-h-[400px] lg:min-h-0 bg-black"
+          onPointerMove={e => {
+            if (!draggingId) return;
+            const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+            if (!pos) return;
+            const [x, z] = pos;
+            setStagedUnits(prev => prev.map(u => u.id === draggingId ? { ...u, x, z } : u));
+          }}
+          onPointerUp={() => setDraggingId(null)}
+          onPointerLeave={() => setDraggingId(null)}
           onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setIsDragOver(true); }}
           onDragLeave={() => setIsDragOver(false)}
           onDrop={e => {
@@ -462,6 +503,7 @@ export default function GameBoard() {
               weaponRange: ship.weaponRange,
               weaponDamage: ship.weaponDamage,
               x, z,
+              heading: 0,
               locked: false,
             }]);
             setSelectedStagedId(newId);
@@ -494,9 +536,20 @@ export default function GameBoard() {
                 unit={unit}
                 isSelected={selectedStagedId === unit.id}
                 onClick={(e) => { e.stopPropagation(); setSelectedStagedId(unit.id); }}
+                onPointerDown={unit.locked ? undefined : (e) => {
+                  e.stopPropagation();
+                  setSelectedStagedId(unit.id);
+                  setDraggingId(unit.id);
+                }}
               />
             ))}
-            <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} minDistance={8} maxDistance={90} />
+            <OrbitControls
+              enablePan={!draggingId}
+              enableZoom={true}
+              enableRotate={!draggingId}
+              minDistance={8}
+              maxDistance={90}
+            />
           </Canvas>
           {/* Status overlay */}
           <div className="absolute top-3 left-3 flex flex-col gap-1.5 pointer-events-none">
