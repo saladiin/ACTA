@@ -339,12 +339,11 @@ export default function GameBoard() {
   const [attackTarget, setAttackTarget] = useState<number | null>(null);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
-  const [deployFleetId, setDeployFleetId] = useState<string>("");
-  const [deployPlacements, setDeployPlacements] = useState<Array<{ shipId: number; hexQ: number; hexR: number; heading: number }>>([]);
-  const [deployShipIdx, setDeployShipIdx] = useState(0);
 
-  const { data: deployShips } = useListFleetShips(parseInt(deployFleetId ?? "0"), {
-    query: { queryKey: getListFleetShipsQueryKey(parseInt(deployFleetId ?? "0")), enabled: !!deployFleetId }
+  // Fleet Yards: which fleet the player is deploying from
+  const [yardsFleetId, setYardsFleetId] = useState<string>("");
+  const { data: yardsFleetShips } = useListFleetShips(parseInt(yardsFleetId || "0"), {
+    query: { queryKey: getListFleetShipsQueryKey(parseInt(yardsFleetId || "0")), enabled: !!yardsFleetId }
   });
 
   const game = gameData?.game;
@@ -396,18 +395,30 @@ export default function GameBoard() {
     );
   };
 
-  const handleDeploy = () => {
-    if (!deployFleetId || deployPlacements.length === 0) return;
+  const handleYardsDeploy = useCallback(() => {
+    if (!yardsFleetId || !yardsFleetShips || stagedUnits.length === 0) return;
+    // Match each staged unit to an available fleet ship by model filename
+    const available = [...yardsFleetShips];
+    const placements: Array<{ shipId: number; hexQ: number; hexR: number; heading: number }> = [];
+    for (const staged of stagedUnits) {
+      const idx = available.findIndex(s => s.shipModel.filename === staged.modelFilename);
+      if (idx === -1) continue;
+      const ship = available.splice(idx, 1)[0];
+      // Convert world coords (inches) to integer grid positions stored in hexQ/hexR
+      placements.push({ shipId: ship.id, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: 0 });
+    }
+    if (placements.length === 0) return;
     deployFleet.mutate(
-      { gameId, data: { fleetId: parseInt(deployFleetId), placements: deployPlacements } },
+      { gameId, data: { fleetId: parseInt(yardsFleetId), placements } },
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-          setDeployPlacements([]);
+          setStagedUnits([]);
+          setSelectedStagedId(null);
         }
       }
     );
-  };
+  }, [yardsFleetId, yardsFleetShips, stagedUnits, deployFleet, gameId, qc]);
 
   if (isLoading) {
     return (
@@ -530,6 +541,22 @@ export default function GameBoard() {
           {game.status === "deploying" && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">Fleet Yards</p>
+
+              {/* Fleet selector */}
+              <Select
+                value={yardsFleetId}
+                onValueChange={val => { setYardsFleetId(val); setStagedUnits([]); setSelectedStagedId(null); }}
+              >
+                <SelectTrigger data-testid="select-yards-fleet" className="bg-background text-xs h-8">
+                  <SelectValue placeholder="Select your fleet…" />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border">
+                  {fleets?.map(f => (
+                    <SelectItem key={f.id} value={String(f.id)}>{f.name} ({f.shipCount} ships)</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <Select value={selectedFaction} onValueChange={setSelectedFaction}>
                 <SelectTrigger className="bg-background text-xs h-8">
                   <SelectValue placeholder="All factions…" />
@@ -605,17 +632,26 @@ export default function GameBoard() {
               <Button
                 data-testid="button-confirm-deployment"
                 className="w-full mt-2 uppercase tracking-widest text-xs gap-2"
-                disabled={stagedUnits.length === 0 || stagedUnits.some(u => !u.locked)}
-                onClick={() => { /* TODO: wire to deployFleet API */ }}
+                disabled={
+                  !yardsFleetId ||
+                  stagedUnits.length === 0 ||
+                  stagedUnits.some(u => !u.locked) ||
+                  deployFleet.isPending
+                }
+                onClick={handleYardsDeploy}
               >
-                {stagedUnits.length === 0
-                  ? "Place ships to deploy"
+                {deployFleet.isPending
+                  ? "Deploying…"
+                  : !yardsFleetId
+                  ? "Select a fleet above"
+                  : stagedUnits.length === 0
+                  ? "Drag ships onto the board"
                   : stagedUnits.some(u => !u.locked)
                   ? `Lock all ships first (${stagedUnits.filter(u => !u.locked).length} unlocked)`
-                  : "Ready for Deployment"}
+                  : "End Deployment"}
               </Button>
               <p className="text-[9px] text-muted-foreground font-mono text-center -mt-1">
-                Select a ship · press L to lock · Del to remove
+                Select a ship · L to lock · Del to remove
               </p>
             </div>
           )}
@@ -648,57 +684,6 @@ export default function GameBoard() {
             </div>
           )}
 
-          {/* Deploying phase */}
-          {game.status === "deploying" && (
-            <div className="p-4 border-b border-border space-y-3">
-              <p className="text-xs text-primary font-mono uppercase tracking-wider">Deploy Your Fleet</p>
-              <Select value={deployFleetId} onValueChange={val => { setDeployFleetId(val); setDeployPlacements([]); setDeployShipIdx(0); }}>
-                <SelectTrigger data-testid="select-deploy-fleet" className="bg-background text-xs">
-                  <SelectValue placeholder="Select fleet..." />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border">
-                  {fleets?.map(f => (
-                    <SelectItem key={f.id} value={String(f.id)}>{f.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {deployShips && deployShips.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    Placing: <span className="text-foreground font-medium">{deployShips[deployShipIdx]?.name}</span>
-                    {" "}({deployShipIdx + 1}/{deployShips.length})
-                  </p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {[-3, -2, -1, 0, 1, 2, 3].map(q =>
-                      [-3, -2, -1, 0].map(r => {
-                        const placed = deployPlacements.find(p => p.hexQ === q && p.hexR === r);
-                        return (
-                          <button
-                            key={`${q},${r}`}
-                            onClick={() => {
-                              if (deployShipIdx >= deployShips.length) return;
-                              const ship = deployShips[deployShipIdx];
-                              if (placed) return;
-                              setDeployPlacements(prev => [...prev, { shipId: ship.id, hexQ: q, hexR: r, heading: 0 }]);
-                              setDeployShipIdx(prev => prev + 1);
-                            }}
-                            className={`text-[9px] font-mono py-1 rounded border ${placed ? "border-primary/50 bg-primary/10 text-primary" : "border-border bg-background hover:border-primary/30 text-muted-foreground"}`}
-                          >
-                            {q},{r}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                  {deployPlacements.length > 0 && (
-                    <Button size="sm" className="w-full uppercase tracking-wider text-xs" onClick={handleDeploy} disabled={deployFleet.isPending}>
-                      {deployFleet.isPending ? "Deploying..." : `Deploy (${deployPlacements.length} ships)`}
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Selected unit info */}
           {selectedUnitData && (
