@@ -28,30 +28,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap } from "lucide-react";
 
-const HEX_SIZE = 1.5;
-
 function hexToWorld(q: number, r: number): [number, number, number] {
-  const x = q * HEX_SIZE * 1.5;
-  const z = r * HEX_SIZE * Math.sqrt(3) + q * HEX_SIZE * (Math.sqrt(3) / 2);
-  return [x, 0, z];
+  return [q * 2.25, 0, r * 2.6 + q * 1.3];
 }
 
-function HexTile({ q, r, highlight, onClick }: { q: number; r: number; highlight?: "select" | "move" | "attack"; onClick?: () => void }) {
-  const [hovered, setHovered] = useState(false);
-  const [x, , z] = hexToWorld(q, r);
-  const color = highlight === "select" ? "#f59e0b" : highlight === "move" ? "#3b82f6" : highlight === "attack" ? "#ef4444" : hovered ? "#374151" : "#1f2937";
-
+function SpaceGrid() {
   return (
-    <group position={[x, -0.05, z]} onClick={onClick} onPointerOver={() => setHovered(true)} onPointerOut={() => setHovered(false)}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[HEX_SIZE * 0.95, HEX_SIZE * 0.95, 0.08, 6]} />
-        <meshStandardMaterial color={color} transparent opacity={0.85} />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-        <cylinderGeometry args={[HEX_SIZE * 0.97, HEX_SIZE * 0.97, 0.02, 6]} />
-        <meshStandardMaterial color={highlight ? color : "#374151"} wireframe />
-      </mesh>
-    </group>
+    <>
+      {/* Fine 1-unit grid */}
+      <gridHelper args={[80, 80, "#0f1f0f", "#0a160a"]} position={[0, -0.01, 0]} />
+      {/* Bold 5-unit grid overlay */}
+      <gridHelper args={[80, 16, "#1a2e1a", "#1a2e1a"]} position={[0, -0.005, 0]} />
+    </>
   );
 }
 
@@ -272,7 +260,7 @@ export default function GameBoard() {
             <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
             <pointLight position={[0, 10, 0]} intensity={0.5} color="#f59e0b" />
             <fog attach="fog" args={["#050505", 20, 50]} />
-            <HexGrid size={6} />
+            <SpaceGrid />
             {units.map(unit => (
               <GameUnit3D
                 key={unit.id}
