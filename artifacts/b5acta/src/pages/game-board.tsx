@@ -1,4 +1,4 @@
-import { useState, useRef, Suspense } from "react";
+import { useState, useRef, Suspense, useMemo } from "react";
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader } from "@react-three/fiber";
@@ -32,14 +32,40 @@ function hexToWorld(q: number, r: number): [number, number, number] {
   return [q * 2.25, 0, r * 2.6 + q * 1.3];
 }
 
+// Board is 48" wide × 72" deep, 1 world unit = 1 inch
+const BOARD_W = 48;
+const BOARD_D = 72;
+
 function SpaceGrid() {
   return (
     <>
-      {/* Fine 1-unit grid */}
-      <gridHelper args={[80, 80, "#0f1f0f", "#0a160a"]} position={[0, -0.01, 0]} />
-      {/* Bold 5-unit grid overlay */}
-      <gridHelper args={[80, 16, "#1a2e1a", "#1a2e1a"]} position={[0, -0.005, 0]} />
+      {/* Fine 1" grid */}
+      <gridHelper args={[72, 72, "#0d1a0d", "#0a140a"]} position={[0, -0.01, 0]} />
+      {/* Bold 6" grid overlay */}
+      <gridHelper args={[72, 12, "#172617", "#172617"]} position={[0, -0.005, 0]} />
     </>
+  );
+}
+
+function BoardBoundary() {
+  const geo = useMemo(() => {
+    const hw = BOARD_W / 2; // 24
+    const hd = BOARD_D / 2; // 36
+    const pts = [
+      new THREE.Vector3(-hw, 0, -hd),
+      new THREE.Vector3( hw, 0, -hd),
+      new THREE.Vector3( hw, 0,  hd),
+      new THREE.Vector3(-hw, 0,  hd),
+      new THREE.Vector3(-hw, 0, -hd),
+    ];
+    return new THREE.BufferGeometry().setFromPoints(pts);
+  }, []);
+
+  return (
+    // @ts-ignore – R3F line primitive
+    <line geometry={geo}>
+      <lineBasicMaterial color="#f59e0b" />
+    </line>
   );
 }
 
@@ -100,49 +126,45 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
   const hpPct = unit.hullPoints / unit.maxHullPoints;
 
   return (
-    <group position={[x, y + 0.15, z]} onClick={onClick}>
-      <Suspense fallback={<ShipModelFallback color={color} />}>
-        <ShipModel3D filename={unit.modelFilename} color={color} />
-      </Suspense>
+    <group position={[x, 0, z]} onClick={onClick}>
+      {/* Translucent circular base at grid level */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <circleGeometry args={[1.2, 48]} />
+        <meshStandardMaterial color={color} transparent opacity={0.15} depthWrite={false} />
+      </mesh>
+      {/* Base ring edge */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <ringGeometry args={[1.15, 1.2, 48]} />
+        <meshStandardMaterial color={color} transparent opacity={isSelected ? 0.9 : 0.45} emissive={color} emissiveIntensity={isSelected ? 0.6 : 0.15} />
+      </mesh>
+      {/* Selection pulse ring */}
       {isSelected && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]}>
-          <ringGeometry args={[0.9, 1.1, 6]} />
-          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.5} transparent opacity={0.8} />
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
+          <ringGeometry args={[1.3, 1.45, 48]} />
+          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.8} transparent opacity={0.7} />
         </mesh>
       )}
-      {/* HP bar */}
-      <group position={[0, 0.8, 0]}>
-        <mesh position={[0, 0, 0]}>
-          <planeGeometry args={[1.2, 0.12]} />
+      {/* Ship model floating 2" above the base */}
+      <group position={[0, 2, 0]}>
+        <Suspense fallback={<ShipModelFallback color={color} />}>
+          <ShipModel3D filename={unit.modelFilename} color={color} />
+        </Suspense>
+      </group>
+      {/* HP bar above ship */}
+      <group position={[0, 3.2, 0]}>
+        <mesh>
+          <planeGeometry args={[2, 0.18]} />
           <meshBasicMaterial color="#1f2937" transparent opacity={0.9} />
         </mesh>
-        <mesh position={[-0.6 * (1 - hpPct), 0, 0.001]} scale={[hpPct, 1, 1]}>
-          <planeGeometry args={[1.2, 0.1]} />
+        <mesh position={[-1 * (1 - hpPct), 0, 0.001]} scale={[hpPct, 1, 1]}>
+          <planeGeometry args={[2, 0.15]} />
           <meshBasicMaterial color={hpPct > 0.5 ? "#22c55e" : hpPct > 0.25 ? "#f59e0b" : "#ef4444"} />
         </mesh>
       </group>
-      <Text position={[0, 1.2, 0]} fontSize={0.3} color="white" anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="black">
-        {unit.name.slice(0, 12)}
+      <Text position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
+        {unit.name.slice(0, 14)}
       </Text>
     </group>
-  );
-}
-
-function HexGrid({ size = 6 }: { size?: number }) {
-  const tiles = [];
-  for (let q = -size; q <= size; q++) {
-    for (let r = -size; r <= size; r++) {
-      if (Math.abs(q + r) <= size) {
-        tiles.push({ q, r });
-      }
-    }
-  }
-  return (
-    <>
-      {tiles.map(({ q, r }) => (
-        <HexTile key={`${q},${r}`} q={q} r={r} />
-      ))}
-    </>
   );
 }
 
@@ -255,12 +277,13 @@ export default function GameBoard() {
       <div className="flex flex-col lg:flex-row h-full min-h-[calc(100dvh-4rem)]">
         {/* 3D Board */}
         <div className="flex-1 relative min-h-[400px] lg:min-h-0 bg-black">
-          <Canvas camera={{ position: [0, 12, 12], fov: 50 }} shadows>
+          <Canvas camera={{ position: [0, 40, 50], fov: 45 }} shadows>
             <ambientLight intensity={0.4} />
             <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
             <pointLight position={[0, 10, 0]} intensity={0.5} color="#f59e0b" />
-            <fog attach="fog" args={["#050505", 20, 50]} />
+            <fog attach="fog" args={["#050505", 60, 110]} />
             <SpaceGrid />
+            <BoardBoundary />
             {units.map(unit => (
               <GameUnit3D
                 key={unit.id}
@@ -270,8 +293,7 @@ export default function GameBoard() {
                 myUserId={myUserId}
               />
             ))}
-            <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} minDistance={5} maxDistance={35} />
-            <gridHelper args={[30, 30, "#1f2937", "#111827"]} position={[0, -0.1, 0]} />
+            <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} minDistance={8} maxDistance={90} />
           </Canvas>
           {/* Status overlay */}
           <div className="absolute top-3 left-3 flex flex-col gap-1.5 pointer-events-none">
