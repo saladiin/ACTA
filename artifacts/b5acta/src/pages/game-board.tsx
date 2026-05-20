@@ -1,4 +1,4 @@
-import { useState, useRef, Suspense, useMemo } from "react";
+import { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
@@ -202,27 +202,52 @@ interface StagedUnitData {
   weaponDamage: number;
   x: number;
   z: number;
+  locked: boolean;
 }
 
-function StagedUnit3D({ unit, onRemove }: { unit: StagedUnitData; onRemove: () => void }) {
-  const color = "#f59e0b";
+function StagedUnit3D({
+  unit, isSelected, onClick,
+}: {
+  unit: StagedUnitData;
+  isSelected: boolean;
+  onClick: (e: any) => void;
+}) {
+  const baseColor = unit.locked ? "#22c55e" : "#f59e0b";
+  const ringOpacity = isSelected ? 0.8 : unit.locked ? 0.55 : 0.45;
+  const fillOpacity = isSelected ? 0.28 : 0.15;
+
   return (
-    <group position={[unit.x, 0, unit.z]} onClick={onRemove}>
+    <group position={[unit.x, 0, unit.z]} onClick={onClick}>
+      {/* Selection pulse ring */}
+      {isSelected && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+          <ringGeometry args={[1.3, 1.5, 48]} />
+          <meshStandardMaterial color="white" transparent opacity={0.35} emissive="white" emissiveIntensity={0.4} depthWrite={false} />
+        </mesh>
+      )}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <circleGeometry args={[1.2, 48]} />
-        <meshStandardMaterial color={color} transparent opacity={0.15} depthWrite={false} />
+        <meshStandardMaterial color={baseColor} transparent opacity={fillOpacity} depthWrite={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
         <ringGeometry args={[1.15, 1.2, 48]} />
-        <meshStandardMaterial color={color} transparent opacity={0.45} emissive={color} emissiveIntensity={0.2} />
+        <meshStandardMaterial color={baseColor} transparent opacity={ringOpacity} emissive={baseColor} emissiveIntensity={0.25} />
       </mesh>
       <group position={[0, 2, 0]}>
-        <Suspense fallback={<ShipModelFallback color={color} />}>
-          <ShipModel3D filename={unit.modelFilename} tint={color} />
+        <Suspense fallback={<ShipModelFallback color={baseColor} />}>
+          <ShipModel3D filename={unit.modelFilename} tint={baseColor} />
         </Suspense>
       </group>
-      <Text position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
-        {unit.name.slice(0, 14)}
+      <Text
+        position={[0, 3.7, 0]}
+        fontSize={0.38}
+        color={unit.locked ? "#86efac" : "white"}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.04}
+        outlineColor="black"
+      >
+        {unit.locked ? `🔒 ${unit.name.slice(0, 11)}` : unit.name.slice(0, 14)}
       </Text>
     </group>
   );
@@ -272,12 +297,36 @@ export default function GameBoard() {
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
 
-  // Staging / armory
+  // Staging / fleet yards
   const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
   const draggedShipRef = useRef<ShipModel | null>(null);
   const [stagedUnits, setStagedUnits] = useState<StagedUnitData[]>([]);
+  const [selectedStagedId, setSelectedStagedId] = useState<string | null>(null);
   const [selectedFaction, setSelectedFaction] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
+
+  // Keyboard handler for placement phase
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!selectedStagedId) return;
+      if (e.key === "l" || e.key === "L") {
+        e.preventDefault();
+        setStagedUnits(prev => prev.map(u => u.id === selectedStagedId ? { ...u, locked: !u.locked } : u));
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        setStagedUnits(prev => {
+          const target = prev.find(u => u.id === selectedStagedId);
+          if (target?.locked) return prev; // locked units are immune
+          return prev.filter(u => u.id !== selectedStagedId);
+        });
+        setSelectedStagedId(null);
+      } else if (e.key === "Escape") {
+        setSelectedStagedId(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedStagedId]);
 
   const factions = useMemo(() => [...new Set((shipModels ?? []).map(m => m.faction))].sort(), [shipModels]);
   const filteredModels = useMemo(
@@ -391,8 +440,9 @@ export default function GameBoard() {
             const pos = screenToBoard(e.clientX, e.clientY, threeRef);
             if (!pos) return;
             const [x, z] = pos;
+            const newId = `staged-${Date.now()}`;
             setStagedUnits(prev => [...prev, {
-              id: `staged-${Date.now()}`,
+              id: newId,
               name: ship.name,
               modelFilename: ship.filename,
               faction: ship.faction,
@@ -401,7 +451,9 @@ export default function GameBoard() {
               weaponRange: ship.weaponRange,
               weaponDamage: ship.weaponDamage,
               x, z,
+              locked: false,
             }]);
+            setSelectedStagedId(newId);
             draggedShipRef.current = null;
           }}
         >
@@ -429,7 +481,8 @@ export default function GameBoard() {
               <StagedUnit3D
                 key={unit.id}
                 unit={unit}
-                onRemove={() => setStagedUnits(prev => prev.filter(u => u.id !== unit.id))}
+                isSelected={selectedStagedId === unit.id}
+                onClick={(e) => { e.stopPropagation(); setSelectedStagedId(unit.id); }}
               />
             ))}
             <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} minDistance={8} maxDistance={90} />
@@ -455,64 +508,117 @@ export default function GameBoard() {
               </div>
             )}
           </div>
-          {/* Camera hint */}
-          <div className="absolute bottom-3 left-3 text-xs text-gray-500 font-mono pointer-events-none">
-            Drag to rotate &bull; Scroll to zoom &bull; Right-drag to pan
+          {/* Camera / key hints */}
+          <div className="absolute bottom-3 left-3 flex flex-col items-start gap-1 pointer-events-none">
+            <div className="text-xs text-gray-500 font-mono">
+              Drag to rotate &bull; Scroll to zoom &bull; Right-drag to pan
+            </div>
+            {game.status === "deploying" && (
+              <div className="text-[10px] text-gray-600 font-mono">
+                {selectedStagedId
+                  ? "L — lock/unlock · Del — remove · Esc — deselect"
+                  : "Click a placed ship to select it"}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Sidebar panel */}
         <div className="w-full lg:w-72 border-t lg:border-t-0 lg:border-l border-border bg-card flex flex-col">
 
-          {/* ── ARMORY ── */}
-          <div className="p-3 border-b border-border space-y-2">
-            <p className="text-xs font-mono text-primary uppercase tracking-widest">Armory</p>
-            <Select value={selectedFaction} onValueChange={setSelectedFaction}>
-              <SelectTrigger className="bg-background text-xs h-8">
-                <SelectValue placeholder="All factions…" />
-              </SelectTrigger>
-              <SelectContent className="bg-card border-border">
-                <SelectItem value="__all__">All factions</SelectItem>
-                {factions.map(f => (
-                  <SelectItem key={f} value={f}>{f}</SelectItem>
+          {/* ── FLEET YARDS (deploy phase only) ── */}
+          {game.status === "deploying" && (
+            <div className="p-3 border-b border-border space-y-2 flex flex-col">
+              <p className="text-xs font-mono text-primary uppercase tracking-widest">Fleet Yards</p>
+              <Select value={selectedFaction} onValueChange={setSelectedFaction}>
+                <SelectTrigger className="bg-background text-xs h-8">
+                  <SelectValue placeholder="All factions…" />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border">
+                  <SelectItem value="__all__">All factions</SelectItem>
+                  {factions.map(f => (
+                    <SelectItem key={f} value={f}>{f}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="space-y-1 max-h-44 overflow-y-auto pr-0.5">
+                {filteredModels.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-2">No ships</p>
+                )}
+                {filteredModels.map(ship => (
+                  <div
+                    key={ship.id}
+                    draggable
+                    data-testid={`ship-card-${ship.id}`}
+                    onDragStart={e => {
+                      draggedShipRef.current = ship;
+                      e.dataTransfer.effectAllowed = "copy";
+                      e.dataTransfer.setData("text/plain", ship.name);
+                    }}
+                    onDragEnd={() => { draggedShipRef.current = null; }}
+                    className="flex items-center justify-between px-2 py-1.5 rounded border border-border bg-background hover:border-primary/40 hover:bg-primary/5 cursor-grab active:cursor-grabbing select-none transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-mono text-foreground truncate">{ship.name}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">{ship.faction}</p>
+                    </div>
+                    <div className="flex gap-1.5 text-[10px] font-mono text-muted-foreground shrink-0 ml-2">
+                      <span title="Hull">{ship.hullPoints}hp</span>
+                      <span title="Speed">{ship.speed}"</span>
+                      <span title="Points" className="text-amber-500/80">{ship.pointCost}pt</span>
+                    </div>
+                  </div>
                 ))}
-              </SelectContent>
-            </Select>
-            <div className="space-y-1 max-h-52 overflow-y-auto pr-0.5">
-              {filteredModels.length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-2">No ships</p>
-              )}
-              {filteredModels.map(ship => (
-                <div
-                  key={ship.id}
-                  draggable
-                  onDragStart={e => {
-                    draggedShipRef.current = ship;
-                    e.dataTransfer.effectAllowed = "copy";
-                    e.dataTransfer.setData("text/plain", ship.name);
-                  }}
-                  onDragEnd={() => { draggedShipRef.current = null; }}
-                  className="flex items-center justify-between px-2 py-1.5 rounded border border-border bg-background hover:border-primary/40 hover:bg-primary/5 cursor-grab active:cursor-grabbing select-none transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-xs font-mono text-foreground truncate">{ship.name}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{ship.faction}</p>
-                  </div>
-                  <div className="flex gap-1.5 text-[10px] font-mono text-muted-foreground shrink-0 ml-2">
-                    <span title="Hull">{ship.hullPoints}hp</span>
-                    <span title="Speed">{ship.speed}"</span>
-                    <span title="Points" className="text-amber-500/80">{ship.pointCost}pt</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {stagedUnits.length > 0 && (
-              <div className="flex items-center justify-between pt-1">
-                <p className="text-[10px] text-muted-foreground font-mono">{stagedUnits.length} staged — click to remove</p>
-                <button className="text-[10px] text-muted-foreground hover:text-destructive font-mono" onClick={() => setStagedUnits([])}>clear all</button>
               </div>
-            )}
-          </div>
+              {/* Staged unit list */}
+              {stagedUnits.length > 0 && (
+                <div className="space-y-0.5 pt-1 border-t border-border/50">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">{stagedUnits.length} placed</p>
+                    <button
+                      className="text-[10px] text-muted-foreground hover:text-destructive font-mono"
+                      onClick={() => { setStagedUnits([]); setSelectedStagedId(null); }}
+                    >clear all</button>
+                  </div>
+                  {stagedUnits.map(u => (
+                    <div
+                      key={u.id}
+                      onClick={() => setSelectedStagedId(u.id)}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono cursor-pointer transition-colors ${
+                        selectedStagedId === u.id
+                          ? "bg-primary/10 border border-primary/40 text-foreground"
+                          : "bg-background border border-border text-muted-foreground hover:border-border/80"
+                      }`}
+                    >
+                      <span className="flex-1 truncate">{u.locked ? "🔒 " : ""}{u.name}</span>
+                      {!u.locked && selectedStagedId === u.id && (
+                        <button
+                          className="text-muted-foreground hover:text-destructive ml-1"
+                          onClick={e => { e.stopPropagation(); setStagedUnits(prev => prev.filter(s => s.id !== u.id)); setSelectedStagedId(null); }}
+                        >✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Confirm deployment */}
+              <Button
+                data-testid="button-confirm-deployment"
+                className="w-full mt-2 uppercase tracking-widest text-xs gap-2"
+                disabled={stagedUnits.length === 0 || stagedUnits.some(u => !u.locked)}
+                onClick={() => { /* TODO: wire to deployFleet API */ }}
+              >
+                {stagedUnits.length === 0
+                  ? "Place ships to deploy"
+                  : stagedUnits.some(u => !u.locked)
+                  ? `Lock all ships first (${stagedUnits.filter(u => !u.locked).length} unlocked)`
+                  : "Ready for Deployment"}
+              </Button>
+              <p className="text-[9px] text-muted-foreground font-mono text-center -mt-1">
+                Select a ship · press L to lock · Del to remove
+              </p>
+            </div>
+          )}
 
           {/* Pending challenge actions */}
           {game.status === "pending" && isOpponent && (
