@@ -6,6 +6,8 @@ import { OrbitControls, Text, useGLTF } from "@react-three/drei";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // @ts-ignore
+import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
+// @ts-ignore
 import * as THREE from "three";
 import {
   useGetGame,
@@ -71,29 +73,47 @@ function BoardBoundary() {
   );
 }
 
-function ObjModel({ url, color }: { url: string; color: string }) {
-  const obj = useLoader(OBJLoader, url) as THREE.Group;
-  const cloned = obj.clone();
-  cloned.traverse((child: any) => {
-    if (child.isMesh) {
-      child.material = new THREE.MeshStandardMaterial({ color });
-    }
-  });
+// OBJ: load MTL for textures, fall back to tinted flat material if no MTL
+function ObjModel({ url, tint }: { url: string; tint: string }) {
+  const mtlUrl = url.replace(/\.obj$/i, ".mtl");
+  const materials = useLoader(MTLLoader, mtlUrl) as any;
+  const obj = useLoader(OBJLoader, url, (loader: any) => {
+    if (materials) { materials.preload(); loader.setMaterials(materials); }
+  }) as THREE.Group;
+  const cloned = useMemo(() => {
+    const c = obj.clone(true);
+    // If no material was applied by MTL, tint the mesh; otherwise keep it
+    c.traverse((child: any) => {
+      if (child.isMesh) {
+        const hasTex = child.material?.map != null;
+        if (!hasTex) {
+          child.material = new THREE.MeshStandardMaterial({ color: tint, metalness: 0.3, roughness: 0.6 });
+        } else {
+          child.material = child.material.clone();
+          child.material.emissive = new THREE.Color(tint);
+          child.material.emissiveIntensity = 0.12;
+        }
+      }
+    });
+    return c;
+  }, [obj, tint]);
   return <primitive object={cloned} scale={[0.4, 0.4, 0.4]} />;
 }
 
-function GlbModel({ url, color }: { url: string; color: string }) {
+// GLB: keep original embedded textures; apply a gentle emissive tint for team color
+function GlbModel({ url, tint }: { url: string; tint: string }) {
   const { scene } = useGLTF(url);
-  const cloned = scene.clone();
-  cloned.traverse((child: any) => {
-    if (child.isMesh) {
-      child.material = new THREE.MeshStandardMaterial({
-        color,
-        metalness: 0.4,
-        roughness: 0.5,
-      });
-    }
-  });
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (child.isMesh) {
+        child.material = child.material.clone();
+        child.material.emissive = new THREE.Color(tint);
+        child.material.emissiveIntensity = 0.18;
+      }
+    });
+    return c;
+  }, [scene, tint]);
   return <primitive object={cloned} scale={[0.4, 0.4, 0.4]} />;
 }
 
@@ -106,14 +126,14 @@ function ShipModelFallback({ color }: { color: string }) {
   );
 }
 
-function ShipModel3D({ filename, color }: { filename: string; color: string }) {
+function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const url = `${basePath}/api/models/${filename}`;
   const isGlb = filename.toLowerCase().endsWith(".glb") || filename.toLowerCase().endsWith(".gltf");
   if (isGlb) {
-    return <GlbModel url={url} color={color} />;
+    return <GlbModel url={url} tint={tint} />;
   }
-  return <ObjModel url={url} color={color} />;
+  return <ObjModel url={url} tint={tint} />;
 }
 
 function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
@@ -149,7 +169,7 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
       {/* Ship model floating 2" above the base */}
       <group position={[0, 2, 0]}>
         <Suspense fallback={<ShipModelFallback color={color} />}>
-          <ShipModel3D filename={unit.modelFilename} color={color} />
+          <ShipModel3D filename={unit.modelFilename} tint={color} />
         </Suspense>
       </group>
       {/* HP bar above ship */}
@@ -198,7 +218,7 @@ function StagedUnit3D({ unit, onRemove }: { unit: StagedUnitData; onRemove: () =
       </mesh>
       <group position={[0, 2, 0]}>
         <Suspense fallback={<ShipModelFallback color={color} />}>
-          <ShipModel3D filename={unit.modelFilename} color={color} />
+          <ShipModel3D filename={unit.modelFilename} tint={color} />
         </Suspense>
       </group>
       <Text position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
