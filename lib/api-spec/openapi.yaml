@@ -3,20 +3,28 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Babylon 5 A Call to Arms - Async Online Wargame API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: fleets
+    description: Fleet and ship management
+  - name: games
+    description: Game management
+  - name: turns
+    description: Turn and action management
+  - name: lobby
+    description: Lobby and matchmaking
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +32,366 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # --- Ship models ---
+  /ship-models:
+    get:
+      operationId: listShipModels
+      tags: [fleets]
+      summary: List all available ship models (uploaded OBJ files)
+      responses:
+        "200":
+          description: List of ship models
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShipModel"
+
+  # --- Fleets (player's named collections of ships) ---
+  /fleets:
+    get:
+      operationId: listFleets
+      tags: [fleets]
+      summary: List fleets for the authenticated user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Fleet"
+    post:
+      operationId: createFleet
+      tags: [fleets]
+      summary: Create a new fleet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FleetInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fleet"
+
+  /fleets/{fleetId}:
+    get:
+      operationId: getFleet
+      tags: [fleets]
+      summary: Get a fleet by ID
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fleet"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteFleet
+      tags: [fleets]
+      summary: Delete a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /fleets/{fleetId}/ships:
+    get:
+      operationId: listFleetShips
+      tags: [fleets]
+      summary: List ships in a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ship"
+    post:
+      operationId: addShipToFleet
+      tags: [fleets]
+      summary: Add a ship to a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShipInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ship"
+
+  /fleets/{fleetId}/ships/{shipId}:
+    delete:
+      operationId: removeShipFromFleet
+      tags: [fleets]
+      summary: Remove a ship from a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: shipId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # --- Games ---
+  /games:
+    get:
+      operationId: listGames
+      tags: [games]
+      summary: List games for the authenticated user (active + completed)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Game"
+    post:
+      operationId: createGame
+      tags: [games]
+      summary: Create a new game challenge (invites an opponent by Clerk user ID or username)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GameInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  /games/{gameId}:
+    get:
+      operationId: getGame
+      tags: [games]
+      summary: Get full game state including board and ships
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameDetail"
+        "404":
+          description: Not found
+
+  /games/{gameId}/accept:
+    post:
+      operationId: acceptGame
+      tags: [games]
+      summary: Accept a game challenge (opponent accepts)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  /games/{gameId}/decline:
+    post:
+      operationId: declineGame
+      tags: [games]
+      summary: Decline a game challenge
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  /games/{gameId}/deploy:
+    post:
+      operationId: deployFleet
+      tags: [games]
+      summary: Place your fleet on the board at the start of a game
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeploymentInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  # --- Turns ---
+  /games/{gameId}/turns:
+    get:
+      operationId: listTurns
+      tags: [turns]
+      summary: Get move history for a game
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Turn"
+    post:
+      operationId: submitTurn
+      tags: [turns]
+      summary: Submit a turn (move ships, fire weapons)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnInput"
+      responses:
+        "201":
+          description: Turn submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Turn"
+        "400":
+          description: Invalid move
+
+  # --- Lobby / Matchmaking ---
+  /lobby:
+    get:
+      operationId: getLobby
+      tags: [lobby]
+      summary: Get open game challenges and active games summary
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LobbyState"
+
+  /players/search:
+    get:
+      operationId: searchPlayers
+      tags: [lobby]
+      summary: Search for players by username to challenge
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlayerProfile"
+
+  /players/me:
+    get:
+      operationId: getMyProfile
+      tags: [lobby]
+      summary: Get the authenticated user's profile and stats
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerProfile"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +399,194 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    ShipModel:
+      type: object
+      required: [id, name, filename, faction, pointCost, hullPoints, speed, weaponRange, weaponDamage]
+      properties:
+        id:       { type: integer }
+        name:     { type: string }
+        filename: { type: string }
+        faction:  { type: string }
+        pointCost:    { type: integer }
+        hullPoints:   { type: integer }
+        speed:        { type: integer }
+        weaponRange:  { type: integer }
+        weaponDamage: { type: integer }
+        description:  { type: ["string", "null"] }
+
+    Fleet:
+      type: object
+      required: [id, ownerId, name, totalPoints, shipCount, createdAt]
+      properties:
+        id:          { type: integer }
+        ownerId:     { type: string }
+        name:        { type: string }
+        totalPoints: { type: integer }
+        shipCount:   { type: integer }
+        createdAt:   { type: string, format: date-time }
+
+    FleetInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+
+    Ship:
+      type: object
+      required: [id, fleetId, shipModelId, name, shipModel]
+      properties:
+        id:          { type: integer }
+        fleetId:     { type: integer }
+        shipModelId: { type: integer }
+        name:        { type: string }
+        shipModel:   { $ref: "#/components/schemas/ShipModel" }
+
+    ShipInput:
+      type: object
+      required: [shipModelId, name]
+      properties:
+        shipModelId: { type: integer }
+        name:        { type: string, minLength: 1 }
+
+    Game:
+      type: object
+      required: [id, challengerId, opponentId, status, currentTurn, pointLimit, createdAt, updatedAt]
+      properties:
+        id:           { type: integer }
+        challengerId: { type: string }
+        opponentId:   { type: string }
+        challengerName: { type: ["string", "null"] }
+        opponentName:   { type: ["string", "null"] }
+        status:       { type: string, enum: [pending, deploying, active, completed, declined] }
+        winnerId:     { type: ["string", "null"] }
+        currentTurn:  { type: integer }
+        pointLimit:   { type: integer }
+        createdAt:    { type: string, format: date-time }
+        updatedAt:    { type: string, format: date-time }
+
+    GameInput:
+      type: object
+      required: [opponentId, fleetId, pointLimit]
+      properties:
+        opponentId: { type: string }
+        fleetId:    { type: integer }
+        pointLimit: { type: integer }
+
+    GameUnit:
+      type: object
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, weaponRange, weaponDamage, isDestroyed]
+      properties:
+        id:            { type: integer }
+        gameId:        { type: integer }
+        ownerId:       { type: string }
+        shipId:        { type: integer }
+        name:          { type: string }
+        modelFilename: { type: string }
+        faction:       { type: string }
+        hullPoints:    { type: integer }
+        maxHullPoints: { type: integer }
+        hexQ:          { type: integer }
+        hexR:          { type: integer }
+        heading:       { type: integer }
+        speed:         { type: integer }
+        weaponRange:   { type: integer }
+        weaponDamage:  { type: integer }
+        isDestroyed:   { type: boolean }
+
+    GameDetail:
+      type: object
+      required: [game, units, turns]
+      properties:
+        game:  { $ref: "#/components/schemas/Game" }
+        units: { type: array, items: { $ref: "#/components/schemas/GameUnit" } }
+        turns: { type: array, items: { $ref: "#/components/schemas/Turn" } }
+
+    ShipPlacement:
+      type: object
+      required: [shipId, hexQ, hexR, heading]
+      properties:
+        shipId:  { type: integer }
+        hexQ:    { type: integer }
+        hexR:    { type: integer }
+        heading: { type: integer }
+
+    DeploymentInput:
+      type: object
+      required: [fleetId, placements]
+      properties:
+        fleetId:    { type: integer }
+        placements:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShipPlacement"
+
+    MoveAction:
+      type: object
+      required: [unitId, toHexQ, toHexR, newHeading]
+      properties:
+        unitId:     { type: integer }
+        toHexQ:     { type: integer }
+        toHexR:     { type: integer }
+        newHeading: { type: integer }
+
+    FireAction:
+      type: object
+      required: [attackerUnitId, targetUnitId]
+      properties:
+        attackerUnitId: { type: integer }
+        targetUnitId:   { type: integer }
+
+    TurnInput:
+      type: object
+      required: [moves, attacks]
+      properties:
+        moves:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveAction"
+        attacks:
+          type: array
+          items:
+            $ref: "#/components/schemas/FireAction"
+
+    Turn:
+      type: object
+      required: [id, gameId, playerId, turnNumber, moves, attacks, resolvedAt]
+      properties:
+        id:          { type: integer }
+        gameId:      { type: integer }
+        playerId:    { type: string }
+        turnNumber:  { type: integer }
+        moves:       { type: object }
+        attacks:     { type: object }
+        resolvedAt:  { type: ["string", "null"], format: date-time }
+
+    LobbyState:
+      type: object
+      required: [pendingChallenges, activeGames, recentlyCompleted]
+      properties:
+        pendingChallenges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+        activeGames:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+        recentlyCompleted:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+
+    PlayerProfile:
+      type: object
+      required: [clerkUserId, username, wins, losses, gamesPlayed]
+      properties:
+        clerkUserId: { type: string }
+        username:    { type: string }
+        wins:        { type: integer }
+        losses:      { type: integer }
+        gamesPlayed: { type: integer }
+        avatarUrl:   { type: ["string", "null"] }

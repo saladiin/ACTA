@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Babylon 5: A Call to Arms"
+version = "1.0.0"
+id = "artifacts/b5acta"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21152
+
+[services.development]
+run = "pnpm --filter @workspace/b5acta run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/b5acta", "run", "build" ]
+publicDir = "artifacts/b5acta/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21152"
+BASE_PATH = "/"
