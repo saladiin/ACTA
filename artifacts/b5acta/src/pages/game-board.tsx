@@ -73,6 +73,15 @@ function BoardBoundary() {
   );
 }
 
+// Compute a uniform scale so the model's longest horizontal dimension = targetInches world units
+function shipScale(object: THREE.Object3D, targetInches = 2): number {
+  const box = new THREE.Box3().setFromObject(object);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxH = Math.max(size.x, size.z);
+  return maxH > 0 ? targetInches / maxH : 1;
+}
+
 // OBJ: load MTL for textures, fall back to tinted flat material if no MTL
 function ObjModel({ url, tint }: { url: string; tint: string }) {
   const mtlUrl = url.replace(/\.obj$/i, ".mtl");
@@ -80,24 +89,27 @@ function ObjModel({ url, tint }: { url: string; tint: string }) {
   const obj = useLoader(OBJLoader, url, (loader: any) => {
     if (materials) { materials.preload(); loader.setMaterials(materials); }
   }) as THREE.Group;
-  const cloned = useMemo(() => {
+  const { cloned, s } = useMemo(() => {
     const c = obj.clone(true);
-    // If no material was applied by MTL, tint the mesh; otherwise keep it
     c.traverse((child: any) => {
-      if (child.isMesh) {
-        const hasTex = child.material?.map != null;
-        if (!hasTex) {
-          child.material = new THREE.MeshStandardMaterial({ color: tint, metalness: 0.3, roughness: 0.6 });
-        } else {
-          child.material = child.material.clone();
-          child.material.emissive = new THREE.Color(tint);
-          child.material.emissiveIntensity = 0.12;
+      if (!child.isMesh) return;
+      // material may be a single material or an array — normalise to array
+      const mats: any[] = Array.isArray(child.material) ? child.material : [child.material];
+      const tinted = mats.map((m: any) => {
+        if (!m) return new THREE.MeshStandardMaterial({ color: tint, metalness: 0.3, roughness: 0.6 });
+        if (m.map) {
+          const clonedMat = m.clone();
+          clonedMat.emissive = new THREE.Color(tint);
+          clonedMat.emissiveIntensity = 0.12;
+          return clonedMat;
         }
-      }
+        return new THREE.MeshStandardMaterial({ color: tint, metalness: 0.3, roughness: 0.6 });
+      });
+      child.material = Array.isArray(child.material) ? tinted : tinted[0];
     });
-    return c;
+    return { cloned: c, s: shipScale(c) };
   }, [obj, tint]);
-  return <primitive object={cloned} scale={[0.4, 0.4, 0.4]} />;
+  return <primitive object={cloned} scale={[s, s, s]} />;
 }
 
 // GLB: keep original embedded textures; apply a gentle emissive tint for team color
@@ -114,7 +126,8 @@ function GlbModel({ url, tint }: { url: string; tint: string }) {
     });
     return c;
   }, [scene, tint]);
-  return <primitive object={cloned} scale={[0.4, 0.4, 0.4]} />;
+  const s = useMemo(() => shipScale(cloned), [cloned]);
+  return <primitive object={cloned} scale={[s, s, s]} />;
 }
 
 function ShipModelFallback({ color }: { color: string }) {
