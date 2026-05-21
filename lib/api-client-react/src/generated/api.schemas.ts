@@ -111,6 +111,7 @@ export interface GameUnit {
   hexR: number;
   heading: number;
   speed: number;
+  turnAngle: number;
   weaponRange: number;
   weaponDamage: number;
   isDestroyed: boolean;

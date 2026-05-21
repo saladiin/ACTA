@@ -219,6 +219,7 @@ export const GetGameResponse = zod.object({
   "hexR": zod.number(),
   "heading": zod.number(),
   "speed": zod.number(),
+  "turnAngle": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean()
