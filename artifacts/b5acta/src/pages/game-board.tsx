@@ -22,6 +22,7 @@ import {
 } from "@workspace/api-client-react";
 import type { ShipModel, Weapon } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
+import { useDevUserId } from "../lib/dev-user";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -493,7 +494,8 @@ export default function GameBoard() {
   const params = useParams<{ id: string }>();
   const gameId = parseInt(params.id ?? "0");
   const { user } = useUser();
-  const myUserId = user?.id ?? "";
+  const devUserId = useDevUserId();
+  const myUserId = import.meta.env.DEV ? devUserId : (user?.id ?? "");
   const qc = useQueryClient();
 
   const { data: gameData, isLoading } = useGetGame(gameId, { query: { queryKey: getGetGameQueryKey(gameId) } });

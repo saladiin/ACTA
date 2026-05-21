@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { setExtraHeaders } from "@workspace/api-client-react";
-
-const LS_KEY = "dev-user-id";
+import { useDevUserId, setDevUserId } from "../lib/dev-user";
 
 const PLAYERS = [
   { id: "test-user-1", label: "P1", name: "COMMANDER-1" },
@@ -11,9 +10,7 @@ const PLAYERS = [
 
 export function DevModeToggle() {
   const qc = useQueryClient();
-  const [activeId, setActiveId] = useState<string>(
-    () => localStorage.getItem(LS_KEY) ?? "test-user-1"
-  );
+  const activeId = useDevUserId();
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -26,10 +23,8 @@ export function DevModeToggle() {
   const next = PLAYERS.find(p => p.id !== activeId) ?? PLAYERS[1];
 
   const toggle = () => {
-    const nextId = next.id;
-    localStorage.setItem(LS_KEY, nextId);
-    setExtraHeaders({ "x-dev-user-id": nextId });
-    setActiveId(nextId);
+    setExtraHeaders({ "x-dev-user-id": next.id });
+    setDevUserId(next.id);
     qc.invalidateQueries();
   };
 
