@@ -214,7 +214,7 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
       {/* Weapon arcs — rotate with heading */}
       {isSelected && weapons.length > 0 && (
         <group rotation={[0, headingRad, 0]}>
-          <WeaponArcDisplay weapons={weapons} />
+          <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
         </group>
       )}
       {/* Heading arrow */}
@@ -302,17 +302,22 @@ function ArcSector({ centerAngle, halfAngle, radius, color, opacity }: {
   );
 }
 
-function WeaponArcDisplay({ weapons }: { weapons: Pick<Weapon, "arc">[] }) {
+// Arcs whose centre is on the fore/aft axis — their centerAngle and label Z must be
+// negated for ships whose model is flipped 180° inside the heading group.
+const AXIAL_ARCS = new Set(["Forward", "Aft", "Boresight Forward", "Boresight Aft"]);
+
+function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "arc">[]; flip?: boolean }) {
   const uniqueArcs = useMemo(() => [...new Set(weapons.map(w => w.arc))], [weapons]);
   return (
     <>
       {uniqueArcs.map(arc => {
         const def = ARC_DEFS[arc];
         if (!def) return null;
+        const centerAngle = (flip && AXIAL_ARCS.has(arc)) ? -def.centerAngle : def.centerAngle;
         return (
           <ArcSector
             key={arc}
-            centerAngle={def.centerAngle}
+            centerAngle={centerAngle}
             halfAngle={def.halfAngle}
             radius={def.radius ?? 1.2}
             color={def.color}
@@ -324,10 +329,13 @@ function WeaponArcDisplay({ weapons }: { weapons: Pick<Weapon, "arc">[] }) {
         const lbl = ARC_LABELS[arc];
         const def = ARC_DEFS[arc];
         if (!lbl || !def) return null;
+        const pos: [number, number, number] = (flip && AXIAL_ARCS.has(arc))
+          ? [lbl.pos[0], lbl.pos[1], -lbl.pos[2]]
+          : lbl.pos;
         return (
           <Text
             key={`lbl-${arc}`}
-            position={lbl.pos}
+            position={pos}
             fontSize={0.17}
             color={def.color}
             anchorX="center"
@@ -417,7 +425,7 @@ function StagedUnit3D({
       {/* Weapon arcs — rendered in heading-rotated group so they turn with the ship */}
       {isSelected && unit.weapons.length > 0 && (
         <group rotation={[0, headingRad, 0]}>
-          <WeaponArcDisplay weapons={unit.weapons} />
+          <WeaponArcDisplay weapons={unit.weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
         </group>
       )}
       {/* Heading arrow — points in the direction the ship is facing */}
