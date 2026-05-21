@@ -1,4 +1,4 @@
-import { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
@@ -124,6 +124,21 @@ function GlbModel({ url, tint }: { url: string; tint: string }) {
   return <primitive object={cloned} scale={[s, s, s]} />;
 }
 
+class ModelErrorBoundary extends React.Component<
+  { color: string; children: React.ReactNode },
+  { error: boolean }
+> {
+  constructor(props: { color: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { error: false };
+  }
+  static getDerivedStateFromError() { return { error: true }; }
+  render() {
+    if (this.state.error) return <ShipModelFallback color={this.props.color} />;
+    return this.props.children;
+  }
+}
+
 function ShipModelFallback({ color }: { color: string }) {
   return (
     <mesh>
@@ -191,9 +206,11 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
       </mesh>
       {/* Ship model floating 2" above the base, rotated to heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
-        <Suspense fallback={<ShipModelFallback color={color} />}>
-          <ShipModel3D filename={unit.modelFilename} tint={color} />
-        </Suspense>
+        <ModelErrorBoundary color={color}>
+          <Suspense fallback={<ShipModelFallback color={color} />}>
+            <ShipModel3D filename={unit.modelFilename} tint={color} />
+          </Suspense>
+        </ModelErrorBoundary>
       </group>
       {/* HP bar above ship */}
       <group position={[0, 3.2, 0]}>
@@ -370,9 +387,11 @@ function StagedUnit3D({
       </mesh>
       {/* Ship model, rotated to match heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
-        <Suspense fallback={<ShipModelFallback color={baseColor} />}>
-          <ShipModel3D filename={unit.modelFilename} tint={baseColor} />
-        </Suspense>
+        <ModelErrorBoundary color={baseColor}>
+          <Suspense fallback={<ShipModelFallback color={baseColor} />}>
+            <ShipModel3D filename={unit.modelFilename} tint={baseColor} />
+          </Suspense>
+        </ModelErrorBoundary>
       </group>
       <Text
         position={[0, 3.9, 0]}
