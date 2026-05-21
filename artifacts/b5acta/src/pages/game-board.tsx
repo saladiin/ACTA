@@ -108,7 +108,7 @@ function ObjModel({ url, tint }: { url: string; tint: string }) {
 
 // GLB: keep original embedded textures; apply a gentle emissive tint for team color
 // Models that need a 180° Y-flip to face forward correctly
-const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb"]);
+const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb"]);
 
 function GlbModel({ url, tint, filename }: { url: string; tint: string; filename: string }) {
   const { scene } = useGLTF(url);
@@ -217,14 +217,6 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
           <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
         </group>
       )}
-      {/* Heading arrow */}
-      <mesh
-        position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
-        rotation={[Math.PI / 2, headingRad, 0]}
-      >
-        <coneGeometry args={[0.14, 0.36, 6]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
-      </mesh>
       {/* Ship model floating 2" above the base, rotated to heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <ModelErrorBoundary color={color}>
@@ -428,14 +420,6 @@ function StagedUnit3D({
           <WeaponArcDisplay weapons={unit.weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
         </group>
       )}
-      {/* Heading arrow — points in the direction the ship is facing */}
-      <mesh
-        position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
-        rotation={[Math.PI / 2, headingRad, 0]}
-      >
-        <coneGeometry args={[0.18, 0.45, 6]} />
-        <meshStandardMaterial color={baseColor} emissive={baseColor} emissiveIntensity={0.5} />
-      </mesh>
       {/* Ship model, rotated to match heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <ModelErrorBoundary color={baseColor}>
