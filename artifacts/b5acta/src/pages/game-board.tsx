@@ -220,7 +220,7 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
       {/* Heading arrow */}
       <mesh
         position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
-        rotation={[Math.PI / 2, 0, -headingRad]}
+        rotation={[Math.PI / 2, headingRad, 0]}
       >
         <coneGeometry args={[0.14, 0.36, 6]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
@@ -431,7 +431,7 @@ function StagedUnit3D({
       {/* Heading arrow — points in the direction the ship is facing */}
       <mesh
         position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
-        rotation={[Math.PI / 2, 0, -headingRad]}
+        rotation={[Math.PI / 2, headingRad, 0]}
       >
         <coneGeometry args={[0.18, 0.45, 6]} />
         <meshStandardMaterial color={baseColor} emissive={baseColor} emissiveIntensity={0.5} />
