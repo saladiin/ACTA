@@ -8,8 +8,25 @@ export const shipModelsTable = pgTable("ship_models", {
   filename: text("filename").notNull(),
   faction: text("faction").notNull(),
   pointCost: integer("point_cost").notNull().default(100),
-  hullPoints: integer("hull_points").notNull().default(10),
+  // ACTA core stats
+  shipClass: text("ship_class"),
+  hull: integer("hull"),                         // armour dice (1-6)
+  troops: integer("troops"),
+  damage: integer("damage"),                     // total damage capacity
+  damageThreshold: integer("damage_threshold"),
+  crew: integer("crew"),
+  crewThreshold: integer("crew_threshold"),
   speed: integer("speed").notNull().default(3),
+  turns: integer("turns"),                       // turns per move activation
+  turnAngle: integer("turn_angle"),              // degrees per turn
+  crewQuality: text("crew_quality"),             // Regular/Veteran/Elite/N/A
+  shield: integer("shield").notNull().default(0),
+  shieldMax: integer("shield_max").notNull().default(0),
+  shieldRegenRate: integer("shield_regen_rate").notNull().default(0),
+  traits: text("traits"),
+  smallCraft: text("small_craft"),
+  // Legacy single-weapon summary (kept for backward compat with game_units)
+  hullPoints: integer("hull_points").notNull().default(10),
   weaponRange: integer("weapon_range").notNull().default(4),
   weaponDamage: integer("weapon_damage").notNull().default(3),
   description: text("description"),
