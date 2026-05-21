@@ -409,24 +409,19 @@ function AnnularSector({ rInner, rOuter, startAngle, endAngle, color, opacity }:
   );
 }
 
-function ForwardPreview({ speed, flip }: { speed: number; flip: boolean }) {
-  // Visual nose direction in ship local space: +Z normally, -Z for FLIP_MODELS
-  const sign = flip ? -1 : 1;
+function ForwardPreview({ speed }: { speed: number }) {
   return (
     <group>
-      <mesh position={[0, 0.06, sign * (1.2 + speed / 2)]}>
+      <mesh position={[0, 0.06, 1.2 + speed / 2]}>
         <boxGeometry args={[0.1, 0.04, speed]} />
         <meshBasicMaterial color="#22d3ee" transparent opacity={0.9} />
       </mesh>
-      <mesh
-        position={[0, 0.06, sign * (1.2 + speed)]}
-        rotation={[sign > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0]}
-      >
+      <mesh position={[0, 0.06, 1.2 + speed]} rotation={[Math.PI / 2, 0, 0]}>
         <coneGeometry args={[0.28, 0.55, 14]} />
         <meshBasicMaterial color="#22d3ee" transparent opacity={0.95} />
       </mesh>
       <Text
-        position={[0.55, 0.1, sign * (1.2 + speed / 2)]}
+        position={[0.55, 0.1, 1.2 + speed / 2]}
         fontSize={0.34}
         color="#67e8f9"
         anchorX="left"
@@ -480,11 +475,14 @@ function MovementPlanner({ unit, plan, flip }: {
 }) {
   if (!plan) return null;
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
-  const headingRad = (unit.heading * Math.PI) / 180;
+  // FLIP_MODELS render with an extra π Y-flip, so their visual nose points along
+  // local −Z. Add π here so the preview's "forward" matches the visual nose, and
+  // therefore "starboard" (the right turn) also lands on the visually-correct side.
+  const previewHeadingRad = ((unit.heading + (flip ? 180 : 0)) * Math.PI) / 180;
   return (
     <group position={[x, 0, z]}>
-      <group rotation={[0, headingRad, 0]}>
-        {plan.kind === "forward" && <ForwardPreview speed={unit.speed} flip={flip} />}
+      <group rotation={[0, previewHeadingRad, 0]}>
+        {plan.kind === "forward" && <ForwardPreview speed={unit.speed} />}
         {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
       </group>
     </group>
@@ -774,7 +772,7 @@ export default function GameBoard() {
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
         setMovePlan({ kind: "forward" });
-      } else if (e.key === "Enter") {
+      } else if (e.key === "Enter" || e.key === " " || e.code === "Space") {
         e.preventDefault();
         confirmMovePlan();
       } else if (e.key === "Escape") {
@@ -1204,7 +1202,7 @@ export default function GameBoard() {
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground font-mono leading-relaxed">
-                    <span className="text-amber-400">F</span> fwd · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">↵</span> queue · <span className="text-amber-400">Esc</span> cancel
+                    <span className="text-amber-400">F</span> fwd · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">␣</span>/<span className="text-amber-400">↵</span> queue · <span className="text-amber-400">Esc</span> cancel
                   </p>
                 </div>
               )}
