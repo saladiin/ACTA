@@ -177,6 +177,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       heading: placement.heading,
       speed: model.speed,
       turnAngle: model.turnAngle ?? 45,
+      turns: model.turns ?? 1,
       weaponRange: model.weaponRange,
       weaponDamage: model.weaponDamage,
       isDestroyed: false,

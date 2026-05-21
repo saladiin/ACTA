@@ -220,6 +220,7 @@ export const GetGameResponse = zod.object({
   "heading": zod.number(),
   "speed": zod.number(),
   "turnAngle": zod.number(),
+  "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean()
@@ -389,6 +390,7 @@ export const MoveUnitResponse = zod.object({
   "heading": zod.number(),
   "speed": zod.number(),
   "turnAngle": zod.number(),
+  "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean()

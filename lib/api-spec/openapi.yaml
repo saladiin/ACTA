@@ -524,7 +524,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, weaponRange, weaponDamage, isDestroyed]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -540,6 +540,7 @@ components:
         heading:       { type: integer }
         speed:         { type: integer }
         turnAngle:     { type: integer }
+        turns:         { type: integer }
         weaponRange:   { type: integer }
         weaponDamage:  { type: integer }
         isDestroyed:   { type: boolean }

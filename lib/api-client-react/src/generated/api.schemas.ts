@@ -112,6 +112,7 @@ export interface GameUnit {
   heading: number;
   speed: number;
   turnAngle: number;
+  turns: number;
   weaponRange: number;
   weaponDamage: number;
   isDestroyed: boolean;

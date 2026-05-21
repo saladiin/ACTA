@@ -181,14 +181,17 @@ function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   return <ObjModel url={url} tint={tint} />;
 }
 
-function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
+function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset }: {
   unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number };
   isSelected: boolean;
   onClick: () => void;
   myUserId: string;
   weapons: Pick<Weapon, "arc">[];
+  dragOffset?: { x: number; z: number } | null;
 }) {
-  const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
+  const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
+  const x = bx + (dragOffset?.x ?? 0);
+  const z = bz + (dragOffset?.z ?? 0);
   const isMine = unit.ownerId === myUserId;
   // mine = green, enemy = red; selected mine = blue, selected enemy = yellow
   const color = unit.isDestroyed
@@ -374,12 +377,22 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
   );
 }
 
-// ── Movement planning (forward / turn previews, keyboard-driven) ─────────────
+// ── Movement planning (forward / turn previews, keyboard + mouse-drag) ───────
 // turn.deltaDeg is signed: positive = clockwise (R), negative = counter-clockwise (Shift+R).
+// forward.distance is in inches (world units), 0..remaining-speed, controlled by mouse drag.
 type MovePlan =
-  | { kind: "forward" }
+  | { kind: "forward"; distance: number }
   | { kind: "turn"; deltaDeg: number }
   | null;
+
+// Heading → unit world-space forward vector (accounting for FLIP_MODELS which
+// render their visual nose along local -Z).
+function headingForwardVec(unit: { heading: number; modelFilename: string }): { x: number; z: number } {
+  const flip = FLIP_MODELS.has(unit.modelFilename);
+  const sign = flip ? -1 : 1;
+  const hRad = (unit.heading * Math.PI) / 180;
+  return { x: sign * Math.sin(hRad), z: sign * Math.cos(hRad) };
+}
 
 // Annular sector mesh — used for the turn-arc preview that hugs the ship base.
 // Shape-space coords (mesh has +π/2 X rotation): shape +Y = world +Z (forward),
@@ -410,26 +423,38 @@ function AnnularSector({ rInner, rOuter, startAngle, endAngle, color, opacity }:
   );
 }
 
-function ForwardPreview({ speed }: { speed: number }) {
+function ForwardPreview({ distance, maxDistance }: { distance: number; maxDistance: number }) {
   return (
     <group>
-      <mesh position={[0, 0.06, 1.2 + speed / 2]}>
-        <boxGeometry args={[0.1, 0.04, speed]} />
-        <meshBasicMaterial color="#22d3ee" transparent opacity={0.9} />
-      </mesh>
-      <mesh position={[0, 0.06, 1.2 + speed]} rotation={[Math.PI / 2, 0, 0]}>
-        <coneGeometry args={[0.28, 0.55, 14]} />
-        <meshBasicMaterial color="#22d3ee" transparent opacity={0.95} />
-      </mesh>
-      <Text
-        position={[0.55, 0.1, 1.2 + speed / 2]}
-        fontSize={0.34}
-        color="#67e8f9"
-        anchorX="left"
-        anchorY="middle"
-        outlineWidth={0.04}
-        outlineColor="black"
-      >{`${speed}"`}</Text>
+      {/* Faint max-range rail showing how far this ship can still go this phase */}
+      {maxDistance > 0 && (
+        <mesh position={[0, 0.05, 1.2 + maxDistance / 2]}>
+          <boxGeometry args={[0.06, 0.02, maxDistance]} />
+          <meshBasicMaterial color="#0891b2" transparent opacity={0.35} />
+        </mesh>
+      )}
+      {/* Active distance arrow */}
+      {distance > 0 && (
+        <>
+          <mesh position={[0, 0.06, 1.2 + distance / 2]}>
+            <boxGeometry args={[0.1, 0.04, distance]} />
+            <meshBasicMaterial color="#22d3ee" transparent opacity={0.9} />
+          </mesh>
+          <mesh position={[0, 0.06, 1.2 + distance]} rotation={[Math.PI / 2, 0, 0]}>
+            <coneGeometry args={[0.28, 0.55, 14]} />
+            <meshBasicMaterial color="#22d3ee" transparent opacity={0.95} />
+          </mesh>
+          <Text
+            position={[0.55, 0.1, 1.2 + distance / 2]}
+            fontSize={0.34}
+            color="#67e8f9"
+            anchorX="left"
+            anchorY="middle"
+            outlineWidth={0.04}
+            outlineColor="black"
+          >{`${distance.toFixed(1)}"`}</Text>
+        </>
+      )}
     </group>
   );
 }
@@ -469,10 +494,11 @@ function TurnArcPreview({ deltaDeg }: { deltaDeg: number }) {
   );
 }
 
-function MovementPlanner({ unit, plan, flip }: {
+function MovementPlanner({ unit, plan, flip, remainingMove }: {
   unit: { hexQ: number; hexR: number; heading: number; speed: number };
   plan: MovePlan;
   flip: boolean;
+  remainingMove: number;
 }) {
   if (!plan) return null;
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
@@ -485,7 +511,7 @@ function MovementPlanner({ unit, plan, flip }: {
     <group position={[x, 0, z]}>
       <group rotation={[0, headingRad, 0]}>
         <group scale={flip ? [1, 1, -1] : [1, 1, 1]}>
-          {plan.kind === "forward" && <ForwardPreview speed={unit.speed} />}
+          {plan.kind === "forward" && <ForwardPreview distance={plan.distance} maxDistance={remainingMove} />}
           {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
         </group>
       </group>
@@ -699,6 +725,14 @@ export default function GameBoard() {
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
   useEffect(() => { setMovePlan(null); }, [selectedUnit]);
 
+  // Per-unit movement-phase ledger. Tracks inches moved + turns used since the
+  // start of the current game turn. Wiped whenever the turn rolls over (which
+  // is also when the player swaps), so each player gets a fresh allowance.
+  const [phaseLedger, setPhaseLedger] = useState<Record<number, { distance: number; turns: number }>>({});
+  const currentTurnNumber = gameData?.game?.currentTurn ?? 0;
+  useEffect(() => { setPhaseLedger({}); }, [currentTurnNumber]);
+  const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0 }, [phaseLedger]);
+
   // Fleet Yards: which fleet the player is deploying from
   const [yardsFleetId, setYardsFleetId] = useState<string>("");
   const { data: yardsFleetShips } = useListFleetShips(parseInt(yardsFleetId || "0"), {
@@ -722,19 +756,20 @@ export default function GameBoard() {
     const u = units.find(x => x.id === selectedUnit);
     if (!u || !movePlan) return;
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
+    let distanceCommitted = 0;
     if (movePlan.kind === "forward") {
+      if (movePlan.distance <= 0) { setMovePlan(null); return; }
       // FLIP_MODELS render their nose along local -Z, so movement direction must
       // mirror the visual nose, not the abstract heading vector.
-      const flip = FLIP_MODELS.has(u.modelFilename);
-      const sign = flip ? -1 : 1;
-      const hRad = (u.heading * Math.PI) / 180;
-      const dx = sign * Math.sin(hRad) * u.speed;
-      const dz = sign * Math.cos(hRad) * u.speed;
+      const v = headingForwardVec(u);
+      const dx = v.x * movePlan.distance;
+      const dz = v.z * movePlan.distance;
       // Invert hexToWorld([q,r]) = [q*2.25, 0, r*2.6 + q*1.3]
       const dq = dx / 2.25;
       const dr = (dz - dq * 1.3) / 2.6;
       toHexQ = Math.round(u.hexQ + dq);
       toHexR = Math.round(u.hexR + dr);
+      distanceCommitted = movePlan.distance;
     } else if (movePlan.kind === "turn") {
       // Three.js +Y rotation is CCW from top-down. The arc-preview convention
       // treats positive deltaDeg as visual CW (sweeps to starboard, the side R
@@ -742,10 +777,32 @@ export default function GameBoard() {
       // what the player just saw on the board.
       newHeading = ((u.heading - movePlan.deltaDeg) % 360 + 360) % 360;
     }
+    const planKind = movePlan.kind;
+    const unitId = u.id;
+    // Optimistically charge the phase ledger BEFORE the mutate resolves —
+    // otherwise rapid R/F presses (or another commit) read stale allowances
+    // between confirm and onSuccess, bypassing the per-phase limits.
+    const ledgerDelta = planKind === "forward"
+      ? { distance: distanceCommitted, turns: 0 }
+      : { distance: 0, turns: 1 };
+    setPhaseLedger(prev => {
+      const cur = prev[unitId] ?? { distance: 0, turns: 0 };
+      return { ...prev, [unitId]: { distance: cur.distance + ledgerDelta.distance, turns: cur.turns + ledgerDelta.turns } };
+    });
     // Apply the move immediately (real-time, single-ship). Does NOT end the turn.
     moveUnit.mutate(
-      { gameId, unitId: u.id, data: { toHexQ, toHexR, newHeading } },
-      { onSuccess: () => { qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }); } }
+      { gameId, unitId, data: { toHexQ, toHexR, newHeading } },
+      {
+        onSuccess: () => { qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }); },
+        // Roll back the optimistic ledger charge on server rejection.
+        onError: () => {
+          setPhaseLedger(prev => {
+            const cur = prev[unitId];
+            if (!cur) return prev;
+            return { ...prev, [unitId]: { distance: Math.max(0, cur.distance - ledgerDelta.distance), turns: Math.max(0, cur.turns - ledgerDelta.turns) } };
+          });
+        },
+      }
     );
     setMovePlan(null);
   }, [units, selectedUnit, movePlan, moveUnit, gameId, qc]);
@@ -766,10 +823,22 @@ export default function GameBoard() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      // While a move is in flight the server hasn't yet updated the unit's
+      // position/heading; queueing another commit would compute from stale state.
+      if (moveUnit.isPending) return;
       const u = selectedUnitData;
       const max = u.turnAngle;
+      const led = getLedger(u.id);
+      const maxTurns = u.turns ?? 1;
+      // First turn is always allowed; subsequent turns require ≥ ½-speed of
+      // forward movement to have been committed earlier in the phase.
+      const canTurn = led.turns < maxTurns && (led.turns === 0 || led.distance >= u.speed / 2);
+      const remainingMove = Math.max(0, u.speed - led.distance);
       if (e.key === "r" || e.key === "R") {
         e.preventDefault();
+        // Allow refining an in-progress turn plan even if `canTurn` is false,
+        // since the plan hasn't been committed yet.
+        if (!canTurn && (!movePlan || movePlan.kind !== "turn")) return;
         const step = e.shiftKey ? -5 : 5;
         setMovePlan(prev => {
           const current = prev && prev.kind === "turn" ? prev.deltaDeg : 0;
@@ -778,7 +847,8 @@ export default function GameBoard() {
         });
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
-        setMovePlan({ kind: "forward" });
+        if (remainingMove <= 0) return;
+        setMovePlan({ kind: "forward", distance: 0 });
       } else if (e.key === "Enter" || e.key === " " || e.code === "Space") {
         e.preventDefault();
         confirmMovePlan();
@@ -790,7 +860,18 @@ export default function GameBoard() {
     // Capture on document so we get the keydown regardless of which element has focus.
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [game?.status, isMyTurn, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan]);
+  }, [game?.status, isMyTurn, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending]);
+
+  // Selected-ship remaining inches this phase + drag offset for the forward
+  // preview / ship slide-along-axis.
+  const selectedRemainingMove = selectedUnitData
+    ? Math.max(0, selectedUnitData.speed - getLedger(selectedUnitData.id).distance)
+    : 0;
+  const selectedDragOffset = useMemo(() => {
+    if (!selectedUnitData || !movePlan || movePlan.kind !== "forward") return null;
+    const v = headingForwardVec(selectedUnitData);
+    return { x: v.x * movePlan.distance, z: v.z * movePlan.distance };
+  }, [selectedUnitData, movePlan]);
 
   const handleUnitClick = (unitId: number) => {
     const unit = units.find(u => u.id === unitId);
@@ -875,11 +956,25 @@ export default function GameBoard() {
         <div
           className="flex-1 relative min-h-[400px] lg:min-h-0 bg-black"
           onPointerMove={e => {
-            if (!draggingId) return;
-            const pos = screenToBoard(e.clientX, e.clientY, threeRef);
-            if (!pos) return;
-            const [x, z] = pos;
-            setStagedUnits(prev => prev.map(u => u.id === draggingId ? { ...u, x, z } : u));
+            // Staged unit drag (deploy phase)
+            if (draggingId) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const [x, z] = pos;
+              setStagedUnits(prev => prev.map(u => u.id === draggingId ? { ...u, x, z } : u));
+              return;
+            }
+            // Forward-move drag: project cursor onto heading axis from ship origin.
+            if (movePlan?.kind === "forward" && selectedUnitData && selectedUnitData.ownerId === myUserId) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const [px, pz] = pos;
+              const [sx, , sz] = hexToWorld(selectedUnitData.hexQ, selectedUnitData.hexR);
+              const v = headingForwardVec(selectedUnitData);
+              const proj = (px - sx) * v.x + (pz - sz) * v.z;
+              const distance = Math.max(0, Math.min(selectedRemainingMove, proj));
+              setMovePlan(prev => (prev && prev.kind === "forward" ? { kind: "forward", distance } : prev));
+            }
           }}
           onPointerUp={() => setDraggingId(null)}
           onPointerLeave={() => setDraggingId(null)}
@@ -931,6 +1026,7 @@ export default function GameBoard() {
                 onClick={() => handleUnitClick(unit.id)}
                 myUserId={myUserId}
                 weapons={weaponsByFilename[unit.modelFilename] ?? []}
+                dragOffset={unit.id === selectedUnit ? selectedDragOffset : null}
               />
             ))}
             {game.status === "active" && isMyTurn && selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (
@@ -938,6 +1034,7 @@ export default function GameBoard() {
                 unit={selectedUnitData}
                 plan={movePlan}
                 flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
+                remainingMove={selectedRemainingMove}
               />
             )}
             {stagedUnits.map(unit => (
@@ -1202,14 +1299,17 @@ export default function GameBoard() {
                       Plan · {selectedUnitData.name}
                     </div>
                     <div className="text-sm font-bold">
-                      {movePlan?.kind === "forward" && `FORWARD ${selectedUnitData.speed}"`}
+                      {movePlan?.kind === "forward" && `FORWARD ${movePlan.distance.toFixed(1)}" / ${selectedRemainingMove.toFixed(1)}" left`}
                       {movePlan?.kind === "turn" && `TURN ${movePlan.deltaDeg > 0 ? "+" : "−"}${Math.abs(movePlan.deltaDeg)}° / ±${selectedUnitData.turnAngle}°`}
                       {!movePlan && turnMoves.some(m => m.unitId === selectedUnitData.id) && "QUEUED"}
                       {!movePlan && !turnMoves.some(m => m.unitId === selectedUnitData.id) && "— idle —"}
                     </div>
+                    <div className="text-[10px] uppercase tracking-wider opacity-70 mt-1">
+                      Phase: {getLedger(selectedUnitData.id).distance.toFixed(1)}"/{selectedUnitData.speed}" moved · {getLedger(selectedUnitData.id).turns}/{selectedUnitData.turns ?? 1} turns
+                    </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground font-mono leading-relaxed">
-                    <span className="text-amber-400">F</span> fwd · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">␣</span>/<span className="text-amber-400">↵</span> queue · <span className="text-amber-400">Esc</span> cancel
+                    <span className="text-amber-400">F</span> fwd (drag mouse) · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">␣</span>/<span className="text-amber-400">↵</span> commit · <span className="text-amber-400">Esc</span> cancel
                   </p>
                 </div>
               )}

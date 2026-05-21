@@ -35,6 +35,7 @@ export const gameUnitsTable = pgTable("game_units", {
   heading: integer("heading").notNull().default(0),
   speed: integer("speed").notNull(),
   turnAngle: integer("turn_angle").notNull().default(45),
+  turns: integer("turns").notNull().default(1),
   weaponRange: integer("weapon_range").notNull(),
   weaponDamage: integer("weapon_damage").notNull(),
   isDestroyed: boolean("is_destroyed").notNull().default(false),
