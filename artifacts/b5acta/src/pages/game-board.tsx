@@ -107,7 +107,10 @@ function ObjModel({ url, tint }: { url: string; tint: string }) {
 }
 
 // GLB: keep original embedded textures; apply a gentle emissive tint for team color
-function GlbModel({ url, tint }: { url: string; tint: string }) {
+// Models that need a 180° Y-flip to face forward correctly
+const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb"]);
+
+function GlbModel({ url, tint, filename }: { url: string; tint: string; filename: string }) {
   const { scene } = useGLTF(url);
   const cloned = useMemo(() => {
     const c = scene.clone(true);
@@ -121,7 +124,8 @@ function GlbModel({ url, tint }: { url: string; tint: string }) {
     return c;
   }, [scene, tint]);
   const s = useMemo(() => shipScale(cloned), [cloned]);
-  return <primitive object={cloned} scale={[s, s, s]} />;
+  const flip = FLIP_MODELS.has(filename);
+  return <primitive object={cloned} scale={[s, s, s]} rotation={[0, flip ? Math.PI : 0, 0]} />;
 }
 
 class ModelErrorBoundary extends React.Component<
@@ -171,7 +175,7 @@ function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   const exists = useModelExists(url);
   // null = check in-flight; false = file missing — both show fallback box
   if (!exists) return <ShipModelFallback color={tint} />;
-  if (isGlb) return <GlbModel url={url} tint={tint} />;
+  if (isGlb) return <GlbModel url={url} tint={tint} filename={filename} />;
   return <ObjModel url={url} tint={tint} />;
 }
 
@@ -261,7 +265,6 @@ const ARC_DEFS: Record<string, { centerAngle: number; halfAngle: number; color: 
   "Aft":               { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4,  color: "#ef4444", opacity: 0.22 },
   "Boresight Forward": { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 24, color: "#fef08a", opacity: 0.85, radius: 1.65 },
   "Boresight Aft":     { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 24, color: "#fb923c", opacity: 0.75, radius: 1.65 },
-  "Turret":            { centerAngle: 0,             halfAngle: Math.PI,      color: "#a855f7", opacity: 0.14 },
 };
 
 // Label positions in the heading-group's local XZ space (local +Z = world forward)
@@ -272,7 +275,6 @@ const ARC_LABELS: Record<string, { pos: [number, number, number]; label: string 
   "Aft":               { pos: [0,    0.07, -1.35], label: "AFT"  },
   "Boresight Forward": { pos: [0,    0.07,  1.72], label: "BS-F" },
   "Boresight Aft":     { pos: [0,    0.07, -1.72], label: "BS-A" },
-  "Turret":            { pos: [0.85, 0.07,  0.85], label: "TRT"  },
 };
 
 function ArcSector({ centerAngle, halfAngle, radius, color, opacity }: {
@@ -337,6 +339,30 @@ function WeaponArcDisplay({ weapons }: { weapons: Pick<Weapon, "arc">[] }) {
           </Text>
         );
       })}
+      {/* Turret: inner circle on the base + centred label */}
+      {uniqueArcs.includes("Turret") && (
+        <>
+          <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.026, 0]}>
+            <ringGeometry args={[0.46, 0.54, 48]} />
+            <meshBasicMaterial color="#a855f7" transparent opacity={0.75} depthWrite={false} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
+            <circleGeometry args={[0.46, 48]} />
+            <meshBasicMaterial color="#a855f7" transparent opacity={0.18} depthWrite={false} side={THREE.DoubleSide} />
+          </mesh>
+          <Text
+            position={[0, 0.09, 0]}
+            fontSize={0.17}
+            color="#a855f7"
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.03}
+            outlineColor="black"
+          >
+            TUR
+          </Text>
+        </>
+      )}
     </>
   );
 }
