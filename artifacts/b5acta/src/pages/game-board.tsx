@@ -6,8 +6,6 @@ import { OrbitControls, Text, useGLTF } from "@react-three/drei";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // @ts-ignore
-import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
-// @ts-ignore
 import * as THREE from "three";
 import {
   useGetGame,
@@ -82,13 +80,9 @@ function shipScale(object: THREE.Object3D, targetInches = 2): number {
   return maxH > 0 ? targetInches / maxH : 1;
 }
 
-// OBJ: load MTL for textures, fall back to tinted flat material if no MTL
+// OBJ: geometry-only load (no MTL — we apply tint via MeshStandardMaterial)
 function ObjModel({ url, tint }: { url: string; tint: string }) {
-  const mtlUrl = url.replace(/\.obj$/i, ".mtl");
-  const materials = useLoader(MTLLoader, mtlUrl) as any;
-  const obj = useLoader(OBJLoader, url, (loader: any) => {
-    if (materials) { materials.preload(); loader.setMaterials(materials); }
-  }) as THREE.Group;
+  const obj = useLoader(OBJLoader, url) as THREE.Group;
   const { cloned, s } = useMemo(() => {
     const c = obj.clone(true);
     c.traverse((child: any) => {
