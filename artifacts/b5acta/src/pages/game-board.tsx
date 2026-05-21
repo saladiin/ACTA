@@ -782,8 +782,9 @@ export default function GameBoard() {
         cancelMovePlan();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture on document so we get the keydown regardless of which element has focus.
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [game?.status, isMyTurn, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan]);
 
   const handleUnitClick = (unitId: number) => {
@@ -1180,10 +1181,32 @@ export default function GameBoard() {
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
               </div>
-              {selectedUnitData && selectedUnitData.ownerId === myUserId && (
-                <p className="text-xs text-muted-foreground font-mono leading-relaxed">
-                  <span className="text-amber-400">F</span> forward · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">↵</span> queue · <span className="text-amber-400">Esc</span> cancel · click enemy to attack
-                </p>
+              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (
+                <div className="space-y-1.5">
+                  <div
+                    className={`rounded border px-2 py-1.5 font-mono text-xs ${
+                      movePlan
+                        ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-300"
+                        : turnMoves.some(m => m.unitId === selectedUnitData.id)
+                        ? "border-green-500/50 bg-green-500/10 text-green-400"
+                        : "border-amber-500/30 bg-black/40 text-amber-400/70"
+                    }`}
+                    data-testid="move-plan-hud"
+                  >
+                    <div className="text-[10px] uppercase tracking-wider opacity-70 mb-0.5">
+                      Plan · {selectedUnitData.name}
+                    </div>
+                    <div className="text-sm font-bold">
+                      {movePlan?.kind === "forward" && `FORWARD ${selectedUnitData.speed}"`}
+                      {movePlan?.kind === "turn" && `TURN ${movePlan.deltaDeg > 0 ? "+" : "−"}${Math.abs(movePlan.deltaDeg)}° / ±${selectedUnitData.turnAngle}°`}
+                      {!movePlan && turnMoves.some(m => m.unitId === selectedUnitData.id) && "QUEUED"}
+                      {!movePlan && !turnMoves.some(m => m.unitId === selectedUnitData.id) && "— idle —"}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground font-mono leading-relaxed">
+                    <span className="text-amber-400">F</span> fwd · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">↵</span> queue · <span className="text-amber-400">Esc</span> cancel
+                  </p>
+                </div>
               )}
               <Button
                 size="sm"
