@@ -188,7 +188,12 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
 }) {
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
-  const color = unit.isDestroyed ? "#4b5563" : isMine ? "#f59e0b" : "#ef4444";
+  // mine = green, enemy = red; selected mine = blue, selected enemy = yellow
+  const color = unit.isDestroyed
+    ? "#4b5563"
+    : isSelected
+      ? (isMine ? "#3b82f6" : "#eab308")
+      : (isMine ? "#22c55e" : "#ef4444");
   const hpPct = unit.hullPoints / unit.maxHullPoints;
   const headingRad = (unit.heading * Math.PI) / 180;
 
@@ -999,48 +1004,62 @@ export default function GameBoard() {
             </div>
           )}
 
-          {/* Move history */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <div className="px-4 pt-3 pb-2 border-b border-border">
-              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Combat Log</p>
+          {/* Enemy fleet roster (top) */}
+          <div className="flex-1 overflow-hidden flex flex-col border-b border-border">
+            <div className="px-4 pt-3 pb-2 border-b border-border flex items-center justify-between">
+              <p className="text-xs font-mono text-red-400 uppercase tracking-wider">Enemy Fleet</p>
+              <span className="text-[10px] font-mono text-muted-foreground">{units.filter(u => u.ownerId !== myUserId && !u.isDestroyed).length}/{units.filter(u => u.ownerId !== myUserId).length}</span>
             </div>
             <ScrollArea className="flex-1 px-4 py-2">
-              {turns.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-4 text-center">No turns yet</p>
+              {units.filter(u => u.ownerId !== myUserId).length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">No enemy contacts</p>
               ) : (
-                <div className="space-y-1.5">
-                  {turns.map(turn => (
-                    <div key={turn.id} data-testid={`turn-${turn.id}`} className="text-xs border border-border rounded px-2 py-1.5 bg-background/40">
-                      <div className="font-mono text-muted-foreground">T{turn.turnNumber} &mdash; {turn.playerId === myUserId ? "You" : (isChallenger ? game.opponentName : game.challengerName)}</div>
-                      <div className="text-foreground">
-                        {Array.isArray(turn.moves) ? (turn.moves as Array<{ unitId: number }>).length : 0} moves,{" "}
-                        {Array.isArray(turn.attacks) ? (turn.attacks as Array<{ attackerUnitId: number }>).length : 0} attacks
+                <div className="space-y-1">
+                  {units.filter(u => u.ownerId !== myUserId).map(unit => {
+                    const selected = selectedUnit === unit.id;
+                    return (
+                      <div
+                        key={unit.id}
+                        data-testid={`unit-${unit.id}`}
+                        className={`flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors ${selected ? "border border-yellow-400/60 bg-yellow-400/10" : "border border-red-500/30 bg-red-500/5 hover:bg-red-500/10"} ${unit.isDestroyed ? "opacity-40 line-through" : ""}`}
+                        onClick={() => handleUnitClick(unit.id)}
+                      >
+                        <span className={`font-mono truncate max-w-[110px] ${selected ? "text-yellow-300" : "text-red-300"}`}>{unit.name}</span>
+                        <span className="font-mono text-muted-foreground shrink-0">{unit.hullPoints}/{unit.maxHullPoints}</span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
           </div>
 
-          {/* Unit roster */}
-          <div className="border-t border-border">
-            <div className="px-4 pt-3 pb-2">
-              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Fleet Status</p>
+          {/* My fleet roster (bottom) */}
+          <div>
+            <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+              <p className="text-xs font-mono text-green-400 uppercase tracking-wider">My Fleet</p>
+              <span className="text-[10px] font-mono text-muted-foreground">{units.filter(u => u.ownerId === myUserId && !u.isDestroyed).length}/{units.filter(u => u.ownerId === myUserId).length}</span>
             </div>
             <ScrollArea className="h-32 px-4 pb-3">
               <div className="space-y-1">
-                {units.map(unit => (
-                  <div
-                    key={unit.id}
-                    data-testid={`unit-${unit.id}`}
-                    className={`flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors ${unit.ownerId === myUserId ? "border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10" : "border border-red-500/20 bg-red-500/5 hover:bg-red-500/10"} ${unit.isDestroyed ? "opacity-40 line-through" : ""}`}
-                    onClick={() => handleUnitClick(unit.id)}
-                  >
-                    <span className="font-mono truncate max-w-[110px]">{unit.name}</span>
-                    <span className="font-mono text-muted-foreground shrink-0">{unit.hullPoints}/{unit.maxHullPoints}</span>
-                  </div>
-                ))}
+                {units.filter(u => u.ownerId === myUserId).length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-2 text-center">No units deployed</p>
+                ) : (
+                  units.filter(u => u.ownerId === myUserId).map(unit => {
+                    const selected = selectedUnit === unit.id;
+                    return (
+                      <div
+                        key={unit.id}
+                        data-testid={`unit-${unit.id}`}
+                        className={`flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors ${selected ? "border border-blue-400/60 bg-blue-400/10" : "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"} ${unit.isDestroyed ? "opacity-40 line-through" : ""}`}
+                        onClick={() => handleUnitClick(unit.id)}
+                      >
+                        <span className={`font-mono truncate max-w-[110px] ${selected ? "text-blue-300" : "text-green-300"}`}>{unit.name}</span>
+                        <span className="font-mono text-muted-foreground shrink-0">{unit.hullPoints}/{unit.maxHullPoints}</span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </ScrollArea>
           </div>
