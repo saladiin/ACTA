@@ -149,16 +149,18 @@ function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   return <ObjModel url={url} tint={tint} />;
 }
 
-function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
-  unit: { id: number; hexQ: number; hexR: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string };
+function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons }: {
+  unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string };
   isSelected: boolean;
   onClick: () => void;
   myUserId: string;
+  weapons: Pick<Weapon, "arc">[];
 }) {
-  const [x, y, z] = hexToWorld(unit.hexQ, unit.hexR);
+  const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
   const color = unit.isDestroyed ? "#4b5563" : isMine ? "#f59e0b" : "#ef4444";
   const hpPct = unit.hullPoints / unit.maxHullPoints;
+  const headingRad = (unit.heading * Math.PI) / 180;
 
   return (
     <group position={[x, 0, z]} onClick={onClick}>
@@ -179,8 +181,22 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
           <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.8} transparent opacity={0.7} />
         </mesh>
       )}
-      {/* Ship model floating 2" above the base */}
-      <group position={[0, 2, 0]}>
+      {/* Weapon arcs — rotate with heading */}
+      {isSelected && weapons.length > 0 && (
+        <group rotation={[0, headingRad, 0]}>
+          <WeaponArcDisplay weapons={weapons} />
+        </group>
+      )}
+      {/* Heading arrow */}
+      <mesh
+        position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
+        rotation={[Math.PI / 2, 0, -headingRad]}
+      >
+        <coneGeometry args={[0.14, 0.36, 6]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
+      </mesh>
+      {/* Ship model floating 2" above the base, rotated to heading */}
+      <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <Suspense fallback={<ShipModelFallback color={color} />}>
           <ShipModel3D filename={unit.modelFilename} tint={color} />
         </Suspense>
@@ -479,6 +495,14 @@ export default function GameBoard() {
     () => (selectedFaction && selectedFaction !== "__all__" ? (shipModels ?? []).filter(m => m.faction === selectedFaction) : (shipModels ?? [])),
     [shipModels, selectedFaction]
   );
+  // filename → weapon arcs lookup for GameUnit3D
+  const weaponsByFilename = useMemo(() => {
+    const map: Record<string, Pick<Weapon, "arc">[]> = {};
+    for (const m of shipModels ?? []) {
+      map[m.filename] = m.weapons ?? [];
+    }
+    return map;
+  }, [shipModels]);
 
   const [selectedUnit, setSelectedUnit] = useState<number | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ q: number; r: number } | null>(null);
@@ -643,6 +667,7 @@ export default function GameBoard() {
                 isSelected={selectedUnit === unit.id}
                 onClick={() => handleUnitClick(unit.id)}
                 myUserId={myUserId}
+                weapons={weaponsByFilename[unit.modelFilename] ?? []}
               />
             ))}
             {stagedUnits.map(unit => (
