@@ -736,7 +736,11 @@ export default function GameBoard() {
       toHexQ = Math.round(u.hexQ + dq);
       toHexR = Math.round(u.hexR + dr);
     } else if (movePlan.kind === "turn") {
-      newHeading = ((u.heading + movePlan.deltaDeg) % 360 + 360) % 360;
+      // Three.js +Y rotation is CCW from top-down. The arc-preview convention
+      // treats positive deltaDeg as visual CW (sweeps to starboard, the side R
+      // is intended to mean). So the heading delta must be negated to match
+      // what the player just saw on the board.
+      newHeading = ((u.heading - movePlan.deltaDeg) % 360 + 360) % 360;
     }
     // Apply the move immediately (real-time, single-ship). Does NOT end the turn.
     moveUnit.mutate(
