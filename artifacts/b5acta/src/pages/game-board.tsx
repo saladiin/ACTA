@@ -148,13 +148,30 @@ function ShipModelFallback({ color }: { color: string }) {
   );
 }
 
+// Cache HEAD-check results so each URL is only fetched once per session
+const modelExistsCache = new Map<string, boolean>();
+
+function useModelExists(url: string): boolean | null {
+  const [exists, setExists] = useState<boolean | null>(
+    modelExistsCache.has(url) ? modelExistsCache.get(url)! : null
+  );
+  useEffect(() => {
+    if (modelExistsCache.has(url)) { setExists(modelExistsCache.get(url)!); return; }
+    fetch(url, { method: "HEAD" })
+      .then(r => { modelExistsCache.set(url, r.ok); setExists(r.ok); })
+      .catch(() => { modelExistsCache.set(url, false); setExists(false); });
+  }, [url]);
+  return exists;
+}
+
 function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const url = `${basePath}/api/models/${filename}`;
   const isGlb = filename.toLowerCase().endsWith(".glb") || filename.toLowerCase().endsWith(".gltf");
-  if (isGlb) {
-    return <GlbModel url={url} tint={tint} />;
-  }
+  const exists = useModelExists(url);
+  // null = check in-flight; false = file missing — both show fallback box
+  if (!exists) return <ShipModelFallback color={tint} />;
+  if (isGlb) return <GlbModel url={url} tint={tint} />;
   return <ObjModel url={url} tint={tint} />;
 }
 
