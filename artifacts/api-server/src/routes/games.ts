@@ -304,4 +304,85 @@ router.post("/games/:gameId/turns", requireAuth, async (req, res): Promise<void>
   res.status(201).json(turn);
 });
 
+// ── DEV-ONLY: auto-deploy both fleets and start the game ──────────────────────
+router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> => {
+  if (process.env.NODE_ENV === "production") {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  let [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+  if (!game) { res.status(404).json({ error: "Game not found" }); return; }
+
+  // Allow from pending (auto-accept) or deploying
+  if (game.status === "pending") {
+    [game] = await db.update(gamesTable).set({ status: "deploying" }).where(eq(gamesTable.id, game.id)).returning();
+  }
+  if (game.status !== "deploying") {
+    res.status(400).json({ error: `Cannot skip deploy from status '${game.status}'` });
+    return;
+  }
+
+  // Find challenger fleet — prefer the one stored on the game, else pick any fleet they own
+  let challengerFleetId = game.challengerFleetId;
+  if (!challengerFleetId) {
+    const [anyFleet] = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, game.challengerId));
+    if (!anyFleet) { res.status(400).json({ error: "Challenger has no fleet" }); return; }
+    challengerFleetId = anyFleet.id;
+  }
+  // Find opponent fleet — prefer stored, else pick any they own, else reuse challenger's
+  let opponentFleetId = game.opponentFleetId;
+  if (!opponentFleetId) {
+    const [anyFleet] = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, game.opponentId));
+    opponentFleetId = anyFleet?.id ?? challengerFleetId;
+  }
+
+  // Clear any units from a previous partial deployment
+  await db.delete(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
+
+  const autoPlace = async (fleetId: number, ownerId: string, hexR: number, heading: number) => {
+    const ships = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
+    const startQ = -Math.floor(ships.length / 2);
+    for (let i = 0; i < ships.length; i++) {
+      const ship = ships[i];
+      const [model] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+      if (!model) continue;
+      await db.insert(gameUnitsTable).values({
+        gameId: game.id,
+        ownerId,
+        shipId: ship.id,
+        name: ship.name,
+        modelFilename: model.filename,
+        faction: model.faction,
+        hullPoints: model.hullPoints,
+        maxHullPoints: model.hullPoints,
+        hexQ: startQ + i * 2,
+        hexR,
+        heading,
+        speed: model.speed,
+        weaponRange: model.weaponRange,
+        weaponDamage: model.weaponDamage,
+        isDestroyed: false,
+      });
+    }
+  };
+
+  // Challenger near top (negative hexR, facing down); opponent near bottom (facing up)
+  await autoPlace(challengerFleetId, game.challengerId, -8, 180);
+  await autoPlace(opponentFleetId, game.opponentId, 8, 0);
+
+  const [updated] = await db.update(gamesTable).set({
+    challengerDeployed: true,
+    opponentDeployed: true,
+    opponentFleetId,
+    status: "active",
+    currentTurn: 1,
+  }).where(eq(gamesTable.id, game.id)).returning();
+
+  res.json(updated);
+});
+
 export default router;

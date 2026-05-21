@@ -523,6 +523,17 @@ export default function GameBoard() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [selectedFaction, setSelectedFaction] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
+  const [devSkipping, setDevSkipping] = useState(false);
+
+  const handleDevSkipDeploy = useCallback(async () => {
+    setDevSkipping(true);
+    try {
+      await fetch(`/api/games/${gameId}/dev/skip-deploy`, { method: "POST" });
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    } finally {
+      setDevSkipping(false);
+    }
+  }, [gameId, qc]);
 
   // Keyboard handler for placement phase
   useEffect(() => {
@@ -910,6 +921,16 @@ export default function GameBoard() {
               <p className="text-[9px] text-muted-foreground font-mono text-center -mt-1">
                 Select a ship · L to lock · Del to remove
               </p>
+              {import.meta.env.DEV && (
+                <button
+                  data-testid="button-dev-skip-deploy"
+                  onClick={handleDevSkipDeploy}
+                  disabled={devSkipping}
+                  className="w-full mt-1 px-2 py-1 rounded border border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/15 text-amber-400 text-[10px] font-mono uppercase tracking-widest transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {devSkipping ? "Skipping…" : "⚡ Dev: Skip to Movement"}
+                </button>
+              )}
             </div>
           )}
 
