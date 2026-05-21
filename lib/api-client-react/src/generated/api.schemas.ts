@@ -9,6 +9,17 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface Weapon {
+  id: number;
+  shipModelId: number;
+  name: string;
+  arc: string;
+  range: number;
+  attackDice: number;
+  /** @nullable */
+  traits?: string | null;
+}
+
 export interface ShipModel {
   id: number;
   name: string;
@@ -21,6 +32,7 @@ export interface ShipModel {
   weaponDamage: number;
   /** @nullable */
   description?: string | null;
+  weapons?: Weapon[];
 }
 
 export interface Fleet {

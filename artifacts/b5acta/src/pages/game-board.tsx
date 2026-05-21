@@ -22,7 +22,7 @@ import {
   getListTurnsQueryKey,
   getListFleetShipsQueryKey,
 } from "@workspace/api-client-react";
-import type { ShipModel } from "@workspace/api-client-react";
+import type { ShipModel, Weapon } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
@@ -203,6 +203,100 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId }: {
   );
 }
 
+// ── Arc visualization ─────────────────────────────────────────────────────────
+// Coordinate mapping: arc mesh uses rotation [+π/2, 0, 0] so shape +Y = world +Z = forward.
+// All angles are in shape-space radians (counterclockwise from shape +X).
+//   Forward   = shape +Y direction = 90° (π/2)
+//   Starboard = shape +X direction = 0°
+//   Aft       = shape -Y direction = 270° (-π/2)
+//   Port      = shape -X direction = 180° (π)
+const ARC_DEFS: Record<string, { centerAngle: number; halfAngle: number; color: string; opacity: number; radius?: number }> = {
+  "Forward":           { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 4,  color: "#f59e0b", opacity: 0.30 },
+  "Starboard":         { centerAngle: 0,             halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
+  "Port":              { centerAngle: Math.PI,       halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
+  "Aft":               { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4,  color: "#ef4444", opacity: 0.22 },
+  "Boresight Forward": { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 24, color: "#fef08a", opacity: 0.85, radius: 1.65 },
+  "Boresight Aft":     { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 24, color: "#fb923c", opacity: 0.75, radius: 1.65 },
+  "Turret":            { centerAngle: 0,             halfAngle: Math.PI,      color: "#a855f7", opacity: 0.14 },
+};
+
+// Label positions in the heading-group's local XZ space (local +Z = world forward)
+const ARC_LABELS: Record<string, { pos: [number, number, number]; label: string }> = {
+  "Forward":           { pos: [0,    0.07,  1.35], label: "FWD"  },
+  "Starboard":         { pos: [1.35, 0.07,  0],    label: "STBD" },
+  "Port":              { pos: [-1.35,0.07,  0],    label: "PORT" },
+  "Aft":               { pos: [0,    0.07, -1.35], label: "AFT"  },
+  "Boresight Forward": { pos: [0,    0.07,  1.72], label: "BS-F" },
+  "Boresight Aft":     { pos: [0,    0.07, -1.72], label: "BS-A" },
+  "Turret":            { pos: [0.85, 0.07,  0.85], label: "TRT"  },
+};
+
+function ArcSector({ centerAngle, halfAngle, radius, color, opacity }: {
+  centerAngle: number;
+  halfAngle: number;
+  radius: number;
+  color: string;
+  opacity: number;
+}) {
+  const geo = useMemo(() => {
+    const segments = halfAngle < 0.3 ? 8 : 36;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    for (let i = 0; i <= segments; i++) {
+      const a = centerAngle - halfAngle + (2 * halfAngle * i) / segments;
+      shape.lineTo(Math.cos(a) * radius, Math.sin(a) * radius);
+    }
+    shape.lineTo(0, 0);
+    return new THREE.ShapeGeometry(shape);
+  }, [centerAngle, halfAngle, radius]);
+  return (
+    <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.022, 0]} geometry={geo}>
+      <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+function WeaponArcDisplay({ weapons }: { weapons: Pick<Weapon, "arc">[] }) {
+  const uniqueArcs = useMemo(() => [...new Set(weapons.map(w => w.arc))], [weapons]);
+  return (
+    <>
+      {uniqueArcs.map(arc => {
+        const def = ARC_DEFS[arc];
+        if (!def) return null;
+        return (
+          <ArcSector
+            key={arc}
+            centerAngle={def.centerAngle}
+            halfAngle={def.halfAngle}
+            radius={def.radius ?? 1.2}
+            color={def.color}
+            opacity={def.opacity}
+          />
+        );
+      })}
+      {uniqueArcs.map(arc => {
+        const lbl = ARC_LABELS[arc];
+        const def = ARC_DEFS[arc];
+        if (!lbl || !def) return null;
+        return (
+          <Text
+            key={`lbl-${arc}`}
+            position={lbl.pos}
+            fontSize={0.17}
+            color={def.color}
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.03}
+            outlineColor="black"
+          >
+            {lbl.label}
+          </Text>
+        );
+      })}
+    </>
+  );
+}
+
 // ── Staged (drag-placed) units ────────────────────────────────────────────────
 interface StagedUnitData {
   id: string;
@@ -213,6 +307,7 @@ interface StagedUnitData {
   speed: number;
   weaponRange: number;
   weaponDamage: number;
+  weapons: Pick<Weapon, "arc">[];
   x: number;
   z: number;
   heading: number; // degrees, 0 = +Z axis, clockwise
@@ -249,6 +344,12 @@ function StagedUnit3D({
         <ringGeometry args={[1.15, 1.2, 48]} />
         <meshStandardMaterial color={baseColor} transparent opacity={ringOpacity} emissive={baseColor} emissiveIntensity={0.25} />
       </mesh>
+      {/* Weapon arcs — rendered in heading-rotated group so they turn with the ship */}
+      {isSelected && unit.weapons.length > 0 && (
+        <group rotation={[0, headingRad, 0]}>
+          <WeaponArcDisplay weapons={unit.weapons} />
+        </group>
+      )}
       {/* Heading arrow — points in the direction the ship is facing */}
       <mesh
         position={[Math.sin(headingRad) * 1.0, 0.06, Math.cos(headingRad) * 1.0]}
@@ -515,6 +616,7 @@ export default function GameBoard() {
               speed: ship.speed,
               weaponRange: ship.weaponRange,
               weaponDamage: ship.weaponDamage,
+              weapons: ship.weapons ?? [],
               x, z,
               heading: 0,
               locked: false,

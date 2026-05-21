@@ -28,3 +28,4 @@ export * from './turn';
 export * from './turnAttacks';
 export * from './turnInput';
 export * from './turnMoves';
+export * from './weapon';

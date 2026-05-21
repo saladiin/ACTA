@@ -29,7 +29,16 @@ export const ListShipModelsResponseItem = zod.object({
   "speed": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "description": zod.string().nullish()
+  "description": zod.string().nullish(),
+  "weapons": zod.array(zod.object({
+  "id": zod.number(),
+  "shipModelId": zod.number(),
+  "name": zod.string(),
+  "arc": zod.string(),
+  "range": zod.number(),
+  "attackDice": zod.number(),
+  "traits": zod.string().nullish()
+})).optional()
 })
 export const ListShipModelsResponse = zod.array(ListShipModelsResponseItem)
 
@@ -106,7 +115,16 @@ export const ListFleetShipsResponseItem = zod.object({
   "speed": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "description": zod.string().nullish()
+  "description": zod.string().nullish(),
+  "weapons": zod.array(zod.object({
+  "id": zod.number(),
+  "shipModelId": zod.number(),
+  "name": zod.string(),
+  "arc": zod.string(),
+  "range": zod.number(),
+  "attackDice": zod.number(),
+  "traits": zod.string().nullish()
+})).optional()
 })
 })
 export const ListFleetShipsResponse = zod.array(ListFleetShipsResponseItem)

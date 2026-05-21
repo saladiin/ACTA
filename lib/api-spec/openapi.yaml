@@ -401,6 +401,18 @@ components:
           type: string
       required: [status]
 
+    Weapon:
+      type: object
+      required: [id, shipModelId, name, arc, range, attackDice]
+      properties:
+        id:          { type: integer }
+        shipModelId: { type: integer }
+        name:        { type: string }
+        arc:         { type: string }
+        range:       { type: integer }
+        attackDice:  { type: integer }
+        traits:      { type: ["string", "null"] }
+
     ShipModel:
       type: object
       required: [id, name, filename, faction, pointCost, hullPoints, speed, weaponRange, weaponDamage]
@@ -415,6 +427,10 @@ components:
         weaponRange:  { type: integer }
         weaponDamage: { type: integer }
         description:  { type: ["string", "null"] }
+        weapons:
+          type: array
+          items:
+            $ref: "#/components/schemas/Weapon"
 
     Fleet:
       type: object

@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { Weapon } from './weapon';
 
 export interface ShipModel {
   id: number;
@@ -18,4 +19,5 @@ export interface ShipModel {
   weaponDamage: number;
   /** @nullable */
   description?: string | null;
+  weapons?: Weapon[];
 }

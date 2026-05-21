@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, shipModelsTable } from "@workspace/db";
+import { db, shipModelsTable, weaponsTable } from "@workspace/db";
 import { ListShipModelsResponse } from "@workspace/api-zod";
 import path from "path";
 import fs from "fs";
@@ -8,7 +8,14 @@ const router: IRouter = Router();
 
 router.get("/ship-models", async (req, res): Promise<void> => {
   const models = await db.select().from(shipModelsTable).orderBy(shipModelsTable.name);
-  res.json(ListShipModelsResponse.parse(models));
+  const allWeapons = await db.select().from(weaponsTable);
+  const byModel: Record<number, typeof allWeapons> = {};
+  for (const w of allWeapons) {
+    if (!byModel[w.shipModelId]) byModel[w.shipModelId] = [];
+    byModel[w.shipModelId].push(w);
+  }
+  const result = models.map(m => ({ ...m, weapons: byModel[m.id] ?? [] }));
+  res.json(ListShipModelsResponse.parse(result));
 });
 
 router.get("/models/:filename", async (req, res): Promise<void> => {
