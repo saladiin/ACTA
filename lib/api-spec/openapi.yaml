@@ -342,6 +342,38 @@ paths:
               schema:
                 $ref: "#/components/schemas/Turn"
         "400":
+          description: Bad request
+
+  /games/{gameId}/units/{unitId}/move:
+    post:
+      operationId: moveUnit
+      tags: [turns]
+      summary: Apply an immediate, single-ship movement (real-time, does not end the turn)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: unitId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveUnitInput"
+      responses:
+        "200":
+          description: Unit updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameUnit"
+        "400":
           description: Invalid move
 
   # --- Lobby / Matchmaking ---
@@ -554,6 +586,14 @@ components:
       properties:
         attackerUnitId: { type: integer }
         targetUnitId:   { type: integer }
+
+    MoveUnitInput:
+      type: object
+      required: [toHexQ, toHexR, newHeading]
+      properties:
+        toHexQ:     { type: integer }
+        toHexR:     { type: integer }
+        newHeading: { type: integer }
 
     TurnInput:
       type: object

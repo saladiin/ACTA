@@ -13,6 +13,7 @@ import {
   useDeclineGame,
   useDeployFleet,
   useSubmitTurn,
+  useMoveUnit,
   useListFleets,
   useListFleetShips,
   useListShipModels,
@@ -475,15 +476,18 @@ function MovementPlanner({ unit, plan, flip }: {
 }) {
   if (!plan) return null;
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
-  // FLIP_MODELS render with an extra π Y-flip, so their visual nose points along
-  // local −Z. Add π here so the preview's "forward" matches the visual nose, and
-  // therefore "starboard" (the right turn) also lands on the visually-correct side.
-  const previewHeadingRad = ((unit.heading + (flip ? 180 : 0)) * Math.PI) / 180;
+  const headingRad = (unit.heading * Math.PI) / 180;
+  // FLIP_MODELS only swap fore↔aft (same convention used by WeaponArcDisplay's
+  // axial-arc handling). A Z-mirror flips the forward arrow to point out the
+  // visual nose while keeping port/starboard on the correct visual side — which
+  // a 180° Y-rotation would NOT do (it mirrors both axes).
   return (
     <group position={[x, 0, z]}>
-      <group rotation={[0, previewHeadingRad, 0]}>
-        {plan.kind === "forward" && <ForwardPreview speed={unit.speed} />}
-        {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
+      <group rotation={[0, headingRad, 0]}>
+        <group scale={flip ? [1, 1, -1] : [1, 1, 1]}>
+          {plan.kind === "forward" && <ForwardPreview speed={unit.speed} />}
+          {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
+        </group>
       </group>
     </group>
   );
@@ -621,6 +625,7 @@ export default function GameBoard() {
   const declineGame = useDeclineGame();
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
+  const moveUnit = useMoveUnit();
 
   // Staging / fleet yards
   const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
@@ -733,19 +738,17 @@ export default function GameBoard() {
     } else if (movePlan.kind === "turn") {
       newHeading = ((u.heading + movePlan.deltaDeg) % 360 + 360) % 360;
     }
-    setTurnMoves(prev => [
-      ...prev.filter(m => m.unitId !== u.id),
-      { unitId: u.id, toHexQ, toHexR, newHeading },
-    ]);
+    // Apply the move immediately (real-time, single-ship). Does NOT end the turn.
+    moveUnit.mutate(
+      { gameId, unitId: u.id, data: { toHexQ, toHexR, newHeading } },
+      { onSuccess: () => { qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }); } }
+    );
     setMovePlan(null);
-  }, [units, selectedUnit, movePlan]);
+  }, [units, selectedUnit, movePlan, moveUnit, gameId, qc]);
 
   const cancelMovePlan = useCallback(() => {
-    if (movePlan) { setMovePlan(null); return; }
-    if (selectedUnit != null) {
-      setTurnMoves(prev => prev.filter(m => m.unitId !== selectedUnit));
-    }
-  }, [movePlan, selectedUnit]);
+    setMovePlan(null);
+  }, []);
 
   // Keyboard controls for movement planning:
   //   R          → enter/extend turn plan by +5° clockwise (capped at +turnAngle)

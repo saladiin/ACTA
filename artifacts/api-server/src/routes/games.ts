@@ -12,6 +12,8 @@ import {
   ListTurnsParams,
   SubmitTurnParams,
   SubmitTurnBody,
+  MoveUnitParams,
+  MoveUnitBody,
   ListGamesResponse,
   GetGameResponse,
   AcceptGameResponse,
@@ -303,6 +305,36 @@ router.post("/games/:gameId/turns", requireAuth, async (req, res): Promise<void>
   }
 
   res.status(201).json(turn);
+});
+
+// ── Instant single-ship move (real-time movement, does NOT end the turn) ─────
+router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = MoveUnitParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = MoveUnitBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+
+  const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+  if (!game) { res.status(404).json({ error: "Game not found" }); return; }
+  if (game.status !== "active") { res.status(400).json({ error: "Game is not active" }); return; }
+
+  const isChallenger = game.challengerId === userId;
+  const isChallengerTurn = game.currentTurn % 2 === 1;
+  if (isChallenger !== isChallengerTurn) { res.status(400).json({ error: "Not your turn" }); return; }
+
+  const [unit] = await db.select().from(gameUnitsTable).where(
+    and(eq(gameUnitsTable.id, params.data.unitId), eq(gameUnitsTable.ownerId, userId), eq(gameUnitsTable.gameId, params.data.gameId))
+  );
+  if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
+  if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
+
+  const [updated] = await db.update(gameUnitsTable)
+    .set({ hexQ: body.data.toHexQ, hexR: body.data.toHexR, heading: body.data.newHeading })
+    .where(eq(gameUnitsTable.id, params.data.unitId))
+    .returning();
+
+  res.json(updated);
 });
 
 // ── DEV-ONLY: auto-deploy both fleets and start the game ──────────────────────

@@ -18,6 +18,7 @@ export * from './gameUnit';
 export * from './healthStatus';
 export * from './lobbyState';
 export * from './moveAction';
+export * from './moveUnitInput';
 export * from './playerProfile';
 export * from './searchPlayersParams';
 export * from './ship';

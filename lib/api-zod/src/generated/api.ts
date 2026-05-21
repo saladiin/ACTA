@@ -361,6 +361,41 @@ export const SubmitTurnBody = zod.object({
 
 
 /**
+ * @summary Apply an immediate, single-ship movement (real-time, does not end the turn)
+ */
+export const MoveUnitParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const MoveUnitBody = zod.object({
+  "toHexQ": zod.number(),
+  "toHexR": zod.number(),
+  "newHeading": zod.number()
+})
+
+export const MoveUnitResponse = zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "isDestroyed": zod.boolean()
+})
+
+
+/**
  * @summary Get open game challenges and active games summary
  */
 export const GetLobbyResponse = zod.object({

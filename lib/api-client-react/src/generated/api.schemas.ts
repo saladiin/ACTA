@@ -162,6 +162,12 @@ export interface FireAction {
   targetUnitId: number;
 }
 
+export interface MoveUnitInput {
+  toHexQ: number;
+  toHexR: number;
+  newHeading: number;
+}
+
 export interface TurnInput {
   moves: MoveAction[];
   attacks: FireAction[];

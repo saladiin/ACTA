@@ -26,8 +26,10 @@ import type {
   Game,
   GameDetail,
   GameInput,
+  GameUnit,
   HealthStatus,
   LobbyState,
+  MoveUnitInput,
   PlayerProfile,
   SearchPlayersParams,
   Ship,
@@ -1303,6 +1305,80 @@ export const useSubmitTurn = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getSubmitTurnMutationOptions(options));
+    }
+
+export const getMoveUnitUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/move`
+}
+
+/**
+ * @summary Apply an immediate, single-ship movement (real-time, does not end the turn)
+ */
+export const moveUnit = async (gameId: number,
+    unitId: number,
+    moveUnitInput: MoveUnitInput, options?: RequestInit): Promise<GameUnit> => {
+
+  return customFetch<GameUnit>(getMoveUnitUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      moveUnitInput,)
+  }
+);}
+
+
+
+
+export const getMoveUnitMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moveUnit>>, TError,{gameId: number;unitId: number;data: BodyType<MoveUnitInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof moveUnit>>, TError,{gameId: number;unitId: number;data: BodyType<MoveUnitInput>}, TContext> => {
+
+const mutationKey = ['moveUnit'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof moveUnit>>, {gameId: number;unitId: number;data: BodyType<MoveUnitInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  moveUnit(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MoveUnitMutationResult = NonNullable<Awaited<ReturnType<typeof moveUnit>>>
+    export type MoveUnitMutationBody = BodyType<MoveUnitInput>
+    export type MoveUnitMutationError = ErrorType<void>
+
+    /**
+ * @summary Apply an immediate, single-ship movement (real-time, does not end the turn)
+ */
+export const useMoveUnit = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof moveUnit>>, TError,{gameId: number;unitId: number;data: BodyType<MoveUnitInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof moveUnit>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<MoveUnitInput>},
+        TContext
+      > => {
+      return useMutation(getMoveUnitMutationOptions(options));
     }
 
 export const getGetLobbyUrl = () => {
