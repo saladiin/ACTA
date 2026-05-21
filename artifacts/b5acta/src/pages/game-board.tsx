@@ -2,7 +2,7 @@ import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } fr
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
-import { OrbitControls, Text, useGLTF, Html } from "@react-three/drei";
+import { OrbitControls, Text, useGLTF } from "@react-three/drei";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // @ts-ignore
@@ -373,8 +373,12 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
   );
 }
 
-// ── Movement planning (forward / turn previews + per-ship toolbar) ───────────
-type MovePlanKind = "forward" | "left" | "right";
+// ── Movement planning (forward / turn previews, keyboard-driven) ─────────────
+// turn.deltaDeg is signed: positive = clockwise (R), negative = counter-clockwise (Shift+R).
+type MovePlan =
+  | { kind: "forward" }
+  | { kind: "turn"; deltaDeg: number }
+  | null;
 
 // Annular sector mesh — used for the turn-arc preview that hugs the ship base.
 // Shape-space coords (mesh has +π/2 X rotation): shape +Y = world +Z (forward),
@@ -405,19 +409,24 @@ function AnnularSector({ rInner, rOuter, startAngle, endAngle, color, opacity }:
   );
 }
 
-function ForwardPreview({ speed }: { speed: number }) {
+function ForwardPreview({ speed, flip }: { speed: number; flip: boolean }) {
+  // Visual nose direction in ship local space: +Z normally, -Z for FLIP_MODELS
+  const sign = flip ? -1 : 1;
   return (
     <group>
-      <mesh position={[0, 0.06, 1.2 + speed / 2]}>
+      <mesh position={[0, 0.06, sign * (1.2 + speed / 2)]}>
         <boxGeometry args={[0.1, 0.04, speed]} />
         <meshBasicMaterial color="#22d3ee" transparent opacity={0.9} />
       </mesh>
-      <mesh position={[0, 0.06, 1.2 + speed]} rotation={[Math.PI / 2, 0, 0]}>
+      <mesh
+        position={[0, 0.06, sign * (1.2 + speed)]}
+        rotation={[sign > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0]}
+      >
         <coneGeometry args={[0.28, 0.55, 14]} />
         <meshBasicMaterial color="#22d3ee" transparent opacity={0.95} />
       </mesh>
       <Text
-        position={[0.55, 0.1, 1.2 + speed / 2]}
+        position={[0.55, 0.1, sign * (1.2 + speed / 2)]}
         fontSize={0.34}
         color="#67e8f9"
         anchorX="left"
@@ -429,16 +438,16 @@ function ForwardPreview({ speed }: { speed: number }) {
   );
 }
 
-function TurnArcPreview({ angleDeg, side }: { angleDeg: number; side: "left" | "right" }) {
-  const angleRad = (angleDeg * Math.PI) / 180;
-  // Forward = shape angle π/2. Right turn sweeps clockwise (decreasing angle) toward starboard;
-  // left turn sweeps counterclockwise (increasing angle) toward port.
+function TurnArcPreview({ deltaDeg }: { deltaDeg: number }) {
+  if (deltaDeg === 0) return null;
+  const absDeg = Math.abs(deltaDeg);
+  const angleRad = (absDeg * Math.PI) / 180;
+  // Forward = shape angle π/2. Positive delta (CW from above) sweeps toward starboard
+  // (decreasing shape angle); negative delta sweeps toward port (increasing shape angle).
   const start = Math.PI / 2;
-  const end = side === "right" ? Math.PI / 2 - angleRad : Math.PI / 2 + angleRad;
-  // Label angle = midpoint between forward and end-of-arc, on outer radius
+  const end = deltaDeg > 0 ? start - angleRad : start + angleRad;
   const midAngle = (start + end) / 2;
   const labelR = 2.6;
-  // Convert shape (x,y) → world (x, _, z): shape +X is world +X; shape +Y is world +Z
   const labelX = Math.cos(midAngle) * labelR;
   const labelZ = Math.sin(midAngle) * labelR;
   return (
@@ -459,87 +468,25 @@ function TurnArcPreview({ angleDeg, side }: { angleDeg: number; side: "left" | "
         anchorY="middle"
         outlineWidth={0.04}
         outlineColor="black"
-      >{`${side === "right" ? "" : "-"}${angleDeg}°`}</Text>
+      >{`${deltaDeg > 0 ? "+" : "−"}${absDeg}°`}</Text>
     </group>
   );
 }
 
-function MovementPlanner({
-  unit, plan, queued, onPlan, onConfirm, onCancel,
-}: {
-  unit: { hexQ: number; hexR: number; heading: number; speed: number; turnAngle: number };
-  plan: MovePlanKind | null;
-  queued: boolean;
-  onPlan: (kind: MovePlanKind) => void;
-  onConfirm: () => void;
-  onCancel: () => void;
+function MovementPlanner({ unit, plan, flip }: {
+  unit: { hexQ: number; hexR: number; heading: number; speed: number };
+  plan: MovePlan;
+  flip: boolean;
 }) {
+  if (!plan) return null;
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
   const headingRad = (unit.heading * Math.PI) / 180;
-  const btn = (active: boolean) =>
-    `w-7 h-7 flex items-center justify-center rounded border text-sm leading-none transition-colors cursor-pointer ${
-      active
-        ? "border-amber-300 bg-amber-500/30 text-amber-200"
-        : "border-amber-500/40 bg-black/60 text-amber-400 hover:bg-amber-500/15"
-    }`;
   return (
     <group position={[x, 0, z]}>
-      {plan && (
-        <group rotation={[0, headingRad, 0]}>
-          {plan === "forward" && <ForwardPreview speed={unit.speed} />}
-          {plan === "right" && <TurnArcPreview angleDeg={unit.turnAngle} side="right" />}
-          {plan === "left" && <TurnArcPreview angleDeg={unit.turnAngle} side="left" />}
-        </group>
-      )}
-      <Html position={[0, 4.6, 0]} center distanceFactor={16} zIndexRange={[100, 0]}>
-        <div
-          className="flex items-center gap-1 bg-black/90 border border-amber-500/50 rounded px-1.5 py-1 font-mono select-none shadow-lg"
-          onPointerDown={(e) => e.stopPropagation()}
-          data-testid="movement-planner"
-        >
-          <button
-            type="button"
-            className={btn(plan === "left")}
-            title={`Turn left ${unit.turnAngle}°`}
-            data-testid="btn-move-left"
-            onClick={() => onPlan("left")}
-          >↶</button>
-          <button
-            type="button"
-            className={btn(plan === "forward")}
-            title={`Forward ${unit.speed}"`}
-            data-testid="btn-move-forward"
-            onClick={() => onPlan("forward")}
-          >↑</button>
-          <button
-            type="button"
-            className={btn(plan === "right")}
-            title={`Turn right ${unit.turnAngle}°`}
-            data-testid="btn-move-right"
-            onClick={() => onPlan("right")}
-          >↷</button>
-          <span className="w-px h-5 bg-amber-500/30 mx-0.5" />
-          <button
-            type="button"
-            disabled={!plan}
-            className="w-7 h-7 flex items-center justify-center rounded border border-green-500/40 bg-green-500/10 hover:bg-green-500/25 text-green-400 text-sm leading-none transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Confirm move"
-            data-testid="btn-move-confirm"
-            onClick={onConfirm}
-          >✓</button>
-          <button
-            type="button"
-            disabled={!plan && !queued}
-            className="w-7 h-7 flex items-center justify-center rounded border border-red-500/40 bg-red-500/10 hover:bg-red-500/25 text-red-400 text-sm leading-none transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-            title={queued && !plan ? "Discard queued move" : "Cancel"}
-            data-testid="btn-move-cancel"
-            onClick={onCancel}
-          >✕</button>
-          {queued && (
-            <span className="ml-1 text-[10px] uppercase tracking-wider text-green-400">QUEUED</span>
-          )}
-        </div>
-      </Html>
+      <group rotation={[0, headingRad, 0]}>
+        {plan.kind === "forward" && <ForwardPreview speed={unit.speed} flip={flip} />}
+        {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
+      </group>
     </group>
   );
 }
@@ -746,7 +693,7 @@ export default function GameBoard() {
   const [attackTarget, setAttackTarget] = useState<number | null>(null);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
-  const [movePlan, setMovePlan] = useState<MovePlanKind | null>(null);
+  const [movePlan, setMovePlan] = useState<MovePlan>(null);
   useEffect(() => { setMovePlan(null); }, [selectedUnit]);
 
   // Fleet Yards: which fleet the player is deploying from
@@ -772,20 +719,21 @@ export default function GameBoard() {
     const u = units.find(x => x.id === selectedUnit);
     if (!u || !movePlan) return;
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
-    if (movePlan === "forward") {
+    if (movePlan.kind === "forward") {
+      // FLIP_MODELS render their nose along local -Z, so movement direction must
+      // mirror the visual nose, not the abstract heading vector.
+      const flip = FLIP_MODELS.has(u.modelFilename);
+      const sign = flip ? -1 : 1;
       const hRad = (u.heading * Math.PI) / 180;
-      // Forward in world = (sin h, 0, cos h) * speed (inches)
-      const dx = Math.sin(hRad) * u.speed;
-      const dz = Math.cos(hRad) * u.speed;
+      const dx = sign * Math.sin(hRad) * u.speed;
+      const dz = sign * Math.cos(hRad) * u.speed;
       // Invert hexToWorld([q,r]) = [q*2.25, 0, r*2.6 + q*1.3]
       const dq = dx / 2.25;
       const dr = (dz - dq * 1.3) / 2.6;
       toHexQ = Math.round(u.hexQ + dq);
       toHexR = Math.round(u.hexR + dr);
-    } else if (movePlan === "right") {
-      newHeading = ((u.heading + u.turnAngle) % 360 + 360) % 360;
-    } else if (movePlan === "left") {
-      newHeading = ((u.heading - u.turnAngle) % 360 + 360) % 360;
+    } else if (movePlan.kind === "turn") {
+      newHeading = ((u.heading + movePlan.deltaDeg) % 360 + 360) % 360;
     }
     setTurnMoves(prev => [
       ...prev.filter(m => m.unitId !== u.id),
@@ -800,6 +748,43 @@ export default function GameBoard() {
       setTurnMoves(prev => prev.filter(m => m.unitId !== selectedUnit));
     }
   }, [movePlan, selectedUnit]);
+
+  // Keyboard controls for movement planning:
+  //   R          → enter/extend turn plan by +5° clockwise (capped at +turnAngle)
+  //   Shift+R    → enter/extend turn plan by −5° counter-clockwise (capped at −turnAngle)
+  //   F          → forward-move plan
+  //   Enter      → confirm current plan (queue it)
+  //   Esc        → cancel current plan, or if none, discard the queued move for this ship
+  useEffect(() => {
+    if (game?.status !== "active" || !isMyTurn) return;
+    if (!selectedUnitData || selectedUnitData.ownerId !== myUserId || selectedUnitData.isDestroyed) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const u = selectedUnitData;
+      const max = u.turnAngle;
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        const step = e.shiftKey ? -5 : 5;
+        setMovePlan(prev => {
+          const current = prev && prev.kind === "turn" ? prev.deltaDeg : 0;
+          const next = Math.max(-max, Math.min(max, current + step));
+          return { kind: "turn", deltaDeg: next };
+        });
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setMovePlan({ kind: "forward" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        confirmMovePlan();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelMovePlan();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [game?.status, isMyTurn, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan]);
 
   const handleUnitClick = (unitId: number) => {
     const unit = units.find(u => u.id === unitId);
@@ -946,10 +931,7 @@ export default function GameBoard() {
               <MovementPlanner
                 unit={selectedUnitData}
                 plan={movePlan}
-                queued={turnMoves.some(m => m.unitId === selectedUnitData.id)}
-                onPlan={setMovePlan}
-                onConfirm={confirmMovePlan}
-                onCancel={cancelMovePlan}
+                flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
               />
             )}
             {stagedUnits.map(unit => (
@@ -1199,8 +1181,8 @@ export default function GameBoard() {
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
               </div>
               {selectedUnitData && selectedUnitData.ownerId === myUserId && (
-                <p className="text-xs text-muted-foreground">
-                  Use the ↶ ↑ ↷ toolbar above the selected ship to plan a move, then ✓ to queue. Click an enemy ship to attack.
+                <p className="text-xs text-muted-foreground font-mono leading-relaxed">
+                  <span className="text-amber-400">F</span> forward · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">↵</span> queue · <span className="text-amber-400">Esc</span> cancel · click enemy to attack
                 </p>
               )}
               <Button
