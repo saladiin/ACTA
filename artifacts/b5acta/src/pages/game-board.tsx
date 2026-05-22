@@ -783,11 +783,16 @@ export default function GameBoard() {
       distanceCommitted = movePlan.distance;
     } else if (movePlan.kind === "turn") {
       // Three.js right-handed Y-up: a positive Y rotation takes +Z → +X, which
-      // appears CLOCKWISE when looking down the -Y axis at the X-Z plane.
-      // That matches the arc preview convention (positive deltaDeg sweeps to
-      // starboard) and what R is intended to mean, so the heading delta is
-      // applied with its own sign — no negation.
-      newHeading = ((u.heading + movePlan.deltaDeg) % 360 + 360) % 360;
+      // appears CLOCKWISE looking down -Y. That matches the arc preview's
+      // "positive deltaDeg sweeps to starboard" convention for unflipped models.
+      // FLIP_MODELS render with an extra 180° Y-rotation: rotating their stored
+      // heading by +Δ moves the visible nose by -Δ in world space, so the arc
+      // (which is mirrored to track the visible nose via the [1,1,-1] z-scale
+      // in MovementPlanner) appears on the visually-correct side, but a naive
+      // heading + Δ commit turns the ship the OTHER way. Negate for flipped.
+      const flip = FLIP_MODELS.has(u.modelFilename);
+      const headingDelta = flip ? -movePlan.deltaDeg : movePlan.deltaDeg;
+      newHeading = ((u.heading + headingDelta) % 360 + 360) % 360;
     }
     const planKind = movePlan.kind;
     const unitId = u.id;
