@@ -816,6 +816,13 @@ export default function GameBoard() {
   // next ship's button state. Merged with the server's authoritative
   // `activeUnit.firedWeaponIds` (which survives reload) for display.
   const [pendingFired, setPendingFired] = useState<{ unitId: number; ids: Set<number> } | null>(null);
+  // Synchronous re-entry guard for the firing-phase target click. A single
+  // user click on an enemy ship produces multiple R3F onClick events (one per
+  // intersected child mesh inside the ship's <group>), so React state updates
+  // in onSuccess come too late to stop duplicate fire-weapon requests. The
+  // ref flips synchronously the moment we kick off a mutate() and is cleared
+  // when the request settles, so the 2nd–Nth events in the same gesture bail.
+  const firingInFlightRef = useRef(false);
   // Dice-roll modal payload. `rolling` plays a quick shuffle animation before
   // revealing the server's authoritative roll in `result`.
   const [diceModal, setDiceModal] = useState<
@@ -1012,6 +1019,10 @@ export default function GameBoard() {
   useEffect(() => {
     setPendingFired(null);
     setFiringWeaponPicking(null);
+    // Also drop the in-flight guard so a stale latch from a previous
+    // activation (e.g. a request that never settled, or the player ended
+    // activation mid-roll) can't permanently block firing on the next ship.
+    firingInFlightRef.current = false;
   }, [activeUnitId, currentPhase]);
 
   const handleUnitClick = (unitId: number) => {
@@ -1029,10 +1040,32 @@ export default function GameBoard() {
       hasActiveUnit &&
       unit.ownerId !== myUserId
     ) {
+      // Re-entry guard: a single user click on a ship produces multiple R3F
+      // onClick events (one per intersected child mesh in the unit group).
+      // Bail synchronously on the 2nd..Nth duplicates so we don't fire the
+      // same weapon multiple times and turn the first (successful) shot
+      // into a confusing "already fired" error in the dice modal.
+      if (firingInFlightRef.current) return;
       const attacker = units.find(u => u.id === activeUnitId);
       const weapon = (weaponsByFilename[attacker?.modelFilename ?? ""] as Weapon[] | undefined)
         ?.find(w => w.id === firingWeaponPicking);
       if (!attacker || !weapon) return;
+      // Optimistically mark this weapon as fired BEFORE the network call so
+      // the weapon-list button disables immediately, the picker clears, and
+      // any duplicate target clicks fall through the firingWeaponPicking
+      // gate above on the next render.
+      const firedWeaponId = weapon.id;
+      const firingUnitId = attacker.id;
+      firingInFlightRef.current = true;
+      setPendingFired(prev => {
+        if (prev && prev.unitId !== firingUnitId) {
+          return { unitId: firingUnitId, ids: new Set([firedWeaponId]) };
+        }
+        const next = new Set(prev?.ids ?? []);
+        next.add(firedWeaponId);
+        return { unitId: firingUnitId, ids: next };
+      });
+      setFiringWeaponPicking(null);
       // Open the dice modal in the "rolling" phase BEFORE we hear back from
       // the server so the user gets immediate visual feedback. The server
       // call below populates `result` (or `error`) when it returns.
@@ -1043,24 +1076,11 @@ export default function GameBoard() {
         attackDice: weapon.attackDice,
         state: "rolling",
       });
-      const firedWeaponId = weapon.id;
       fireWeapon.mutate(
-        { gameId, unitId: attacker.id, data: { weaponId: firedWeaponId, targetUnitId: unit.id } },
+        { gameId, unitId: firingUnitId, data: { weaponId: firedWeaponId, targetUnitId: unit.id } },
         {
           onSuccess: (res) => {
-            // Mark rules-state IMMEDIATELY so the same weapon can't be
-            // re-fired during the dice-roll animation window. The visual
-            // reveal of the result is delayed separately for UX polish only.
-            // Scope to firingUnitId so a late callback after the player has
-            // already moved on to a different ship can't disable buttons there.
-            const firingUnitId = attacker.id;
-            setPendingFired(prev => {
-              if (prev && prev.unitId !== firingUnitId) return prev;
-              const next = new Set(prev?.ids ?? []);
-              next.add(firedWeaponId);
-              return { unitId: firingUnitId, ids: next };
-            });
-            setFiringWeaponPicking(null);
+            firingInFlightRef.current = false;
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             // Small delay so the "rolling" shuffle has a moment to play.
             setTimeout(() => {
@@ -1068,9 +1088,16 @@ export default function GameBoard() {
             }, 700);
           },
           onError: (err: any) => {
+            firingInFlightRef.current = false;
+            // Roll back the optimistic fired-marker so the player can retry.
+            setPendingFired(prev => {
+              if (!prev || prev.unitId !== firingUnitId) return prev;
+              const next = new Set(prev.ids);
+              next.delete(firedWeaponId);
+              return next.size === 0 ? null : { unitId: firingUnitId, ids: next };
+            });
             setTimeout(() => {
               setDiceModal(m => (m ? { ...m, state: "error", error: err?.message ?? "Shot failed" } : null));
-              setFiringWeaponPicking(null);
             }, 200);
           },
         },
