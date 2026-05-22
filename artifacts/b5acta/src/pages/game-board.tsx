@@ -782,11 +782,12 @@ export default function GameBoard() {
       toHexR = Math.round(u.hexR + dr);
       distanceCommitted = movePlan.distance;
     } else if (movePlan.kind === "turn") {
-      // Three.js +Y rotation is CCW from top-down. The arc-preview convention
-      // treats positive deltaDeg as visual CW (sweeps to starboard, the side R
-      // is intended to mean). So the heading delta must be negated to match
-      // what the player just saw on the board.
-      newHeading = ((u.heading - movePlan.deltaDeg) % 360 + 360) % 360;
+      // Three.js right-handed Y-up: a positive Y rotation takes +Z → +X, which
+      // appears CLOCKWISE when looking down the -Y axis at the X-Z plane.
+      // That matches the arc preview convention (positive deltaDeg sweeps to
+      // starboard) and what R is intended to mean, so the heading delta is
+      // applied with its own sign — no negation.
+      newHeading = ((u.heading + movePlan.deltaDeg) % 360 + 360) % 360;
     }
     const planKind = movePlan.kind;
     const unitId = u.id;
