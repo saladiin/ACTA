@@ -277,14 +277,16 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, 
 // ── Arc visualization ─────────────────────────────────────────────────────────
 // Coordinate mapping: arc mesh uses rotation [+π/2, 0, 0] so shape +Y = world +Z = forward.
 // All angles are in shape-space radians (counterclockwise from shape +X).
+// In a right-handed frame (Y up, +Z forward), anatomical right = forward × up
+// = +Z × +Y = -X, so STARBOARD is shape -X (π) and PORT is shape +X (0).
 //   Forward   = shape +Y direction = 90° (π/2)
-//   Starboard = shape +X direction = 0°
+//   Port      = shape +X direction = 0°
 //   Aft       = shape -Y direction = 270° (-π/2)
-//   Port      = shape -X direction = 180° (π)
+//   Starboard = shape -X direction = 180° (π)
 const ARC_DEFS: Record<string, { centerAngle: number; halfAngle: number; color: string; opacity: number; radius?: number }> = {
   "Forward":           { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 4,  color: "#f59e0b", opacity: 0.30 },
-  "Starboard":         { centerAngle: 0,             halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
-  "Port":              { centerAngle: Math.PI,       halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
+  "Port":              { centerAngle: 0,             halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
+  "Starboard":         { centerAngle: Math.PI,       halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
   "Aft":               { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4,  color: "#ef4444", opacity: 0.22 },
   "Boresight Forward": { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 24, color: "#fef08a", opacity: 0.85, radius: 1.65 },
   "Boresight Aft":     { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 24, color: "#fb923c", opacity: 0.75, radius: 1.65 },
@@ -296,8 +298,8 @@ const ARC_DEFS: Record<string, { centerAngle: number; halfAngle: number; color: 
 // Label positions in the heading-group's local XZ space (local +Z = world forward)
 const ARC_LABELS: Record<string, { pos: [number, number, number]; label: string }> = {
   "Forward":           { pos: [0,    0.07,  1.35], label: "FWD"  },
-  "Starboard":         { pos: [1.35, 0.07,  0],    label: "STBD" },
-  "Port":              { pos: [-1.35,0.07,  0],    label: "PORT" },
+  "Port":              { pos: [1.35, 0.07,  0],    label: "PORT" },
+  "Starboard":         { pos: [-1.35,0.07,  0],    label: "STBD" },
   "Aft":               { pos: [0,    0.07, -1.35], label: "AFT"  },
   "Boresight Forward": { pos: [0,    0.07,  1.72], label: "BS-F" },
   "Boresight Aft":     { pos: [0,    0.07, -1.72], label: "BS-A" },

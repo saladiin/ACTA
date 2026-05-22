@@ -40,8 +40,8 @@ function rollD6(): number { return 1 + Math.floor(Math.random() * 6); }
 // within a tiny tolerance); 2π means "all-arcs" (turret).
 const ARCS: Record<string, { center: number; half: number } | null> = {
   "Forward":           { center: Math.PI / 2,  half: Math.PI / 4 },
-  "Starboard":         { center: 0,            half: Math.PI / 4 },
-  "Port":              { center: Math.PI,      half: Math.PI / 4 },
+  "Port":              { center: 0,            half: Math.PI / 4 },
+  "Starboard":         { center: Math.PI,      half: Math.PI / 4 },
   "Aft":               { center: -Math.PI / 2, half: Math.PI / 4 },
   "Boresight Forward": { center: Math.PI / 2,  half: Math.PI / 24 },
   "Boresight Aft":     { center: -Math.PI / 2, half: Math.PI / 24 },
@@ -73,7 +73,7 @@ function isInArc(
   const localX = dx * Math.cos(headingRad) - dz * Math.sin(headingRad);
   const localZ = dx * Math.sin(headingRad) + dz * Math.cos(headingRad);
   if (localX === 0 && localZ === 0) return true; // same hex (shouldn't happen)
-  const bearing = Math.atan2(localZ, localX); // +π/2 = forward, 0 = starboard, etc.
+  const bearing = Math.atan2(localZ, localX); // +π/2 = forward, 0 = port, π = starboard, -π/2 = aft.
   return Math.abs(angleDelta(bearing, arc.center)) <= arc.half + 1e-6;
 }
 
