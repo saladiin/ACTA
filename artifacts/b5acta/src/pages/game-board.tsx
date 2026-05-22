@@ -852,7 +852,8 @@ export default function GameBoard() {
         setStagedUnits(prev => prev.map(u => u.id === selectedStagedId ? { ...u, locked: !u.locked } : u));
       } else if (e.key === "r" || e.key === "R") {
         e.preventDefault();
-        const delta = e.shiftKey ? -15 : 15;
+        // R = counter-clockwise, Shift+R = clockwise (15° per press)
+        const delta = e.shiftKey ? 15 : -15;
         setStagedUnits(prev => prev.map(u => {
           if (u.id !== selectedStagedId || u.locked) return u;
           return { ...u, heading: ((u.heading + delta) % 360 + 360) % 360 };
