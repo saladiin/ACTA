@@ -3,6 +3,8 @@ import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import { WeaponFx } from "@/components/weapon-fx";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // @ts-ignore
@@ -485,6 +487,11 @@ type DiceModalPhase =
   | "error";
 type DiceModalState = {
   weapon: Weapon;
+  // The attacker is captured at fire-time (rather than read live from
+  // activeUnitId) so the weapon-fx beam/tracer/missile renders from the right
+  // origin even if the player ends activation or selects another ship while
+  // the dice modal is still open.
+  attackerUnitId: number;
   targetName: string;
   targetId: number;
   attackDice: number;
@@ -1094,6 +1101,7 @@ export default function GameBoard() {
       // is never asked to roll dice we haven't received yet.
       setDiceModal({
         weapon,
+        attackerUnitId: firingUnitId,
         targetName: unit.name,
         targetId: unit.id,
         attackDice: weapon.attackDice,
@@ -1368,6 +1376,48 @@ export default function GameBoard() {
               minDistance={8}
               maxDistance={90}
             />
+            {/* Weapon firing FX — mounts when a shot starts rolling and stays
+                mounted for the rest of the dice modal lifetime. Internal
+                animations handle their own fade. */}
+            {(() => {
+              if (!diceModal) return null;
+              const fxPhases = new Set<DiceModalPhase>([
+                "attack-rolling",
+                "attack-shown",
+                "damage-ready",
+                "damage-rolling",
+                "damage-shown",
+              ]);
+              if (!fxPhases.has(diceModal.phase)) return null;
+              const attacker = units.find(u => u.id === diceModal.attackerUnitId);
+              const target = units.find(u => u.id === diceModal.targetId);
+              if (!attacker || !target) return null;
+              const [ax, , az] = hexToWorld(attacker.hexQ, attacker.hexR);
+              const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
+              // Ship models sit at y≈2; aim the beam at hull-center.
+              const from = new THREE.Vector3(ax, 2, az);
+              const to = new THREE.Vector3(tx, 2, tz);
+              const hits = diceModal.result?.hits ?? 0;
+              return (
+                <WeaponFx
+                  key={`${diceModal.attackerUnitId}-${diceModal.weapon.id}-${diceModal.targetId}`}
+                  from={from}
+                  to={to}
+                  weapon={diceModal.weapon}
+                  attackerFaction={attacker.faction}
+                  hits={hits}
+                  totalDice={diceModal.attackDice}
+                />
+              );
+            })()}
+            <EffectComposer>
+              <Bloom
+                intensity={0.9}
+                luminanceThreshold={0.55}
+                luminanceSmoothing={0.2}
+                mipmapBlur
+              />
+            </EffectComposer>
           </Canvas>
           {/* Status overlay */}
           <div className="absolute top-3 left-3 flex flex-col gap-1.5 pointer-events-none">
@@ -1936,7 +1986,7 @@ function DiceRollModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
       data-testid="dice-modal"
       // Backdrop click routes through the same confirm-close gate so the
       // player can never lose the result by accident — even mid-shuffle.
