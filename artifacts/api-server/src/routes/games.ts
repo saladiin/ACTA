@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql } from "drizzle-orm";
-import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import {
   CreateGameBody,
@@ -16,6 +16,8 @@ import {
   MoveUnitBody,
   ActivateUnitParams,
   EndActivationParams,
+  FireWeaponParams,
+  FireWeaponBody,
   ListGamesResponse,
   GetGameResponse,
   AcceptGameResponse,
@@ -23,6 +25,63 @@ import {
   DeployFleetResponse,
   ListTurnsResponse,
 } from "@workspace/api-zod";
+
+// ── Combat helpers ───────────────────────────────────────────────────────────
+// World units = inches (see game-board.tsx: "1 world unit = 1 inch").
+// hexToWorld must mirror the frontend exactly so that arc/range UI agrees
+// with server-side validation.
+function hexToWorld(q: number, r: number): { x: number; z: number } {
+  return { x: q * 2.25, z: r * 2.6 + q * 1.3 };
+}
+function rollD6(): number { return 1 + Math.floor(Math.random() * 6); }
+
+// Arc center angles match game-board.tsx (local +Z = forward when heading=0).
+// halfAngle of -1 means "no arc" (boresight = strict equality on center bearing
+// within a tiny tolerance); 2π means "all-arcs" (turret).
+const ARCS: Record<string, { center: number; half: number } | null> = {
+  "Forward":           { center: Math.PI / 2,  half: Math.PI / 4 },
+  "Starboard":         { center: 0,            half: Math.PI / 4 },
+  "Port":              { center: Math.PI,      half: Math.PI / 4 },
+  "Aft":               { center: -Math.PI / 2, half: Math.PI / 4 },
+  "Boresight Forward": { center: Math.PI / 2,  half: Math.PI / 24 },
+  "Boresight Aft":     { center: -Math.PI / 2, half: Math.PI / 24 },
+  "Turret":            { center: 0,            half: Math.PI }, // 360°
+};
+
+function angleDelta(a: number, b: number): number {
+  // shortest signed difference in (-π, π]
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d <= -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
+function isInArc(
+  attacker: { x: number; z: number; headingDeg: number; flipped: boolean },
+  target:   { x: number; z: number },
+  arcName: string,
+): boolean {
+  const arc = ARCS[arcName];
+  if (!arc) return false; // unknown arc → reject
+  const dx = target.x - attacker.x;
+  const dz = target.z - attacker.z;
+  // Flipped models render rotated 180° around Y, so the player-facing "forward"
+  // is the opposite of the raw heading value. Match the frontend convention.
+  const effHeading = attacker.headingDeg + (attacker.flipped ? 180 : 0);
+  const headingRad = (effHeading * Math.PI) / 180;
+  // World → ship-local: rotate world delta by -headingRad around Y.
+  const localX = dx * Math.cos(headingRad) - dz * Math.sin(headingRad);
+  const localZ = dx * Math.sin(headingRad) + dz * Math.cos(headingRad);
+  if (localX === 0 && localZ === 0) return true; // same hex (shouldn't happen)
+  const bearing = Math.atan2(localZ, localX); // +π/2 = forward, 0 = starboard, etc.
+  return Math.abs(angleDelta(bearing, arc.center)) <= arc.half + 1e-6;
+}
+
+// Some OBJ models are authored nose-pointing-aft, so the frontend renders them
+// with an extra 180° Y-rotation inside the heading group. The player-facing
+// "forward" is therefore the opposite of the stored heading. KEEP IN SYNC with
+// the FLIP_MODELS set in artifacts/b5acta/src/pages/game-board.tsx.
+const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb"]);
 
 const router: IRouter = Router();
 
@@ -283,6 +342,8 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       activePlayerId: updated.challengerId,
       activeUnitId: null,
       lastActivatorId: null,
+      phase: "movement",
+      initiativeWinnerId: updated.challengerId,
     }).where(eq(gamesTable.id, params.data.gameId)).returning();
   }
 
@@ -407,7 +468,14 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Unit is destroyed"), { status: 400 });
-      if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+      // Each phase tracks its own per-round done-flag. A ship that finished its
+      // movement activation is still eligible to be picked up again for its
+      // firing activation, and vice-versa.
+      if (game.phase === "firing") {
+        if (unit.hasFiredThisRound) throw Object.assign(new Error("Unit already fired this round"), { status: 400 });
+      } else {
+        if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+      }
 
       // Conditional UPDATE: succeeds only if state still matches what we saw.
       const result = await tx.update(gamesTable)
@@ -420,6 +488,12 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
         ))
         .returning();
       if (result.length === 0) throw Object.assign(new Error("Activation conflict, retry"), { status: 409 });
+      // Fresh activation → wipe the per-activation fired-weapon ledger so
+      // each weapon gets exactly one shot this firing activation. (Harmless
+      // for movement-phase activations; firing-phase code reads this.)
+      await tx.update(gameUnitsTable)
+        .set({ firedWeaponIds: [] })
+        .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
       return result[0];
     });
     res.json(updated);
@@ -450,8 +524,10 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       if (!game.activeUnitId) throw Object.assign(new Error("No active unit to end"), { status: 400 });
 
       const endedUnitId = game.activeUnitId;
+      const isFiring = game.phase === "firing";
+      // Mark the just-ended activation as done for THIS phase only.
       await tx.update(gameUnitsTable)
-        .set({ hasMovedThisRound: true })
+        .set(isFiring ? { hasFiredThisRound: true } : { hasMovedThisRound: true })
         .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)));
 
       // In active games the opponent is always bound; the status check above
@@ -459,12 +535,13 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       if (!game.opponentId) throw Object.assign(new Error("Game has no opponent"), { status: 500 });
       const opponentId = game.opponentId;
       const otherPlayerId = userId === game.challengerId ? opponentId : game.challengerId;
+      const doneCol = isFiring ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound;
       const remainingFor = async (pid: string) => {
         const rows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
           eq(gameUnitsTable.gameId, game.id),
           eq(gameUnitsTable.ownerId, pid),
           eq(gameUnitsTable.isDestroyed, false),
-          eq(gameUnitsTable.hasMovedThisRound, false),
+          eq(doneCol, false),
         ));
         return rows.length;
       };
@@ -474,20 +551,31 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       let nextActivePlayerId: string;
       let nextRound = game.currentRound;
       let nextTurn = game.currentTurn;
+      let nextPhase: "movement" | "firing" = isFiring ? "firing" : "movement";
+      let nextInitiativeWinnerId = game.initiativeWinnerId;
 
       if (otherRemaining > 0) {
         nextActivePlayerId = otherPlayerId;
       } else if (selfRemaining > 0) {
         nextActivePlayerId = userId;
+      } else if (!isFiring) {
+        // Movement sub-phase complete → transition to firing. Same initiative
+        // winner activates first in the firing phase; round/turn don't advance.
+        nextPhase = "firing";
+        nextActivePlayerId = game.initiativeWinnerId ?? game.challengerId;
       } else {
-        // Round complete. Reset has-moved flags for ALL surviving units, then
-        // hand initiative to the OTHER player (last activator goes second next round).
+        // Firing sub-phase complete → end of round. Reset BOTH per-phase flags
+        // on all surviving units; new initiative winner is whoever did NOT
+        // have it this round (last-activator-goes-second-next-round).
         await tx.update(gameUnitsTable)
-          .set({ hasMovedThisRound: false })
+          .set({ hasMovedThisRound: false, hasFiredThisRound: false, firedWeaponIds: [] })
           .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
         nextRound = game.currentRound + 1;
         nextTurn = game.currentTurn + 1;
-        nextActivePlayerId = userId === game.challengerId ? opponentId : game.challengerId;
+        nextPhase = "movement";
+        nextInitiativeWinnerId =
+          game.initiativeWinnerId === game.challengerId ? opponentId : game.challengerId;
+        nextActivePlayerId = nextInitiativeWinnerId;
       }
 
       // Conditional UPDATE guards against any state change we didn't see.
@@ -497,6 +585,8 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         lastActivatorId: userId,
         currentRound: nextRound,
         currentTurn: nextTurn,
+        phase: nextPhase,
+        initiativeWinnerId: nextInitiativeWinnerId,
       }).where(and(
         eq(gamesTable.id, gameId),
         eq(gamesTable.activePlayerId, userId),
@@ -507,6 +597,138 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       return result[0];
     });
     res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── Fire a single weapon from the active ship at a target ────────────────────
+// Rolls dice server-side and applies damage. The activation does NOT end here
+// — the player calls /end-activation when they're done firing (potentially
+// after multiple weapons). One target per weapon per activation; the server
+// enforces "this weapon has not fired yet this activation" via
+// gameUnits.firedWeaponIds (reset on activate + on round transition).
+router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = FireWeaponParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = FireWeaponBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+  const { gameId, unitId } = params.data;
+  const { weaponId, targetUnitId } = body.data;
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "firing") throw Object.assign(new Error("Not in firing phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
+      if (game.activeUnitId !== unitId) throw Object.assign(new Error("This unit is not the one you activated"), { status: 400 });
+
+      const [attacker] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!attacker) throw Object.assign(new Error("Attacker not found"), { status: 404 });
+      if (attacker.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (attacker.isDestroyed) throw Object.assign(new Error("Attacker is destroyed"), { status: 400 });
+      // Server-authoritative one-shot-per-weapon-per-activation guard.
+      const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
+      if (alreadyFired.includes(weaponId)) {
+        throw Object.assign(new Error("Weapon has already fired this activation"), { status: 400 });
+      }
+
+      const [target] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!target) throw Object.assign(new Error("Target not found"), { status: 404 });
+      if (target.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+      if (target.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+
+      // Weapon must belong to the attacker's ship class.
+      const [attackerShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, attacker.shipId));
+      if (!attackerShip) throw Object.assign(new Error("Attacker ship record missing"), { status: 500 });
+      const [weapon] = await tx.select().from(weaponsTable).where(eq(weaponsTable.id, weaponId));
+      if (!weapon) throw Object.assign(new Error("Weapon not found"), { status: 404 });
+      if (weapon.shipModelId !== attackerShip.shipModelId) {
+        throw Object.assign(new Error("Weapon does not belong to attacker"), { status: 400 });
+      }
+
+      // Range check (world units = inches; the OpenAPI spec stores weapon.range
+      // in inches and the board is laid out at 1 unit = 1 inch).
+      const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
+      const tPos = hexToWorld(target.hexQ, target.hexR);
+      const dist = Math.hypot(tPos.x - aPos.x, tPos.z - aPos.z);
+      if (dist > weapon.range) {
+        throw Object.assign(new Error(`Target out of range (${dist.toFixed(1)}\" > ${weapon.range}\")`), { status: 400 });
+      }
+
+      // Arc check.
+      const flipped = FLIP_MODELS.has(attacker.modelFilename);
+      if (!isInArc({ x: aPos.x, z: aPos.z, headingDeg: attacker.heading, flipped }, tPos, weapon.arc)) {
+        throw Object.assign(new Error(`Target not in ${weapon.arc} arc`), { status: 400 });
+      }
+
+      // To-hit threshold: target's ship-class hullRating, overridden to flat 4+
+      // by beam-family weapons.
+      const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
+      if (!targetShip) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
+      const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
+      if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
+      const traits = (weapon.traits ?? "").toLowerCase();
+      const isBeam = traits.includes("beam") || traits.includes("mini-beam") || traits.includes("mini beam");
+      const hitThreshold = isBeam ? 4 : targetModel.hullRating;
+
+      // Roll attack dice → hits.
+      const attackRolls: number[] = [];
+      for (let i = 0; i < weapon.attackDice; i++) attackRolls.push(rollD6());
+      const hits = attackRolls.filter(r => r >= hitThreshold).length;
+
+      // Roll damage dice per hit. 1=0, 2-5=1, 6=2 + cosmetic critical roll.
+      const damageRolls: number[] = [];
+      const criticalRolls: number[] = [];
+      let totalDamage = 0;
+      for (let i = 0; i < hits; i++) {
+        const d = rollD6();
+        damageRolls.push(d);
+        if (d === 1) totalDamage += 0;
+        else if (d <= 5) totalDamage += 1;
+        else { totalDamage += 2; criticalRolls.push(rollD6()); }
+      }
+
+      const targetHullBefore = target.hullPoints;
+      const targetHullAfter = Math.max(0, targetHullBefore - totalDamage);
+      const targetDestroyed = targetHullAfter === 0;
+
+      await tx.update(gameUnitsTable).set({
+        hullPoints: targetHullAfter,
+        isDestroyed: targetDestroyed,
+      }).where(eq(gameUnitsTable.id, target.id));
+
+      // Record that this weapon has fired this activation.
+      await tx.update(gameUnitsTable)
+        .set({ firedWeaponIds: [...alreadyFired, weaponId] })
+        .where(eq(gameUnitsTable.id, attacker.id));
+
+      return {
+        weaponId,
+        targetUnitId,
+        hitThreshold,
+        attackRolls,
+        hits,
+        damageRolls,
+        totalDamage,
+        criticalRolls,
+        targetHullBefore,
+        targetHullAfter,
+        targetDestroyed,
+      };
+    });
+    res.json(result);
   } catch (e) {
     const err = e as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
@@ -601,6 +823,8 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
     activePlayerId: game.challengerId,
     activeUnitId: null,
     lastActivatorId: null,
+    phase: "movement",
+    initiativeWinnerId: game.challengerId,
   }).where(eq(gamesTable.id, game.id)).returning();
 
   res.json(updated);

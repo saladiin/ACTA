@@ -377,6 +377,30 @@ paths:
                 $ref: "#/components/schemas/Game"
         "400": { description: No active unit }
 
+  /games/{gameId}/units/{unitId}/fire-weapon:
+    post:
+      operationId: fireWeapon
+      tags: [turns]
+      summary: Fire a single weapon from the active ship at a chosen target. Server rolls dice and applies damage.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FireWeaponInput"
+      responses:
+        "200":
+          description: Weapon resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FireWeaponResult"
+        "400": { description: "Invalid target (out of arc, out of range, etc.)" }
+        "409": { description: "Activation conflict" }
+
   /games/{gameId}/units/{unitId}/move:
     post:
       operationId: moveUnit
@@ -480,7 +504,7 @@ components:
 
     ShipModel:
       type: object
-      required: [id, name, filename, faction, pointCost, hullPoints, speed, weaponRange, weaponDamage]
+      required: [id, name, filename, faction, pointCost, hullPoints, speed, weaponRange, weaponDamage, hullRating]
       properties:
         id:       { type: integer }
         name:     { type: string }
@@ -491,6 +515,7 @@ components:
         speed:        { type: integer }
         weaponRange:  { type: integer }
         weaponDamage: { type: integer }
+        hullRating:   { type: integer, description: "Roll-to-hit target (≥) for attacks against this ship's class." }
         description:  { type: ["string", "null"] }
         weapons:
           type: array
@@ -533,7 +558,7 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, status, currentTurn, currentRound, pointLimit, createdAt, updatedAt]
+      required: [id, challengerId, status, currentTurn, currentRound, phase, pointLimit, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
@@ -547,6 +572,8 @@ components:
         activePlayerId:  { type: ["string", "null"] }
         activeUnitId:    { type: ["integer", "null"] }
         lastActivatorId: { type: ["string", "null"] }
+        phase:           { type: string, enum: [movement, firing] }
+        initiativeWinnerId: { type: ["string", "null"] }
         pointLimit:   { type: integer }
         createdAt:    { type: string, format: date-time }
         updatedAt:    { type: string, format: date-time }
@@ -561,7 +588,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed, hasMovedThisRound]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed, hasMovedThisRound, hasFiredThisRound]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -582,6 +609,7 @@ components:
         weaponDamage:  { type: integer }
         isDestroyed:   { type: boolean }
         hasMovedThisRound: { type: boolean }
+        hasFiredThisRound: { type: boolean }
 
     GameDetail:
       type: object
@@ -625,6 +653,35 @@ components:
       properties:
         attackerUnitId: { type: integer }
         targetUnitId:   { type: integer }
+
+    FireWeaponInput:
+      type: object
+      required: [weaponId, targetUnitId]
+      properties:
+        weaponId:     { type: integer }
+        targetUnitId: { type: integer }
+
+    FireWeaponResult:
+      type: object
+      required: [weaponId, targetUnitId, hitThreshold, attackRolls, hits, damageRolls, totalDamage, criticalRolls, targetHullBefore, targetHullAfter, targetDestroyed]
+      properties:
+        weaponId:        { type: integer }
+        targetUnitId:    { type: integer }
+        hitThreshold:    { type: integer }
+        attackRolls:
+          type: array
+          items: { type: integer }
+        hits:            { type: integer }
+        damageRolls:
+          type: array
+          items: { type: integer }
+        totalDamage:     { type: integer }
+        criticalRolls:
+          type: array
+          items: { type: integer }
+        targetHullBefore: { type: integer }
+        targetHullAfter:  { type: integer }
+        targetDestroyed: { type: boolean }
 
     MoveUnitInput:
       type: object

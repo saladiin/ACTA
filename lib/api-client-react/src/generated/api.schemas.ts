@@ -30,6 +30,8 @@ export interface ShipModel {
   speed: number;
   weaponRange: number;
   weaponDamage: number;
+  /** Roll-to-hit target (≥) for attacks against this ship's class. */
+  hullRating: number;
   /** @nullable */
   description?: string | null;
   weapons?: Weapon[];
@@ -75,6 +77,14 @@ export const GameStatus = {
   declined: 'declined',
 } as const;
 
+export type GamePhase = typeof GamePhase[keyof typeof GamePhase];
+
+
+export const GamePhase = {
+  movement: 'movement',
+  firing: 'firing',
+} as const;
+
 export interface Game {
   id: number;
   challengerId: string;
@@ -95,6 +105,9 @@ export interface Game {
   activeUnitId?: number | null;
   /** @nullable */
   lastActivatorId?: string | null;
+  phase: GamePhase;
+  /** @nullable */
+  initiativeWinnerId?: string | null;
   pointLimit: number;
   createdAt: string;
   updatedAt: string;
@@ -134,6 +147,7 @@ export interface GameUnit {
   weaponDamage: number;
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
+  hasFiredThisRound: boolean;
 }
 
 export type TurnMoves = { [key: string]: unknown };
@@ -179,6 +193,25 @@ export interface MoveAction {
 export interface FireAction {
   attackerUnitId: number;
   targetUnitId: number;
+}
+
+export interface FireWeaponInput {
+  weaponId: number;
+  targetUnitId: number;
+}
+
+export interface FireWeaponResult {
+  weaponId: number;
+  targetUnitId: number;
+  hitThreshold: number;
+  attackRolls: number[];
+  hits: number;
+  damageRolls: number[];
+  totalDamage: number;
+  criticalRolls: number[];
+  targetHullBefore: number;
+  targetHullAfter: number;
+  targetDestroyed: boolean;
 }
 
 export interface MoveUnitInput {

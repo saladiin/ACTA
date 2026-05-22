@@ -14,6 +14,9 @@ export const shipModelsTable = pgTable("ship_models", {
   troops: integer("troops"),
   damage: integer("damage"),                     // total damage capacity
   damageThreshold: integer("damage_threshold"),
+  // B5: ACTA-style "hull" to-hit rating. An attacking die equals-or-exceeds
+  // this value to score a hit (beam/mini-beam weapons override to a flat 4+).
+  hullRating: integer("hull_rating").notNull().default(4),
   crew: integer("crew"),
   crewThreshold: integer("crew_threshold"),
   speed: integer("speed").notNull().default(3),

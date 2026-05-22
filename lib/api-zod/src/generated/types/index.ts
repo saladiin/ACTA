@@ -8,11 +8,14 @@
 
 export * from './deploymentInput';
 export * from './fireAction';
+export * from './fireWeaponInput';
+export * from './fireWeaponResult';
 export * from './fleet';
 export * from './fleetInput';
 export * from './game';
 export * from './gameDetail';
 export * from './gameInput';
+export * from './gamePhase';
 export * from './gameStatus';
 export * from './gameUnit';
 export * from './healthStatus';

@@ -20,6 +20,11 @@ export const gamesTable = pgTable("games", {
   activePlayerId: text("active_player_id"),
   activeUnitId: integer("active_unit_id"),
   lastActivatorId: text("last_activator_id"),
+  // Each round is split into two sub-phases: movement (all ships activate
+  // alternately to move/turn) → firing (all ships activate alternately to
+  // shoot). The same initiative winner fires first within each round.
+  phase: text("phase").notNull().default("movement"), // "movement" | "firing"
+  initiativeWinnerId: text("initiative_winner_id"),
   pointLimit: integer("point_limit").notNull().default(500),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
@@ -49,6 +54,12 @@ export const gameUnitsTable = pgTable("game_units", {
   weaponDamage: integer("weapon_damage").notNull(),
   isDestroyed: boolean("is_destroyed").notNull().default(false),
   hasMovedThisRound: boolean("has_moved_this_round").notNull().default(false),
+  hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),
+  // Weapons this ship has already discharged DURING the current firing
+  // activation. Reset to [] each time the ship is picked up for activation so
+  // the server can authoritatively enforce one-shot-per-weapon. (Per the
+  // rules, each weapon can fire at one target per firing activation.)
+  firedWeaponIds: jsonb("fired_weapon_ids").$type<number[]>().notNull().default([]),
 });
 
 export const turnsTable = pgTable("turns", {

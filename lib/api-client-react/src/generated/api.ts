@@ -21,6 +21,8 @@ import type {
 
 import type {
   DeploymentInput,
+  FireWeaponInput,
+  FireWeaponResult,
   Fleet,
   FleetInput,
   Game,
@@ -1447,6 +1449,80 @@ export const useEndActivation = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getEndActivationMutationOptions(options));
+    }
+
+export const getFireWeaponUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/fire-weapon`
+}
+
+/**
+ * @summary Fire a single weapon from the active ship at a chosen target. Server rolls dice and applies damage.
+ */
+export const fireWeapon = async (gameId: number,
+    unitId: number,
+    fireWeaponInput: FireWeaponInput, options?: RequestInit): Promise<FireWeaponResult> => {
+
+  return customFetch<FireWeaponResult>(getFireWeaponUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      fireWeaponInput,)
+  }
+);}
+
+
+
+
+export const getFireWeaponMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof fireWeapon>>, TError,{gameId: number;unitId: number;data: BodyType<FireWeaponInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof fireWeapon>>, TError,{gameId: number;unitId: number;data: BodyType<FireWeaponInput>}, TContext> => {
+
+const mutationKey = ['fireWeapon'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof fireWeapon>>, {gameId: number;unitId: number;data: BodyType<FireWeaponInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  fireWeapon(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type FireWeaponMutationResult = NonNullable<Awaited<ReturnType<typeof fireWeapon>>>
+    export type FireWeaponMutationBody = BodyType<FireWeaponInput>
+    export type FireWeaponMutationError = ErrorType<void>
+
+    /**
+ * @summary Fire a single weapon from the active ship at a chosen target. Server rolls dice and applies damage.
+ */
+export const useFireWeapon = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof fireWeapon>>, TError,{gameId: number;unitId: number;data: BodyType<FireWeaponInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof fireWeapon>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<FireWeaponInput>},
+        TContext
+      > => {
+      return useMutation(getFireWeaponMutationOptions(options));
     }
 
 export const getMoveUnitUrl = (gameId: number,

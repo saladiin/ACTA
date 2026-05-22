@@ -17,6 +17,8 @@ export interface ShipModel {
   speed: number;
   weaponRange: number;
   weaponDamage: number;
+  /** Roll-to-hit target (≥) for attacks against this ship's class. */
+  hullRating: number;
   /** @nullable */
   description?: string | null;
   weapons?: Weapon[];

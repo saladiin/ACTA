@@ -26,4 +26,5 @@ export interface GameUnit {
   weaponDamage: number;
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
+  hasFiredThisRound: boolean;
 }

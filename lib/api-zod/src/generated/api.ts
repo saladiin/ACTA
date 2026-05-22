@@ -29,6 +29,7 @@ export const ListShipModelsResponseItem = zod.object({
   "speed": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
+  "hullRating": zod.number().describe('Roll-to-hit target (≥) for attacks against this ship\'s class.'),
   "description": zod.string().nullish(),
   "weapons": zod.array(zod.object({
   "id": zod.number(),
@@ -115,6 +116,7 @@ export const ListFleetShipsResponseItem = zod.object({
   "speed": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
+  "hullRating": zod.number().describe('Roll-to-hit target (≥) for attacks against this ship\'s class.'),
   "description": zod.string().nullish(),
   "weapons": zod.array(zod.object({
   "id": zod.number(),
@@ -171,6 +173,8 @@ export const ListGamesResponseItem = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -209,6 +213,8 @@ export const GetGameResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -232,7 +238,8 @@ export const GetGameResponse = zod.object({
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean(),
-  "hasMovedThisRound": zod.boolean()
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean()
 })),
   "turns": zod.array(zod.object({
   "id": zod.number(),
@@ -270,6 +277,8 @@ export const AcceptGameResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -296,6 +305,8 @@ export const DeclineGameResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -332,6 +343,8 @@ export const DeployFleetResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -403,6 +416,8 @@ export const ActivateUnitResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -429,9 +444,39 @@ export const EndActivationResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Fire a single weapon from the active ship at a chosen target. Server rolls dice and applies damage.
+ */
+export const FireWeaponParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const FireWeaponBody = zod.object({
+  "weaponId": zod.number(),
+  "targetUnitId": zod.number()
+})
+
+export const FireWeaponResponse = zod.object({
+  "weaponId": zod.number(),
+  "targetUnitId": zod.number(),
+  "hitThreshold": zod.number(),
+  "attackRolls": zod.array(zod.number()),
+  "hits": zod.number(),
+  "damageRolls": zod.array(zod.number()),
+  "totalDamage": zod.number(),
+  "criticalRolls": zod.array(zod.number()),
+  "targetHullBefore": zod.number(),
+  "targetHullAfter": zod.number(),
+  "targetDestroyed": zod.boolean()
 })
 
 
@@ -468,7 +513,8 @@ export const MoveUnitResponse = zod.object({
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean(),
-  "hasMovedThisRound": zod.boolean()
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean()
 })
 
 
@@ -489,6 +535,8 @@ export const GetLobbyResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -506,6 +554,8 @@ export const GetLobbyResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -523,6 +573,8 @@ export const GetLobbyResponse = zod.object({
   "activePlayerId": zod.string().nullish(),
   "activeUnitId": zod.number().nullish(),
   "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()

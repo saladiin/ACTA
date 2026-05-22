@@ -16,6 +16,7 @@ import {
   useMoveUnit,
   useActivateUnit,
   useEndActivation,
+  useFireWeapon,
   useListFleets,
   useListFleetShips,
   useListShipModels,
@@ -23,7 +24,7 @@ import {
   getListTurnsQueryKey,
   getListFleetShipsQueryKey,
 } from "@workspace/api-client-react";
-import type { ShipModel, Weapon } from "@workspace/api-client-react";
+import type { ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { useDevUserId } from "../lib/dev-user";
 import { Layout } from "@/components/layout";
@@ -310,10 +311,12 @@ function ArcSector({ centerAngle, halfAngle, radius, color, opacity }: {
   );
 }
 
-// Arcs whose centre is on the fore/aft axis — their centerAngle and label Z must be
-// negated for ships whose model is flipped 180° inside the heading group.
-const AXIAL_ARCS = new Set(["Forward", "Aft", "Boresight Forward", "Boresight Aft"]);
-
+// For ships whose OBJ is flipped 180° inside the heading group, the entire arc
+// frame must be rotated 180° so the visual arcs match the server's adjudication
+// (server uses `effHeading = heading + 180` for FLIP_MODELS — see games.ts).
+// Rotating by +π handles both axial arcs (Forward/Aft/Boresight) AND lateral
+// arcs (Port/Starboard) correctly, where the older "negate axial-only" trick
+// silently mirrored port/starboard onto the wrong side of the hull.
 function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "arc">[]; flip?: boolean }) {
   const uniqueArcs = useMemo(() => [...new Set(weapons.map(w => w.arc))], [weapons]);
   return (
@@ -321,7 +324,7 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
       {uniqueArcs.map(arc => {
         const def = ARC_DEFS[arc];
         if (!def) return null;
-        const centerAngle = (flip && AXIAL_ARCS.has(arc)) ? -def.centerAngle : def.centerAngle;
+        const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
         return (
           <ArcSector
             key={arc}
@@ -337,8 +340,8 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
         const lbl = ARC_LABELS[arc];
         const def = ARC_DEFS[arc];
         if (!lbl || !def) return null;
-        const pos: [number, number, number] = (flip && AXIAL_ARCS.has(arc))
-          ? [lbl.pos[0], lbl.pos[1], -lbl.pos[2]]
+        const pos: [number, number, number] = flip
+          ? [-lbl.pos[0], lbl.pos[1], -lbl.pos[2]]
           : lbl.pos;
         return (
           <Text
@@ -660,6 +663,7 @@ export default function GameBoard() {
   const moveUnit = useMoveUnit();
   const activateUnit = useActivateUnit();
   const endActivation = useEndActivation();
+  const fireWeapon = useFireWeapon();
 
   // Staging / fleet yards
   const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
@@ -728,6 +732,28 @@ export default function GameBoard() {
   const [selectedUnit, setSelectedUnit] = useState<number | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ q: number; r: number } | null>(null);
   const [attackTarget, setAttackTarget] = useState<number | null>(null);
+
+  // ── Firing-phase state ──
+  // The weapon (id) the player has selected and is about to assign to a target.
+  // While set, clicking an enemy ship resolves into a fire-weapon call.
+  const [firingWeaponPicking, setFiringWeaponPicking] = useState<number | null>(null);
+  // Weapons already fired during the CURRENT firing activation (one shot per
+  // weapon per activation). Reset on activeUnit change or round transition.
+  const [weaponsFiredIds, setWeaponsFiredIds] = useState<Set<number>>(new Set());
+  // Dice-roll modal payload. `rolling` plays a quick shuffle animation before
+  // revealing the server's authoritative roll in `result`.
+  const [diceModal, setDiceModal] = useState<
+    | null
+    | {
+        weapon: Weapon;
+        targetName: string;
+        targetId: number;
+        attackDice: number;
+        state: "rolling" | "done" | "error";
+        result?: FireWeaponResult;
+        error?: string;
+      }
+  >(null);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
@@ -902,12 +928,76 @@ export default function GameBoard() {
     return { x: v.x * movePlan.distance, z: v.z * movePlan.distance };
   }, [selectedUnitData, movePlan]);
 
+  const currentPhase: "movement" | "firing" = (game?.phase as "movement" | "firing") ?? "movement";
+
+  // Reset per-activation firing state whenever the active unit changes (new
+  // ship picked up, or the previous activation ended).
+  useEffect(() => {
+    setWeaponsFiredIds(new Set());
+    setFiringWeaponPicking(null);
+  }, [activeUnitId, currentPhase]);
+
   const handleUnitClick = (unitId: number) => {
     const unit = units.find(u => u.id === unitId);
     if (!unit || unit.isDestroyed) return;
 
-    // Attack click: selected own ship + clicked enemy = queue an attack.
-    if (selectedUnit && selectedUnit !== unitId && unit.ownerId !== myUserId) {
+    // ── FIRING-PHASE target click ──
+    // While picking a target for a weapon, clicking an enemy ship resolves
+    // the shot immediately via the server.
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "firing" &&
+      firingWeaponPicking !== null &&
+      hasActiveUnit &&
+      unit.ownerId !== myUserId
+    ) {
+      const attacker = units.find(u => u.id === activeUnitId);
+      const weapon = (weaponsByFilename[attacker?.modelFilename ?? ""] as Weapon[] | undefined)
+        ?.find(w => w.id === firingWeaponPicking);
+      if (!attacker || !weapon) return;
+      // Open the dice modal in the "rolling" phase BEFORE we hear back from
+      // the server so the user gets immediate visual feedback. The server
+      // call below populates `result` (or `error`) when it returns.
+      setDiceModal({
+        weapon,
+        targetName: unit.name,
+        targetId: unit.id,
+        attackDice: weapon.attackDice,
+        state: "rolling",
+      });
+      const firedWeaponId = weapon.id;
+      fireWeapon.mutate(
+        { gameId, unitId: attacker.id, data: { weaponId: firedWeaponId, targetUnitId: unit.id } },
+        {
+          onSuccess: (res) => {
+            // Mark rules-state IMMEDIATELY so the same weapon can't be
+            // re-fired during the dice-roll animation window. The visual
+            // reveal of the result is delayed separately for UX polish only.
+            setWeaponsFiredIds(prev => new Set(prev).add(firedWeaponId));
+            setFiringWeaponPicking(null);
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            // Small delay so the "rolling" shuffle has a moment to play.
+            setTimeout(() => {
+              setDiceModal(m => (m ? { ...m, state: "done", result: res } : null));
+            }, 700);
+          },
+          onError: (err: any) => {
+            setTimeout(() => {
+              setDiceModal(m => (m ? { ...m, state: "error", error: err?.message ?? "Shot failed" } : null));
+              setFiringWeaponPicking(null);
+            }, 200);
+          },
+        },
+      );
+      return;
+    }
+
+    // Legacy attack-queue path (movement phase / legacy submitTurn flow).
+    if (
+      currentPhase === "movement" &&
+      selectedUnit && selectedUnit !== unitId && unit.ownerId !== myUserId
+    ) {
       const attacker = units.find(u => u.id === selectedUnit);
       if (attacker && attacker.ownerId === myUserId) {
         setTurnAttacks(prev => [...prev.filter(a => a.attackerUnitId !== selectedUnit), { attackerUnitId: selectedUnit, targetUnitId: unitId }]);
@@ -920,10 +1010,12 @@ export default function GameBoard() {
 
     // Activation model: clicking an own ship picks the next activation. The
     // server enforces this — UI only fires when it's actually our turn AND
-    // the ship hasn't moved yet AND nothing else is currently activated.
+    // the ship hasn't done THIS phase's activation yet AND nothing else is
+    // currently activated.
     if (game?.status === "active" && isMyActivation) {
       const isCurrentlyActive = activeUnitId === unitId;
-      if (!hasActiveUnit && !unit.hasMovedThisRound) {
+      const phaseDone = currentPhase === "firing" ? unit.hasFiredThisRound : unit.hasMovedThisRound;
+      if (!hasActiveUnit && !phaseDone) {
         // Pick this ship up for its activation.
         if (activateUnit.isPending) return;
         setSelectedUnit(unitId);
@@ -1388,8 +1480,24 @@ export default function GameBoard() {
           {/* Turn actions */}
           {game.status === "active" && isMyActivation && (
             <div className="p-4 border-b border-border space-y-3">
-              <p className="text-xs font-mono text-primary uppercase tracking-wider">
-                Round {game.currentRound} — {hasActiveUnit ? `Activating ${units.find(u => u.id === activeUnitId)?.name ?? "—"}` : "Pick a Ship"}
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs font-mono text-primary uppercase tracking-wider">
+                  Round {game.currentRound}
+                </p>
+                <Badge
+                  data-testid="badge-phase"
+                  variant="outline"
+                  className={`text-[10px] font-mono uppercase tracking-widest ${
+                    currentPhase === "firing"
+                      ? "border-red-500/60 text-red-300 bg-red-500/10"
+                      : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"
+                  }`}
+                >
+                  {currentPhase === "firing" ? "Firing" : "Movement"}
+                </Badge>
+              </div>
+              <p className="text-xs font-mono text-muted-foreground">
+                {hasActiveUnit ? `Activating ${units.find(u => u.id === activeUnitId)?.name ?? "—"}` : "Pick a Ship"}
               </p>
               <Button
                 size="sm"
@@ -1404,7 +1512,7 @@ export default function GameBoard() {
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
               </div>
-              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (
+              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && (
                 <div className="space-y-1.5">
                   <div
                     className={`rounded border px-2 py-1.5 font-mono text-xs ${
@@ -1434,6 +1542,58 @@ export default function GameBoard() {
                   </p>
                 </div>
               )}
+
+              {/* ── FIRING PHASE: weapon list for the active ship ── */}
+              {currentPhase === "firing" && hasActiveUnit && (() => {
+                const attacker = units.find(u => u.id === activeUnitId);
+                if (!attacker || attacker.ownerId !== myUserId) return null;
+                const weapons = (weaponsByFilename[attacker.modelFilename] as Weapon[] | undefined) ?? [];
+                return (
+                  <div className="space-y-1.5" data-testid="firing-panel">
+                    <div className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
+                      Weapons · {attacker.name}
+                    </div>
+                    {weapons.length === 0 && (
+                      <p className="text-xs text-muted-foreground font-mono italic">No weapons.</p>
+                    )}
+                    {weapons.map(w => {
+                      const fired = weaponsFiredIds.has(w.id);
+                      const picking = firingWeaponPicking === w.id;
+                      return (
+                        <button
+                          key={w.id}
+                          data-testid={`weapon-${w.id}`}
+                          disabled={fired || fireWeapon.isPending}
+                          onClick={() => setFiringWeaponPicking(picking ? null : w.id)}
+                          className={`w-full text-left rounded border px-2 py-1.5 font-mono text-xs transition-colors ${
+                            fired
+                              ? "border-green-500/30 bg-green-500/5 text-green-500/60 line-through cursor-not-allowed"
+                              : picking
+                              ? "border-amber-400/80 bg-amber-400/15 text-amber-200"
+                              : "border-red-500/30 bg-red-500/5 text-red-300 hover:bg-red-500/10"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold">{w.name || w.arc}</span>
+                            <span className="text-[10px] opacity-70">{w.attackDice}AD · r{w.range}"</span>
+                          </div>
+                          <div className="text-[10px] opacity-70 mt-0.5">
+                            {w.arc}{w.traits ? ` · ${w.traits}` : ""}
+                          </div>
+                          {picking && (
+                            <div className="text-[10px] text-amber-200 mt-1 uppercase tracking-wider">
+                              ▸ Click an enemy ship to fire
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                    <p className="text-[10px] text-muted-foreground font-mono">
+                      Pick weapons → target → End Activation when done.
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -1498,6 +1658,183 @@ export default function GameBoard() {
           </div>
         </div>
       </div>
+
+      {/* ── DICE ROLL MODAL ── */}
+      {diceModal && (
+        <DiceRollModal
+          modal={diceModal}
+          onClose={() => setDiceModal(null)}
+        />
+      )}
     </Layout>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dice roll modal — plays a brief shuffle animation, then reveals the server's
+// authoritative attack rolls / hits / damage / crits.
+// ─────────────────────────────────────────────────────────────────────────────
+function DiceFace({ value, rolling }: { value: number; rolling: boolean }) {
+  const [display, setDisplay] = useState<number>(value);
+  useEffect(() => {
+    if (!rolling) { setDisplay(value); return; }
+    let raf = 0;
+    let last = 0;
+    const loop = (t: number) => {
+      if (t - last > 80) {
+        setDisplay(1 + Math.floor(Math.random() * 6));
+        last = t;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [rolling, value]);
+  return (
+    <span className="inline-flex items-center justify-center w-9 h-9 rounded border border-amber-500/60 bg-black/60 text-amber-300 font-mono text-lg font-bold tabular-nums">
+      {display}
+    </span>
+  );
+}
+
+function DiceRollModal({
+  modal,
+  onClose,
+}: {
+  modal: {
+    weapon: Weapon;
+    targetName: string;
+    targetId: number;
+    attackDice: number;
+    state: "rolling" | "done" | "error";
+    result?: FireWeaponResult;
+    error?: string;
+  };
+  onClose: () => void;
+}) {
+  const { weapon, targetName, attackDice, state, result, error } = modal;
+  const rolling = state === "rolling";
+  const rolls = result?.attackRolls ?? Array.from({ length: attackDice }, () => 0);
+  const hitThreshold = result?.hitThreshold;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      data-testid="dice-modal"
+      onClick={state !== "rolling" ? onClose : undefined}
+    >
+      <div
+        className="bg-card border border-amber-500/40 rounded-md p-5 w-full max-w-md mx-4 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-amber-400/70 font-mono">Firing</p>
+            <p className="text-sm font-mono font-bold text-amber-300">
+              {weapon.name || weapon.arc} → {targetName}
+            </p>
+          </div>
+          <p className="text-[10px] font-mono text-muted-foreground">
+            {attackDice}AD · r{weapon.range}" · {weapon.arc}
+          </p>
+        </div>
+
+        {state === "error" && (
+          <div className="text-sm font-mono text-red-400 py-4 text-center">
+            ✕ {error}
+          </div>
+        )}
+
+        {state !== "error" && (
+          <>
+            {/* Attack dice */}
+            <div className="space-y-1">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                Attack {hitThreshold ? `· need ${hitThreshold}+` : ""}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {rolls.map((r, i) => {
+                  const hit = !rolling && hitThreshold !== undefined && r >= hitThreshold;
+                  return (
+                    <div key={i} className={`relative ${hit ? "" : !rolling ? "opacity-50" : ""}`}>
+                      <DiceFace value={r} rolling={rolling} />
+                      {hit && (
+                        <span className="absolute -bottom-1 -right-1 text-[8px] font-mono text-green-400 bg-black/80 px-1 rounded">HIT</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Damage dice (only shown after roll) */}
+            {!rolling && result && (
+              <>
+                {result.hits > 0 ? (
+                  <div className="mt-3 space-y-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                      Damage · {result.hits} hit{result.hits === 1 ? "" : "s"}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {result.damageRolls.map((d, i) => {
+                        const dmg = d === 1 ? 0 : d <= 5 ? 1 : 2;
+                        return (
+                          <div key={i} className="flex flex-col items-center">
+                            <DiceFace value={d} rolling={false} />
+                            <span className={`text-[10px] font-mono mt-0.5 ${d === 6 ? "text-red-400 font-bold" : d === 1 ? "text-muted-foreground" : "text-amber-300"}`}>
+                              {dmg}{d === 6 ? "+crit" : ""}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {result.criticalRolls.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
+                          Critical · {result.criticalRolls.length} crit{result.criticalRolls.length === 1 ? "" : "s"}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {result.criticalRolls.map((c, i) => (
+                            <DiceFace key={i} value={c} rolling={false} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-3 text-sm font-mono text-muted-foreground text-center py-2">
+                    All misses — no damage rolled.
+                  </div>
+                )}
+
+                {/* Summary */}
+                <div className="mt-4 border-t border-border pt-3 space-y-1 font-mono text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Total damage</span>
+                    <span className="text-amber-300 font-bold">{result.totalDamage}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{targetName} hull</span>
+                    <span className={result.targetDestroyed ? "text-red-400 font-bold" : "text-foreground"}>
+                      {result.targetHullBefore} → {result.targetHullAfter}
+                      {result.targetDestroyed && " · DESTROYED"}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        <Button
+          data-testid="button-close-dice-modal"
+          className="w-full mt-4 uppercase tracking-widest text-xs"
+          disabled={rolling}
+          onClick={onClose}
+        >
+          {rolling ? "Rolling…" : "Continue"}
+        </Button>
+      </div>
+    </div>
   );
 }

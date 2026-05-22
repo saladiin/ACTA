@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { GamePhase } from './gamePhase';
 import type { GameStatus } from './gameStatus';
 
 export interface Game {
@@ -27,6 +28,9 @@ export interface Game {
   activeUnitId?: number | null;
   /** @nullable */
   lastActivatorId?: string | null;
+  phase: GamePhase;
+  /** @nullable */
+  initiativeWinnerId?: string | null;
   pointLimit: number;
   createdAt: Date;
   updatedAt: Date;
