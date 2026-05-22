@@ -67,6 +67,7 @@ export type GameStatus = typeof GameStatus[keyof typeof GameStatus];
 
 
 export const GameStatus = {
+  open: 'open',
   pending: 'pending',
   deploying: 'deploying',
   active: 'active',
@@ -77,7 +78,8 @@ export const GameStatus = {
 export interface Game {
   id: number;
   challengerId: string;
-  opponentId: string;
+  /** @nullable */
+  opponentId?: string | null;
   /** @nullable */
   challengerName?: string | null;
   /** @nullable */
@@ -99,8 +101,16 @@ export interface Game {
 }
 
 export interface GameInput {
-  opponentId: string;
-  fleetId: number;
+  /**
+     * Optional. Omit for an open challenge any commander can accept.
+     * @nullable
+     */
+  opponentId?: string | null;
+  /**
+     * Optional prefab fleet to commit at creation time.
+     * @nullable
+     */
+  fleetId?: number | null;
   pointLimit: number;
 }
 

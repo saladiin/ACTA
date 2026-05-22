@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 export const gamesTable = pgTable("games", {
   id: serial("id").primaryKey(),
   challengerId: text("challenger_id").notNull(),
-  opponentId: text("opponent_id").notNull(),
+  opponentId: text("opponent_id"),
   challengerName: text("challenger_name"),
   opponentName: text("opponent_name"),
   status: text("status").notNull().default("pending"),

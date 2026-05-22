@@ -10,6 +10,7 @@ export type GameStatus = typeof GameStatus[keyof typeof GameStatus];
 
 
 export const GameStatus = {
+  open: 'open',
   pending: 'pending',
   deploying: 'deploying',
   active: 'active',

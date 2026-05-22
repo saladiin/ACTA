@@ -43,21 +43,34 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [fleet] = await db.select().from(fleetsTable).where(and(eq(fleetsTable.id, parsed.data.fleetId), eq(fleetsTable.ownerId, userId)));
-  if (!fleet) {
-    res.status(404).json({ error: "Fleet not found" });
-    return;
+  // Fleet is optional at creation time — challenger can pick one later during
+  // the deploy phase. If supplied, it must belong to the challenger.
+  const fleetId = parsed.data.fleetId ?? null;
+  if (fleetId !== null) {
+    const [fleet] = await db.select().from(fleetsTable).where(and(eq(fleetsTable.id, fleetId), eq(fleetsTable.ownerId, userId)));
+    if (!fleet) { res.status(404).json({ error: "Fleet not found" }); return; }
   }
+
   const [challenger] = await db.select().from(playersTable).where(eq(playersTable.clerkUserId, userId));
-  const [opponent] = await db.select().from(playersTable).where(eq(playersTable.clerkUserId, parsed.data.opponentId));
+
+  // Open challenge: no specific opponent — anyone (other than challenger) may
+  // accept it from the lobby. status="open" makes the auth model explicit:
+  // accept is gated on status, not on opponentId membership.
+  const opponentId = parsed.data.opponentId ?? null;
+  let opponentName: string | null = null;
+  if (opponentId) {
+    const [opp] = await db.select().from(playersTable).where(eq(playersTable.clerkUserId, opponentId));
+    opponentName = opp?.username ?? null;
+  }
+
   const [game] = await db.insert(gamesTable).values({
     challengerId: userId,
-    opponentId: parsed.data.opponentId,
+    opponentId,
     challengerName: challenger?.username ?? null,
-    opponentName: opponent?.username ?? null,
-    challengerFleetId: parsed.data.fleetId,
+    opponentName,
+    challengerFleetId: fleetId,
     pointLimit: parsed.data.pointLimit,
-    status: "pending",
+    status: opponentId ? "pending" : "open",
   }).returning();
   res.status(201).json(game);
 });
@@ -69,12 +82,18 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
+  // Anyone can view an open challenge so they can decide to accept it from a
+  // direct link; members of a non-open game see it as before.
   const [game] = await db
     .select()
     .from(gamesTable)
     .where(and(
       eq(gamesTable.id, params.data.gameId),
-      or(eq(gamesTable.challengerId, userId), eq(gamesTable.opponentId, userId))
+      or(
+        eq(gamesTable.status, "open"),
+        eq(gamesTable.challengerId, userId),
+        eq(gamesTable.opponentId, userId),
+      ),
     ));
   if (!game) {
     res.status(404).json({ error: "Game not found" });
@@ -92,17 +111,46 @@ router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const [game] = await db.select().from(gamesTable).where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.opponentId, userId)));
-  if (!game) {
-    res.status(404).json({ error: "Game not found" });
-    return;
+
+  try {
+    const updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      if (game.status === "open") {
+        // Open challenge: anyone except the challenger may claim it. We bind
+        // the opponent atomically here so two simultaneous accepts can't both
+        // win — the conditional UPDATE only fires while status is still open.
+        if (game.challengerId === userId) {
+          throw Object.assign(new Error("Cannot accept your own challenge"), { status: 400 });
+        }
+        const [me] = await tx.select().from(playersTable).where(eq(playersTable.clerkUserId, userId));
+        const result = await tx.update(gamesTable)
+          .set({ status: "deploying", opponentId: userId, opponentName: me?.username ?? null })
+          .where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.status, "open")))
+          .returning();
+        if (result.length === 0) throw Object.assign(new Error("Already claimed"), { status: 409 });
+        return result[0];
+      }
+
+      if (game.status === "pending") {
+        if (game.opponentId !== userId) throw Object.assign(new Error("Game not found"), { status: 404 });
+        const result = await tx.update(gamesTable)
+          .set({ status: "deploying" })
+          .where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.status, "pending")))
+          .returning();
+        if (result.length === 0) throw Object.assign(new Error("Already changed"), { status: 409 });
+        return result[0];
+      }
+
+      throw Object.assign(new Error("Game is not acceptable"), { status: 400 });
+    });
+    res.json(AcceptGameResponse.parse(updated));
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
   }
-  if (game.status !== "pending") {
-    res.status(400).json({ error: "Game is not pending" });
-    return;
-  }
-  const [updated] = await db.update(gamesTable).set({ status: "deploying" }).where(eq(gamesTable.id, params.data.gameId)).returning();
-  res.json(AcceptGameResponse.parse(updated));
 });
 
 router.post("/games/:gameId/decline", requireAuth, async (req, res): Promise<void> => {
@@ -112,13 +160,46 @@ router.post("/games/:gameId/decline", requireAuth, async (req, res): Promise<voi
     res.status(400).json({ error: params.error.message });
     return;
   }
-  const [game] = await db.select().from(gamesTable).where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.opponentId, userId)));
-  if (!game) {
-    res.status(404).json({ error: "Game not found" });
-    return;
+  // Decline semantics:
+  // - status='pending': only the targeted opponent may decline.
+  // - status='open':    only the challenger may withdraw the open challenge.
+  // Anything past pending/open (deploying/active/completed/declined) is
+  // immutable here — prevents a malicious or stale client from regressing a
+  // game's lifecycle, and prevents a decline/accept race from overwriting a
+  // just-accepted game.
+  try {
+    const updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      if (game.status === "pending") {
+        if (game.opponentId !== userId) throw Object.assign(new Error("Game not found"), { status: 404 });
+        const result = await tx.update(gamesTable)
+          .set({ status: "declined" })
+          .where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.status, "pending")))
+          .returning();
+        if (result.length === 0) throw Object.assign(new Error("Already changed"), { status: 409 });
+        return result[0];
+      }
+
+      if (game.status === "open") {
+        if (game.challengerId !== userId) throw Object.assign(new Error("Only the challenger can withdraw an open challenge"), { status: 403 });
+        const result = await tx.update(gamesTable)
+          .set({ status: "declined" })
+          .where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.status, "open")))
+          .returning();
+        if (result.length === 0) throw Object.assign(new Error("Already changed"), { status: 409 });
+        return result[0];
+      }
+
+      throw Object.assign(new Error(`Cannot decline from status '${game.status}'`), { status: 400 });
+    });
+    res.json(DeclineGameResponse.parse(updated));
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
   }
-  const [updated] = await db.update(gamesTable).set({ status: "declined" }).where(eq(gamesTable.id, params.data.gameId)).returning();
-  res.json(DeclineGameResponse.parse(updated));
 });
 
 router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void> => {
@@ -373,7 +454,11 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         .set({ hasMovedThisRound: true })
         .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)));
 
-      const otherPlayerId = userId === game.challengerId ? game.opponentId : game.challengerId;
+      // In active games the opponent is always bound; the status check above
+      // (game.status === "active") implies an accepted/claimed challenge.
+      if (!game.opponentId) throw Object.assign(new Error("Game has no opponent"), { status: 500 });
+      const opponentId = game.opponentId;
+      const otherPlayerId = userId === game.challengerId ? opponentId : game.challengerId;
       const remainingFor = async (pid: string) => {
         const rows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
           eq(gameUnitsTable.gameId, game.id),
@@ -402,7 +487,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
           .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
         nextRound = game.currentRound + 1;
         nextTurn = game.currentTurn + 1;
-        nextActivePlayerId = userId === game.challengerId ? game.opponentId : game.challengerId;
+        nextActivePlayerId = userId === game.challengerId ? opponentId : game.challengerId;
       }
 
       // Conditional UPDATE guards against any state change we didn't see.
@@ -449,6 +534,13 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
     res.status(400).json({ error: `Cannot skip deploy from status '${game.status}'` });
     return;
   }
+  // skip-deploy only makes sense once both sides exist; open challenges have
+  // no opponent until someone accepts them.
+  const opponentId = game.opponentId;
+  if (!opponentId) {
+    res.status(400).json({ error: "No opponent has accepted this challenge yet" });
+    return;
+  }
 
   // Find challenger fleet — prefer the one stored on the game, else pick any fleet they own
   let challengerFleetId = game.challengerFleetId;
@@ -460,7 +552,7 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
   // Find opponent fleet — prefer stored, else pick any they own, else reuse challenger's
   let opponentFleetId = game.opponentFleetId;
   if (!opponentFleetId) {
-    const [anyFleet] = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, game.opponentId));
+    const [anyFleet] = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, opponentId));
     opponentFleetId = anyFleet?.id ?? challengerFleetId;
   }
 
@@ -497,7 +589,7 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
 
   // Challenger near top (negative hexR, facing down); opponent near bottom (facing up)
   await autoPlace(challengerFleetId, game.challengerId, -8, 180);
-  await autoPlace(opponentFleetId, game.opponentId, 8, 0);
+  await autoPlace(opponentFleetId, opponentId, 8, 0);
 
   const [updated] = await db.update(gamesTable).set({
     challengerDeployed: true,

@@ -7,7 +7,15 @@
  */
 
 export interface GameInput {
-  opponentId: string;
-  fleetId: number;
+  /**
+     * Optional. Omit for an open challenge any commander can accept.
+     * @nullable
+     */
+  opponentId?: string | null;
+  /**
+     * Optional prefab fleet to commit at creation time.
+     * @nullable
+     */
+  fleetId?: number | null;
   pointLimit: number;
 }

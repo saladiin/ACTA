@@ -10,7 +10,8 @@ import type { GameStatus } from './gameStatus';
 export interface Game {
   id: number;
   challengerId: string;
-  opponentId: string;
+  /** @nullable */
+  opponentId?: string | null;
   /** @nullable */
   challengerName?: string | null;
   /** @nullable */

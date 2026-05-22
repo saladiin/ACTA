@@ -533,14 +533,14 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, opponentId, status, currentTurn, currentRound, pointLimit, createdAt, updatedAt]
+      required: [id, challengerId, status, currentTurn, currentRound, pointLimit, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
-        opponentId:   { type: string }
+        opponentId:   { type: ["string", "null"] }
         challengerName: { type: ["string", "null"] }
         opponentName:   { type: ["string", "null"] }
-        status:       { type: string, enum: [pending, deploying, active, completed, declined] }
+        status:       { type: string, enum: [open, pending, deploying, active, completed, declined] }
         winnerId:     { type: ["string", "null"] }
         currentTurn:  { type: integer }
         currentRound: { type: integer }
@@ -553,10 +553,10 @@ components:
 
     GameInput:
       type: object
-      required: [opponentId, fleetId, pointLimit]
+      required: [pointLimit]
       properties:
-        opponentId: { type: string }
-        fleetId:    { type: integer }
+        opponentId: { type: ["string", "null"], description: "Optional. Omit for an open challenge any commander can accept." }
+        fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time." }
         pointLimit: { type: integer }
 
     GameUnit:

@@ -1299,7 +1299,7 @@ export default function GameBoard() {
             </div>
           )}
 
-          {/* Pending challenge actions */}
+          {/* Targeted pending challenge — opponent can accept or decline. */}
           {game.status === "pending" && isOpponent && (
             <div className="p-4 border-b border-border space-y-2">
               <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">Challenge from {game.challengerName}</p>
@@ -1324,6 +1324,37 @@ export default function GameBoard() {
                   <XCircle className="w-3.5 h-3.5" /> Decline
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* Open challenge — any non-challenger can claim it; challenger can withdraw it. */}
+          {game.status === "open" && !isChallenger && (
+            <div className="p-4 border-b border-border space-y-2">
+              <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">Open challenge from {game.challengerName}</p>
+              <Button
+                size="sm"
+                data-testid="button-accept-open-game"
+                className="w-full gap-1.5 uppercase tracking-wider text-xs"
+                onClick={() => acceptGame.mutate({ gameId }, { onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) })}
+                disabled={acceptGame.isPending}
+              >
+                <CheckCircle className="w-3.5 h-3.5" /> Accept Open Challenge
+              </Button>
+            </div>
+          )}
+          {game.status === "open" && isChallenger && (
+            <div className="p-4 border-b border-border space-y-2">
+              <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">Open challenge — awaiting a commander to accept</p>
+              <Button
+                size="sm"
+                variant="destructive"
+                data-testid="button-withdraw-game"
+                className="w-full gap-1.5 uppercase tracking-wider text-xs"
+                onClick={() => declineGame.mutate({ gameId }, { onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) })}
+                disabled={declineGame.isPending}
+              >
+                <XCircle className="w-3.5 h-3.5" /> Withdraw Challenge
+              </Button>
             </div>
           )}
 
