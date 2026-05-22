@@ -51,8 +51,8 @@ function BeamFx({
   from,
   to,
   color,
-  lifeMs = 650,
-  thickness = 0.09,
+  lifeMs = 2600,
+  thickness = 0.018,
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
