@@ -14,6 +14,8 @@ import {
   useDeployFleet,
   useSubmitTurn,
   useMoveUnit,
+  useActivateUnit,
+  useEndActivation,
   useListFleets,
   useListFleetShips,
   useListShipModels,
@@ -181,24 +183,28 @@ function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   return <ObjModel url={url} tint={tint} />;
 }
 
-function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset }: {
+function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, dimmed }: {
   unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number };
   isSelected: boolean;
   onClick: () => void;
   myUserId: string;
   weapons: Pick<Weapon, "arc">[];
   dragOffset?: { x: number; z: number } | null;
+  dimmed?: boolean;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const x = bx + (dragOffset?.x ?? 0);
   const z = bz + (dragOffset?.z ?? 0);
   const isMine = unit.ownerId === myUserId;
-  // mine = green, enemy = red; selected mine = blue, selected enemy = yellow
+  // mine = green, enemy = red; selected mine = blue, selected enemy = yellow.
+  // Dimmed = activated already this round.
   const color = unit.isDestroyed
     ? "#4b5563"
-    : isSelected
-      ? (isMine ? "#3b82f6" : "#eab308")
-      : (isMine ? "#22c55e" : "#ef4444");
+    : dimmed
+      ? (isMine ? "#166534" : "#7f1d1d")
+      : isSelected
+        ? (isMine ? "#3b82f6" : "#eab308")
+        : (isMine ? "#22c55e" : "#ef4444");
   const hpPct = unit.hullPoints / unit.maxHullPoints;
   const headingRad = (unit.heading * Math.PI) / 180;
 
@@ -652,6 +658,8 @@ export default function GameBoard() {
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
   const moveUnit = useMoveUnit();
+  const activateUnit = useActivateUnit();
+  const endActivation = useEndActivation();
 
   // Staging / fleet yards
   const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
@@ -725,12 +733,12 @@ export default function GameBoard() {
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
   useEffect(() => { setMovePlan(null); }, [selectedUnit]);
 
-  // Per-unit movement-phase ledger. Tracks inches moved + turns used since the
-  // start of the current game turn. Wiped whenever the turn rolls over (which
-  // is also when the player swaps), so each player gets a fresh allowance.
+  // Per-unit movement-phase ledger. Each ship gets ONE activation per round
+  // with `speed` inches and `turns` rotations to spend; the ledger is wiped
+  // when the round rolls over.
   const [phaseLedger, setPhaseLedger] = useState<Record<number, { distance: number; turns: number }>>({});
-  const currentTurnNumber = gameData?.game?.currentTurn ?? 0;
-  useEffect(() => { setPhaseLedger({}); }, [currentTurnNumber]);
+  const currentRoundNumber = gameData?.game?.currentRound ?? 1;
+  useEffect(() => { setPhaseLedger({}); }, [currentRoundNumber]);
   const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0 }, [phaseLedger]);
 
   // Fleet Yards: which fleet the player is deploying from
@@ -745,12 +753,15 @@ export default function GameBoard() {
 
   const isChallenger = game?.challengerId === myUserId;
   const isOpponent = game?.opponentId === myUserId;
-  const isMyTurn = game?.status === "active" && (
-    (isChallenger && (game.currentTurn % 2 === 1)) ||
-    (isOpponent && (game.currentTurn % 2 === 0))
-  );
-
+  // New activation model: it's "my turn" if the server says I'm the
+  // active player for the round's next ship activation.
+  const isMyActivation = game?.status === "active" && game.activePlayerId === myUserId;
+  const activeUnitId = game?.activeUnitId ?? null;
+  const hasActiveUnit = activeUnitId !== null;
   const selectedUnitData = units.find(u => u.id === selectedUnit);
+  // The selected ship is only "controllable" if it's the one the server
+  // currently has activated for THIS player.
+  const isSelectedUnitActive = !!selectedUnitData && selectedUnitData.id === activeUnitId && isMyActivation;
 
   const confirmMovePlan = useCallback(() => {
     const u = units.find(x => x.id === selectedUnit);
@@ -818,7 +829,7 @@ export default function GameBoard() {
   //   Enter      → confirm current plan (queue it)
   //   Esc        → cancel current plan, or if none, discard the queued move for this ship
   useEffect(() => {
-    if (game?.status !== "active" || !isMyTurn) return;
+    if (game?.status !== "active" || !isSelectedUnitActive) return;
     if (!selectedUnitData || selectedUnitData.ownerId !== myUserId || selectedUnitData.isDestroyed) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -826,6 +837,18 @@ export default function GameBoard() {
       // While a move is in flight the server hasn't yet updated the unit's
       // position/heading; queueing another commit would compute from stale state.
       if (moveUnit.isPending) return;
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        if (endActivation.isPending) return;
+        endActivation.mutate({ gameId }, {
+          onSuccess: () => {
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            setSelectedUnit(null);
+            setMovePlan(null);
+          }
+        });
+        return;
+      }
       const u = selectedUnitData;
       const max = u.turnAngle;
       const led = getLedger(u.id);
@@ -860,7 +883,7 @@ export default function GameBoard() {
     // Capture on document so we get the keydown regardless of which element has focus.
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [game?.status, isMyTurn, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending]);
+  }, [game?.status, isSelectedUnitActive, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending, endActivation, gameId, qc]);
 
   // Selected-ship remaining inches this phase + drag offset for the forward
   // preview / ship slide-along-axis.
@@ -877,8 +900,8 @@ export default function GameBoard() {
     const unit = units.find(u => u.id === unitId);
     if (!unit || unit.isDestroyed) return;
 
+    // Attack click: selected own ship + clicked enemy = queue an attack.
     if (selectedUnit && selectedUnit !== unitId && unit.ownerId !== myUserId) {
-      // Attack
       const attacker = units.find(u => u.id === selectedUnit);
       if (attacker && attacker.ownerId === myUserId) {
         setTurnAttacks(prev => [...prev.filter(a => a.attackerUnitId !== selectedUnit), { attackerUnitId: selectedUnit, targetUnitId: unitId }]);
@@ -887,12 +910,51 @@ export default function GameBoard() {
       return;
     }
 
-    if (unit.ownerId === myUserId) {
-      setSelectedUnit(unitId === selectedUnit ? null : unitId);
-      setMoveTarget(null);
-      setAttackTarget(null);
+    if (unit.ownerId !== myUserId) return;
+
+    // Activation model: clicking an own ship picks the next activation. The
+    // server enforces this — UI only fires when it's actually our turn AND
+    // the ship hasn't moved yet AND nothing else is currently activated.
+    if (game?.status === "active" && isMyActivation) {
+      const isCurrentlyActive = activeUnitId === unitId;
+      if (!hasActiveUnit && !unit.hasMovedThisRound) {
+        // Pick this ship up for its activation.
+        if (activateUnit.isPending) return;
+        setSelectedUnit(unitId);
+        setMoveTarget(null);
+        setAttackTarget(null);
+        activateUnit.mutate({ gameId, unitId }, {
+          onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+        });
+        return;
+      }
+      if (isCurrentlyActive) {
+        setSelectedUnit(unitId === selectedUnit ? null : unitId);
+        setMoveTarget(null);
+        setAttackTarget(null);
+        return;
+      }
+      // hasActiveUnit && different ship: ignore — must End Activation first.
+      return;
     }
+
+    // Inactive game or not our activation: still allow selecting own ships
+    // for inspection.
+    setSelectedUnit(unitId === selectedUnit ? null : unitId);
+    setMoveTarget(null);
+    setAttackTarget(null);
   };
+
+  const handleEndActivation = useCallback(() => {
+    if (!hasActiveUnit || endActivation.isPending) return;
+    endActivation.mutate({ gameId }, {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        setSelectedUnit(null);
+        setMovePlan(null);
+      }
+    });
+  }, [hasActiveUnit, endActivation, gameId, qc]);
 
   const handleSubmitTurn = () => {
     submitTurn.mutate(
@@ -1027,9 +1089,10 @@ export default function GameBoard() {
                 myUserId={myUserId}
                 weapons={weaponsByFilename[unit.modelFilename] ?? []}
                 dragOffset={unit.id === selectedUnit ? selectedDragOffset : null}
+                dimmed={unit.hasMovedThisRound && !unit.isDestroyed}
               />
             ))}
-            {game.status === "active" && isMyTurn && selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (
+            {game.status === "active" && isSelectedUnitActive && selectedUnitData && !selectedUnitData.isDestroyed && (
               <MovementPlanner
                 unit={selectedUnitData}
                 plan={movePlan}
@@ -1066,11 +1129,21 @@ export default function GameBoard() {
               game.status === "deploying" ? "bg-blue-500/10 border-blue-500/30 text-blue-400" :
               "bg-muted/10 border-muted/30 text-muted-foreground"
             }`}>
-              {game.status} {game.status === "active" && `— Turn ${game.currentTurn}`}
+              {game.status} {game.status === "active" && `— Round ${game.currentRound}`}
             </div>
-            {isMyTurn && (
-              <div className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-primary/40 bg-primary/10 text-primary animate-pulse">
-                Your Turn
+            {game.status === "active" && isMyActivation && !hasActiveUnit && (
+              <div className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-primary/40 bg-primary/10 text-primary animate-pulse" data-testid="hud-pick-ship">
+                Pick a Ship
+              </div>
+            )}
+            {game.status === "active" && isMyActivation && hasActiveUnit && (
+              <div className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-cyan-500/40 bg-cyan-500/10 text-cyan-300" data-testid="hud-activating">
+                Activating · {units.find(u => u.id === activeUnitId)?.name ?? "—"}
+              </div>
+            )}
+            {game.status === "active" && !isMyActivation && (
+              <div className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-muted/40 bg-muted/10 text-muted-foreground" data-testid="hud-waiting">
+                Waiting · Opponent {hasActiveUnit ? "activating" : "to pick"}
               </div>
             )}
             {game.winnerId && (
@@ -1276,9 +1349,20 @@ export default function GameBoard() {
           )}
 
           {/* Turn actions */}
-          {game.status === "active" && isMyTurn && (
+          {game.status === "active" && isMyActivation && (
             <div className="p-4 border-b border-border space-y-3">
-              <p className="text-xs font-mono text-primary uppercase tracking-wider">Turn {game.currentTurn} — Your Move</p>
+              <p className="text-xs font-mono text-primary uppercase tracking-wider">
+                Round {game.currentRound} — {hasActiveUnit ? `Activating ${units.find(u => u.id === activeUnitId)?.name ?? "—"}` : "Pick a Ship"}
+              </p>
+              <Button
+                size="sm"
+                data-testid="button-end-activation"
+                className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
+                onClick={handleEndActivation}
+                disabled={!hasActiveUnit || endActivation.isPending}
+              >
+                {endActivation.isPending ? "Ending…" : "End Activation (N)"}
+              </Button>
               <div className="space-y-1 text-xs text-muted-foreground font-mono">
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
@@ -1313,24 +1397,6 @@ export default function GameBoard() {
                   </p>
                 </div>
               )}
-              <Button
-                size="sm"
-                data-testid="button-submit-turn"
-                className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
-                onClick={handleSubmitTurn}
-                disabled={submitTurn.isPending || (turnMoves.length === 0 && turnAttacks.length === 0)}
-              >
-                <Swords className="w-3.5 h-3.5" />
-                {submitTurn.isPending ? "Submitting..." : "Commit Orders"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="w-full text-xs text-muted-foreground uppercase tracking-wider"
-                onClick={() => { setTurnMoves([]); setTurnAttacks([]); setSelectedUnit(null); }}
-              >
-                Clear Orders
-              </Button>
             </div>
           )}
 

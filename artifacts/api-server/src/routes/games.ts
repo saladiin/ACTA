@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, or } from "drizzle-orm";
+import { eq, and, or, isNull, sql } from "drizzle-orm";
 import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import {
@@ -14,6 +14,8 @@ import {
   SubmitTurnBody,
   MoveUnitParams,
   MoveUnitBody,
+  ActivateUnitParams,
+  EndActivationParams,
   ListGamesResponse,
   GetGameResponse,
   AcceptGameResponse,
@@ -190,9 +192,17 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
   let updated: typeof game;
   [updated] = await db.update(gamesTable).set(updateData).where(eq(gamesTable.id, params.data.gameId)).returning();
 
-  // If both deployed, start the game
+  // If both deployed, start the game. First round: challenger has initiative
+  // by default (real initiative system is a future feature).
   if (updated.challengerDeployed && updated.opponentDeployed) {
-    [updated] = await db.update(gamesTable).set({ status: "active", currentTurn: 1 }).where(eq(gamesTable.id, params.data.gameId)).returning();
+    [updated] = await db.update(gamesTable).set({
+      status: "active",
+      currentTurn: 1,
+      currentRound: 1,
+      activePlayerId: updated.challengerId,
+      activeUnitId: null,
+      lastActivatorId: null,
+    }).where(eq(gamesTable.id, params.data.gameId)).returning();
   }
 
   res.json(DeployFleetResponse.parse(updated));
@@ -248,64 +258,13 @@ router.post("/games/:gameId/turns", requireAuth, async (req, res): Promise<void>
     return;
   }
 
-  // Determine whose turn it is: challenger on odd, opponent on even
-  const isChallenger = game.challengerId === userId;
-  const isChallengerTurn = game.currentTurn % 2 === 1;
-  if (isChallenger !== isChallengerTurn) {
-    res.status(400).json({ error: "Not your turn" });
-    return;
-  }
-
-  // Apply moves
-  for (const move of parsed.data.moves) {
-    const raw = Array.isArray(move.unitId) ? move.unitId[0] : move.unitId;
-    const unitId = typeof raw === "string" ? parseInt(raw, 10) : raw;
-    await db.update(gameUnitsTable)
-      .set({ hexQ: move.toHexQ, hexR: move.toHexR, heading: move.newHeading })
-      .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.ownerId, userId)));
-  }
-
-  // Apply attacks
-  for (const attack of parsed.data.attacks) {
-    const attackerRaw = Array.isArray(attack.attackerUnitId) ? attack.attackerUnitId[0] : attack.attackerUnitId;
-    const targetRaw = Array.isArray(attack.targetUnitId) ? attack.targetUnitId[0] : attack.targetUnitId;
-    const attackerId = typeof attackerRaw === "string" ? parseInt(attackerRaw, 10) : attackerRaw;
-    const targetId = typeof targetRaw === "string" ? parseInt(targetRaw, 10) : targetRaw;
-
-    const [attacker] = await db.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, attackerId), eq(gameUnitsTable.ownerId, userId)));
-    if (!attacker || attacker.isDestroyed) continue;
-    const [target] = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.id, targetId));
-    if (!target || target.isDestroyed || target.ownerId === userId) continue;
-
-    const newHp = Math.max(0, target.hullPoints - attacker.weaponDamage);
-    await db.update(gameUnitsTable).set({ hullPoints: newHp, isDestroyed: newHp === 0 }).where(eq(gameUnitsTable.id, targetId));
-  }
-
-  // Record the turn
-  const [turn] = await db.insert(turnsTable).values({
-    gameId: params.data.gameId,
-    playerId: userId,
-    turnNumber: game.currentTurn,
-    moves: parsed.data.moves,
-    attacks: parsed.data.attacks,
-    resolvedAt: new Date(),
-  }).returning();
-
-  // Advance turn
-  await db.update(gamesTable).set({ currentTurn: game.currentTurn + 1 }).where(eq(gamesTable.id, params.data.gameId));
-
-  // Check if all opponent units are destroyed
-  const opponentId = isChallenger ? game.opponentId : game.challengerId;
-  const remainingUnits = await db.select().from(gameUnitsTable).where(
-    and(eq(gameUnitsTable.gameId, params.data.gameId), eq(gameUnitsTable.ownerId, opponentId), eq(gameUnitsTable.isDestroyed, false))
-  );
-  if (remainingUnits.length === 0) {
-    await db.update(gamesTable).set({ status: "completed", winnerId: userId }).where(eq(gamesTable.id, params.data.gameId));
-    await db.update(playersTable).set({ wins: game.currentTurn }).where(eq(playersTable.clerkUserId, userId));
-    await db.update(playersTable).set({ losses: game.currentTurn }).where(eq(playersTable.clerkUserId, opponentId));
-  }
-
-  res.status(201).json(turn);
+  // The batched submitTurn endpoint is legacy. The live game now uses the
+  // ship-by-ship activation flow (POST /activate + /end-activation), which is
+  // the only path that respects activePlayerId/activeUnitId/hasMovedThisRound
+  // and the round-advance/initiative rules. Allowing this path in active games
+  // would bypass all of those invariants, so reject it outright.
+  void parsed; // body shape was validated; we just refuse the action.
+  res.status(410).json({ error: "submitTurn is deprecated; use /activate and /end-activation" });
 });
 
 // ── Instant single-ship move (real-time movement, does NOT end the turn) ─────
@@ -320,15 +279,15 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   if (!game) { res.status(404).json({ error: "Game not found" }); return; }
   if (game.status !== "active") { res.status(400).json({ error: "Game is not active" }); return; }
 
-  const isChallenger = game.challengerId === userId;
-  const isChallengerTurn = game.currentTurn % 2 === 1;
-  if (isChallenger !== isChallengerTurn) { res.status(400).json({ error: "Not your turn" }); return; }
+  if (game.activePlayerId !== userId) { res.status(400).json({ error: "Not your activation" }); return; }
+  if (game.activeUnitId !== params.data.unitId) { res.status(400).json({ error: "This unit is not the one you activated" }); return; }
 
   const [unit] = await db.select().from(gameUnitsTable).where(
     and(eq(gameUnitsTable.id, params.data.unitId), eq(gameUnitsTable.ownerId, userId), eq(gameUnitsTable.gameId, params.data.gameId))
   );
   if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
   if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
+  if (unit.hasMovedThisRound) { res.status(400).json({ error: "Unit has already moved this round" }); return; }
 
   const [updated] = await db.update(gameUnitsTable)
     .set({ hexQ: body.data.toHexQ, hexR: body.data.toHexR, heading: body.data.newHeading })
@@ -336,6 +295,137 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     .returning();
 
   res.json(updated);
+});
+
+// ── Pick up a ship for its activation this round ─────────────────────────────
+router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = ActivateUnitParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const { gameId, unitId } = params.data;
+
+  try {
+    const updated = await db.transaction(async (tx) => {
+      // Lock the game row to serialize concurrent activate/end-activation calls
+      // — without this, two simultaneous activates from the same player could
+      // both pass preconditions and one would silently win.
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
+      if (game.activeUnitId && game.activeUnitId !== unitId) {
+        throw Object.assign(new Error("End your current activation first"), { status: 400 });
+      }
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(
+        and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId))
+      );
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unit.isDestroyed) throw Object.assign(new Error("Unit is destroyed"), { status: 400 });
+      if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+
+      // Conditional UPDATE: succeeds only if state still matches what we saw.
+      const result = await tx.update(gamesTable)
+        .set({ activeUnitId: unitId })
+        .where(and(
+          eq(gamesTable.id, gameId),
+          eq(gamesTable.activePlayerId, userId),
+          eq(gamesTable.status, "active"),
+          or(isNull(gamesTable.activeUnitId), eq(gamesTable.activeUnitId, unitId)),
+        ))
+        .returning();
+      if (result.length === 0) throw Object.assign(new Error("Activation conflict, retry"), { status: 409 });
+      return result[0];
+    });
+    res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── End the current ship's activation; hand off or advance the round ─────────
+router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = EndActivationParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const { gameId } = params.data;
+
+  try {
+    const updated = await db.transaction(async (tx) => {
+      // Lock the game row so two end-activation calls can't both fire and
+      // double-advance the round.
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
+      if (!game.activeUnitId) throw Object.assign(new Error("No active unit to end"), { status: 400 });
+
+      const endedUnitId = game.activeUnitId;
+      await tx.update(gameUnitsTable)
+        .set({ hasMovedThisRound: true })
+        .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)));
+
+      const otherPlayerId = userId === game.challengerId ? game.opponentId : game.challengerId;
+      const remainingFor = async (pid: string) => {
+        const rows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, game.id),
+          eq(gameUnitsTable.ownerId, pid),
+          eq(gameUnitsTable.isDestroyed, false),
+          eq(gameUnitsTable.hasMovedThisRound, false),
+        ));
+        return rows.length;
+      };
+      const otherRemaining = await remainingFor(otherPlayerId);
+      const selfRemaining = await remainingFor(userId);
+
+      let nextActivePlayerId: string;
+      let nextRound = game.currentRound;
+      let nextTurn = game.currentTurn;
+
+      if (otherRemaining > 0) {
+        nextActivePlayerId = otherPlayerId;
+      } else if (selfRemaining > 0) {
+        nextActivePlayerId = userId;
+      } else {
+        // Round complete. Reset has-moved flags for ALL surviving units, then
+        // hand initiative to the OTHER player (last activator goes second next round).
+        await tx.update(gameUnitsTable)
+          .set({ hasMovedThisRound: false })
+          .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
+        nextRound = game.currentRound + 1;
+        nextTurn = game.currentTurn + 1;
+        nextActivePlayerId = userId === game.challengerId ? game.opponentId : game.challengerId;
+      }
+
+      // Conditional UPDATE guards against any state change we didn't see.
+      const result = await tx.update(gamesTable).set({
+        activeUnitId: null,
+        activePlayerId: nextActivePlayerId,
+        lastActivatorId: userId,
+        currentRound: nextRound,
+        currentTurn: nextTurn,
+      }).where(and(
+        eq(gamesTable.id, gameId),
+        eq(gamesTable.activePlayerId, userId),
+        eq(gamesTable.activeUnitId, endedUnitId),
+        eq(gamesTable.status, "active"),
+      )).returning();
+      if (result.length === 0) throw Object.assign(new Error("Activation conflict, retry"), { status: 409 });
+      return result[0];
+    });
+    res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
 });
 
 // ── DEV-ONLY: auto-deploy both fleets and start the game ──────────────────────
@@ -415,6 +505,10 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
     opponentFleetId,
     status: "active",
     currentTurn: 1,
+    currentRound: 1,
+    activePlayerId: game.challengerId,
+    activeUnitId: null,
+    lastActivatorId: null,
   }).where(eq(gamesTable.id, game.id)).returning();
 
   res.json(updated);

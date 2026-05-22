@@ -11,6 +11,15 @@ export const gamesTable = pgTable("games", {
   status: text("status").notNull().default("pending"),
   winnerId: text("winner_id"),
   currentTurn: integer("current_turn").notNull().default(0),
+  currentRound: integer("current_round").notNull().default(1),
+  // Ship-by-ship alternating activation state. activePlayerId is the player
+  // whose turn it is to activate a ship right now; activeUnitId is the ship
+  // they have currently picked up (null = they still need to pick one).
+  // lastActivatorId is whoever ran the most recent activation, used to decide
+  // initiative for the next round (last-mover-goes-second-next-round).
+  activePlayerId: text("active_player_id"),
+  activeUnitId: integer("active_unit_id"),
+  lastActivatorId: text("last_activator_id"),
   pointLimit: integer("point_limit").notNull().default(500),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
@@ -39,6 +48,7 @@ export const gameUnitsTable = pgTable("game_units", {
   weaponRange: integer("weapon_range").notNull(),
   weaponDamage: integer("weapon_damage").notNull(),
   isDestroyed: boolean("is_destroyed").notNull().default(false),
+  hasMovedThisRound: boolean("has_moved_this_round").notNull().default(false),
 });
 
 export const turnsTable = pgTable("turns", {

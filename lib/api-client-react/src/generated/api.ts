@@ -1307,6 +1307,148 @@ export const useSubmitTurn = <TError = ErrorType<void>,
       return useMutation(getSubmitTurnMutationOptions(options));
     }
 
+export const getActivateUnitUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/activate`
+}
+
+/**
+ * @summary Pick up a ship for its single activation this round
+ */
+export const activateUnit = async (gameId: number,
+    unitId: number, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getActivateUnitUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getActivateUnitMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activateUnit>>, TError,{gameId: number;unitId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof activateUnit>>, TError,{gameId: number;unitId: number}, TContext> => {
+
+const mutationKey = ['activateUnit'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof activateUnit>>, {gameId: number;unitId: number}> = (props) => {
+          const {gameId,unitId} = props ?? {};
+
+          return  activateUnit(gameId,unitId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ActivateUnitMutationResult = NonNullable<Awaited<ReturnType<typeof activateUnit>>>
+
+    export type ActivateUnitMutationError = ErrorType<void>
+
+    /**
+ * @summary Pick up a ship for its single activation this round
+ */
+export const useActivateUnit = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activateUnit>>, TError,{gameId: number;unitId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof activateUnit>>,
+        TError,
+        {gameId: number;unitId: number},
+        TContext
+      > => {
+      return useMutation(getActivateUnitMutationOptions(options));
+    }
+
+export const getEndActivationUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/end-activation`
+}
+
+/**
+ * @summary Finish the current ship's activation and hand off (or advance round)
+ */
+export const endActivation = async (gameId: number, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getEndActivationUrl(gameId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getEndActivationMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endActivation>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof endActivation>>, TError,{gameId: number}, TContext> => {
+
+const mutationKey = ['endActivation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endActivation>>, {gameId: number}> = (props) => {
+          const {gameId} = props ?? {};
+
+          return  endActivation(gameId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EndActivationMutationResult = NonNullable<Awaited<ReturnType<typeof endActivation>>>
+
+    export type EndActivationMutationError = ErrorType<void>
+
+    /**
+ * @summary Finish the current ship's activation and hand off (or advance round)
+ */
+export const useEndActivation = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endActivation>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof endActivation>>,
+        TError,
+        {gameId: number},
+        TContext
+      > => {
+      return useMutation(getEndActivationMutationOptions(options));
+    }
+
 export const getMoveUnitUrl = (gameId: number,
     unitId: number,) => {
 

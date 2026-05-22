@@ -19,6 +19,13 @@ export interface Game {
   /** @nullable */
   winnerId?: string | null;
   currentTurn: number;
+  currentRound: number;
+  /** @nullable */
+  activePlayerId?: string | null;
+  /** @nullable */
+  activeUnitId?: number | null;
+  /** @nullable */
+  lastActivatorId?: string | null;
   pointLimit: number;
   createdAt: Date;
   updatedAt: Date;

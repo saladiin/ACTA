@@ -344,6 +344,39 @@ paths:
         "400":
           description: Bad request
 
+  /games/{gameId}/units/{unitId}/activate:
+    post:
+      operationId: activateUnit
+      tags: [turns]
+      summary: Pick up a ship for its single activation this round
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Activation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: Invalid activation }
+
+  /games/{gameId}/end-activation:
+    post:
+      operationId: endActivation
+      tags: [turns]
+      summary: Finish the current ship's activation and hand off (or advance round)
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Activation ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: No active unit }
+
   /games/{gameId}/units/{unitId}/move:
     post:
       operationId: moveUnit
@@ -500,7 +533,7 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, opponentId, status, currentTurn, pointLimit, createdAt, updatedAt]
+      required: [id, challengerId, opponentId, status, currentTurn, currentRound, pointLimit, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
@@ -510,6 +543,10 @@ components:
         status:       { type: string, enum: [pending, deploying, active, completed, declined] }
         winnerId:     { type: ["string", "null"] }
         currentTurn:  { type: integer }
+        currentRound: { type: integer }
+        activePlayerId:  { type: ["string", "null"] }
+        activeUnitId:    { type: ["integer", "null"] }
+        lastActivatorId: { type: ["string", "null"] }
         pointLimit:   { type: integer }
         createdAt:    { type: string, format: date-time }
         updatedAt:    { type: string, format: date-time }
@@ -524,7 +561,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed, hasMovedThisRound]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -544,6 +581,7 @@ components:
         weaponRange:   { type: integer }
         weaponDamage:  { type: integer }
         isDestroyed:   { type: boolean }
+        hasMovedThisRound: { type: boolean }
 
     GameDetail:
       type: object

@@ -167,6 +167,10 @@ export const ListGamesResponseItem = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -201,6 +205,10 @@ export const GetGameResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -223,7 +231,8 @@ export const GetGameResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "isDestroyed": zod.boolean()
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean()
 })),
   "turns": zod.array(zod.object({
   "id": zod.number(),
@@ -257,6 +266,10 @@ export const AcceptGameResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -279,6 +292,10 @@ export const DeclineGameResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -311,6 +328,10 @@ export const DeployFleetResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -362,6 +383,59 @@ export const SubmitTurnBody = zod.object({
 
 
 /**
+ * @summary Pick up a ship for its single activation this round
+ */
+export const ActivateUnitParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const ActivateUnitResponse = zod.object({
+  "id": zod.number(),
+  "challengerId": zod.string(),
+  "opponentId": zod.string(),
+  "challengerName": zod.string().nullish(),
+  "opponentName": zod.string().nullish(),
+  "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
+  "winnerId": zod.string().nullish(),
+  "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
+  "pointLimit": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Finish the current ship's activation and hand off (or advance round)
+ */
+export const EndActivationParams = zod.object({
+  "gameId": zod.coerce.number()
+})
+
+export const EndActivationResponse = zod.object({
+  "id": zod.number(),
+  "challengerId": zod.string(),
+  "opponentId": zod.string(),
+  "challengerName": zod.string().nullish(),
+  "opponentName": zod.string().nullish(),
+  "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
+  "winnerId": zod.string().nullish(),
+  "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
+  "pointLimit": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Apply an immediate, single-ship movement (real-time, does not end the turn)
  */
 export const MoveUnitParams = zod.object({
@@ -393,7 +467,8 @@ export const MoveUnitResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "isDestroyed": zod.boolean()
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean()
 })
 
 
@@ -410,6 +485,10 @@ export const GetLobbyResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -423,6 +502,10 @@ export const GetLobbyResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
@@ -436,6 +519,10 @@ export const GetLobbyResponse = zod.object({
   "status": zod.enum(['pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
   "pointLimit": zod.number(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
