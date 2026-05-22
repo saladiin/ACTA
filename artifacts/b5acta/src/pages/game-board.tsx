@@ -2,7 +2,7 @@ import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } fr
 import { useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
-import { OrbitControls, Text, useGLTF } from "@react-three/drei";
+import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 // @ts-ignore
@@ -184,7 +184,7 @@ function ShipModel3D({ filename, tint }: { filename: string; tint: string }) {
   return <ObjModel url={url} tint={tint} />;
 }
 
-function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, dimmed }: {
+function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, dimmed, firingArc }: {
   unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number };
   isSelected: boolean;
   onClick: () => void;
@@ -192,6 +192,10 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, 
   weapons: Pick<Weapon, "arc">[];
   dragOffset?: { x: number; z: number } | null;
   dimmed?: boolean;
+  // When set, draws a translucent "weapon coverage" sector at full range for
+  // the currently-selected firing weapon so the player can see eligible
+  // targets. Only rendered for the active firing ship.
+  firingArc?: { arc: string; range: number } | null;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const x = bx + (dragOffset?.x ?? 0);
@@ -232,6 +236,16 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, 
       {isSelected && weapons.length > 0 && (
         <group rotation={[0, headingRad, 0]}>
           <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
+        </group>
+      )}
+      {/* Firing coverage — long-range arc showing eligible-target area */}
+      {firingArc && (
+        <group rotation={[0, headingRad, 0]}>
+          <RangeArcOverlay
+            arc={firingArc.arc}
+            range={firingArc.range}
+            flip={FLIP_MODELS.has(unit.modelFilename)}
+          />
         </group>
       )}
       {/* Ship model floating 2" above the base, rotated to heading */}
@@ -308,6 +322,61 @@ function ArcSector({ centerAngle, halfAngle, radius, color, opacity }: {
     <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.022, 0]} geometry={geo}>
       <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} />
     </mesh>
+  );
+}
+
+// Long-range coverage arc for the FIRING PHASE — drawn at the weapon's actual
+// range (in world inches) so the player can see where its eligible targets lie.
+// Uses the same ARC_DEFS angles as the base arcs so the visual and server's
+// `isInArc` adjudication line up; flip handling matches WeaponArcDisplay.
+function RangeArcOverlay({ arc, range, flip }: { arc: string; range: number; flip: boolean }) {
+  const def = ARC_DEFS[arc];
+  const geo = useMemo(() => {
+    if (!def) return null;
+    const segments = def.halfAngle < 0.3 ? 16 : 64;
+    const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    for (let i = 0; i <= segments; i++) {
+      const a = centerAngle - def.halfAngle + (2 * def.halfAngle * i) / segments;
+      shape.lineTo(Math.cos(a) * range, Math.sin(a) * range);
+    }
+    shape.lineTo(0, 0);
+    return new THREE.ShapeGeometry(shape);
+  }, [def, range, flip]);
+
+  // Outline polyline: origin → arc → origin (rotated into XZ plane so it
+  // sits on the board, matching the fill mesh's rotation).
+  const edgePoints = useMemo<[number, number, number][] | null>(() => {
+    if (!def) return null;
+    const segments = def.halfAngle < 0.3 ? 16 : 64;
+    const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
+    const pts: [number, number, number][] = [[0, 0, 0]];
+    for (let i = 0; i <= segments; i++) {
+      const a = centerAngle - def.halfAngle + (2 * def.halfAngle * i) / segments;
+      // Shape's local (X, Y) → world (X, Z) because we rotate the fill by +π/2 on X.
+      pts.push([Math.cos(a) * range, 0, Math.sin(a) * range]);
+    }
+    pts.push([0, 0, 0]);
+    return pts;
+  }, [def, range, flip]);
+
+  if (!def || !geo || !edgePoints) return null;
+  return (
+    <>
+      {/* Translucent fill */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.018, 0]} geometry={geo}>
+        <meshBasicMaterial
+          color={def.color}
+          transparent
+          opacity={0.10}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {/* Outline along the arc + radial edges so the boundary reads clearly */}
+      <Line points={edgePoints} color={def.color} lineWidth={1.5} transparent opacity={0.85} position={[0, 0.05, 0]} />
+    </>
   );
 }
 
@@ -1178,18 +1247,36 @@ export default function GameBoard() {
             <fog attach="fog" args={["#050505", 60, 110]} />
             <SpaceGrid />
             <BoardBoundary />
-            {units.map(unit => (
-              <GameUnit3D
-                key={unit.id}
-                unit={unit}
-                isSelected={selectedUnit === unit.id}
-                onClick={() => handleUnitClick(unit.id)}
-                myUserId={myUserId}
-                weapons={weaponsByFilename[unit.modelFilename] ?? []}
-                dragOffset={unit.id === selectedUnit ? selectedDragOffset : null}
-                dimmed={unit.hasMovedThisRound && !unit.isDestroyed}
-              />
-            ))}
+            {units.map(unit => {
+              const dimmed = currentPhase === "firing"
+                ? unit.hasFiredThisRound && !unit.isDestroyed
+                : unit.hasMovedThisRound && !unit.isDestroyed;
+              // Show the weapon's full-range coverage sector ONLY for the
+              // active firing ship while a weapon is selected for targeting.
+              let firingArc: { arc: string; range: number } | null = null;
+              if (
+                currentPhase === "firing" &&
+                firingWeaponPicking !== null &&
+                unit.id === activeUnitId
+              ) {
+                const w = (weaponsByFilename[unit.modelFilename] as Weapon[] | undefined)
+                  ?.find(x => x.id === firingWeaponPicking);
+                if (w) firingArc = { arc: w.arc, range: w.range };
+              }
+              return (
+                <GameUnit3D
+                  key={unit.id}
+                  unit={unit}
+                  isSelected={selectedUnit === unit.id}
+                  onClick={() => handleUnitClick(unit.id)}
+                  myUserId={myUserId}
+                  weapons={weaponsByFilename[unit.modelFilename] ?? []}
+                  dragOffset={unit.id === selectedUnit ? selectedDragOffset : null}
+                  dimmed={dimmed}
+                  firingArc={firingArc}
+                />
+              );
+            })}
             {game.status === "active" && isSelectedUnitActive && selectedUnitData && !selectedUnitData.isDestroyed && (
               <MovementPlanner
                 unit={selectedUnitData}
