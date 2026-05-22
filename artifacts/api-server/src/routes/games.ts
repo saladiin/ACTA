@@ -14,6 +14,8 @@ import {
   SubmitTurnBody,
   MoveUnitParams,
   MoveUnitBody,
+  DevMoveUnitParams,
+  DevMoveUnitBody,
   ActivateUnitParams,
   EndActivationParams,
   FireWeaponParams,
@@ -436,6 +438,45 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     .where(eq(gameUnitsTable.id, params.data.unitId))
     .returning();
 
+  res.json(updated);
+});
+
+// ── DEV ONLY: free-form ship reposition ─────────────────────────────────────
+// Used by the in-app developer mode to set up test scenarios. Bypasses all
+// ownership / phase / activation / hasMovedThisRound checks; the only
+// invariants are that the game exists, the unit belongs to that game, and the
+// unit isn't destroyed. Heading is wrapped to [0, 360).
+router.post("/games/:gameId/units/:unitId/dev-move", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = DevMoveUnitParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = DevMoveUnitBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+
+  const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+  if (!game) { res.status(404).json({ error: "Game not found" }); return; }
+  // Participant gate: dev-move bypasses turn/phase/ownership rules but must
+  // still be confined to a game the caller is actually in. Without this, any
+  // authenticated user could reach in and shove ships around in arbitrary
+  // strangers' games.
+  if (game.challengerId !== userId && game.opponentId !== userId) {
+    res.status(403).json({ error: "Not a participant in this game" });
+    return;
+  }
+
+  const [unit] = await db.select().from(gameUnitsTable).where(
+    and(eq(gameUnitsTable.id, params.data.unitId), eq(gameUnitsTable.gameId, params.data.gameId))
+  );
+  if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
+  if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
+
+  const heading = ((body.data.heading % 360) + 360) % 360;
+  const [updated] = await db.update(gameUnitsTable)
+    .set({ hexQ: body.data.hexQ, hexR: body.data.hexR, heading })
+    .where(eq(gameUnitsTable.id, params.data.unitId))
+    .returning();
+
+  req.log.warn({ unitId: params.data.unitId, gameId: params.data.gameId, hexQ: body.data.hexQ, hexR: body.data.hexR, heading }, "dev-move applied");
   res.json(updated);
 });
 

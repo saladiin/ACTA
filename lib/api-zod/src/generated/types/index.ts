@@ -7,6 +7,7 @@
  */
 
 export * from './deploymentInput';
+export * from './devMoveUnitInput';
 export * from './fireAction';
 export * from './fireWeaponInput';
 export * from './fireWeaponResult';

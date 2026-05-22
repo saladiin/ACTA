@@ -16,6 +16,7 @@ import {
   useDeployFleet,
   useSubmitTurn,
   useMoveUnit,
+  useDevMoveUnit,
   useActivateUnit,
   useEndActivation,
   useFireWeapon,
@@ -35,7 +36,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap } from "lucide-react";
+import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Wrench, RotateCw, RotateCcw, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 function hexToWorld(q: number, r: number): [number, number, number] {
   return [q * 2.25, 0, r * 2.6 + q * 1.3];
@@ -773,6 +775,21 @@ export default function GameBoard() {
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
   const moveUnit = useMoveUnit();
+  const devMoveUnit = useDevMoveUnit();
+  // ── DEV MODE ────────────────────────────────────────────────────────────────
+  // Free-form "god mode" for setting up test scenarios: click any ship of any
+  // side and shove it around with nudge / rotate buttons. Bypasses all
+  // turn / phase / ownership / activation checks on both the client and the
+  // server (see POST /games/:id/units/:id/dev-move). Persisted to
+  // localStorage so a reload keeps the toggle state.
+  const [devMode, setDevMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("b5acta-dev-mode") === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("b5acta-dev-mode", devMode ? "1" : "0");
+  }, [devMode]);
   const activateUnit = useActivateUnit();
   const endActivation = useEndActivation();
   const fireWeapon = useFireWeapon();
@@ -1058,6 +1075,17 @@ export default function GameBoard() {
   const handleUnitClick = (unitId: number) => {
     const unit = units.find(u => u.id === unitId);
     if (!unit || unit.isDestroyed) return;
+
+    // ── DEV MODE: hard short-circuit ──
+    // Must run BEFORE firing-target / attack-queue / activation branches so
+    // that clicking an enemy ship in dev mode selects it for repositioning
+    // instead of (e.g.) firing the currently-picked weapon at it.
+    if (devMode) {
+      setSelectedUnit(unitId === selectedUnit ? null : unitId);
+      setMoveTarget(null);
+      setAttackTarget(null);
+      return;
+    }
 
     // ── FIRING-PHASE target click ──
     // While picking a target for a weapon, clicking an enemy ship resolves
@@ -1467,6 +1495,112 @@ export default function GameBoard() {
 
         {/* Sidebar panel */}
         <div className="w-full lg:w-72 border-t lg:border-t-0 lg:border-l border-border bg-card flex flex-col">
+
+          {/* ── DEV MODE ── */}
+          {(() => {
+            const devUnit = devMode ? units.find(u => u.id === selectedUnit) : null;
+            const applyDev = (dq: number, dr: number, dh: number) => {
+              if (!devUnit || devMoveUnit.isPending) return;
+              const hexQ = devUnit.hexQ + dq;
+              const hexR = devUnit.hexR + dr;
+              const heading = devUnit.heading + dh;
+              devMoveUnit.mutate(
+                { gameId, unitId: devUnit.id, data: { hexQ, hexR, heading } },
+                { onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+              );
+            };
+            return (
+              <div className="p-3 border-b border-border space-y-2" data-testid="dev-mode-panel">
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="text-xs font-mono uppercase tracking-widest flex items-center gap-1.5 text-fuchsia-400">
+                    <Wrench className="w-3 h-3" /> Dev Mode
+                  </span>
+                  <Switch
+                    checked={devMode}
+                    onCheckedChange={setDevMode}
+                    data-testid="switch-dev-mode"
+                  />
+                </label>
+                {devMode && (
+                  <>
+                    <p className="text-[10px] font-mono text-fuchsia-300/70 leading-snug">
+                      Click any ship · bypass all turn/phase/ownership rules.
+                    </p>
+                    {devUnit ? (
+                      <div className="space-y-1.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/5 p-2">
+                        <div className="flex items-center justify-between font-mono text-[11px]">
+                          <span className="text-fuchsia-200 font-bold truncate">{devUnit.name}</span>
+                          <span className="text-fuchsia-300/70">
+                            q{devUnit.hexQ} r{devUnit.hexR} · {((devUnit.heading % 360) + 360) % 360}°
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1">
+                          <div />
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
+                            disabled={devMoveUnit.isPending}
+                            onClick={() => applyDev(0, -1, 0)}
+                            data-testid="dev-r-minus"
+                          ><ArrowUp className="w-3 h-3" /></Button>
+                          <div />
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
+                            disabled={devMoveUnit.isPending}
+                            onClick={() => applyDev(-1, 0, 0)}
+                            data-testid="dev-q-minus"
+                          ><ArrowLeft className="w-3 h-3" /></Button>
+                          <div className="text-center text-[9px] font-mono text-fuchsia-300/60 self-center">HEX</div>
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
+                            disabled={devMoveUnit.isPending}
+                            onClick={() => applyDev(1, 0, 0)}
+                            data-testid="dev-q-plus"
+                          ><ArrowRight className="w-3 h-3" /></Button>
+                          <div />
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
+                            disabled={devMoveUnit.isPending}
+                            onClick={() => applyDev(0, 1, 0)}
+                            data-testid="dev-r-plus"
+                          ><ArrowDown className="w-3 h-3" /></Button>
+                          <div />
+                        </div>
+                        <div className="grid grid-cols-2 gap-1 pt-0.5">
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 gap-1 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20 font-mono text-[10px]"
+                            disabled={devMoveUnit.isPending}
+                            onClick={() => applyDev(0, 0, -15)}
+                            data-testid="dev-rot-ccw"
+                          ><RotateCcw className="w-3 h-3" />−15°</Button>
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-7 gap-1 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20 font-mono text-[10px]"
+                            disabled={devMoveUnit.isPending}
+                            onClick={() => applyDev(0, 0, 15)}
+                            data-testid="dev-rot-cw"
+                          ><RotateCw className="w-3 h-3" />+15°</Button>
+                        </div>
+                        {devMoveUnit.isError && (
+                          <p className="text-[10px] font-mono text-red-400">
+                            {(devMoveUnit.error as { message?: string } | undefined)?.message ?? "dev-move failed"}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] font-mono text-muted-foreground italic">
+                        Click any ship to nudge / rotate it.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── FLEET YARDS (deploy phase only) ── */}
           {game.status === "deploying" && (

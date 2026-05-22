@@ -482,6 +482,45 @@ export const FireWeaponResponse = zod.object({
 
 
 /**
+ * @summary DEV ONLY — reposition any unit to a hex with a heading, bypassing turn/phase/ownership checks. Used by the in-app developer mode for setting up test scenarios.
+ */
+export const DevMoveUnitParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const DevMoveUnitBody = zod.object({
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number()
+})
+
+export const DevMoveUnitResponse = zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.')
+})
+
+
+/**
  * @summary Apply an immediate, single-ship movement (real-time, does not end the turn)
  */
 export const MoveUnitParams = zod.object({

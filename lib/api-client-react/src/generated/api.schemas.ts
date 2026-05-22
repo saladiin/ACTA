@@ -222,6 +222,12 @@ export interface MoveUnitInput {
   newHeading: number;
 }
 
+export interface DevMoveUnitInput {
+  hexQ: number;
+  hexR: number;
+  heading: number;
+}
+
 export interface TurnInput {
   moves: MoveAction[];
   attacks: FireAction[];
