@@ -55,6 +55,20 @@ An async multiplayer tabletop wargame playable online, featuring 3D ship models 
 - Military/sci-fi aesthetic: dark background, amber primary, monospaced uppercase labels, "B5: ACTA" branding
 - `data-testid` attributes on all interactive elements
 
+## Model orientation spec
+
+All ship `.glb`/`.obj` uploads must follow this convention so the engine's heading, movement, and weapon-arc math work without per-model patching:
+
+- **Forward axis**: nose points along local **+Z** (heading 0° → ship faces +Z on the board)
+- **Up axis**: local **+Y**
+- **Port / Starboard**: Port = local **+X**, Starboard = local **−X**
+- **Origin**: geometric center at (0, 0, 0), sitting on the XZ plane (don't bury it below Y=0)
+- **Scale**: irrelevant — the renderer auto-scales the longest horizontal dimension to ~2"
+- **Blender export**: with the model at origin and nose pointing along Blender's **+Y** ("forward" in the viewport), use the standard glTF exporter (+Y up, −Z forward). The loader's glTF axis convention will land the nose on world +Z.
+- **Textures**: embed in the `.glb` (we do not load external `.mtl` for GLBs)
+
+`FLIP_MODELS` (in both `game-board.tsx` and `games.ts`) is intentionally an **empty set** — it exists only as an emergency escape hatch for a one-off misauthored model. The correct fix is always to re-export the model with proper orientation.
+
 ## Gotchas
 
 - Port 21152 must be registered in `.replit` `[[ports]]` for the b5acta workflow health-check to pass (done via `verifyAndReplaceDotReplit`)

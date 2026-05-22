@@ -105,11 +105,11 @@ function isInArc(
   return Math.abs(angleDelta(bearing, arc.center)) <= arc.half + 1e-6;
 }
 
-// Some OBJ models are authored nose-pointing-aft, so the frontend renders them
-// with an extra 180° Y-rotation inside the heading group. The player-facing
-// "forward" is therefore the opposite of the stored heading. KEEP IN SYNC with
-// the FLIP_MODELS set in artifacts/b5acta/src/pages/game-board.tsx.
-const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb", "nova.glb"]);
+// Render-time orientation patch for legacy/misauthored models. Empty by
+// design: new models must follow the orientation spec in replit.md
+// (nose along local +Z). KEEP IN SYNC with the FLIP_MODELS set in
+// artifacts/b5acta/src/pages/game-board.tsx.
+const FLIP_MODELS: Set<string> = new Set();
 
 const router: IRouter = Router();
 

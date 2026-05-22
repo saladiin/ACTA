@@ -139,10 +139,12 @@ function ObjModel({ url, tint }: { url: string; tint: string }) {
   return <primitive object={cloned} scale={[s, s, s]} />;
 }
 
-// GLB: keep original embedded textures; apply a gentle emissive tint for team color
-// Models that need a 180° Y-flip to face forward correctly
-const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb", "nova.glb"]);
-
+// GLB: keep original embedded textures; apply a gentle emissive tint for team color.
+// Models must be exported nose-along-local-+Z per the Model orientation spec
+// in replit.md. FLIP_MODELS is kept as an (empty) set so the render-time and
+// arc-math fallbacks below remain available for any one-off legacy upload, but
+// the canonical fix is to re-export the model with correct orientation.
+const FLIP_MODELS: Set<string> = new Set();
 function GlbModel({ url, tint, filename }: { url: string; tint: string; filename: string }) {
   const { scene } = useGLTF(url);
   const cloned = useMemo(() => {
