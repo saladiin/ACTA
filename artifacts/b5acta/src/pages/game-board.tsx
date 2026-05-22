@@ -141,7 +141,7 @@ function ObjModel({ url, tint }: { url: string; tint: string }) {
 
 // GLB: keep original embedded textures; apply a gentle emissive tint for team color
 // Models that need a 180° Y-flip to face forward correctly
-const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb"]);
+const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb", "nova.glb"]);
 
 function GlbModel({ url, tint, filename }: { url: string; tint: string; filename: string }) {
   const { scene } = useGLTF(url);

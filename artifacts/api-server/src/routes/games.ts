@@ -109,7 +109,7 @@ function isInArc(
 // with an extra 180° Y-rotation inside the heading group. The player-facing
 // "forward" is therefore the opposite of the stored heading. KEEP IN SYNC with
 // the FLIP_MODELS set in artifacts/b5acta/src/pages/game-board.tsx.
-const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb"]);
+const FLIP_MODELS = new Set(["oracle.glb", "hyperion.glb", "sagittarius.glb", "sharlin.glb", "nova.glb"]);
 
 const router: IRouter = Router();
 
