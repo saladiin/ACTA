@@ -1302,7 +1302,7 @@ export default function GameBoard() {
       if (idx === -1) continue;
       const ship = available.splice(idx, 1)[0];
       // Convert world coords (inches) to integer grid positions stored in hexQ/hexR
-      placements.push({ shipId: ship.id, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: 0 });
+      placements.push({ shipId: ship.id, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: staged.heading });
     }
     if (placements.length === 0) return;
     deployFleet.mutate(
@@ -1385,7 +1385,11 @@ export default function GameBoard() {
               weaponDamage: ship.weaponDamage,
               weapons: ship.weapons ?? [],
               x, z,
-              heading: 0,
+              // Default facing: nose toward the opposing player's edge so a
+              // freshly-dropped ship is already pointed at the enemy.
+              // Challenger deploys from +Z → faces -Z (heading 180°);
+              // Opponent deploys from -Z → faces +Z (heading 0°).
+              heading: mySide === "challenger" ? 180 : 0,
               locked: false,
             }]);
             setSelectedStagedId(newId);
