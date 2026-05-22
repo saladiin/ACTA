@@ -148,6 +148,8 @@ export interface GameUnit {
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
   hasFiredThisRound: boolean;
+  /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
+  firedWeaponIds: number[];
 }
 
 export type TurnMoves = { [key: string]: unknown };

@@ -288,6 +288,9 @@ const ARC_DEFS: Record<string, { centerAngle: number; halfAngle: number; color: 
   "Aft":               { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4,  color: "#ef4444", opacity: 0.22 },
   "Boresight Forward": { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 24, color: "#fef08a", opacity: 0.85, radius: 1.65 },
   "Boresight Aft":     { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 24, color: "#fb923c", opacity: 0.75, radius: 1.65 },
+  // Turrets fire in any direction → full 360° sector. centerAngle is arbitrary
+  // since halfAngle = π covers the entire circle.
+  "Turret":            { centerAngle: Math.PI / 2,  halfAngle: Math.PI,      color: "#a78bfa", opacity: 0.22 },
 };
 
 // Label positions in the heading-group's local XZ space (local +Z = world forward)
@@ -806,9 +809,11 @@ export default function GameBoard() {
   // The weapon (id) the player has selected and is about to assign to a target.
   // While set, clicking an enemy ship resolves into a fire-weapon call.
   const [firingWeaponPicking, setFiringWeaponPicking] = useState<number | null>(null);
-  // Weapons already fired during the CURRENT firing activation (one shot per
-  // weapon per activation). Reset on activeUnit change or round transition.
-  const [weaponsFiredIds, setWeaponsFiredIds] = useState<Set<number>>(new Set());
+  // Optimistic fired-weapon ids, scoped to a specific (unitId, phase) so a
+  // late /fire-weapon onSuccess from a previous activation can't pollute the
+  // next ship's button state. Merged with the server's authoritative
+  // `activeUnit.firedWeaponIds` (which survives reload) for display.
+  const [pendingFired, setPendingFired] = useState<{ unitId: number; ids: Set<number> } | null>(null);
   // Dice-roll modal payload. `rolling` plays a quick shuffle animation before
   // revealing the server's authoritative roll in `result`.
   const [diceModal, setDiceModal] = useState<
@@ -1000,9 +1005,10 @@ export default function GameBoard() {
   const currentPhase: "movement" | "firing" = (game?.phase as "movement" | "firing") ?? "movement";
 
   // Reset per-activation firing state whenever the active unit changes (new
-  // ship picked up, or the previous activation ended).
+  // ship picked up, or the previous activation ended). Server clears its own
+  // ledger on /activate-unit; we just clear the optimistic overlay + picker.
   useEffect(() => {
-    setWeaponsFiredIds(new Set());
+    setPendingFired(null);
     setFiringWeaponPicking(null);
   }, [activeUnitId, currentPhase]);
 
@@ -1043,7 +1049,15 @@ export default function GameBoard() {
             // Mark rules-state IMMEDIATELY so the same weapon can't be
             // re-fired during the dice-roll animation window. The visual
             // reveal of the result is delayed separately for UX polish only.
-            setWeaponsFiredIds(prev => new Set(prev).add(firedWeaponId));
+            // Scope to firingUnitId so a late callback after the player has
+            // already moved on to a different ship can't disable buttons there.
+            const firingUnitId = attacker.id;
+            setPendingFired(prev => {
+              if (prev && prev.unitId !== firingUnitId) return prev;
+              const next = new Set(prev?.ids ?? []);
+              next.add(firedWeaponId);
+              return { unitId: firingUnitId, ids: next };
+            });
             setFiringWeaponPicking(null);
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             // Small delay so the "rolling" shuffle has a moment to play.
@@ -1635,6 +1649,15 @@ export default function GameBoard() {
                 const attacker = units.find(u => u.id === activeUnitId);
                 if (!attacker || attacker.ownerId !== myUserId) return null;
                 const weapons = (weaponsByFilename[attacker.modelFilename] as Weapon[] | undefined) ?? [];
+                // Authoritative fired-set = server's ledger ∪ optimistic local
+                // adds (covers the brief window before query invalidation lands).
+                const serverFired = new Set((attacker.firedWeaponIds ?? []) as number[]);
+                const pendingForThisUnit =
+                  pendingFired && pendingFired.unitId === attacker.id ? pendingFired.ids : null;
+                const firedSet = new Set<number>([
+                  ...serverFired,
+                  ...(pendingForThisUnit ?? []),
+                ]);
                 return (
                   <div className="space-y-1.5" data-testid="firing-panel">
                     <div className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
@@ -1644,7 +1667,7 @@ export default function GameBoard() {
                       <p className="text-xs text-muted-foreground font-mono italic">No weapons.</p>
                     )}
                     {weapons.map(w => {
-                      const fired = weaponsFiredIds.has(w.id);
+                      const fired = firedSet.has(w.id);
                       const picking = firingWeaponPicking === w.id;
                       return (
                         <button

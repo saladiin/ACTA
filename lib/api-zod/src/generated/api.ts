@@ -239,7 +239,8 @@ export const GetGameResponse = zod.object({
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
-  "hasFiredThisRound": zod.boolean()
+  "hasFiredThisRound": zod.boolean(),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.')
 })),
   "turns": zod.array(zod.object({
   "id": zod.number(),
@@ -514,7 +515,8 @@ export const MoveUnitResponse = zod.object({
   "weaponDamage": zod.number(),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
-  "hasFiredThisRound": zod.boolean()
+  "hasFiredThisRound": zod.boolean(),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.')
 })
 
 

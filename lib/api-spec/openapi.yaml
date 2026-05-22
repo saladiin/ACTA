@@ -588,7 +588,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed, hasMovedThisRound, hasFiredThisRound]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -610,6 +610,10 @@ components:
         isDestroyed:   { type: boolean }
         hasMovedThisRound: { type: boolean }
         hasFiredThisRound: { type: boolean }
+        firedWeaponIds:
+          type: array
+          items: { type: integer }
+          description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
 
     GameDetail:
       type: object
