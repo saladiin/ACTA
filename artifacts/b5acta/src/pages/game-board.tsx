@@ -1677,10 +1677,10 @@ export default function GameBoard() {
                           onClick={() => setFiringWeaponPicking(picking ? null : w.id)}
                           className={`w-full text-left rounded border px-2 py-1.5 font-mono text-xs transition-colors ${
                             fired
-                              ? "border-green-500/30 bg-green-500/5 text-green-500/60 line-through cursor-not-allowed"
+                              ? "border-red-500/30 bg-red-500/5 text-red-300/60 line-through cursor-not-allowed"
                               : picking
                               ? "border-amber-400/80 bg-amber-400/15 text-amber-200"
-                              : "border-red-500/30 bg-red-500/5 text-red-300 hover:bg-red-500/10"
+                              : "border-green-500/40 bg-green-500/5 text-green-300 hover:bg-green-500/10"
                           }`}
                         >
                           <div className="flex items-center justify-between">
