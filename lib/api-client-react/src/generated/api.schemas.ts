@@ -85,6 +85,14 @@ export const GamePhase = {
   firing: 'firing',
 } as const;
 
+export type GameVisibility = typeof GameVisibility[keyof typeof GameVisibility];
+
+
+export const GameVisibility = {
+  public: 'public',
+  private: 'private',
+} as const;
+
 export interface Game {
   id: number;
   challengerId: string;
@@ -109,22 +117,46 @@ export interface Game {
   /** @nullable */
   initiativeWinnerId?: string | null;
   pointLimit: number;
+  visibility?: GameVisibility;
+  /** True if this engagement is gated by a password (does not expose the password itself). */
+  hasPassword?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+/**
+ * public = anyone may join from the lobby; private = password-gated.
+ */
+export type GameInputVisibility = typeof GameInputVisibility[keyof typeof GameInputVisibility];
+
+
+export const GameInputVisibility = {
+  public: 'public',
+  private: 'private',
+} as const;
+
 export interface GameInput {
+  pointLimit: number;
+  /** public = anyone may join from the lobby; private = password-gated. */
+  visibility: GameInputVisibility;
   /**
-     * Optional. Omit for an open challenge any commander can accept.
+     * Required when visibility=private. Stored hashed; required again on accept.
      * @nullable
      */
-  opponentId?: string | null;
+  password?: string | null;
   /**
-     * Optional prefab fleet to commit at creation time.
+     * Optional prefab fleet to commit at creation time; may also be chosen later during deploy.
      * @nullable
      */
   fleetId?: number | null;
-  pointLimit: number;
+}
+
+export interface AcceptGameInput {
+  /**
+     * Required if the engagement is private.
+     * @nullable
+     */
+  password?: string | null;
 }
 
 export interface GameUnit {

@@ -245,6 +245,12 @@ paths:
           required: true
           schema:
             type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptGameInput"
       responses:
         "200":
           description: OK
@@ -252,6 +258,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Game"
+        "403":
+          description: Forbidden (e.g. wrong password on a private engagement)
 
   /games/{gameId}/decline:
     post:
@@ -609,16 +617,24 @@ components:
         phase:           { type: string, enum: [movement, firing] }
         initiativeWinnerId: { type: ["string", "null"] }
         pointLimit:   { type: integer }
+        visibility:   { type: string, enum: [public, private] }
+        hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         createdAt:    { type: string, format: date-time }
         updatedAt:    { type: string, format: date-time }
 
     GameInput:
       type: object
-      required: [pointLimit]
+      required: [pointLimit, visibility]
       properties:
-        opponentId: { type: ["string", "null"], description: "Optional. Omit for an open challenge any commander can accept." }
-        fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time." }
         pointLimit: { type: integer }
+        visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
+        password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
+        fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
+
+    AcceptGameInput:
+      type: object
+      properties:
+        password: { type: ["string", "null"], description: "Required if the engagement is private." }
 
     GameUnit:
       type: object

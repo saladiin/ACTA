@@ -2,131 +2,69 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  useSearchPlayers,
   useListFleets,
   useCreateGame,
   getListGamesQueryKey,
   getGetLobbyQueryKey,
-  getSearchPlayersQueryKey,
 } from "@workspace/api-client-react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { UserCircle, Swords, ChevronRight } from "lucide-react";
+import { Swords, Globe2, Lock } from "lucide-react";
 
 export default function NewGame() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
-  const [search, setSearch] = useState("");
-  const [selectedOpponent, setSelectedOpponent] = useState<{ id: string; username: string } | null>(null);
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [password, setPassword] = useState("");
   const [selectedFleet, setSelectedFleet] = useState<string>("");
   const [pointLimit, setPointLimit] = useState("500");
 
-  const { data: players, isLoading: searchLoading } = useSearchPlayers(
-    { q: search },
-    { query: { queryKey: getSearchPlayersQueryKey({ q: search }), enabled: search.length >= 2 } }
-  );
   const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
 
+  const canSubmit =
+    !!pointLimit &&
+    (visibility === "public" || password.trim().length >= 1) &&
+    !createGame.isPending;
+
   const handleCreate = () => {
-    if (!selectedOpponent || !selectedFleet) return;
+    if (!canSubmit) return;
     createGame.mutate(
-      { data: { opponentId: selectedOpponent.id, fleetId: parseInt(selectedFleet), pointLimit: parseInt(pointLimit) } },
+      {
+        data: {
+          pointLimit: parseInt(pointLimit),
+          visibility,
+          password: visibility === "private" ? password : null,
+          fleetId: selectedFleet ? parseInt(selectedFleet) : null,
+        },
+      },
       {
         onSuccess: (game) => {
           qc.invalidateQueries({ queryKey: getListGamesQueryKey() });
           qc.invalidateQueries({ queryKey: getGetLobbyQueryKey() });
+          // Game starts in 'open' status; the game-board renders the deployment
+          // screen for the challenger as soon as they land on it.
           setLocation(`/games/${game.id}`);
         },
-      }
+      },
     );
   };
+
+  const sectionHeader = (n: number, label: string) => (
+    <h2 className="text-xs font-mono tracking-[0.3em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
+      <span className="w-5 h-5 border border-primary text-primary rounded-full flex items-center justify-center text-[10px] font-bold">{n}</span>
+      {label}
+    </h2>
+  );
 
   return (
     <Layout title="Launch Engagement">
       <div className="p-6 max-w-xl mx-auto space-y-8">
-        {/* Step 1: Choose opponent */}
+        {/* Step 1: Point limit — the only mandatory tactical field. */}
         <section>
-          <h2 className="text-xs font-mono tracking-[0.3em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
-            <span className="w-5 h-5 border border-primary text-primary rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
-            Select Opposing Commander
-          </h2>
-          {selectedOpponent ? (
-            <div data-testid="selected-opponent" className="flex items-center justify-between border border-primary/30 bg-primary/5 rounded-md px-4 py-3">
-              <div className="flex items-center gap-2">
-                <UserCircle className="w-4 h-4 text-primary" />
-                <span className="font-semibold text-sm">{selectedOpponent.username}</span>
-              </div>
-              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setSelectedOpponent(null)}>Change</Button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Input
-                data-testid="input-search-players"
-                placeholder="Search by username..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="bg-background"
-              />
-              {search.length >= 2 && (
-                <div className="border border-border rounded-md overflow-hidden">
-                  {searchLoading ? (
-                    <div className="p-3"><Skeleton className="h-8 w-full" /></div>
-                  ) : players?.length === 0 ? (
-                    <div className="px-4 py-3 text-sm text-muted-foreground">No commanders found</div>
-                  ) : (
-                    players?.map(p => (
-                      <button
-                        key={p.clerkUserId}
-                        data-testid={`button-select-player-${p.clerkUserId}`}
-                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-secondary/30 transition-colors text-left"
-                        onClick={() => { setSelectedOpponent({ id: p.clerkUserId, username: p.username }); setSearch(""); }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <UserCircle className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">{p.username}</span>
-                        </div>
-                        <div className="text-xs text-muted-foreground font-mono">{p.wins}W / {p.losses}L</div>
-                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-        {/* Step 2: Choose fleet */}
-        <section>
-          <h2 className="text-xs font-mono tracking-[0.3em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
-            <span className="w-5 h-5 border border-primary text-primary rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
-            Deploy Your Fleet
-          </h2>
-          <Select value={selectedFleet} onValueChange={setSelectedFleet}>
-            <SelectTrigger data-testid="select-fleet" className="bg-background">
-              <SelectValue placeholder="Select fleet..." />
-            </SelectTrigger>
-            <SelectContent className="bg-card border-border">
-              {fleets?.length === 0 && <SelectItem value="none" disabled>No fleets — create one first</SelectItem>}
-              {fleets?.map(f => (
-                <SelectItem key={f.id} value={String(f.id)}>
-                  {f.name} ({f.shipCount} ships, {f.totalPoints} pts)
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </section>
-
-        {/* Step 3: Point limit */}
-        <section>
-          <h2 className="text-xs font-mono tracking-[0.3em] uppercase text-muted-foreground mb-3 flex items-center gap-2">
-            <span className="w-5 h-5 border border-primary text-primary rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
-            Point Limit
-          </h2>
+          {sectionHeader(1, "Point Limit")}
           <Select value={pointLimit} onValueChange={setPointLimit}>
             <SelectTrigger data-testid="select-point-limit" className="bg-background">
               <SelectValue />
@@ -140,10 +78,96 @@ export default function NewGame() {
           </Select>
         </section>
 
+        {/* Step 2: Visibility — public to lobby, or private with password. */}
+        <section>
+          {sectionHeader(2, "Visibility")}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              data-testid="button-visibility-public"
+              onClick={() => setVisibility("public")}
+              className={`flex items-center gap-2 px-4 py-3 rounded-md border text-sm font-mono uppercase tracking-wider transition-colors ${
+                visibility === "public"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <Globe2 className="w-4 h-4" /> Public
+            </button>
+            <button
+              type="button"
+              data-testid="button-visibility-private"
+              onClick={() => setVisibility("private")}
+              className={`flex items-center gap-2 px-4 py-3 rounded-md border text-sm font-mono uppercase tracking-wider transition-colors ${
+                visibility === "private"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <Lock className="w-4 h-4" /> Private
+            </button>
+          </div>
+          {visibility === "private" && (
+            <div className="mt-3">
+              <Input
+                data-testid="input-engagement-password"
+                type="password"
+                autoComplete="new-password"
+                placeholder="Engagement password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="bg-background"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground font-mono">
+                Anyone with this password can join. Share it on your own channel.
+              </p>
+            </div>
+          )}
+          {visibility === "public" && (
+            <p className="mt-2 text-[11px] text-muted-foreground font-mono">
+              Listed in the public lobby — any commander may accept.
+            </p>
+          )}
+        </section>
+
+        {/* Step 3: Optional prefab fleet — can also be chosen at deployment. */}
+        <section>
+          {sectionHeader(3, "Prefab Fleet (optional)")}
+          <Select value={selectedFleet} onValueChange={setSelectedFleet}>
+            <SelectTrigger data-testid="select-fleet" className="bg-background">
+              <SelectValue placeholder="Choose later in the deployment screen…" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              {fleets?.length === 0 && <SelectItem value="none" disabled>No fleets — create one first</SelectItem>}
+              {fleets?.map((f) => (
+                <SelectItem key={f.id} value={String(f.id)}>
+                  {f.name} ({f.shipCount} ships, {f.totalPoints} pts)
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {selectedFleet && (
+            <button
+              type="button"
+              className="mt-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider hover:text-foreground"
+              onClick={() => setSelectedFleet("")}
+              data-testid="button-clear-fleet"
+            >
+              Clear selection
+            </button>
+          )}
+        </section>
+
+        {createGame.isError && (
+          <p className="text-xs text-red-400 font-mono" data-testid="text-create-error">
+            {(createGame.error as Error).message}
+          </p>
+        )}
+
         <Button
           data-testid="button-launch-engagement"
           className="w-full gap-2 uppercase tracking-widest font-bold"
-          disabled={!selectedOpponent || !selectedFleet || createGame.isPending}
+          disabled={!canSubmit}
           onClick={handleCreate}
         >
           <Swords className="w-4 h-4" />

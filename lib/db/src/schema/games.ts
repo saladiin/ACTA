@@ -26,6 +26,10 @@ export const gamesTable = pgTable("games", {
   phase: text("phase").notNull().default("movement"), // "movement" | "firing"
   initiativeWinnerId: text("initiative_winner_id"),
   pointLimit: integer("point_limit").notNull().default(500),
+  // "public" — anyone in the lobby can join. "private" — must supply the
+  // matching password (stored as scrypt hash in passwordHash).
+  visibility: text("visibility").notNull().default("public"),
+  passwordHash: text("password_hash"),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
   challengerDeployed: boolean("challenger_deployed").notNull().default(false),

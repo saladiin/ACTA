@@ -32,6 +32,7 @@ import { useUser } from "@clerk/react";
 import { useDevUserId } from "../lib/dev-user";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -803,6 +804,9 @@ export default function GameBoard() {
   const [selectedFaction, setSelectedFaction] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [devSkipping, setDevSkipping] = useState(false);
+  // Password an accepter types to join a private engagement (only shown when
+  // the open challenge has hasPassword=true).
+  const [joinPassword, setJoinPassword] = useState("");
 
   const handleDevSkipDeploy = useCallback(async () => {
     setDevSkipping(true);
@@ -1762,16 +1766,37 @@ export default function GameBoard() {
           {/* Open challenge — any non-challenger can claim it; challenger can withdraw it. */}
           {game.status === "open" && !isChallenger && (
             <div className="p-4 border-b border-border space-y-2">
-              <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">Open challenge from {game.challengerName}</p>
+              <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
+                {game.visibility === "private" ? "Private engagement" : "Open challenge"} from {game.challengerName}
+              </p>
+              {game.hasPassword && (
+                <Input
+                  data-testid="input-accept-password"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Engagement password"
+                  value={joinPassword}
+                  onChange={(e) => setJoinPassword(e.target.value)}
+                  className="bg-background h-8 text-xs"
+                />
+              )}
               <Button
                 size="sm"
                 data-testid="button-accept-open-game"
                 className="w-full gap-1.5 uppercase tracking-wider text-xs"
-                onClick={() => acceptGame.mutate({ gameId }, { onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) })}
-                disabled={acceptGame.isPending}
+                onClick={() => acceptGame.mutate(
+                  { gameId, data: game.hasPassword ? { password: joinPassword } : {} },
+                  { onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                )}
+                disabled={acceptGame.isPending || (game.hasPassword && joinPassword.length === 0)}
               >
-                <CheckCircle className="w-3.5 h-3.5" /> Accept Open Challenge
+                <CheckCircle className="w-3.5 h-3.5" /> Accept {game.visibility === "private" ? "Private Engagement" : "Open Challenge"}
               </Button>
+              {acceptGame.isError && (
+                <p className="text-[11px] text-red-400 font-mono" data-testid="text-accept-error">
+                  {(acceptGame.error as Error).message}
+                </p>
+              )}
             </div>
           )}
           {game.status === "open" && isChallenger && (

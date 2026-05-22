@@ -1,11 +1,13 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql } from "drizzle-orm";
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import {
   CreateGameBody,
   GetGameParams,
   AcceptGameParams,
+  AcceptGameBody,
   DeclineGameParams,
   DeployFleetParams,
   DeployFleetBody,
@@ -36,6 +38,30 @@ function hexToWorld(q: number, r: number): { x: number; z: number } {
   return { x: q * 2.25, z: r * 2.6 + q * 1.3 };
 }
 function rollD6(): number { return 1 + Math.floor(Math.random() * 6); }
+
+// ── Password hashing (scrypt) ────────────────────────────────────────────────
+// Stored as "<saltHex>:<hashHex>" so we can rotate parameters later without a
+// migration. The password itself never leaves the server; clients see only
+// `hasPassword: boolean` on the Game DTO.
+function hashPassword(password: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 64);
+  return `${salt.toString("hex")}:${hash.toString("hex")}`;
+}
+function verifyPassword(password: string, stored: string): boolean {
+  const [saltHex, hashHex] = stored.split(":");
+  if (!saltHex || !hashHex) return false;
+  const expected = Buffer.from(hashHex, "hex");
+  const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+// Strip server-only fields from a DB row before returning to clients. The
+// Game schema requires `hasPassword` (boolean) and forbids `passwordHash`.
+function toGameDto<T extends { passwordHash: string | null }>(row: T): Omit<T, "passwordHash"> & { hasPassword: boolean } {
+  const { passwordHash, ...rest } = row;
+  return { ...rest, hasPassword: passwordHash !== null };
+}
 
 // Arc center angles match game-board.tsx (local +Z = forward when heading=0).
 // halfAngle of -1 means "no arc" (boresight = strict equality on center bearing
@@ -94,7 +120,7 @@ router.get("/games", requireAuth, async (req, res): Promise<void> => {
     .from(gamesTable)
     .where(or(eq(gamesTable.challengerId, userId), eq(gamesTable.opponentId, userId)))
     .orderBy(gamesTable.updatedAt);
-  res.json(ListGamesResponse.parse(games));
+  res.json(ListGamesResponse.parse(games.map(toGameDto)));
 });
 
 router.post("/games", requireAuth, async (req, res): Promise<void> => {
@@ -114,26 +140,32 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
 
   const [challenger] = await db.select().from(playersTable).where(eq(playersTable.clerkUserId, userId));
 
-  // Open challenge: no specific opponent — anyone (other than challenger) may
-  // accept it from the lobby. status="open" makes the auth model explicit:
-  // accept is gated on status, not on opponentId membership.
-  const opponentId = parsed.data.opponentId ?? null;
-  let opponentName: string | null = null;
-  if (opponentId) {
-    const [opp] = await db.select().from(playersTable).where(eq(playersTable.clerkUserId, opponentId));
-    opponentName = opp?.username ?? null;
+  // Engagements no longer target a specific opponent. They are listed as
+  // "open" so any other commander can join — either freely (public) or by
+  // supplying the matching password (private).
+  const visibility = parsed.data.visibility;
+  if (visibility === "private") {
+    if (!parsed.data.password || parsed.data.password.length < 1) {
+      res.status(400).json({ error: "Password required for a private engagement." });
+      return;
+    }
   }
+  const passwordHash = visibility === "private" && parsed.data.password
+    ? hashPassword(parsed.data.password)
+    : null;
 
   const [game] = await db.insert(gamesTable).values({
     challengerId: userId,
-    opponentId,
+    opponentId: null,
     challengerName: challenger?.username ?? null,
-    opponentName,
+    opponentName: null,
     challengerFleetId: fleetId,
     pointLimit: parsed.data.pointLimit,
-    status: opponentId ? "pending" : "open",
+    visibility,
+    passwordHash,
+    status: "open",
   }).returning();
-  res.status(201).json(game);
+  res.status(201).json(toGameDto(game));
 });
 
 router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
@@ -162,7 +194,7 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const units = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
   const turns = await db.select().from(turnsTable).where(eq(turnsTable.gameId, params.data.gameId)).orderBy(turnsTable.turnNumber);
-  res.json(GetGameResponse.parse({ game, units, turns }));
+  res.json(GetGameResponse.parse({ game: toGameDto(game), units, turns }));
 });
 
 router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void> => {
@@ -172,6 +204,14 @@ router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void
     res.status(400).json({ error: params.error.message });
     return;
   }
+  // Body is optional (public engagements need nothing); when present it may
+  // carry the password for a private engagement.
+  const body = AcceptGameBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const submittedPassword = body.data.password ?? null;
 
   try {
     const updated = await db.transaction(async (tx) => {
@@ -185,6 +225,11 @@ router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void
         // win — the conditional UPDATE only fires while status is still open.
         if (game.challengerId === userId) {
           throw Object.assign(new Error("Cannot accept your own challenge"), { status: 400 });
+        }
+        if (game.visibility === "private") {
+          if (!game.passwordHash || !submittedPassword || !verifyPassword(submittedPassword, game.passwordHash)) {
+            throw Object.assign(new Error("Incorrect password for this engagement."), { status: 403 });
+          }
         }
         const [me] = await tx.select().from(playersTable).where(eq(playersTable.clerkUserId, userId));
         const result = await tx.update(gamesTable)
@@ -207,7 +252,7 @@ router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void
 
       throw Object.assign(new Error("Game is not acceptable"), { status: 400 });
     });
-    res.json(AcceptGameResponse.parse(updated));
+    res.json(AcceptGameResponse.parse(toGameDto(updated)));
   } catch (e) {
     const err = e as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
@@ -256,7 +301,7 @@ router.post("/games/:gameId/decline", requireAuth, async (req, res): Promise<voi
 
       throw Object.assign(new Error(`Cannot decline from status '${game.status}'`), { status: 400 });
     });
-    res.json(DeclineGameResponse.parse(updated));
+    res.json(DeclineGameResponse.parse(toGameDto(updated)));
   } catch (e) {
     const err = e as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });

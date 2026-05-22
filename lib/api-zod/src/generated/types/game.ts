@@ -7,6 +7,7 @@
  */
 import type { GamePhase } from './gamePhase';
 import type { GameStatus } from './gameStatus';
+import type { GameVisibility } from './gameVisibility';
 
 export interface Game {
   id: number;
@@ -32,6 +33,9 @@ export interface Game {
   /** @nullable */
   initiativeWinnerId?: string | null;
   pointLimit: number;
+  visibility?: GameVisibility;
+  /** True if this engagement is gated by a password (does not expose the password itself). */
+  hasPassword?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -176,6 +176,8 @@ export const ListGamesResponseItem = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -186,9 +188,10 @@ export const ListGamesResponse = zod.array(ListGamesResponseItem)
  * @summary Create a new game challenge (invites an opponent by Clerk user ID or username)
  */
 export const CreateGameBody = zod.object({
-  "opponentId": zod.string().nullish().describe('Optional. Omit for an open challenge any commander can accept.'),
-  "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time.'),
-  "pointLimit": zod.number()
+  "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
+  "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
+  "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.')
 })
 
 
@@ -216,6 +219,8 @@ export const GetGameResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }),
@@ -265,6 +270,10 @@ export const AcceptGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const AcceptGameBody = zod.object({
+  "password": zod.string().nullish().describe('Required if the engagement is private.')
+})
+
 export const AcceptGameResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -281,6 +290,8 @@ export const AcceptGameResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -309,6 +320,8 @@ export const DeclineGameResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -347,6 +360,8 @@ export const DeployFleetResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -420,6 +435,8 @@ export const ActivateUnitResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -448,6 +465,8 @@ export const EndActivationResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -579,6 +598,8 @@ export const GetLobbyResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -598,6 +619,8 @@ export const GetLobbyResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -617,6 +640,8 @@ export const GetLobbyResponse = zod.object({
   "phase": zod.enum(['movement', 'firing']),
   "initiativeWinnerId": zod.string().nullish(),
   "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))

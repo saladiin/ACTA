@@ -5,17 +5,20 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { GameInputVisibility } from './gameInputVisibility';
 
 export interface GameInput {
+  pointLimit: number;
+  /** public = anyone may join from the lobby; private = password-gated. */
+  visibility: GameInputVisibility;
   /**
-     * Optional. Omit for an open challenge any commander can accept.
+     * Required when visibility=private. Stored hashed; required again on accept.
      * @nullable
      */
-  opponentId?: string | null;
+  password?: string | null;
   /**
-     * Optional prefab fleet to commit at creation time.
+     * Optional prefab fleet to commit at creation time; may also be chosen later during deploy.
      * @nullable
      */
   fleetId?: number | null;
-  pointLimit: number;
 }

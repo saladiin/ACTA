@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './acceptGameInput';
 export * from './deploymentInput';
 export * from './devMoveUnitInput';
 export * from './fireAction';
@@ -16,9 +17,11 @@ export * from './fleetInput';
 export * from './game';
 export * from './gameDetail';
 export * from './gameInput';
+export * from './gameInputVisibility';
 export * from './gamePhase';
 export * from './gameStatus';
 export * from './gameUnit';
+export * from './gameVisibility';
 export * from './healthStatus';
 export * from './lobbyState';
 export * from './moveAction';

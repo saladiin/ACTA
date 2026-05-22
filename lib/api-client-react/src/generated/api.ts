@@ -20,6 +20,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AcceptGameInput,
   DeploymentInput,
   DevMoveUnitInput,
   FireWeaponInput,
@@ -960,23 +961,25 @@ export const getAcceptGameUrl = (gameId: number,) => {
 /**
  * @summary Accept a game challenge (opponent accepts)
  */
-export const acceptGame = async (gameId: number, options?: RequestInit): Promise<Game> => {
+export const acceptGame = async (gameId: number,
+    acceptGameInput?: AcceptGameInput, options?: RequestInit): Promise<Game> => {
 
   return customFetch<Game>(getAcceptGameUrl(gameId),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      acceptGameInput,)
   }
 );}
 
 
 
 
-export const getAcceptGameMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptGame>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof acceptGame>>, TError,{gameId: number}, TContext> => {
+export const getAcceptGameMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptGame>>, TError,{gameId: number;data?: BodyType<AcceptGameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof acceptGame>>, TError,{gameId: number;data?: BodyType<AcceptGameInput>}, TContext> => {
 
 const mutationKey = ['acceptGame'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -988,10 +991,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acceptGame>>, {gameId: number}> = (props) => {
-          const {gameId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acceptGame>>, {gameId: number;data?: BodyType<AcceptGameInput>}> = (props) => {
+          const {gameId,data} = props ?? {};
 
-          return  acceptGame(gameId,requestOptions)
+          return  acceptGame(gameId,data,requestOptions)
         }
 
 
@@ -1002,18 +1005,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type AcceptGameMutationResult = NonNullable<Awaited<ReturnType<typeof acceptGame>>>
-
-    export type AcceptGameMutationError = ErrorType<unknown>
+    export type AcceptGameMutationBody = BodyType<AcceptGameInput> | undefined
+    export type AcceptGameMutationError = ErrorType<void>
 
     /**
  * @summary Accept a game challenge (opponent accepts)
  */
-export const useAcceptGame = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptGame>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useAcceptGame = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptGame>>, TError,{gameId: number;data?: BodyType<AcceptGameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof acceptGame>>,
         TError,
-        {gameId: number},
+        {gameId: number;data?: BodyType<AcceptGameInput>},
         TContext
       > => {
       return useMutation(getAcceptGameMutationOptions(options));
