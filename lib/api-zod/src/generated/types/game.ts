@@ -36,6 +36,12 @@ export interface Game {
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
+  /**
+     * Depth in inches of each player's deployment zone, measured inward from their short edge of the 48"×72" board.
+     * @minimum 4
+     * @maximum 30
+     */
+  deploymentDepth?: number;
   createdAt: Date;
   updatedAt: Date;
 }

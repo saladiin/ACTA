@@ -154,6 +154,10 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     ? hashPassword(parsed.data.password)
     : null;
 
+  // Clamp belt-and-braces; the Zod schema already enforces 4..30 but the DB
+  // would otherwise accept anything an attacker could sneak past the spec.
+  const deploymentDepth = Math.max(4, Math.min(30, Math.trunc(parsed.data.deploymentDepth)));
+
   const [game] = await db.insert(gamesTable).values({
     challengerId: userId,
     opponentId: null,
@@ -163,6 +167,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     pointLimit: parsed.data.pointLimit,
     visibility,
     passwordHash,
+    deploymentDepth,
     status: "open",
   }).returning();
   res.status(201).json(toGameDto(game));
@@ -346,6 +351,21 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
   }
 
   const ships = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
+
+  // Zone validation: challenger deploys from +Z short edge, opponent from -Z.
+  // hexQ/hexR are stored as world inches (see game-board.tsx handleYardsDeploy).
+  // Board is 48"×72"; placements must stay inside the player's deployment zone.
+  const D = game.deploymentDepth;
+  const zoneMinR = isChallenger ? 36 - D : -36;
+  const zoneMaxR = isChallenger ? 36 : -36 + D;
+  for (const placement of parsed.data.placements) {
+    if (placement.hexQ < -24 || placement.hexQ > 24 || placement.hexR < zoneMinR || placement.hexR > zoneMaxR) {
+      res.status(400).json({
+        error: `Placement (${placement.hexQ}, ${placement.hexR}) is outside your ${D}\" deployment zone.`,
+      });
+      return;
+    }
+  }
 
   for (const placement of parsed.data.placements) {
     const ship = ships.find(s => s.id === placement.shipId);

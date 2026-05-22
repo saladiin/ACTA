@@ -30,6 +30,10 @@ export const gamesTable = pgTable("games", {
   // matching password (stored as scrypt hash in passwordHash).
   visibility: text("visibility").notNull().default("public"),
   passwordHash: text("password_hash"),
+  // Depth of each player's deployment zone in inches, measured inward from
+  // their short edge of the 48"×72" board. Constrained to 4..30 (creation
+  // is validated server-side). Dev mode bypasses this on the client.
+  deploymentDepth: integer("deployment_depth").notNull().default(12),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
   challengerDeployed: boolean("challenger_deployed").notNull().default(false),

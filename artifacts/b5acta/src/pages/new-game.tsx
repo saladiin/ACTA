@@ -20,6 +20,9 @@ export default function NewGame() {
   const [password, setPassword] = useState("");
   const [selectedFleet, setSelectedFleet] = useState<string>("");
   const [pointLimit, setPointLimit] = useState("500");
+  // Deployment zone depth in inches (4..30). Each player deploys within this
+  // depth from their short edge of the 48"×72" board.
+  const [deploymentDepth, setDeploymentDepth] = useState<number>(12);
 
   const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
@@ -38,6 +41,7 @@ export default function NewGame() {
           visibility,
           password: visibility === "private" ? password : null,
           fleetId: selectedFleet ? parseInt(selectedFleet) : null,
+          deploymentDepth,
         },
       },
       {
@@ -130,9 +134,30 @@ export default function NewGame() {
           )}
         </section>
 
-        {/* Step 3: Optional prefab fleet — can also be chosen at deployment. */}
+        {/* Step 3: Deployment zone depth — how far from each player's short
+            edge ships may be placed during the deploy phase. */}
         <section>
-          {sectionHeader(3, "Prefab Fleet (optional)")}
+          {sectionHeader(3, `Deployment Zone Depth — ${deploymentDepth}"`)}
+          <input
+            type="range"
+            min={4}
+            max={30}
+            step={1}
+            value={deploymentDepth}
+            onChange={(e) => setDeploymentDepth(parseInt(e.target.value))}
+            data-testid="input-deployment-depth"
+            className="w-full accent-primary"
+          />
+          <div className="flex justify-between text-[10px] font-mono text-muted-foreground tracking-wider mt-1">
+            <span>4"</span>
+            <span>Each commander deploys within this depth of their short edge.</span>
+            <span>30"</span>
+          </div>
+        </section>
+
+        {/* Step 4: Optional prefab fleet — can also be chosen at deployment. */}
+        <section>
+          {sectionHeader(4, "Prefab Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
               <SelectValue placeholder="Choose later in the deployment screen…" />

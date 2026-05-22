@@ -619,17 +619,19 @@ components:
         pointLimit:   { type: integer }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
+        deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
         createdAt:    { type: string, format: date-time }
         updatedAt:    { type: string, format: date-time }
 
     GameInput:
       type: object
-      required: [pointLimit, visibility]
+      required: [pointLimit, visibility, deploymentDepth]
       properties:
         pointLimit: { type: integer }
         visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
         fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
+        deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge." }
 
     AcceptGameInput:
       type: object

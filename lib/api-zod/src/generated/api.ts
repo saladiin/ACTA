@@ -160,6 +160,11 @@ export const RemoveShipFromFleetParams = zod.object({
 /**
  * @summary List games for the authenticated user (active + completed)
  */
+export const listGamesResponseDeploymentDepthMin = 4;
+export const listGamesResponseDeploymentDepthMax = 30;
+
+
+
 export const ListGamesResponseItem = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -178,6 +183,7 @@ export const ListGamesResponseItem = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -187,11 +193,17 @@ export const ListGamesResponse = zod.array(ListGamesResponseItem)
 /**
  * @summary Create a new game challenge (invites an opponent by Clerk user ID or username)
  */
+export const createGameBodyDeploymentDepthMin = 4;
+export const createGameBodyDeploymentDepthMax = 30;
+
+
+
 export const CreateGameBody = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
-  "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.')
+  "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.'),
+  "deploymentDepth": zod.number().min(createGameBodyDeploymentDepthMin).max(createGameBodyDeploymentDepthMax).describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge.')
 })
 
 
@@ -201,6 +213,11 @@ export const CreateGameBody = zod.object({
 export const GetGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
+export const getGameResponseGameDeploymentDepthMin = 4;
+export const getGameResponseGameDeploymentDepthMax = 30;
+
+
 
 export const GetGameResponse = zod.object({
   "game": zod.object({
@@ -221,6 +238,7 @@ export const GetGameResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }),
@@ -274,6 +292,11 @@ export const AcceptGameBody = zod.object({
   "password": zod.string().nullish().describe('Required if the engagement is private.')
 })
 
+export const acceptGameResponseDeploymentDepthMin = 4;
+export const acceptGameResponseDeploymentDepthMax = 30;
+
+
+
 export const AcceptGameResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -292,6 +315,7 @@ export const AcceptGameResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -303,6 +327,11 @@ export const AcceptGameResponse = zod.object({
 export const DeclineGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
+export const declineGameResponseDeploymentDepthMin = 4;
+export const declineGameResponseDeploymentDepthMax = 30;
+
+
 
 export const DeclineGameResponse = zod.object({
   "id": zod.number(),
@@ -322,6 +351,7 @@ export const DeclineGameResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -344,6 +374,11 @@ export const DeployFleetBody = zod.object({
 }))
 })
 
+export const deployFleetResponseDeploymentDepthMin = 4;
+export const deployFleetResponseDeploymentDepthMax = 30;
+
+
+
 export const DeployFleetResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -362,6 +397,7 @@ export const DeployFleetResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -419,6 +455,11 @@ export const ActivateUnitParams = zod.object({
   "unitId": zod.coerce.number()
 })
 
+export const activateUnitResponseDeploymentDepthMin = 4;
+export const activateUnitResponseDeploymentDepthMax = 30;
+
+
+
 export const ActivateUnitResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -437,6 +478,7 @@ export const ActivateUnitResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -448,6 +490,11 @@ export const ActivateUnitResponse = zod.object({
 export const EndActivationParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
+export const endActivationResponseDeploymentDepthMin = 4;
+export const endActivationResponseDeploymentDepthMax = 30;
+
+
 
 export const EndActivationResponse = zod.object({
   "id": zod.number(),
@@ -467,6 +514,7 @@ export const EndActivationResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -581,6 +629,17 @@ export const MoveUnitResponse = zod.object({
 /**
  * @summary Get open game challenges and active games summary
  */
+export const getLobbyResponsePendingChallengesItemDeploymentDepthMin = 4;
+export const getLobbyResponsePendingChallengesItemDeploymentDepthMax = 30;
+
+export const getLobbyResponseActiveGamesItemDeploymentDepthMin = 4;
+export const getLobbyResponseActiveGamesItemDeploymentDepthMax = 30;
+
+export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMin = 4;
+export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMax = 30;
+
+
+
 export const GetLobbyResponse = zod.object({
   "pendingChallenges": zod.array(zod.object({
   "id": zod.number(),
@@ -600,6 +659,7 @@ export const GetLobbyResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -621,6 +681,7 @@ export const GetLobbyResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -642,6 +703,7 @@ export const GetLobbyResponse = zod.object({
   "pointLimit": zod.number(),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))

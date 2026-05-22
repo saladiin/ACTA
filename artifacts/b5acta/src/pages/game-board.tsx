@@ -59,6 +59,29 @@ function SpaceGrid() {
   );
 }
 
+// Translucent floor quads marking each player's deployment zone. The
+// challenger's zone hugs the +Z short edge; the opponent's hugs -Z. Depth (in
+// inches) is configured at game creation (4..30) and enforced server-side.
+function DeploymentZones({ depth, mySide }: { depth: number; mySide: "challenger" | "opponent" | null }) {
+  const hd = BOARD_D / 2; // 36
+  const w = BOARD_W;
+  // Player zones: centred at z = ±(36 - depth/2), depth tall, full board wide.
+  const challengerZ = hd - depth / 2;
+  const opponentZ = -hd + depth / 2;
+  return (
+    <>
+      <mesh position={[0, 0.001, challengerZ]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
+        <planeGeometry args={[w, depth]} />
+        <meshBasicMaterial color={mySide === "challenger" ? "#f59e0b" : "#7c2d12"} transparent opacity={mySide === "challenger" ? 0.12 : 0.06} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, 0.001, opponentZ]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
+        <planeGeometry args={[w, depth]} />
+        <meshBasicMaterial color={mySide === "opponent" ? "#f59e0b" : "#7c2d12"} transparent opacity={mySide === "opponent" ? 0.12 : 0.06} depthWrite={false} />
+      </mesh>
+    </>
+  );
+}
+
 function BoardBoundary() {
   const geo = useMemo(() => {
     const hw = BOARD_W / 2; // 24
@@ -912,6 +935,31 @@ export default function GameBoard() {
   const turns = gameData?.turns ?? [];
 
   const isChallenger = game?.challengerId === myUserId;
+
+  // Deployment-zone clamp for staged ship placement during the deploy phase.
+  // Challenger deploys from the +Z short edge, opponent from -Z. Dev mode
+  // bypasses the clamp entirely so test scenarios can place anywhere.
+  const deploymentDepth = game?.deploymentDepth ?? 12;
+  const clampToDeployZone = useCallback((x: number, z: number): [number, number] => {
+    const cx = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, x));
+    if (devMode || !game) return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
+    const mine: "challenger" | "opponent" | null =
+      myUserId === game.challengerId ? "challenger"
+      : myUserId === game.opponentId ? "opponent"
+      : null;
+    if (mine === "challenger") {
+      return [cx, Math.max(36 - deploymentDepth, Math.min(36, z))];
+    }
+    if (mine === "opponent") {
+      return [cx, Math.max(-36, Math.min(-36 + deploymentDepth, z))];
+    }
+    return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
+  }, [devMode, game, myUserId, deploymentDepth]);
+  const mySide: "challenger" | "opponent" | null = !game
+    ? null
+    : myUserId === game.challengerId ? "challenger"
+    : myUserId === game.opponentId ? "opponent"
+    : null;
   const isOpponent = game?.opponentId === myUserId;
   // New activation model: it's "my turn" if the server says I'm the
   // active player for the round's next ship activation.
@@ -1292,7 +1340,8 @@ export default function GameBoard() {
             if (draggingId) {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
               if (!pos) return;
-              const [x, z] = pos;
+              const [rx, rz] = pos;
+              const [x, z] = clampToDeployZone(rx, rz);
               setStagedUnits(prev => prev.map(u => u.id === draggingId ? { ...u, x, z } : u));
               return;
             }
@@ -1319,7 +1368,8 @@ export default function GameBoard() {
             if (!ship) return;
             const pos = screenToBoard(e.clientX, e.clientY, threeRef);
             if (!pos) return;
-            const [x, z] = pos;
+            const [rx, rz] = pos;
+            const [x, z] = clampToDeployZone(rx, rz);
             const newId = `staged-${Date.now()}`;
             setStagedUnits(prev => [...prev, {
               id: newId,
@@ -1350,6 +1400,9 @@ export default function GameBoard() {
             <fog attach="fog" args={["#050505", 60, 110]} />
             <SpaceGrid />
             <BoardBoundary />
+            {game.status === "deploying" && (
+              <DeploymentZones depth={deploymentDepth} mySide={mySide} />
+            )}
             {units.map(unit => {
               const dimmed = currentPhase === "firing"
                 ? unit.hasFiredThisRound && !unit.isDestroyed

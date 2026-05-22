@@ -21,4 +21,10 @@ export interface GameInput {
      * @nullable
      */
   fleetId?: number | null;
+  /**
+     * Depth in inches of each player's deployment zone, measured inward from their short edge.
+     * @minimum 4
+     * @maximum 30
+     */
+  deploymentDepth: number;
 }
