@@ -2118,32 +2118,84 @@ function DiceRollModal({
     return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
   })();
 
+  // ── Free-floating, draggable panel ──
+  // No backdrop — the battlefield underneath stays visible AND clickable so
+  // the player can watch a fresh shot fly while the previous dice result is
+  // still on screen. The header bar is the drag handle; position is clamped
+  // to the viewport on every move and on window resize so the panel can't
+  // get marooned offscreen.
+  const PANEL_W = 448;            // ~max-w-md
+  const PANEL_H_ESTIMATE = 360;   // generous; only used for initial clamp
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
+    if (typeof window === "undefined") return { x: 100, y: 80 };
+    return { x: Math.max(16, window.innerWidth - PANEL_W - 24), y: 80 };
+  });
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  const clamp = useCallback((x: number, y: number) => {
+    if (typeof window === "undefined") return { x, y };
+    const h = panelRef.current?.offsetHeight ?? PANEL_H_ESTIMATE;
+    const w = panelRef.current?.offsetWidth ?? PANEL_W;
+    const maxX = Math.max(0, window.innerWidth - w);
+    const maxY = Math.max(0, window.innerHeight - h);
+    return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) };
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setPos(p => clamp(p.x, p.y));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clamp]);
+
+  const onHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Ignore drags initiated on interactive controls inside the header (X button, etc.).
+    if ((e.target as HTMLElement).closest("button")) return;
+    dragRef.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onHeaderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    setPos(clamp(e.clientX - dragRef.current.dx, e.clientY - dragRef.current.dy));
+  };
+  const onHeaderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    dragRef.current = null;
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      ref={panelRef}
+      className="fixed z-50 w-full max-w-md bg-card border border-amber-500/40 rounded-md p-5 shadow-2xl"
+      style={{ left: pos.x, top: pos.y }}
       data-testid="dice-modal"
-      // Backdrop click routes through the same confirm-close gate so the
-      // player can never lose the result by accident — even mid-shuffle.
-      onClick={requestClose}
+      onClick={e => e.stopPropagation()}
     >
-      <div
-        className="bg-card border border-amber-500/40 rounded-md p-5 w-full max-w-md mx-4 shadow-2xl relative"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Corner X — also routes through confirm-close. */}
+        {/* Corner X — routes through confirm-close. */}
         <button
           type="button"
           data-testid="button-x-dice-modal"
           aria-label="Close"
-          className="absolute top-2 right-2 text-amber-400/60 hover:text-amber-300 font-mono text-sm w-7 h-7 flex items-center justify-center"
+          className="absolute top-2 right-2 text-amber-400/60 hover:text-amber-300 font-mono text-sm w-7 h-7 flex items-center justify-center z-10"
           onClick={requestClose}
         >
           ✕
         </button>
 
-        <div className="flex items-center justify-between mb-3 pr-7">
+        {/* Header doubles as drag handle. */}
+        <div
+          className="flex items-center justify-between mb-3 pr-7 cursor-move select-none touch-none"
+          onPointerDown={onHeaderPointerDown}
+          onPointerMove={onHeaderPointerMove}
+          onPointerUp={onHeaderPointerUp}
+          onPointerCancel={onHeaderPointerUp}
+          data-testid="dice-modal-drag-handle"
+          title="Drag to move"
+        >
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-amber-400/70 font-mono">Firing</p>
+            <p className="text-[10px] uppercase tracking-widest text-amber-400/70 font-mono flex items-center gap-1.5">
+              <span className="inline-block w-3 text-amber-400/50">⋮⋮</span> Firing
+            </p>
             <p className="text-sm font-mono font-bold text-amber-300">
               {weapon.name || weapon.arc} → {targetName}
             </p>
@@ -2311,7 +2363,6 @@ function DiceRollModal({
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }
