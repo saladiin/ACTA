@@ -463,6 +463,37 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
 // ── Movement planning (forward / turn previews, keyboard + mouse-drag) ───────
 // turn.deltaDeg is signed: positive = clockwise (R), negative = counter-clockwise (Shift+R).
 // forward.distance is in inches (world units), 0..remaining-speed, controlled by mouse drag.
+// Dice-modal staging. The reveal is gated behind explicit confirm buttons:
+//   pending        → server roll in flight (no result yet)
+//   attack-ready   → result cached; press "Roll to Hit" to reveal attack dice
+//   attack-rolling → attack dice shuffle animation (~700ms)
+//   attack-shown   → attack dice revealed. If hits>0 prompt damage; else close.
+//   damage-ready   → press "Roll Damage" to reveal damage/crit dice
+//   damage-rolling → damage dice shuffle animation
+//   damage-shown   → full result + summary; press "Close"
+//   error          → server rejected the shot (e.g. out of arc / range)
+// `confirmingClose` overlays a Yes/Cancel prompt so the player can't dismiss
+// the modal by accident and lose track of what just happened.
+type DiceModalPhase =
+  | "pending"
+  | "attack-ready"
+  | "attack-rolling"
+  | "attack-shown"
+  | "damage-ready"
+  | "damage-rolling"
+  | "damage-shown"
+  | "error";
+type DiceModalState = {
+  weapon: Weapon;
+  targetName: string;
+  targetId: number;
+  attackDice: number;
+  phase: DiceModalPhase;
+  result?: FireWeaponResult;
+  error?: string;
+  confirmingClose?: boolean;
+};
+
 type MovePlan =
   | { kind: "forward"; distance: number }
   | { kind: "turn"; deltaDeg: number }
@@ -823,20 +854,12 @@ export default function GameBoard() {
   // ref flips synchronously the moment we kick off a mutate() and is cleared
   // when the request settles, so the 2nd–Nth events in the same gesture bail.
   const firingInFlightRef = useRef(false);
-  // Dice-roll modal payload. `rolling` plays a quick shuffle animation before
-  // revealing the server's authoritative roll in `result`.
-  const [diceModal, setDiceModal] = useState<
-    | null
-    | {
-        weapon: Weapon;
-        targetName: string;
-        targetId: number;
-        attackDice: number;
-        state: "rolling" | "done" | "error";
-        result?: FireWeaponResult;
-        error?: string;
-      }
-  >(null);
+  // Dice-roll modal payload. The reveal is staged behind explicit player
+  // confirmations: pending (waiting for server) → attack-ready (press to
+  // roll attack) → attack-rolling (shuffle anim) → attack-shown → if hits,
+  // damage-ready → damage-rolling → damage-shown → close (confirmed). The
+  // server returns the full result in one shot; the staging is purely UX.
+  const [diceModal, setDiceModal] = useState<DiceModalState | null>(null);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
@@ -1066,15 +1089,15 @@ export default function GameBoard() {
         return { unitId: firingUnitId, ids: next };
       });
       setFiringWeaponPicking(null);
-      // Open the dice modal in the "rolling" phase BEFORE we hear back from
-      // the server so the user gets immediate visual feedback. The server
-      // call below populates `result` (or `error`) when it returns.
+      // Open the modal in "pending" while the server resolves the shot. We
+      // do NOT advance to attack-ready until the result lands, so the player
+      // is never asked to roll dice we haven't received yet.
       setDiceModal({
         weapon,
         targetName: unit.name,
         targetId: unit.id,
         attackDice: weapon.attackDice,
-        state: "rolling",
+        phase: "pending",
       });
       fireWeapon.mutate(
         { gameId, unitId: firingUnitId, data: { weaponId: firedWeaponId, targetUnitId: unit.id } },
@@ -1082,10 +1105,9 @@ export default function GameBoard() {
           onSuccess: (res) => {
             firingInFlightRef.current = false;
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-            // Small delay so the "rolling" shuffle has a moment to play.
-            setTimeout(() => {
-              setDiceModal(m => (m ? { ...m, state: "done", result: res } : null));
-            }, 700);
+            // Cache the full server result and unlock the first confirm step.
+            // The player must press "Roll to Hit" to begin the reveal.
+            setDiceModal(m => (m ? { ...m, phase: "attack-ready", result: res } : null));
           },
           onError: (err: any) => {
             firingInFlightRef.current = false;
@@ -1096,9 +1118,7 @@ export default function GameBoard() {
               next.delete(firedWeaponId);
               return next.size === 0 ? null : { unitId: firingUnitId, ids: next };
             });
-            setTimeout(() => {
-              setDiceModal(m => (m ? { ...m, state: "error", error: err?.message ?? "Shot failed" } : null));
-            }, 200);
+            setDiceModal(m => (m ? { ...m, phase: "error", error: err?.message ?? "Shot failed" } : null));
           },
         },
       );
@@ -1802,7 +1822,7 @@ export default function GameBoard() {
       {diceModal && (
         <DiceRollModal
           modal={diceModal}
-          onClose={() => setDiceModal(null)}
+          setModal={setDiceModal}
         />
       )}
     </Layout>
@@ -1838,35 +1858,106 @@ function DiceFace({ value, rolling }: { value: number; rolling: boolean }) {
 
 function DiceRollModal({
   modal,
-  onClose,
+  setModal,
 }: {
-  modal: {
-    weapon: Weapon;
-    targetName: string;
-    targetId: number;
-    attackDice: number;
-    state: "rolling" | "done" | "error";
-    result?: FireWeaponResult;
-    error?: string;
-  };
-  onClose: () => void;
+  modal: DiceModalState;
+  setModal: React.Dispatch<React.SetStateAction<DiceModalState | null>>;
 }) {
-  const { weapon, targetName, attackDice, state, result, error } = modal;
-  const rolling = state === "rolling";
+  const { weapon, targetName, attackDice, phase, result, error, confirmingClose } = modal;
+  const attackRolling = phase === "attack-rolling";
+  const damageRolling = phase === "damage-rolling";
+  // Show attack dice once we've started rolling them; before that they're hidden.
+  const attackVisible = phase !== "pending" && phase !== "attack-ready" && phase !== "error";
+  // Show damage dice once we've started rolling them.
+  const damageVisible = phase === "damage-rolling" || phase === "damage-shown";
+  // Final summary only after damage is fully resolved (or after attack if no hits).
+  const summaryVisible =
+    phase === "damage-shown" ||
+    (phase === "attack-shown" && result !== undefined && result.hits === 0);
+
   const rolls = result?.attackRolls ?? Array.from({ length: attackDice }, () => 0);
   const hitThreshold = result?.hitThreshold;
+
+  // ── Stage transitions ──
+  // Roll-to-hit: attack-ready → attack-rolling (animate ~700ms) → attack-shown.
+  const handleRollAttack = () => {
+    setModal(m => (m ? { ...m, phase: "attack-rolling" } : null));
+    setTimeout(() => {
+      setModal(m => (m && m.phase === "attack-rolling" ? { ...m, phase: "attack-shown" } : m));
+    }, 700);
+  };
+  // Roll-damage: damage-ready → damage-rolling → damage-shown.
+  const handleRollDamage = () => {
+    setModal(m => (m ? { ...m, phase: "damage-rolling" } : null));
+    setTimeout(() => {
+      setModal(m => (m && m.phase === "damage-rolling" ? { ...m, phase: "damage-shown" } : m));
+    }, 700);
+  };
+  // Attack-shown → if any hits queue damage-ready, otherwise this is terminal
+  // and the close button takes over (no damage to roll).
+  const handleProceedToDamage = () => {
+    setModal(m => (m ? { ...m, phase: "damage-ready" } : null));
+  };
+  // Close flow always passes through a confirm step so the player can't lose
+  // the result by misclicking the backdrop or the corner X.
+  const requestClose = () => setModal(m => (m ? { ...m, confirmingClose: true } : null));
+  const cancelClose = () => setModal(m => (m ? { ...m, confirmingClose: false } : null));
+  const confirmClose = () => setModal(null);
+
+  // The footer button is contextual based on phase. Disabled while shuffles play.
+  const footer = (() => {
+    if (phase === "error") {
+      return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
+    }
+    if (phase === "pending") {
+      return { label: "Resolving…", onClick: () => {}, testid: "button-pending", disabled: true };
+    }
+    if (phase === "attack-ready") {
+      return { label: `Roll to Hit · ${attackDice}D`, onClick: handleRollAttack, testid: "button-roll-attack", disabled: false };
+    }
+    if (phase === "attack-rolling") {
+      return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-attack", disabled: true };
+    }
+    if (phase === "attack-shown") {
+      if (result && result.hits > 0) {
+        return { label: `Roll Damage · ${result.hits}D`, onClick: handleProceedToDamage, testid: "button-proceed-damage", disabled: false };
+      }
+      return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
+    }
+    if (phase === "damage-ready") {
+      return { label: `Roll Damage · ${result?.hits ?? 0}D`, onClick: handleRollDamage, testid: "button-roll-damage", disabled: false };
+    }
+    if (phase === "damage-rolling") {
+      return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-damage", disabled: true };
+    }
+    // damage-shown
+    return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
+  })();
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
       data-testid="dice-modal"
-      onClick={state !== "rolling" ? onClose : undefined}
+      // Backdrop click routes through the same confirm-close gate so the
+      // player can never lose the result by accident — even mid-shuffle.
+      onClick={requestClose}
     >
       <div
-        className="bg-card border border-amber-500/40 rounded-md p-5 w-full max-w-md mx-4 shadow-2xl"
+        className="bg-card border border-amber-500/40 rounded-md p-5 w-full max-w-md mx-4 shadow-2xl relative"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-3">
+        {/* Corner X — also routes through confirm-close. */}
+        <button
+          type="button"
+          data-testid="button-x-dice-modal"
+          aria-label="Close"
+          className="absolute top-2 right-2 text-amber-400/60 hover:text-amber-300 font-mono text-sm w-7 h-7 flex items-center justify-center"
+          onClick={requestClose}
+        >
+          ✕
+        </button>
+
+        <div className="flex items-center justify-between mb-3 pr-7">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-amber-400/70 font-mono">Firing</p>
             <p className="text-sm font-mono font-bold text-amber-300">
@@ -1878,101 +1969,164 @@ function DiceRollModal({
           </p>
         </div>
 
-        {state === "error" && (
-          <div className="text-sm font-mono text-red-400 py-4 text-center">
+        {phase === "error" && (
+          <div className="text-sm font-mono text-red-400 py-4 text-center" data-testid="dice-error">
             ✕ {error}
           </div>
         )}
 
-        {state !== "error" && (
-          <>
-            {/* Attack dice */}
-            <div className="space-y-1">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-                Attack {hitThreshold ? `· need ${hitThreshold}+` : ""}
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {rolls.map((r, i) => {
-                  const hit = !rolling && hitThreshold !== undefined && r >= hitThreshold;
-                  return (
-                    <div key={i} className={`relative ${hit ? "" : !rolling ? "opacity-50" : ""}`}>
-                      <DiceFace value={r} rolling={rolling} />
-                      {hit && (
-                        <span className="absolute -bottom-1 -right-1 text-[8px] font-mono text-green-400 bg-black/80 px-1 rounded">HIT</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+        {phase === "pending" && (
+          <div className="text-sm font-mono text-amber-300/70 py-6 text-center" data-testid="dice-pending">
+            Resolving shot on the server…
+          </div>
+        )}
 
-            {/* Damage dice (only shown after roll) */}
-            {!rolling && result && (
-              <>
-                {result.hits > 0 ? (
-                  <div className="mt-3 space-y-1">
-                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-                      Damage · {result.hits} hit{result.hits === 1 ? "" : "s"}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {result.damageRolls.map((d, i) => {
-                        const dmg = d === 1 ? 0 : d <= 5 ? 1 : 2;
-                        return (
-                          <div key={i} className="flex flex-col items-center">
-                            <DiceFace value={d} rolling={false} />
-                            <span className={`text-[10px] font-mono mt-0.5 ${d === 6 ? "text-red-400 font-bold" : d === 1 ? "text-muted-foreground" : "text-amber-300"}`}>
-                              {dmg}{d === 6 ? "+crit" : ""}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {result.criticalRolls.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        <p className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
-                          Critical · {result.criticalRolls.length} crit{result.criticalRolls.length === 1 ? "" : "s"}
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {result.criticalRolls.map((c, i) => (
-                            <DiceFace key={i} value={c} rolling={false} />
-                          ))}
-                        </div>
-                      </div>
+        {phase === "attack-ready" && (
+          <div className="text-sm font-mono text-muted-foreground py-4 text-center" data-testid="dice-prompt-attack">
+            Ready to roll <span className="text-amber-300 font-bold">{attackDice}</span> attack
+            dice{hitThreshold ? <> · need <span className="text-amber-300 font-bold">{hitThreshold}+</span> to hit</> : null}.
+          </div>
+        )}
+
+        {/* Attack dice (revealed during/after rolling) */}
+        {attackVisible && (
+          <div className="space-y-1">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+              Attack {hitThreshold ? `· need ${hitThreshold}+` : ""}
+            </p>
+            <div className="flex flex-wrap gap-1.5" data-testid="attack-dice">
+              {rolls.map((r, i) => {
+                const hit = !attackRolling && hitThreshold !== undefined && r >= hitThreshold;
+                return (
+                  <div key={i} className={`relative ${hit ? "" : !attackRolling ? "opacity-50" : ""}`}>
+                    <DiceFace value={r} rolling={attackRolling} />
+                    {hit && (
+                      <span className="absolute -bottom-1 -right-1 text-[8px] font-mono text-green-400 bg-black/80 px-1 rounded">HIT</span>
                     )}
                   </div>
-                ) : (
-                  <div className="mt-3 text-sm font-mono text-muted-foreground text-center py-2">
-                    All misses — no damage rolled.
-                  </div>
-                )}
-
-                {/* Summary */}
-                <div className="mt-4 border-t border-border pt-3 space-y-1 font-mono text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Total damage</span>
-                    <span className="text-amber-300 font-bold">{result.totalDamage}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{targetName} hull</span>
-                    <span className={result.targetDestroyed ? "text-red-400 font-bold" : "text-foreground"}>
-                      {result.targetHullBefore} → {result.targetHullAfter}
-                      {result.targetDestroyed && " · DESTROYED"}
-                    </span>
-                  </div>
-                </div>
-              </>
+                );
+              })}
+            </div>
+            {phase === "attack-shown" && result && (
+              <p className="text-[11px] font-mono text-amber-300/80 pt-1">
+                {result.hits} hit{result.hits === 1 ? "" : "s"} of {attackDice}.
+              </p>
             )}
-          </>
+          </div>
+        )}
+
+        {/* Damage prompt */}
+        {phase === "damage-ready" && result && (
+          <div className="mt-4 text-sm font-mono text-muted-foreground text-center" data-testid="dice-prompt-damage">
+            Ready to roll <span className="text-amber-300 font-bold">{result.hits}</span> damage
+            dice (6 = crit).
+          </div>
+        )}
+
+        {/* Damage dice (during/after damage roll) */}
+        {damageVisible && result && result.hits > 0 && (
+          <div className="mt-3 space-y-1">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+              Damage · {result.hits} hit{result.hits === 1 ? "" : "s"}
+            </p>
+            <div className="flex flex-wrap gap-1.5" data-testid="damage-dice">
+              {result.damageRolls.map((d, i) => {
+                const dmg = d === 1 ? 0 : d <= 5 ? 1 : 2;
+                return (
+                  <div key={i} className="flex flex-col items-center">
+                    <DiceFace value={d} rolling={damageRolling} />
+                    {!damageRolling && (
+                      <span className={`text-[10px] font-mono mt-0.5 ${d === 6 ? "text-red-400 font-bold" : d === 1 ? "text-muted-foreground" : "text-amber-300"}`}>
+                        {dmg}{d === 6 ? "+crit" : ""}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {!damageRolling && result.criticalRolls.length > 0 && (
+              <div className="mt-2 space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
+                  Critical · {result.criticalRolls.length} crit{result.criticalRolls.length === 1 ? "" : "s"}
+                </p>
+                <div className="flex flex-wrap gap-1.5" data-testid="critical-dice">
+                  {result.criticalRolls.map((c, i) => (
+                    <DiceFace key={i} value={c} rolling={false} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* "All misses" sits in place of the damage section when applicable. */}
+        {phase === "attack-shown" && result && result.hits === 0 && (
+          <div className="mt-3 text-sm font-mono text-muted-foreground text-center py-2">
+            All misses — no damage to roll.
+          </div>
+        )}
+
+        {/* Final summary (only after the player has actually seen all dice). */}
+        {summaryVisible && result && (
+          <div className="mt-4 border-t border-border pt-3 space-y-1 font-mono text-sm" data-testid="dice-summary">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total damage</span>
+              <span className="text-amber-300 font-bold">{result.totalDamage}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">{targetName} hull</span>
+              <span className={result.targetDestroyed ? "text-red-400 font-bold" : "text-foreground"}>
+                {result.targetHullBefore} → {result.targetHullAfter}
+                {result.targetDestroyed && " · DESTROYED"}
+              </span>
+            </div>
+          </div>
         )}
 
         <Button
-          data-testid="button-close-dice-modal"
+          data-testid={footer.testid}
           className="w-full mt-4 uppercase tracking-widest text-xs"
-          disabled={rolling}
-          onClick={onClose}
+          disabled={footer.disabled}
+          onClick={footer.onClick}
         >
-          {rolling ? "Rolling…" : "Continue"}
+          {footer.label}
         </Button>
+
+        {/* Confirm-close overlay — small inline prompt above the modal body. */}
+        {confirmingClose && (
+          <div
+            className="absolute inset-0 flex items-center justify-center bg-black/85 rounded-md"
+            data-testid="confirm-close-overlay"
+          >
+            <div className="text-center space-y-3 px-6">
+              <p className="font-mono text-sm text-amber-300 uppercase tracking-wider">
+                Close window?
+              </p>
+              <p className="font-mono text-[11px] text-muted-foreground">
+                {phase === "damage-shown" || (phase === "attack-shown" && result?.hits === 0) || phase === "error"
+                  ? "The shot is already resolved on the server."
+                  : "The shot is resolved on the server — you'll lose the dice reveal but the result stands."}
+              </p>
+              <div className="flex gap-2 justify-center pt-1">
+                <Button
+                  data-testid="button-confirm-close-yes"
+                  className="uppercase tracking-widest text-xs"
+                  onClick={confirmClose}
+                >
+                  Close
+                </Button>
+                <Button
+                  data-testid="button-confirm-close-cancel"
+                  variant="outline"
+                  className="uppercase tracking-widest text-xs"
+                  onClick={cancelClose}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
