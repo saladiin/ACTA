@@ -1753,30 +1753,29 @@ export default function GameBoard() {
                   ))}
                 </div>
               )}
-              {/* Confirm deployment */}
+              {/* Deploy — commit the staged fleet. No per-ship lock required;
+                  hitting this is the "I'm ready" gesture. */}
               <Button
                 data-testid="button-confirm-deployment"
                 className="w-full mt-2 uppercase tracking-widest text-xs gap-2"
                 disabled={
                   !yardsFleetId ||
                   stagedUnits.length === 0 ||
-                  stagedUnits.some(u => !u.locked) ||
                   deployFleet.isPending
                 }
                 onClick={handleYardsDeploy}
               >
+                <Swords className="w-3.5 h-3.5" />
                 {deployFleet.isPending
                   ? "Deploying…"
                   : !yardsFleetId
                   ? "Select a fleet above"
                   : stagedUnits.length === 0
                   ? "Drag ships onto the board"
-                  : stagedUnits.some(u => !u.locked)
-                  ? `Lock all ships first (${stagedUnits.filter(u => !u.locked).length} unlocked)`
-                  : "End Deployment"}
+                  : `Deploy (${stagedUnits.length} ship${stagedUnits.length === 1 ? "" : "s"})`}
               </Button>
               <p className="text-[9px] text-muted-foreground font-mono text-center -mt-1">
-                Select a ship · L to lock · Del to remove
+                Select a ship · R rotate · L lock · Del remove
               </p>
               {import.meta.env.DEV && (
                 <button
