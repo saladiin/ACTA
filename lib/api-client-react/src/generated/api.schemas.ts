@@ -144,6 +144,10 @@ export interface Game {
   deploymentDepth?: number;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
+  /** True once the challenger has committed a fleet via POST /games/{id}/deploy. When both sides are true, status auto-transitions to 'active'. */
+  challengerDeployed?: boolean;
+  /** True once the opponent has committed a fleet via POST /games/{id}/deploy. */
+  opponentDeployed?: boolean;
   createdAt: string;
   updatedAt: string;
 }

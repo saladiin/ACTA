@@ -1819,10 +1819,37 @@ export default function GameBoard() {
             );
           })()}
 
-          {/* ── FLEET YARDS (deploy phase only) ── */}
-          {game.status === "deploying" && (
+          {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
+          {game.status === "deploying" && ((mySide === "challenger" && game.challengerDeployed) || (mySide === "opponent" && game.opponentDeployed)) && (
+            <div className="p-4 border-b border-border space-y-2" data-testid="panel-awaiting-opponent">
+              <p className="text-xs font-mono text-green-400 uppercase tracking-widest flex items-center gap-1.5">
+                <CheckCircle className="w-3.5 h-3.5" /> Fleet Deployed
+              </p>
+              <p className="text-xs font-mono text-muted-foreground">
+                Standing by for {mySide === "challenger" ? (game.opponentName ?? "opponent") : (game.challengerName ?? "challenger")} to commit their fleet. The engagement will begin automatically.
+              </p>
+              {import.meta.env.DEV && (
+                <button
+                  data-testid="button-dev-skip-deploy"
+                  onClick={handleDevSkipDeploy}
+                  disabled={devSkipping}
+                  className="w-full mt-1 px-2 py-1 rounded border border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/15 text-amber-400 text-[10px] font-mono uppercase tracking-widest transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {devSkipping ? "Skipping…" : "⚡ Dev: Force-Deploy Opponent & Start"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── FLEET YARDS (deploy phase, current player not yet deployed) ── */}
+          {game.status === "deploying" && !((mySide === "challenger" && game.challengerDeployed) || (mySide === "opponent" && game.opponentDeployed)) && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">Fleet Yards</p>
+              {((mySide === "challenger" && game.opponentDeployed) || (mySide === "opponent" && game.challengerDeployed)) && (
+                <p className="text-[10px] font-mono text-green-400/80" data-testid="text-opponent-ready">
+                  ⚡ Opponent has deployed — they're waiting on you.
+                </p>
+              )}
 
               {/* Fleet selector */}
               <Select
@@ -1976,10 +2003,13 @@ export default function GameBoard() {
                   ? "Select a fleet above"
                   : stagedUnits.length === 0
                   ? "Drag ships onto the board"
-                  : `Deploy (${stagedUnits.length} ship${stagedUnits.length === 1 ? "" : "s"})`}
+                  : `Commit & Engage (${stagedUnits.length} ship${stagedUnits.length === 1 ? "" : "s"})`}
               </Button>
-              <p className="text-[9px] text-muted-foreground font-mono text-center -mt-1">
-                Select a ship · R rotate · L lock · Del remove
+              <p className="text-[9px] text-muted-foreground font-mono text-center -mt-1 leading-snug">
+                Locking a ship (<kbd>L</kbd>) is optional — it just freezes
+                position. Hit <span className="text-primary">Commit &amp;
+                Engage</span> when ready; the battle starts once both
+                commanders commit.
               </p>
               {import.meta.env.DEV && (
                 <button

@@ -670,6 +670,8 @@ components:
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
         crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy." }
+        challengerDeployed: { type: boolean, description: "True once the challenger has committed a fleet via POST /games/{id}/deploy. When both sides are true, status auto-transitions to 'active'." }
+        opponentDeployed:   { type: boolean, description: "True once the opponent has committed a fleet via POST /games/{id}/deploy." }
         createdAt:    { type: string, format: date-time }
         updatedAt:    { type: string, format: date-time }
 

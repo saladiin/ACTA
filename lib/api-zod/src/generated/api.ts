@@ -187,6 +187,8 @@ export const ListGamesResponseItem = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -246,6 +248,8 @@ export const GetGameResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }),
@@ -348,6 +352,8 @@ export const AcceptGameResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -385,6 +391,8 @@ export const DeclineGameResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -437,6 +445,8 @@ export const DeployFleetResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -519,6 +529,8 @@ export const ActivateUnitResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -556,6 +568,8 @@ export const EndActivationResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -956,6 +970,8 @@ export const GetLobbyResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -979,6 +995,8 @@ export const GetLobbyResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -1002,6 +1020,8 @@ export const GetLobbyResponse = zod.object({
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))
