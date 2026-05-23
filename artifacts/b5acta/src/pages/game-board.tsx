@@ -2870,6 +2870,47 @@ function DiceRollModal({
           <div className="text-sm font-mono text-muted-foreground py-4 text-center" data-testid="dice-prompt-attack">
             Ready to roll <span className="text-amber-300 font-bold">{attackDice}</span> attack
             dice{hitThreshold ? <> · need <span className="text-amber-300 font-bold">{hitThreshold}+</span> to hit</> : null}.
+            {result?.stealthCheckTarget != null && (
+              <div className="mt-2 text-[11px] text-cyan-300/80" data-testid="stealth-prompt">
+                Target is stealthed — single 1d6 must hit{" "}
+                <span className="font-bold">{result.stealthCheckTarget}+</span> or the attack misses.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Stealth check (per-attack 1d6, defender's Stealth trait). Shows
+            during/after the attack roll. PASS → continues to AD; FAIL →
+            attack misses entirely (server returns 0 AD rolled). */}
+        {attackVisible && result?.stealthCheckTarget != null && result?.stealthCheckRoll != null && (
+          <div className="space-y-1" data-testid="stealth-panel">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+              Stealth Check · need {result.stealthCheckTarget}+
+              {!attackRolling && (
+                result.stealthCheckPassed
+                  ? <span className="ml-2 text-green-400" data-testid="stealth-result-pass">PASS</span>
+                  : <span className="ml-2 text-red-400 animate-pulse" data-testid="stealth-result-fail">MISS — STEALTH</span>
+              )}
+            </p>
+            <div className="flex items-center gap-2">
+              <div
+                className={`relative rounded ${
+                  !attackRolling && !result.stealthCheckPassed
+                    ? "ring-2 ring-red-500 ring-offset-2 ring-offset-background shadow-[0_0_8px_rgba(248,113,113,0.7)]"
+                    : !attackRolling
+                    ? "ring-1 ring-cyan-400/60 ring-offset-1 ring-offset-background"
+                    : ""
+                }`}
+                data-testid="stealth-die"
+              >
+                <DiceFace value={result.stealthCheckRoll} rolling={attackRolling} />
+              </div>
+              {!attackRolling && !result.stealthCheckPassed && (
+                <span className="text-[11px] font-mono text-red-400/90">
+                  Attack does not get through.
+                </span>
+              )}
+            </div>
           </div>
         )}
 

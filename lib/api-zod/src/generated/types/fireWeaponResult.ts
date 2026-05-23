@@ -13,8 +13,14 @@ import type { FireWeaponResultAttackRollKindsItem } from './fireWeaponResultAtta
 export interface FireWeaponResult {
   weaponId: number;
   targetUnitId: number;
-  /** To-hit threshold AFTER Stealth modifiers. */
+  /** To-hit threshold for each AD (base hullRating / Beam=4+ / crit-floors). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
   hitThreshold: number;
+  /** Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth). */
+  stealthCheckTarget?: number | null;
+  /** Single 1d6 the attacker rolled against the defender's Stealth. Null when no stealth check was made. */
+  stealthCheckRoll?: number | null;
+  /** True if stealthCheckRoll >= stealthCheckTarget (or no stealth check was needed). False means the attack misses entirely — no AD rolled, hits=0, defender pipeline skipped. */
+  stealthCheckPassed?: boolean | null;
   /** All d6 results rolled for AD (including beam-explosions and re-rolls). */
   attackRolls: number[];
   /** Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight. */

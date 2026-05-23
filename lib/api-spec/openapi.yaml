@@ -839,7 +839,19 @@ components:
       properties:
         weaponId:        { type: integer }
         targetUnitId:    { type: integer }
-        hitThreshold:    { type: integer, description: "To-hit threshold AFTER Stealth modifiers." }
+        hitThreshold:    { type: integer, description: "To-hit threshold for each AD (base hullRating / Beam=4+ / crit-floors). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*)." }
+        stealthCheckTarget:
+          type: integer
+          nullable: true
+          description: "Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth)."
+        stealthCheckRoll:
+          type: integer
+          nullable: true
+          description: "Single 1d6 the attacker rolled against the defender's Stealth. Null when no stealth check was made."
+        stealthCheckPassed:
+          type: boolean
+          nullable: true
+          description: "True if stealthCheckRoll >= stealthCheckTarget (or no stealth check was needed). False means the attack misses entirely — no AD rolled, hits=0, defender pipeline skipped."
         attackRolls:
           type: array
           items: { type: integer }

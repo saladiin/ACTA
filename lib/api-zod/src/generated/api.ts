@@ -594,7 +594,10 @@ export const FireWeaponBody = zod.object({
 export const FireWeaponResponse = zod.object({
   "weaponId": zod.number(),
   "targetUnitId": zod.number(),
-  "hitThreshold": zod.number().describe('To-hit threshold AFTER Stealth modifiers.'),
+  "hitThreshold": zod.number().describe('To-hit threshold for each AD (base hullRating \/ Beam=4+ \/ crit-floors). Stealth is NO LONGER folded into this — it\'s a separate pre-attack 1d6 check (see stealthCheck\*).'),
+  "stealthCheckTarget": zod.number().nullish().describe('Defender\'s stealth value (with range\/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth).'),
+  "stealthCheckRoll": zod.number().nullish().describe('Single 1d6 the attacker rolled against the defender\'s Stealth. Null when no stealth check was made.'),
+  "stealthCheckPassed": zod.boolean().nullish().describe('True if stealthCheckRoll >= stealthCheckTarget (or no stealth check was needed). False means the attack misses entirely — no AD rolled, hits=0, defender pipeline skipped.'),
   "attackRolls": zod.array(zod.number()).describe('All d6 results rolled for AD (including beam-explosions and re-rolls).'),
   "attackRollKinds": zod.array(zod.enum(['normal', 'explosion', 'twin-reroll', 'concentrate-reroll'])).describe('Parallel array to attackRolls labelling each die\'s origin. Same length as attackRolls. Use \'explosion\' dice for the Beam-trait visual highlight.'),
   "hits": zod.number().describe('Raw hits scored before defender pipeline (Dodge\/Interceptors\/Shields).'),

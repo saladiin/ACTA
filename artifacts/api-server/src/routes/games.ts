@@ -1057,12 +1057,27 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
 
       // ── To-hit threshold ─────────────────────────────────────────────────
       // Beam family hits on 4+. Otherwise the target class's hullRating.
-      // Stealth raises the floor (skipped by Energy Mine). Attacker crit
-      // `weaponsHitOn4` (Sensors etc.) bumps the floor to a minimum of 4.
+      // Attacker crit `weaponsHitOn4` (Sensors etc.) bumps the floor to a
+      // minimum of 4. Stealth is NOT folded in here — it's a separate
+      // pre-attack 1d6 check (below).
       const baseThreshold = (wt.beam || wt.miniBeam) ? 4 : targetModel.hullRating;
-      const stealthMin = wt.energyMine ? 0 : stealthFloor(targetTraits.stealth, dist, false);
       const critFloor = attackerCrits.weaponsHitOn4 ? 4 : 0;
-      const hitThreshold = Math.max(baseThreshold, stealthMin, critFloor);
+      const hitThreshold = Math.max(baseThreshold, critFloor);
+
+      // ── Stealth check (per-attack, single 1d6) ───────────────────────────
+      // House rule: a Stealth-trait defender forces ONE 1d6 stealth check
+      // per attack. Attacker must roll >= the defender's Stealth value
+      // (with range/already-hit modifiers, clamped 2..6) or the whole
+      // attack misses — no AD rolled, no defender pipeline.
+      // Energy Mine ignores Stealth (sheet rule preserved).
+      let stealthCheckTarget: number | null = null;
+      let stealthCheckRoll: number | null = null;
+      let stealthCheckPassed = true;
+      if (targetTraits.stealth > 0 && !wt.energyMine) {
+        stealthCheckTarget = stealthFloor(targetTraits.stealth, dist, false);
+        stealthCheckRoll = rollD6();
+        stealthCheckPassed = stealthCheckRoll >= stealthCheckTarget;
+      }
 
       // ── Roll AD → raw hits ───────────────────────────────────────────────
       // Beam: every to-hit die showing 4+ "explodes" and rolls one additional
@@ -1082,7 +1097,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       let beamExplosions = 0;
       let twinRerolls = 0;
       let concentrateRerolls = 0;
-      for (let i = 0; i < finalAttackDice; i++) {
+      // Stealth check failure short-circuits the AD roll entirely — attackRolls
+      // stays empty, hits stays 0, and the defender pipeline naturally cascades
+      // to no damage.
+      for (let i = 0; stealthCheckPassed && i < finalAttackDice; i++) {
         let r = rollD6();
         attackRolls.push(r);
         attackRollKinds.push("normal");
@@ -1514,6 +1532,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         weaponId,
         targetUnitId,
         hitThreshold,
+        stealthCheckTarget,
+        stealthCheckRoll,
+        stealthCheckPassed,
         attackRolls,
         attackRollKinds,
         hits,
