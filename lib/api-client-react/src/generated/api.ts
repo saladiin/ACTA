@@ -21,6 +21,8 @@ import type {
 
 import type {
   AcceptGameInput,
+  DamageControlInput,
+  DamageControlResult,
   DeploymentInput,
   DevMoveUnitInput,
   FireWeaponInput,
@@ -1529,6 +1531,80 @@ export const useFireWeapon = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getFireWeaponMutationOptions(options));
+    }
+
+export const getDamageControlUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/damage-control`
+}
+
+/**
+ * @summary Attempt to repair one critical effect during the End Phase (once per round per ship).
+ */
+export const damageControl = async (gameId: number,
+    unitId: number,
+    damageControlInput: DamageControlInput, options?: RequestInit): Promise<DamageControlResult> => {
+
+  return customFetch<DamageControlResult>(getDamageControlUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      damageControlInput,)
+  }
+);}
+
+
+
+
+export const getDamageControlMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof damageControl>>, TError,{gameId: number;unitId: number;data: BodyType<DamageControlInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof damageControl>>, TError,{gameId: number;unitId: number;data: BodyType<DamageControlInput>}, TContext> => {
+
+const mutationKey = ['damageControl'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof damageControl>>, {gameId: number;unitId: number;data: BodyType<DamageControlInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  damageControl(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DamageControlMutationResult = NonNullable<Awaited<ReturnType<typeof damageControl>>>
+    export type DamageControlMutationBody = BodyType<DamageControlInput>
+    export type DamageControlMutationError = ErrorType<void>
+
+    /**
+ * @summary Attempt to repair one critical effect during the End Phase (once per round per ship).
+ */
+export const useDamageControl = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof damageControl>>, TError,{gameId: number;unitId: number;data: BodyType<DamageControlInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof damageControl>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<DamageControlInput>},
+        TContext
+      > => {
+      return useMutation(getDamageControlMutationOptions(options));
     }
 
 export const getChooseSpecialActionUrl = (gameId: number,

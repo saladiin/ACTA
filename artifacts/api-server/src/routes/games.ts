@@ -1,8 +1,24 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
+import {
+  parseShipTraits,
+  parseWeaponTraits,
+  stealthFloor,
+  effectiveAttackDice,
+  damageMultiplier,
+} from "../lib/traits";
+import {
+  CRITICAL_TABLE,
+  locationFromRoll,
+  findEntry,
+  rollDice,
+  deriveCritEffects,
+  isDice,
+  CANONICAL_ARCS,
+} from "../lib/critical-table";
 import {
   CreateGameBody,
   GetGameParams,
@@ -24,6 +40,8 @@ import {
   FireWeaponBody,
   ChooseSpecialActionParams,
   ChooseSpecialActionBody,
+  DamageControlParams,
+  DamageControlBody,
   ListGamesResponse,
   GetGameResponse,
   AcceptGameResponse,
@@ -207,7 +225,26 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const units = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
   const turns = await db.select().from(turnsTable).where(eq(turnsTable.gameId, params.data.gameId)).orderBy(turnsTable.turnNumber);
-  res.json(GetGameResponse.parse({ game: toGameDto(game), units, turns }));
+  // Attach live critical-hit rows to each unit so the UI can render the
+  // crit panel and DC button without a second query.
+  const unitIds = units.map(u => u.id);
+  const critRows = unitIds.length === 0 ? [] : await db.select().from(unitCriticalEffectsTable)
+    .where(or(...unitIds.map(id => eq(unitCriticalEffectsTable.gameUnitId, id))));
+  const critsByUnit = new Map<number, typeof critRows>();
+  for (const r of critRows) {
+    const list = critsByUnit.get(r.gameUnitId) ?? [];
+    list.push(r);
+    critsByUnit.set(r.gameUnitId, list);
+  }
+  const unitsWithCrits = units.map(u => ({
+    ...u,
+    criticals: critsByUnit.get(u.id) ?? [],
+    // Slice C derived flags — surfaced to the client so badges can render
+    // without re-deriving the rule.
+    isCrippled: u.maxHullPoints > 0 && u.hullPoints * 2 <= u.maxHullPoints && !u.isDestroyed,
+    isSkeletonCrew: u.maxCrewPoints > 0 && u.crewPoints * 2 <= u.maxCrewPoints && !u.isDestroyed,
+  }));
+  res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns }));
 });
 
 router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void> => {
@@ -408,6 +445,13 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       weaponRange: model.weaponRange,
       weaponDamage: model.weaponDamage,
       crewQuality,
+      // Shields start full per the sheet ("Shields X/Y", regenerates Y per turn).
+      shieldsCurrent: model.shieldMax ?? 0,
+      // Crew defaults from the ship_model record. Used by Skeleton-Crew /
+      // damage-table logic in Slice C.
+      crewPoints: model.crew ?? 0,
+      maxCrewPoints: model.crew ?? 0,
+      damageState: "normal",
       isDestroyed: false,
     });
   }
@@ -516,6 +560,14 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
   if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
   if (unit.hasMovedThisRound) { res.status(400).json({ error: "Unit has already moved this round" }); return; }
+  // Slice C: adrift ships do not take voluntary movement (they drift
+  // compulsorily in the end phase). Crippled / skeleton movement caps
+  // (½ speed, 45°/1 turn) are advisory at the route layer — the client
+  // surfaces them via isCrippled / isSkeletonCrew flags — but adrift is
+  // an absolute block on player-driven movement.
+  if (unit.damageState === "adrift") {
+    res.status(400).json({ error: "Adrift ship cannot be moved by its commander" }); return;
+  }
 
   const [updated] = await db.update(gameUnitsTable)
     .set({ hexQ: body.data.toHexQ, hexR: body.data.toHexR, heading: body.data.newHeading })
@@ -703,12 +755,82 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
             specialActionTargetId: null,
           })
           .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
+        // Slice C: resolve delayed catastrophic kills. Any ship marked
+        // "exploding-end-of-next" at the previous round's damage table
+        // detonates now and is removed. (Round-precision is approximated:
+        // we destroy at the first end-of-round after the marker is set.
+        // Tightening to "end of NEXT round" would require an extra
+        // damageStateRound column; deferred until proven necessary.)
+        await tx.update(gameUnitsTable).set({
+          damageState: "destroyed",
+          isDestroyed: true,
+        }).where(and(
+          eq(gameUnitsTable.gameId, game.id),
+          eq(gameUnitsTable.damageState, "exploding-end-of-next"),
+        ));
+        // Re-evaluate win condition after delayed kills.
+        const postExplosion = await tx.select().from(gameUnitsTable)
+          .where(eq(gameUnitsTable.gameId, game.id));
+        let cAlive = 0, oAlive = 0;
+        for (const u of postExplosion) {
+          if (u.isDestroyed) continue;
+          if (u.ownerId === game.challengerId) cAlive++;
+          else if (u.ownerId === game.opponentId) oAlive++;
+        }
+        if (game.opponentId && cAlive === 0 && oAlive > 0) {
+          await tx.update(gamesTable).set({ status: "completed", winnerId: game.opponentId })
+            .where(eq(gamesTable.id, game.id));
+        } else if (game.opponentId && oAlive === 0 && cAlive > 0) {
+          await tx.update(gamesTable).set({ status: "completed", winnerId: game.challengerId })
+            .where(eq(gamesTable.id, game.id));
+        } else if (game.opponentId && cAlive === 0 && oAlive === 0) {
+          // Double-KO via delayed explosions → draw (winnerId stays null).
+          await tx.update(gamesTable).set({ status: "completed", winnerId: null })
+            .where(eq(gamesTable.id, game.id));
+        }
+        // Shield regen — each surviving ship recovers `shieldRegenRate` toward
+        // its `shieldMax`. Done per-row because the cap is row-specific.
+        const survivors = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
+        ));
+        for (const u of survivors) {
+          // game_units.shipId → ships.id → ship_models.id
+          const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
+          if (!ship) continue;
+          const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+          const max = model?.shieldMax ?? 0;
+          const regen = model?.shieldRegenRate ?? 0;
+          if (max <= 0 || regen <= 0) continue;
+          const next = Math.min(max, u.shieldsCurrent + regen);
+          if (next !== u.shieldsCurrent) {
+            await tx.update(gameUnitsTable).set({ shieldsCurrent: next }).where(eq(gameUnitsTable.id, u.id));
+          }
+        }
         nextRound = game.currentRound + 1;
         nextTurn = game.currentTurn + 1;
         nextPhase = "movement";
         nextInitiativeWinnerId =
           game.initiativeWinnerId === game.challengerId ? opponentId : game.challengerId;
         nextActivePlayerId = nextInitiativeWinnerId;
+      }
+
+      // If a delayed catastrophic explosion just ended the game (status
+      // flipped to 'completed' inside this same transaction), short-circuit
+      // the round-advance: don't reset phase/round, just clear the
+      // activation pointers. The conditional WHERE below would otherwise
+      // fail (status no longer 'active'), rolling the win back.
+      const [postGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (postGame?.status === "completed") {
+        // Game ended via delayed-kill processing this turn. Clear
+        // activation pointers and return the updated games row so the
+        // response shape continues to match EndActivationResponse
+        // (a Game). No status='active' guard here — the row is now
+        // terminal and won't be raced by another writer.
+        const [completed] = await tx.update(gamesTable)
+          .set({ activeUnitId: null, activePlayerId: null, lastActivatorId: userId })
+          .where(eq(gamesTable.id, gameId))
+          .returning();
+        return completed;
       }
 
       // Conditional UPDATE guards against any state change we didn't see.
@@ -814,6 +936,24 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         throw Object.assign(new Error("Weapon does not belong to attacker"), { status: 400 });
       }
 
+      // ── Attacker's live critical-hit effects ─────────────────────────────
+      // Loaded once and used to gate weapon eligibility (forbidden arc /
+      // forbidden weapon), adjust AD, and bump to-hit floor.
+      const attackerCritRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, attacker.id));
+      const attackerCrits = deriveCritEffects(attackerCritRows.map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+      if (attackerCrits.forbiddenWeaponIds.has(weaponId)) {
+        throw Object.assign(new Error("This weapon is offline (critical hit)"), { status: 400 });
+      }
+      if (attackerCrits.forbiddenArcs.has(weapon.arc)) {
+        throw Object.assign(new Error(`Weapons in the ${weapon.arc} arc are offline (critical hit)`), { status: 400 });
+      }
+
       // Range check (world units = inches; the OpenAPI spec stores weapon.range
       // in inches and the board is laid out at 1 unit = 1 inch).
       const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
@@ -829,89 +969,450 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         throw Object.assign(new Error(`Target not in ${weapon.arc} arc`), { status: 400 });
       }
 
-      // To-hit threshold: target's ship-class hullRating, overridden to flat 4+
-      // by beam-family weapons.
+      // Resolve attacker/target ship classes (needed for traits + hit threshold).
       const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
       if (!targetShip) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
       const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
       if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
-      const traits = (weapon.traits ?? "").toLowerCase();
-      const isBeam = traits.includes("beam") || traits.includes("mini-beam") || traits.includes("mini beam");
-      // Concentrate-fire reroll is skipped for these per the rulebook.
-      const isTwinLinked = traits.includes("twin-linked") || traits.includes("twin linked");
-      const isEnergyMine = traits.includes("energy mine") || traits.includes("energy-mine");
-      const concentrateRerollEligible = concentrateActive && !isBeam && !isTwinLinked && !isEnergyMine;
-      const hitThreshold = isBeam ? 4 : targetModel.hullRating;
 
-      // Intensify Defensive Fire: halve outgoing AD on every arc this turn,
-      // round down, minimum 1. (The interceptors/AF double-up half lives on
-      // the *defender's* incoming path which we don't model yet, so this
-      // wing of the action is a no-op until point-defense exists.)
+      // ── Target's live critical-hit effects ───────────────────────────────
+      const targetCritRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, target.id));
+      const targetCrits = deriveCritEffects(targetCritRows.map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+
+      // ── Trait parse ──────────────────────────────────────────────────────
+      // Filter the target's ship traits by any crit-lost trait names so
+      // Adaptive Armour / Stealth / Interceptors / etc. drop out when a
+      // power-feedback/implosion/etc. crit nuked them.
+      const wt = parseWeaponTraits(weapon.traits);
+      const lostLc = new Set(Array.from(targetCrits.lostTraitNames).map(n => n.toLowerCase()));
+      const filterTraits = (raw: string | null | undefined): string => {
+        if (!raw) return "";
+        return raw.split(/[;,]/).map(t => t.trim()).filter(Boolean)
+          .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
+          .join("; ");
+      };
+      const targetTraits = parseShipTraits(filterTraits(targetModel.traits));
+
+      // ── Effective AD count ───────────────────────────────────────────────
+      // Order: weapon AD modifiers (AP/Super AP/Weak) first, then Intensify
+      // Defensive Fire halve (min 1). Intensify is on the *attacker*, applied
+      // last so it caps even a buffed weapon. Attacker crits apply a flat
+      // negative AD modifier (Capacitors / Targeting) before halving.
       const intensifyActive = baseAction === "intensify-defense";
-      const effectiveAttackDice = intensifyActive
-        ? Math.max(1, Math.floor(weapon.attackDice / 2))
-        : weapon.attackDice;
+      const weaponAd = effectiveAttackDice(weapon.attackDice, wt);
+      const adAfterCrits = Math.max(1, weaponAd + attackerCrits.allWeaponsAdMod);
+      const finalAttackDice = intensifyActive ? Math.max(1, Math.floor(adAfterCrits / 2)) : adAfterCrits;
 
-      // Roll attack dice → hits.
-      // Beam rule: every to-hit die showing 4+ "explodes" and rolls one
-      // additional die, which is itself checked for hit AND for further
-      // explosion. p(explode)=0.5 → expected ~2× dice per starting die; tail
-      // is geometric and effectively never exceeds ~30 rolls from one die.
-      // The hard cap of 100 chained rolls per starting die exists purely as
-      // a runaway-loop guard against a future bug that mis-thresholds the
-      // explode face — it will not fire in normal play.
+      // ── To-hit threshold ─────────────────────────────────────────────────
+      // Beam family hits on 4+. Otherwise the target class's hullRating.
+      // Stealth raises the floor (skipped by Energy Mine). Attacker crit
+      // `weaponsHitOn4` (Sensors etc.) bumps the floor to a minimum of 4.
+      const baseThreshold = (wt.beam || wt.miniBeam) ? 4 : targetModel.hullRating;
+      const stealthMin = wt.energyMine ? 0 : stealthFloor(targetTraits.stealth, dist, false);
+      const critFloor = attackerCrits.weaponsHitOn4 ? 4 : 0;
+      const hitThreshold = Math.max(baseThreshold, stealthMin, critFloor);
+
+      // ── Roll AD → raw hits ───────────────────────────────────────────────
+      // Beam: every to-hit die showing 4+ "explodes" and rolls one additional
+      // die (also checked for hit + further explosion). Cap per-die at 100
+      // chained rolls as a runaway-loop guard.
+      // Twin Linked: missed AD may be re-rolled once.
+      // Concentrate Fire: missed AD against the locked target may be re-rolled
+      // once (skipped by Beam, Energy Mine, Twin Linked per rulebook).
+      // A single die may be re-rolled by at most ONE of these two effects.
       const EXPLODE_ON = 4;
       const EXPLODE_CAP_PER_DIE = 100;
+      const concentrateRerollEligible =
+        concentrateActive && !wt.beam && !wt.miniBeam && !wt.twinLinked && !wt.energyMine;
       const attackRolls: number[] = [];
       let hits = 0;
-      let explodedCount = 0; // total chained dice across all starts (for UI)
-      let concentrateRerolls = 0; // count of misses re-rolled by Concentrate
-      for (let i = 0; i < weapon.attackDice && i < effectiveAttackDice; i++) {
+      let beamExplosions = 0;
+      let twinRerolls = 0;
+      let concentrateRerolls = 0;
+      for (let i = 0; i < finalAttackDice; i++) {
         let r = rollD6();
         attackRolls.push(r);
         let hitFlag = r >= hitThreshold;
-        // Concentrate All Fire-power: missed AD against the nominated target
-        // re-roll once. Re-roll never explodes again (it isn't the original
-        // die) and isn't itself re-rolled. Ineligible weapons: Beam, Energy
-        // Mine, Twin-Linked.
-        if (!hitFlag && concentrateRerollEligible) {
+        if (!hitFlag && wt.twinLinked) {
+          const r2 = rollD6();
+          attackRolls.push(r2);
+          twinRerolls++;
+          if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
+        } else if (!hitFlag && concentrateRerollEligible) {
           const r2 = rollD6();
           attackRolls.push(r2);
           concentrateRerolls++;
           if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
         }
         if (hitFlag) hits++;
-        if (isBeam) {
+        if (wt.beam) {
           let chain = 0;
           while (r >= EXPLODE_ON && chain < EXPLODE_CAP_PER_DIE) {
             r = rollD6();
             attackRolls.push(r);
-            explodedCount++;
+            beamExplosions++;
             if (r >= hitThreshold) hits++;
             chain++;
           }
         }
       }
-      void explodedCount; void concentrateRerolls; // reserved for richer combat log UI
 
-      // Roll damage dice per hit. 1=0, 2-5=1, 6=2 + cosmetic critical roll.
-      const damageRolls: number[] = [];
-      const criticalRolls: number[] = [];
-      let totalDamage = 0;
-      for (let i = 0; i < hits; i++) {
-        const d = rollD6();
-        damageRolls.push(d);
-        if (d === 1) totalDamage += 0;
-        else if (d <= 5) totalDamage += 1;
-        else { totalDamage += 2; criticalRolls.push(rollD6()); }
+      // ── Damage multiplier (Double / Triple / Quad) ───────────────────────
+      const { mult, bulkheadFloor } = damageMultiplier(wt);
+
+      // ── Defender pipeline: Dodge → Interceptors → Shields ────────────────
+      // Per the sheet: AD → Dodges → Interceptors → Shields → Attack Table → GEG → Crits → Blast Doors.
+      let remainingHits = hits;
+      const dodgeRolls: number[] = [];
+      let dodgesSuccessful = 0;
+      // Dodge: per-hit defender d6 ≥ dodge → miss. Lost if Accurate / Energy
+      // Mine. (Sheet also says "Lost if Adrift or not moved" — Adrift state
+      // arrives in Slice C; this pre-condition is currently not modelled, so
+      // any ship with a Dodge rating may dodge.)
+      const dodgeActive = targetTraits.dodge > 0 && !wt.accurate && !wt.energyMine;
+      if (dodgeActive) {
+        for (let i = 0; i < remainingHits; i++) {
+          const d = rollD6();
+          dodgeRolls.push(d);
+          if (d >= targetTraits.dodge) dodgesSuccessful++;
+        }
+        remainingHits = Math.max(0, remainingHits - dodgesSuccessful);
       }
 
+      // Interceptors: defender absorbs up to X hits per firing activation.
+      // Skipped by Beam, Mini Beam, Mass Driver, Energy Mine.
+      let interceptedHits = 0;
+      const interceptorsAvailable = targetTraits.interceptors;
+      const interceptorsBypassed = wt.beam || wt.miniBeam || wt.massDriver || wt.energyMine;
+      if (!interceptorsBypassed && interceptorsAvailable > 0 && remainingHits > 0) {
+        interceptedHits = Math.min(remainingHits, interceptorsAvailable);
+        remainingHits -= interceptedHits;
+      }
+
+      // Shields: each hit costs `mult` shield points (Double Damage hits count
+      // double, etc.). Partial absorption: a hit hitting a partly-full shield
+      // pool drains the pool to 0 and still gets through. Mass Driver and
+      // Energy Mine bypass shields.
+      let shieldsBefore = target.shieldsCurrent;
+      let shieldsCurrent = shieldsBefore;
+      let shieldedHits = 0;
+      if (!wt.massDriver && !wt.energyMine && shieldsCurrent > 0 && remainingHits > 0) {
+        while (remainingHits > 0 && shieldsCurrent >= mult) {
+          shieldsCurrent -= mult;
+          shieldedHits++;
+          remainingHits--;
+        }
+        // Final partial-absorption hit (drains remaining pool, passes through).
+        if (remainingHits > 0 && shieldsCurrent > 0) {
+          shieldsCurrent = 0;
+          // Note: hit still gets through; we don't decrement remainingHits.
+        }
+      }
+
+      // ── Attack Table per surviving hit ──────────────────────────────────
+      // 1 = Bulkhead (no dmg, no crew unless multiplier floor),
+      // 2-5 = Solid (-1 dmg, -1 crew, * mult),
+      // 6 = Crit (Solid + roll on Critical Hit table — Slice B will apply
+      //          structural effects; for now we just log the rolls).
+      const attackTableRolls: number[] = [];
+      const criticalRolls: number[] = [];
+      // Pending crits: each gets a location/effect roll after the loop so
+      // we can resolve dice penalties + persist rows in one batch.
+      type PendingCrit = { locationRoll: number; effectRoll: number };
+      const pendingCrits: PendingCrit[] = [];
+      let bulkheadHits = 0;
+      let solidHits = 0;
+      let criticalHits = 0;
+      let totalDamage = 0;
+      let totalCrewLost = 0;
+      for (let i = 0; i < remainingHits; i++) {
+        const d = rollD6();
+        attackTableRolls.push(d);
+        if (d === 1) {
+          bulkheadHits++;
+          totalDamage += bulkheadFloor;
+        } else if (d <= 5) {
+          solidHits++;
+          totalDamage += 1 * mult;
+          totalCrewLost += 1 * mult;
+        } else {
+          if (wt.energyMine) {
+            // Energy Mine: no criticals; counts as Solid.
+            solidHits++;
+          } else {
+            criticalHits++;
+            const locRoll = rollD6();
+            const effRoll = rollD6();
+            pendingCrits.push({ locationRoll: locRoll, effectRoll: effRoll });
+            criticalRolls.push(effRoll);
+          }
+          totalDamage += 1 * mult;
+          totalCrewLost += 1 * mult;
+        }
+      }
+
+      // ── GEG: reduce structural damage AND crew per surviving hit ────────
+      // Critical-table effects are applied AFTER GEG (sheet: "criticals not
+      // affected"). Mass Driver bypasses GEG.
+      const gegReduction = wt.massDriver ? 0 : targetTraits.geg * remainingHits;
+      let damageAfterGeg = Math.max(0, totalDamage - gegReduction);
+      let crewAfterGeg = Math.max(0, totalCrewLost - gegReduction);
+
+      // ── Resolve critical-hit table rolls ─────────────────────────────────
+      // For each pending crit: pick location (1d6→bucket), look up entry,
+      // resolve dice penalties, sample random arc / weapon / trait, and add
+      // structural dmg+crew on top of the GEG-reduced totals.
+      const criticalsApplied: Array<{
+        id: number; gameUnitId: number;
+        location: number; effectKey: string; name: string;
+        damageApplied: number; crewApplied: number;
+        randomArc: string | null; randomWeaponId: number | null;
+        lostTraits: string[];
+        appliedRound: number; repairable: boolean;
+      }> = [];
+      // Cache target's weapon list (grouped by arc) for random-arc picks.
+      const targetWeapons = await tx.select().from(weaponsTable)
+        .where(eq(weaponsTable.shipModelId, targetModel.id));
+      const weaponsByArc = new Map<string, typeof targetWeapons>();
+      for (const w of targetWeapons) {
+        const list = weaponsByArc.get(w.arc) ?? [];
+        list.push(w);
+        weaponsByArc.set(w.arc, list);
+      }
+      const targetTraitNames = (targetModel.traits ?? "")
+        .split(/[;,]/).map(t => t.trim()).filter(Boolean)
+        .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
+        .map(t => t.split(/\s+/)[0]);
+      const currentRound = game.currentRound;
+      // Track gross crit damage so we can later scale the per-crit
+      // `damageApplied` to the net amount that actually reached hull
+      // (after Adaptive Armour + Blast Doors). DC refunds the *net* delta.
+      const critGrossSoFar = totalDamage;  // structural-only at this point
+      const damagePreCrits = damageAfterGeg;
+      let critDmgGross = 0;
+      const insertedIds: number[] = [];
+      const insertedGrossDmg: number[] = [];
+      for (const pc of pendingCrits) {
+        const loc = locationFromRoll(pc.locationRoll);
+        const entry = findEntry(loc, pc.effectRoll);
+        if (!entry) continue;
+        const dmgApplied = isDice(entry.dmg) ? rollDice(entry.dmg.dice) : entry.dmg;
+        const crewApplied = isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew;
+        let randomArc: string | null = null;
+        let randomWeaponId: number | null = null;
+        const lostTraits: string[] = [];
+        // Random-arc effects roll from the canonical arc set, not just
+        // occupied arcs (sheet intent: arc is rolled before checking what
+        // lives there).
+        if (entry.flags.randomArcNoFire) {
+          randomArc = CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)];
+        }
+        // Random-arc-then-one-weapon: roll arc first, then pick a weapon
+        // within that arc (if any). If the rolled arc is empty, the effect
+        // is wasted (no weapon blocked) — matches sheet randomness.
+        if (entry.flags.randomArcOneWeaponNoFire) {
+          randomArc = CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)];
+          const arcWeapons = weaponsByArc.get(randomArc) ?? [];
+          if (arcWeapons.length > 0) {
+            const w = arcWeapons[Math.floor(Math.random() * arcWeapons.length)];
+            randomWeaponId = w.id;
+          }
+        }
+        if (entry.flags.loseTraits && targetTraitNames.length > 0) {
+          const pool = [...targetTraitNames];
+          for (let k = 0; k < entry.flags.loseTraits && pool.length > 0; k++) {
+            const idx = Math.floor(Math.random() * pool.length);
+            lostTraits.push(pool.splice(idx, 1)[0]);
+          }
+        }
+        const [inserted] = await tx.insert(unitCriticalEffectsTable).values({
+          gameUnitId: target.id,
+          effectKey: entry.effectKey,
+          location: loc,
+          name: entry.name,
+          damageApplied: dmgApplied,
+          crewApplied,
+          randomArc,
+          randomWeaponId,
+          lostTraits,
+          appliedRound: currentRound,
+          repairable: entry.repairable,
+        }).returning();
+        damageAfterGeg += dmgApplied;
+        crewAfterGeg += crewApplied;
+        critDmgGross += dmgApplied;
+        insertedIds.push(inserted.id);
+        insertedGrossDmg.push(dmgApplied);
+        criticalsApplied.push({
+          id: inserted.id, gameUnitId: inserted.gameUnitId,
+          location: loc, effectKey: entry.effectKey, name: entry.name,
+          damageApplied: dmgApplied, crewApplied,
+          randomArc, randomWeaponId, lostTraits,
+          appliedRound: currentRound, repairable: entry.repairable,
+        });
+      }
+      // Silence "declared but unused" — kept for clarity in the calculation.
+      void critGrossSoFar; void damagePreCrits;
+
+      // ── Adaptive Armour: halve dmg & crew, min 1 (if any) ────────────────
+      let adaptiveHalved = false;
+      if (targetTraits.adaptiveArmour && (damageAfterGeg > 0 || crewAfterGeg > 0)) {
+        adaptiveHalved = true;
+        damageAfterGeg = damageAfterGeg > 0 ? Math.max(1, Math.floor(damageAfterGeg / 2)) : 0;
+        crewAfterGeg = crewAfterGeg > 0 ? Math.max(1, Math.floor(crewAfterGeg / 2)) : 0;
+      }
+
+      // ── Close Blast Doors: 5+ save per point of damage AND per crew ──────
+      // Declared by the *target* (the defender), not the attacker. Only the
+      // successful version grants saves (failed declaration is just a wasted
+      // SA with no benefit but the always-on 1-weapon penalty).
+      const blastDoorsActive = target.specialAction === "blast-doors";
+      const blastDoorsDamageRolls: number[] = [];
+      const blastDoorsCrewRolls: number[] = [];
+      let blastDoorsDamageSaved = 0;
+      let blastDoorsCrewSaved = 0;
+      if (blastDoorsActive) {
+        for (let i = 0; i < damageAfterGeg; i++) {
+          const r = rollD6();
+          blastDoorsDamageRolls.push(r);
+          if (r >= 5) blastDoorsDamageSaved++;
+        }
+        for (let i = 0; i < crewAfterGeg; i++) {
+          const r = rollD6();
+          blastDoorsCrewRolls.push(r);
+          if (r >= 5) blastDoorsCrewSaved++;
+        }
+      }
+      const finalDamage = Math.max(0, damageAfterGeg - blastDoorsDamageSaved);
+      const finalCrewLost = Math.max(0, crewAfterGeg - blastDoorsCrewSaved);
+
+      // ── Scale per-crit damageApplied to the NET hull damage actually
+      //    landed by each crit, so Damage-Control refunds the right amount.
+      //    `damageAfterGeg` includes both structural + crit gross damage.
+      //    The combined pool is then reduced by Adaptive Armour + Blast
+      //    Doors; we attribute the resulting reduction proportionally so
+      //    structural and crit damage shrink by the same ratio.
+      if (critDmgGross > 0 && insertedIds.length > 0) {
+        const ratio = damageAfterGeg > 0 ? finalDamage / damageAfterGeg : 0;
+        for (let k = 0; k < insertedIds.length; k++) {
+          const netDmg = Math.floor(insertedGrossDmg[k] * ratio);
+          if (netDmg !== insertedGrossDmg[k]) {
+            await tx.update(unitCriticalEffectsTable)
+              .set({ damageApplied: netDmg })
+              .where(eq(unitCriticalEffectsTable.id, insertedIds[k]));
+            // Mirror to the response payload so client-side panel matches DB.
+            const c = criticalsApplied.find(x => x.id === insertedIds[k]);
+            if (c) c.damageApplied = netDmg;
+          }
+        }
+      }
+
+      // ── Apply to hull + crew ─────────────────────────────────────────────
       const targetHullBefore = target.hullPoints;
-      const targetHullAfter = Math.max(0, targetHullBefore - totalDamage);
-      const targetDestroyed = targetHullAfter === 0;
+      const targetHullAfter = Math.max(0, targetHullBefore - finalDamage);
+      const targetCrewBefore = target.crewPoints;
+      const targetCrewAfter = Math.max(0, targetCrewBefore - finalCrewLost);
+
+      // ── Damage table (Slice C) ───────────────────────────────────────────
+      // Fired when this attack drops hull to 0 from a still-living state.
+      // Sheet: roll 1d6 + abs(overkill) → 1-6 adrift, 7-11 destroyed,
+      // 12-17 exploding-end-of-next, 18+ explodes now (AOE).
+      let damageTable: {
+        overkill: number; roll: number; total: number;
+        outcome: "adrift" | "destroyed" | "exploding-end-of-next" | "explodes-now";
+      } | null = null;
+      let nextDamageState: string = target.damageState;
+      let targetDestroyed: boolean = target.isDestroyed;
+      const explosionVictims: Array<{
+        unitId: number; hitsTaken: number; finalDamage: number;
+        finalCrewLost: number; hullAfter: number; destroyed: boolean;
+      }> = [];
+
+      if (targetHullAfter === 0 && target.damageState === "normal" && !target.isDestroyed) {
+        const overkill = Math.max(0, finalDamage - targetHullBefore);
+        const dtRoll = rollD6();
+        const dtTotal = dtRoll + overkill;
+        let outcome: "adrift" | "destroyed" | "exploding-end-of-next" | "explodes-now";
+        if (dtTotal <= 6) outcome = "adrift";
+        else if (dtTotal <= 11) outcome = "destroyed";
+        else if (dtTotal <= 17) outcome = "exploding-end-of-next";
+        else outcome = "explodes-now";
+        damageTable = { overkill, roll: dtRoll, total: dtTotal, outcome };
+
+        if (outcome === "adrift") {
+          nextDamageState = "adrift";
+        } else if (outcome === "destroyed") {
+          nextDamageState = "destroyed";
+          targetDestroyed = true;
+        } else if (outcome === "exploding-end-of-next") {
+          // Delayed kill — handled at end-phase rollover; for now mark and
+          // leave the row in place so it can still be shot.
+          nextDamageState = "exploding-end-of-next";
+        } else {
+          // explodes-now: AOE attack within 4" hexes. min(15, floor(max/2))
+          // AD per nearby unit, resolved through a lightweight attack-table
+          // pass (no shields/interceptors — direct hull damage per the
+          // simplified Slice C model).
+          nextDamageState = "destroyed";
+          targetDestroyed = true;
+          const aoeAD = Math.min(15, Math.floor(target.maxHullPoints / 2));
+          const nearby = await tx.select().from(gameUnitsTable).where(and(
+            eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
+          ));
+          for (const v of nearby) {
+            if (v.id === target.id) continue;
+            // Cube-distance on offset hex coords (q,r).
+            const dq = v.hexQ - target.hexQ;
+            const dr = v.hexR - target.hexR;
+            const dist = Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
+            if (dist > 4) continue;
+            let hitsTaken = 0, vDmg = 0, vCrew = 0;
+            for (let a = 0; a < aoeAD; a++) {
+              if (rollD6() >= 4) hitsTaken++;
+            }
+            for (let h = 0; h < hitsTaken; h++) {
+              const r = rollD6();
+              if (r >= 2 && r <= 5) { vDmg += 1; vCrew += 1; }
+              else if (r === 6) { vDmg += 1; vCrew += 1; }
+            }
+            const vHullAfter = Math.max(0, v.hullPoints - vDmg);
+            const vCrewAfter = Math.max(0, v.crewPoints - vCrew);
+            const vDestroyed = vHullAfter === 0;
+            // Crew-to-zero on a still-living "normal" victim sets adrift,
+            // matching the main-target rule.
+            const vNextState = vDestroyed
+              ? "destroyed"
+              : (vCrewAfter === 0 && v.damageState === "normal" ? "adrift" : v.damageState);
+            await tx.update(gameUnitsTable).set({
+              hullPoints: vHullAfter,
+              crewPoints: vCrewAfter,
+              isDestroyed: vDestroyed,
+              damageState: vNextState,
+            }).where(eq(gameUnitsTable.id, v.id));
+            explosionVictims.push({
+              unitId: v.id, hitsTaken, finalDamage: vDmg,
+              finalCrewLost: vCrew, hullAfter: vHullAfter, destroyed: vDestroyed,
+            });
+          }
+        }
+      }
+
+      // Out-of-crew → adrift (only if still alive and not already adrift/worse).
+      if (targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
+        nextDamageState = "adrift";
+      }
 
       await tx.update(gameUnitsTable).set({
         hullPoints: targetHullAfter,
+        crewPoints: targetCrewAfter,
+        shieldsCurrent,
+        damageState: nextDamageState,
         isDestroyed: targetDestroyed,
       }).where(eq(gameUnitsTable.id, target.id));
 
@@ -920,18 +1421,85 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         .set({ firedWeaponIds: [...alreadyFired, weaponId] })
         .where(eq(gameUnitsTable.id, attacker.id));
 
+      // ── Win condition (Slice C) ──────────────────────────────────────────
+      // After any damage application, if all of one player's units are
+      // destroyed, end the game and award to the other player.
+      let winnerId: string | null = null;
+      const allUnits = await tx.select().from(gameUnitsTable)
+        .where(eq(gameUnitsTable.gameId, game.id));
+      const aliveByOwner = new Map<string, number>();
+      for (const u of allUnits) {
+        if (!u.isDestroyed) {
+          aliveByOwner.set(u.ownerId, (aliveByOwner.get(u.ownerId) ?? 0) + 1);
+        }
+      }
+      const challengerAlive = aliveByOwner.get(game.challengerId) ?? 0;
+      const opponentAlive = game.opponentId ? (aliveByOwner.get(game.opponentId) ?? 0) : 0;
+      let gameCompleted = false;
+      if (game.opponentId && challengerAlive === 0 && opponentAlive > 0) {
+        winnerId = game.opponentId; gameCompleted = true;
+      } else if (game.opponentId && opponentAlive === 0 && challengerAlive > 0) {
+        winnerId = game.challengerId; gameCompleted = true;
+      } else if (game.opponentId && challengerAlive === 0 && opponentAlive === 0) {
+        // Double-KO (mutual annihilation via simultaneous catastrophic
+        // explosion/AOE). End the game as a draw — winnerId stays null.
+        gameCompleted = true;
+      }
+      if (gameCompleted) {
+        await tx.update(gamesTable)
+          .set({ status: "completed", winnerId })
+          .where(eq(gamesTable.id, game.id));
+      }
+
+      // damageRolls retained for back-compat with existing combat log UI:
+      // map (bulkhead=1, solid=3, crit=6) so the legacy "1=miss, 2-5=hit,
+      // 6=crit" rendering keeps showing meaningful pips. Slice A's richer
+      // surface is in attackTableRolls + the new aggregate counts.
+      const damageRolls = attackTableRolls.map(r => r);
+
       return {
         weaponId,
         targetUnitId,
         hitThreshold,
         attackRolls,
         hits,
+        // Defender pipeline
+        dodgeRolls,
+        dodgesSuccessful,
+        interceptedHits,
+        shieldedHits,
+        targetShieldsBefore: shieldsBefore,
+        targetShieldsAfter: shieldsCurrent,
+        // Attack Table
+        attackTableRolls,
+        bulkheadHits,
+        solidHits,
+        criticalHits,
+        // Post-table modifiers
+        gegReduction,
+        adaptiveHalved,
+        blastDoorsDamageSaved,
+        blastDoorsCrewSaved,
+        blastDoorsDamageRolls,
+        blastDoorsCrewRolls,
+        // Aggregates
         damageRolls,
-        totalDamage,
+        totalDamage: finalDamage,
+        crewLost: finalCrewLost,
         criticalRolls,
+        criticalsApplied,
+        // Reroll metadata (cosmetic combat-log fields).
+        beamExplosions,
+        twinRerolls,
+        concentrateRerolls,
         targetHullBefore,
         targetHullAfter,
+        targetCrewBefore,
+        targetCrewAfter,
         targetDestroyed,
+        damageTable,
+        winnerId,
+        explosionVictims,
       };
     });
     res.json(result);
@@ -987,6 +1555,29 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
       if (unit.specialAction) throw Object.assign(new Error("Already used a Special Action this round"), { status: 400 });
       if (unit.hasMovedThisRound) throw Object.assign(new Error("Cannot declare a Special Action after the activation has ended"), { status: 400 });
+      // Slice C: Skeleton Crew (crewPoints ≤ ½ max) and Adrift ships
+      // cannot declare Special Actions.
+      if (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) {
+        throw Object.assign(new Error("Skeleton crew cannot declare Special Actions"), { status: 400 });
+      }
+      if (unit.damageState === "adrift") {
+        throw Object.assign(new Error("Adrift ship cannot declare Special Actions"), { status: 400 });
+      }
+
+      // Critical-effect gate: Reactor 5/6, Bridge, Decompression all set
+      // noSA. Block the action entirely (no -failed bookkeeping — the rule
+      // is "cannot declare", not "declare and roll").
+      const saCritRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+      const saCrits = deriveCritEffects(saCritRows.map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+      if (saCrits.noSA) {
+        throw Object.assign(new Error("Cannot declare Special Actions — Bridge / Reactor crit active"), { status: 400 });
+      }
 
       // Per-action prereqs.
       let storedTarget: number | null = null;
@@ -1038,6 +1629,110 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         cqRoll,
         cqTotal,
         unit: updated,
+      };
+    });
+    res.json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── Damage Control ──────────────────────────────────────────────────────────
+// Attempt to repair one critical-effect row. Once per ship per round; cannot
+// target Vital Systems (location 6); cannot repair the round the crit was
+// applied; cannot repair while an Engineering crit is active (permanently
+// disables DC for the ship). Success removes the row and refunds the
+// structural damage it dealt; failure still consumes the per-round attempt.
+router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = DamageControlParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = DamageControlBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+  const { gameId, unitId } = params.data;
+  const { effectId } = body.data;
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.lastDcRound === game.currentRound) {
+        throw Object.assign(new Error("Damage control already attempted this round"), { status: 400 });
+      }
+      // End-phase modelling is pending (Slice C). For now, gate DC to the
+      // firing phase — the only phase where damage exists and the closest
+      // available approximation of "end of round". Movement-phase DC would
+      // let the active player repair before the opponent has fired.
+      if (game.phase !== "firing") {
+        throw Object.assign(new Error("Damage control may only be attempted in the firing/end phase"), { status: 400 });
+      }
+
+      const [effect] = await tx.select().from(unitCriticalEffectsTable)
+        .where(and(eq(unitCriticalEffectsTable.id, effectId), eq(unitCriticalEffectsTable.gameUnitId, unitId)));
+      if (!effect) throw Object.assign(new Error("Critical effect not found"), { status: 404 });
+      if (!effect.repairable) throw Object.assign(new Error("Vital Systems cannot be repaired"), { status: 400 });
+      if (effect.appliedRound === game.currentRound) {
+        throw Object.assign(new Error("Cannot repair a critical the round it was applied"), { status: 400 });
+      }
+
+      // Derive cumulative DC penalty + lockout gates (Engineering = ever,
+      // Hull Breach = this round).
+      const allRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, unitId));
+      const crits = deriveCritEffects(allRows.map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+        appliedRound: r.appliedRound,
+      })), game.currentRound);
+      if (crits.noDamageControlEver) {
+        throw Object.assign(new Error("Engineering crit prevents damage control"), { status: 400 });
+      }
+      if (crits.noDamageControlThisRound) {
+        throw Object.assign(new Error("Hull Breach prevents damage control this round"), { status: 400 });
+      }
+
+      const dcRoll = rollD6();
+      // Slice C: Skeleton Crew levies an additional -2 to damage control.
+      const skeletonPenalty = (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) ? 2 : 0;
+      const dcPenalty = crits.damageControlPenalty + skeletonPenalty;
+      const dcTotal = dcRoll + unit.crewQuality - dcPenalty;
+      const dcThreshold = 9;
+      const success = dcTotal >= dcThreshold;
+
+      // Record the attempt regardless of outcome.
+      await tx.update(gameUnitsTable)
+        .set({ lastDcRound: game.currentRound })
+        .where(eq(gameUnitsTable.id, unit.id));
+
+      if (success) {
+        await tx.delete(unitCriticalEffectsTable).where(eq(unitCriticalEffectsTable.id, effect.id));
+        // Refund the structural damage (cap at maxHullPoints).
+        const restored = Math.min(unit.maxHullPoints, unit.hullPoints + (effect.damageApplied ?? 0));
+        await tx.update(gameUnitsTable)
+          .set({ hullPoints: restored, isDestroyed: false })
+          .where(eq(gameUnitsTable.id, unit.id));
+      }
+      const [updated] = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.id, unit.id));
+      // Attach live criticals so the response satisfies the GameUnit
+      // contract and the client can refresh the panel without a roundtrip.
+      const liveCrits = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+      return {
+        success, dcRoll, dcTotal, dcThreshold, dcPenalty, effectId,
+        unit: { ...updated, criticals: liveCrits },
       };
     });
     res.json(out);
@@ -1116,6 +1811,10 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
         turnAngle: model.turnAngle ?? 45,
         weaponRange: model.weaponRange,
         weaponDamage: model.weaponDamage,
+        shieldsCurrent: model.shieldMax ?? 0,
+        crewPoints: model.crew ?? 0,
+        maxCrewPoints: model.crew ?? 0,
+        damageState: "normal",
         isDestroyed: false,
       });
     }

@@ -20,6 +20,7 @@ import {
   useActivateUnit,
   useEndActivation,
   useFireWeapon,
+  useDamageControl,
   useChooseSpecialAction,
   useListFleets,
   useListFleetShips,
@@ -835,6 +836,7 @@ export default function GameBoard() {
   const activateUnit = useActivateUnit();
   const endActivation = useEndActivation();
   const fireWeapon = useFireWeapon();
+  const damageControl = useDamageControl();
   const chooseSpecialAction = useChooseSpecialAction();
   // Transient feedback for the most recent special-action attempt
   // (success/fail + dice roll). Cleared when activation ends.
@@ -2088,6 +2090,43 @@ export default function GameBoard() {
                   <span className="flex items-center gap-1"><Zap className="w-3 h-3 text-amber-400" />{selectedUnitData.weaponDamage} dmg</span>
                   <span className="flex items-center gap-1"><Crosshair className="w-3 h-3 text-blue-400" />r{selectedUnitData.weaponRange}</span>
                 </div>
+                {/* Slice C: crew + damage-state badges. Crippled/Skeleton are
+                    server-derived; damageState exposes adrift / delayed-boom. */}
+                <div className="flex gap-1.5 text-[10px] font-mono mt-1 flex-wrap">
+                  {(selectedUnitData.maxCrewPoints ?? 0) > 0 && (
+                    <span
+                      data-testid="badge-crew"
+                      className={`px-1.5 py-0.5 rounded border ${
+                        selectedUnitData.isSkeletonCrew
+                          ? "border-red-500/60 text-red-300 bg-red-500/10"
+                          : "border-border text-muted-foreground"
+                      }`}
+                      title="Crew"
+                    >
+                      CREW {selectedUnitData.crewPoints}/{selectedUnitData.maxCrewPoints}
+                    </span>
+                  )}
+                  {selectedUnitData.isCrippled && (
+                    <span data-testid="badge-crippled" className="px-1.5 py-0.5 rounded border border-red-500/60 text-red-300 bg-red-500/10 uppercase tracking-wider">
+                      Crippled
+                    </span>
+                  )}
+                  {selectedUnitData.isSkeletonCrew && (
+                    <span data-testid="badge-skeleton" className="px-1.5 py-0.5 rounded border border-orange-500/60 text-orange-300 bg-orange-500/10 uppercase tracking-wider">
+                      Skeleton
+                    </span>
+                  )}
+                  {selectedUnitData.damageState === "adrift" && (
+                    <span data-testid="badge-adrift" className="px-1.5 py-0.5 rounded border border-yellow-500/60 text-yellow-300 bg-yellow-500/10 uppercase tracking-wider">
+                      Adrift
+                    </span>
+                  )}
+                  {selectedUnitData.damageState === "exploding-end-of-next" && (
+                    <span data-testid="badge-exploding" className="px-1.5 py-0.5 rounded border border-red-500/80 text-red-200 bg-red-500/20 uppercase tracking-wider animate-pulse">
+                      Detonating
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground">Hex: {selectedUnitData.hexQ},{selectedUnitData.hexR}</p>
               </div>
             </div>
@@ -2242,6 +2281,64 @@ export default function GameBoard() {
                           : `${specialActionFeedback.success ? "✓ ENGAGED" : "✗ FAILED"}`}
                       </div>
                     )}
+                  </div>
+                );
+              })()}
+
+              {/* Critical-damage panel: persistent list of active crits on the
+                  selected own-ship, with damage-control buttons. */}
+              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (selectedUnitData.criticals?.length ?? 0) > 0 && (() => {
+                const crits = selectedUnitData.criticals ?? [];
+                const currentRound = game?.currentRound ?? 0;
+                const dcAttemptedThisRound = (selectedUnitData.lastDcRound ?? 0) === currentRound;
+                return (
+                  <div className="space-y-1.5" data-testid="crit-panel">
+                    <div className="text-[10px] uppercase tracking-wider text-red-400/80 font-mono flex items-center justify-between">
+                      <span>Critical Damage · {crits.length}</span>
+                      {dcAttemptedThisRound && (
+                        <span className="text-[9px] text-red-300/60">DC used this round</span>
+                      )}
+                    </div>
+                    {crits.map((c) => {
+                      const isSameRound = c.appliedRound === currentRound;
+                      const canRepair = c.repairable && !isSameRound && !dcAttemptedThisRound && !damageControl.isPending;
+                      return (
+                        <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200" data-testid={`crit-row-${c.id}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold uppercase">{c.name}</span>
+                            <span className="text-[9px] opacity-70">
+                              {c.damageApplied > 0 && `−${c.damageApplied}H `}
+                              {c.crewApplied > 0 && `−${c.crewApplied}C`}
+                            </span>
+                          </div>
+                          {(c.randomArc || (c.lostTraits?.length ?? 0) > 0) && (
+                            <div className="text-[9px] opacity-70 mt-0.5">
+                              {c.randomArc && <>arc: {c.randomArc} </>}
+                              {(c.lostTraits?.length ?? 0) > 0 && <>lost: {c.lostTraits.join(", ")}</>}
+                            </div>
+                          )}
+                          <button
+                            data-testid={`damage-control-${c.id}`}
+                            disabled={!canRepair}
+                            onClick={() => {
+                              damageControl.mutate(
+                                { gameId, unitId: selectedUnitData.id, data: { effectId: c.id } },
+                                { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                              );
+                            }}
+                            className="mt-1 w-full rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {!c.repairable
+                              ? "Unrepairable"
+                              : isSameRound
+                              ? "Wait until next round"
+                              : dcAttemptedThisRound
+                              ? "DC locked this round"
+                              : `Damage Control (1d6+CQ${selectedUnitData.crewQuality}≥9)`}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })()}
@@ -2680,14 +2777,28 @@ function DiceRollModal({
                 );
               })}
             </div>
-            {!damageRolling && result.criticalRolls.length > 0 && (
-              <div className="mt-2 space-y-1">
+            {!damageRolling && (result.criticalsApplied?.length ?? 0) > 0 && (
+              <div className="mt-2 space-y-1" data-testid="criticals-applied">
                 <p className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
-                  Critical · {result.criticalRolls.length} crit{result.criticalRolls.length === 1 ? "" : "s"}
+                  Criticals · {result.criticalsApplied.length}
                 </p>
-                <div className="flex flex-wrap gap-1.5" data-testid="critical-dice">
-                  {result.criticalRolls.map((c, i) => (
-                    <DiceFace key={i} value={c} rolling={false} />
+                <div className="space-y-1">
+                  {result.criticalsApplied.map((c) => (
+                    <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-mono text-red-200" data-testid={`crit-${c.effectKey}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold uppercase">{c.name}</span>
+                        <span className="opacity-70">
+                          {c.damageApplied > 0 && `−${c.damageApplied}H `}
+                          {c.crewApplied > 0 && `−${c.crewApplied}C`}
+                        </span>
+                      </div>
+                      {(c.randomArc || c.lostTraits.length > 0) && (
+                        <div className="opacity-70 mt-0.5">
+                          {c.randomArc && <>arc: {c.randomArc} </>}
+                          {c.lostTraits.length > 0 && <>lost: {c.lostTraits.join(", ")}</>}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2705,10 +2816,66 @@ function DiceRollModal({
         {/* Final summary (only after the player has actually seen all dice). */}
         {summaryVisible && result && (
           <div className="mt-4 border-t border-border pt-3 space-y-1 font-mono text-sm" data-testid="dice-summary">
-            <div className="flex justify-between">
+            {/* Defender pipeline — only show rows that actually fired. */}
+            {result.dodgesSuccessful > 0 && (
+              <div className="flex justify-between" data-testid="row-dodges">
+                <span className="text-muted-foreground">Dodged</span>
+                <span className="text-cyan-300">−{result.dodgesSuccessful} hit{result.dodgesSuccessful === 1 ? "" : "s"}</span>
+              </div>
+            )}
+            {result.interceptedHits > 0 && (
+              <div className="flex justify-between" data-testid="row-intercepted">
+                <span className="text-muted-foreground">Interceptors</span>
+                <span className="text-cyan-300">−{result.interceptedHits} hit{result.interceptedHits === 1 ? "" : "s"}</span>
+              </div>
+            )}
+            {(result.shieldedHits > 0 || result.targetShieldsBefore !== result.targetShieldsAfter) && (
+              <div className="flex justify-between" data-testid="row-shields">
+                <span className="text-muted-foreground">Shields {result.shieldedHits > 0 ? `· −${result.shieldedHits} hit${result.shieldedHits === 1 ? "" : "s"}` : ""}</span>
+                <span className="text-blue-300">{result.targetShieldsBefore} → {result.targetShieldsAfter}</span>
+              </div>
+            )}
+            {(result.bulkheadHits + result.solidHits + result.criticalHits) > 0 && (
+              <div className="flex justify-between" data-testid="row-attack-table">
+                <span className="text-muted-foreground">Attack table</span>
+                <span className="text-foreground">
+                  {result.bulkheadHits > 0 && <>{result.bulkheadHits}B </>}
+                  {result.solidHits > 0 && <>{result.solidHits}S </>}
+                  {result.criticalHits > 0 && <span className="text-red-400">{result.criticalHits}C</span>}
+                </span>
+              </div>
+            )}
+            {result.gegReduction > 0 && (
+              <div className="flex justify-between" data-testid="row-geg">
+                <span className="text-muted-foreground">GEG reduction</span>
+                <span className="text-emerald-300">−{result.gegReduction}</span>
+              </div>
+            )}
+            {result.adaptiveHalved && (
+              <div className="flex justify-between" data-testid="row-adaptive">
+                <span className="text-muted-foreground">Adaptive armour</span>
+                <span className="text-emerald-300">halved</span>
+              </div>
+            )}
+            {(result.blastDoorsDamageSaved > 0 || result.blastDoorsCrewSaved > 0) && (
+              <div className="flex justify-between" data-testid="row-blast-doors">
+                <span className="text-muted-foreground">Blast doors</span>
+                <span className="text-emerald-300">
+                  −{result.blastDoorsDamageSaved} dmg
+                  {result.blastDoorsCrewSaved > 0 && <> · −{result.blastDoorsCrewSaved} crew</>}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between pt-1 border-t border-border/50">
               <span className="text-muted-foreground">Total damage</span>
               <span className="text-amber-300 font-bold">{result.totalDamage}</span>
             </div>
+            {result.crewLost > 0 && (
+              <div className="flex justify-between" data-testid="row-crew-lost">
+                <span className="text-muted-foreground">Crew lost</span>
+                <span className="text-amber-300/80">{result.crewLost}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-muted-foreground">{targetName} hull</span>
               <span className={result.targetDestroyed ? "text-red-400 font-bold" : "text-foreground"}>

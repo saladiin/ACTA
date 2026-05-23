@@ -5,17 +5,66 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { CriticalEffect } from './criticalEffect';
+import type { DamageTableResult } from './damageTableResult';
+import type { ExplosionVictim } from './explosionVictim';
 
 export interface FireWeaponResult {
   weaponId: number;
   targetUnitId: number;
+  /** To-hit threshold AFTER Stealth modifiers. */
   hitThreshold: number;
+  /** All d6 results rolled for AD (including beam-explosions and re-rolls). */
   attackRolls: number[];
+  /** Raw hits scored before defender pipeline (Dodge/Interceptors/Shields). */
   hits: number;
+  /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */
+  dodgeRolls: number[];
+  dodgesSuccessful: number;
+  /** Hits absorbed by target's Interceptors. */
+  interceptedHits: number;
+  /** Hits absorbed by target's shields. */
+  shieldedHits: number;
+  targetShieldsBefore: number;
+  targetShieldsAfter: number;
+  /** Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit. */
+  attackTableRolls: number[];
+  bulkheadHits: number;
+  solidHits: number;
+  criticalHits: number;
+  /** Damage AND crew reduction from target's GEG (per-hit X, summed). */
+  gegReduction: number;
+  /** True if damage/crew were halved by Adaptive Armour. */
+  adaptiveHalved: boolean;
+  blastDoorsDamageSaved: number;
+  blastDoorsCrewSaved: number;
+  blastDoorsDamageRolls: number[];
+  blastDoorsCrewRolls: number[];
+  /** Back-compat mirror of attackTableRolls (Slice A). */
   damageRolls: number[];
+  /** Final damage applied to hullPoints AFTER GEG/Adaptive/Blast Doors. */
   totalDamage: number;
+  /** Final crew lost (not yet persisted; Slice C will track crewPoints). */
+  crewLost: number;
+  /** Cosmetic per-crit d6 rolls (back-compat). Use `criticalsApplied` for structured details. */
   criticalRolls: number[];
+  /** Newly applied critical-effect rows produced by this attack. */
+  criticalsApplied: CriticalEffect[];
+  beamExplosions: number;
+  twinRerolls: number;
+  concentrateRerolls: number;
   targetHullBefore: number;
   targetHullAfter: number;
+  targetCrewBefore?: number;
+  targetCrewAfter?: number;
   targetDestroyed: boolean;
+  /** Populated when this attack brought target hull to 0 from 'normal' state. Null otherwise. */
+  damageTable?: null | DamageTableResult;
+  /**
+     * Set to the surviving player's userId when this attack ended the game; null otherwise.
+     * @nullable
+     */
+  winnerId?: string | null;
+  /** Units caught in an immediate-explosion damage-table result (≥18). Empty otherwise. */
+  explosionVictims?: ExplosionVictim[];
 }

@@ -202,6 +202,48 @@ export interface AcceptGameInput {
   password?: string | null;
 }
 
+/**
+ * Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed.
+ */
+export type GameUnitDamageState = typeof GameUnitDamageState[keyof typeof GameUnitDamageState];
+
+
+export const GameUnitDamageState = {
+  normal: 'normal',
+  adrift: 'adrift',
+  'exploding-end-of-next': 'exploding-end-of-next',
+  destroyed: 'destroyed',
+} as const;
+
+export interface CriticalEffect {
+  id: number;
+  gameUnitId: number;
+  /** Stable key from the critical-hit table (e.g. 'engines-thrusters'). */
+  effectKey: string;
+  /** 1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital. */
+  location: number;
+  name: string;
+  /** Hull damage applied when this row was created (reversed on DC success). */
+  damageApplied: number;
+  /** Crew damage applied when this row was created (Slice C-only counter; logged for UI). */
+  crewApplied: number;
+  /**
+     * Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).
+     * @nullable
+     */
+  randomArc?: string | null;
+  /**
+     * Specific weapon rolled for Weapons-Offline.
+     * @nullable
+     */
+  randomWeaponId?: number | null;
+  /** Ship traits dropped when this row was created (e.g. ['Stealth', 'Interceptors']). */
+  lostTraits: string[];
+  appliedRound: number;
+  /** False for Vital Systems (location 6) per the sheet. */
+  repairable: boolean;
+}
+
 export interface GameUnit {
   id: number;
   gameId: number;
@@ -212,6 +254,22 @@ export interface GameUnit {
   faction: string;
   hullPoints: number;
   maxHullPoints: number;
+  /** Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round. */
+  shieldsCurrent: number;
+  /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
+  lastDcRound?: number;
+  /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
+  crewPoints?: number;
+  /** Maximum crew complement, set at deploy from ship_model.crew. */
+  maxCrewPoints?: number;
+  /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
+  damageState?: GameUnitDamageState;
+  /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  isCrippled?: boolean;
+  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
+  isSkeletonCrew?: boolean;
+  /** Unrepaired critical effects, oldest first. */
+  criticals?: CriticalEffect[];
   hexQ: number;
   hexR: number;
   heading: number;
@@ -299,18 +357,117 @@ export interface FireWeaponInput {
   targetUnitId: number;
 }
 
+/**
+ * 1-6 adrift, 7-11 destroyed, 12-17 delayed explode, 18+ explodes now.
+ */
+export type DamageTableResultOutcome = typeof DamageTableResultOutcome[keyof typeof DamageTableResultOutcome];
+
+
+export const DamageTableResultOutcome = {
+  adrift: 'adrift',
+  destroyed: 'destroyed',
+  'exploding-end-of-next': 'exploding-end-of-next',
+  'explodes-now': 'explodes-now',
+} as const;
+
+export interface DamageTableResult {
+  /** abs(hullPoints - finalDamage), added to the d6. */
+  overkill: number;
+  /** 1d6 base. */
+  roll: number;
+  /** roll + overkill. */
+  total: number;
+  /** 1-6 adrift, 7-11 destroyed, 12-17 delayed explode, 18+ explodes now. */
+  outcome: DamageTableResultOutcome;
+}
+
+export interface ExplosionVictim {
+  unitId: number;
+  /** min(15, floor(maxDamage/2)) AD landed on this victim. */
+  hitsTaken: number;
+  finalDamage: number;
+  finalCrewLost: number;
+  hullAfter: number;
+  destroyed: boolean;
+}
+
 export interface FireWeaponResult {
   weaponId: number;
   targetUnitId: number;
+  /** To-hit threshold AFTER Stealth modifiers. */
   hitThreshold: number;
+  /** All d6 results rolled for AD (including beam-explosions and re-rolls). */
   attackRolls: number[];
+  /** Raw hits scored before defender pipeline (Dodge/Interceptors/Shields). */
   hits: number;
+  /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */
+  dodgeRolls: number[];
+  dodgesSuccessful: number;
+  /** Hits absorbed by target's Interceptors. */
+  interceptedHits: number;
+  /** Hits absorbed by target's shields. */
+  shieldedHits: number;
+  targetShieldsBefore: number;
+  targetShieldsAfter: number;
+  /** Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit. */
+  attackTableRolls: number[];
+  bulkheadHits: number;
+  solidHits: number;
+  criticalHits: number;
+  /** Damage AND crew reduction from target's GEG (per-hit X, summed). */
+  gegReduction: number;
+  /** True if damage/crew were halved by Adaptive Armour. */
+  adaptiveHalved: boolean;
+  blastDoorsDamageSaved: number;
+  blastDoorsCrewSaved: number;
+  blastDoorsDamageRolls: number[];
+  blastDoorsCrewRolls: number[];
+  /** Back-compat mirror of attackTableRolls (Slice A). */
   damageRolls: number[];
+  /** Final damage applied to hullPoints AFTER GEG/Adaptive/Blast Doors. */
   totalDamage: number;
+  /** Final crew lost (not yet persisted; Slice C will track crewPoints). */
+  crewLost: number;
+  /** Cosmetic per-crit d6 rolls (back-compat). Use `criticalsApplied` for structured details. */
   criticalRolls: number[];
+  /** Newly applied critical-effect rows produced by this attack. */
+  criticalsApplied: CriticalEffect[];
+  beamExplosions: number;
+  twinRerolls: number;
+  concentrateRerolls: number;
   targetHullBefore: number;
   targetHullAfter: number;
+  targetCrewBefore?: number;
+  targetCrewAfter?: number;
   targetDestroyed: boolean;
+  /** Populated when this attack brought target hull to 0 from 'normal' state. Null otherwise. */
+  damageTable?: null | DamageTableResult;
+  /**
+     * Set to the surviving player's userId when this attack ended the game; null otherwise.
+     * @nullable
+     */
+  winnerId?: string | null;
+  /** Units caught in an immediate-explosion damage-table result (≥18). Empty otherwise. */
+  explosionVictims?: ExplosionVictim[];
+}
+
+export interface DamageControlInput {
+  /** id of the unit_critical_effects row to repair. */
+  effectId: number;
+}
+
+export interface DamageControlResult {
+  success: boolean;
+  /** 1d6 result. */
+  dcRoll: number;
+  /** dcRoll + crewQuality - dcPenalty. */
+  dcTotal: number;
+  /** Target total (always 9). */
+  dcThreshold: number;
+  /** Sum of damage-control penalties (e.g. Multiple Fires adds 1). */
+  dcPenalty: number;
+  effectId: number;
+  unit: GameUnit;
 }
 
 export type SpecialActionInputAction = typeof SpecialActionInputAction[keyof typeof SpecialActionInputAction];

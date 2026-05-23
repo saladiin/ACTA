@@ -57,6 +57,30 @@ export const gameUnitsTable = pgTable("game_units", {
   faction: text("faction").notNull(),
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
+  // Current shield pool (Shields X). Refilled toward shieldMax at the end of
+  // each round per shieldRegenRate. Initialized to ship_model.shieldMax at
+  // deploy. Absorbs incoming hits in the damage pipeline before the Attack
+  // Table is rolled, scaled by the attacker's damage multiplier (Double /
+  // Triple / Quad). Mass Driver and Energy Mine bypass shields.
+  shieldsCurrent: integer("shields_current").notNull().default(0),
+  // Last round in which this unit attempted Damage Control (Slice B). Used
+  // to enforce the once-per-end-phase-per-unit cap. 0 means never.
+  lastDcRound: integer("last_dc_round").notNull().default(0),
+  // Crew aboard the ship. Reduced by attack-table crew rolls, certain
+  // critical effects, and boarding actions. When ≤ ½ maxCrewPoints the
+  // ship is treated as "Skeleton Crew" (no SA, only 1 weapon system fires,
+  // -2 DC, troops halved, lose Command/Fleet Carrier/Admiral). When
+  // crewPoints hits 0 the ship is adrift.
+  crewPoints: integer("crew_points").notNull().default(0),
+  maxCrewPoints: integer("max_crew_points").notNull().default(0),
+  // Authoritative life-state of the ship for damage-table resolution.
+  //   "normal"               — undamaged or merely scarred; default.
+  //   "adrift"               — failed damage-table or out of crew; halved
+  //                            speed, compulsory end-phase drift.
+  //   "exploding-end-of-next"— delayed catastrophic kill; explodes at the
+  //                            end of the following round.
+  //   "destroyed"            — gone (also mirrored by `isDestroyed`).
+  damageState: text("damage_state").notNull().default("normal"),
   hexQ: integer("hex_q").notNull().default(0),
   hexR: integer("hex_r").notNull().default(0),
   heading: integer("heading").notNull().default(0),

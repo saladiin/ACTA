@@ -5,6 +5,8 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { CriticalEffect } from './criticalEffect';
+import type { GameUnitDamageState } from './gameUnitDamageState';
 
 export interface GameUnit {
   id: number;
@@ -16,6 +18,22 @@ export interface GameUnit {
   faction: string;
   hullPoints: number;
   maxHullPoints: number;
+  /** Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round. */
+  shieldsCurrent: number;
+  /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
+  lastDcRound?: number;
+  /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
+  crewPoints?: number;
+  /** Maximum crew complement, set at deploy from ship_model.crew. */
+  maxCrewPoints?: number;
+  /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
+  damageState?: GameUnitDamageState;
+  /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  isCrippled?: boolean;
+  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
+  isSkeletonCrew?: boolean;
+  /** Unrepaired critical effects, oldest first. */
+  criticals?: CriticalEffect[];
   hexQ: number;
   hexR: number;
   heading: number;

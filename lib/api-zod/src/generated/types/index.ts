@@ -7,8 +7,14 @@
  */
 
 export * from './acceptGameInput';
+export * from './criticalEffect';
+export * from './damageControlInput';
+export * from './damageControlResult';
+export * from './damageTableResult';
+export * from './damageTableResultOutcome';
 export * from './deploymentInput';
 export * from './devMoveUnitInput';
+export * from './explosionVictim';
 export * from './fireAction';
 export * from './fireWeaponInput';
 export * from './fireWeaponResult';
@@ -23,6 +29,7 @@ export * from './gameInputVisibility';
 export * from './gamePhase';
 export * from './gameStatus';
 export * from './gameUnit';
+export * from './gameUnitDamageState';
 export * from './gameVisibility';
 export * from './healthStatus';
 export * from './lobbyState';

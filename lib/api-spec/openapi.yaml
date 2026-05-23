@@ -409,6 +409,30 @@ paths:
         "400": { description: "Invalid target (out of arc, out of range, etc.)" }
         "409": { description: "Activation conflict" }
 
+  /games/{gameId}/units/{unitId}/damage-control:
+    post:
+      operationId: damageControl
+      tags: [turns]
+      summary: Attempt to repair one critical effect during the End Phase (once per round per ship).
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DamageControlInput"
+      responses:
+        "200":
+          description: Damage control resolved (success or failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DamageControlResult"
+        "400": { description: "Already attempted, target effect not repairable, or no such effect" }
+        "409": { description: "Activation conflict" }
+
   /games/{gameId}/units/{unitId}/special-action:
     post:
       operationId: chooseSpecialAction
@@ -667,7 +691,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, shieldsCurrent, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -678,6 +702,17 @@ components:
         faction:       { type: string }
         hullPoints:    { type: integer }
         maxHullPoints: { type: integer }
+        shieldsCurrent: { type: integer, description: "Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round." }
+        lastDcRound:    { type: integer, description: "Last round (1-based) this unit attempted Damage Control. 0 = never." }
+        crewPoints:     { type: integer, description: "Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew." }
+        maxCrewPoints:  { type: integer, description: "Maximum crew complement, set at deploy from ship_model.crew." }
+        damageState:    { type: string, enum: [normal, adrift, exploding-end-of-next, destroyed], description: "Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed." }
+        isCrippled:     { type: boolean, description: "Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral." }
+        isSkeletonCrew: { type: boolean, description: "Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral." }
+        criticals:
+          type: array
+          items: { $ref: "#/components/schemas/CriticalEffect" }
+          description: "Unrepaired critical effects, oldest first."
         hexQ:          { type: integer }
         hexR:          { type: integer }
         heading:       { type: integer }
@@ -758,25 +793,166 @@ components:
 
     FireWeaponResult:
       type: object
-      required: [weaponId, targetUnitId, hitThreshold, attackRolls, hits, damageRolls, totalDamage, criticalRolls, targetHullBefore, targetHullAfter, targetDestroyed]
+      required:
+        - weaponId
+        - targetUnitId
+        - hitThreshold
+        - attackRolls
+        - hits
+        - dodgeRolls
+        - dodgesSuccessful
+        - interceptedHits
+        - shieldedHits
+        - targetShieldsBefore
+        - targetShieldsAfter
+        - attackTableRolls
+        - bulkheadHits
+        - solidHits
+        - criticalHits
+        - gegReduction
+        - adaptiveHalved
+        - blastDoorsDamageSaved
+        - blastDoorsCrewSaved
+        - blastDoorsDamageRolls
+        - blastDoorsCrewRolls
+        - criticalsApplied
+        - damageRolls
+        - totalDamage
+        - crewLost
+        - criticalRolls
+        - beamExplosions
+        - twinRerolls
+        - concentrateRerolls
+        - targetHullBefore
+        - targetHullAfter
+        - targetDestroyed
       properties:
         weaponId:        { type: integer }
         targetUnitId:    { type: integer }
-        hitThreshold:    { type: integer }
+        hitThreshold:    { type: integer, description: "To-hit threshold AFTER Stealth modifiers." }
         attackRolls:
           type: array
           items: { type: integer }
-        hits:            { type: integer }
+          description: "All d6 results rolled for AD (including beam-explosions and re-rolls)."
+        hits:            { type: integer, description: "Raw hits scored before defender pipeline (Dodge/Interceptors/Shields)." }
+        dodgeRolls:
+          type: array
+          items: { type: integer }
+          description: "Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible."
+        dodgesSuccessful: { type: integer }
+        interceptedHits: { type: integer, description: "Hits absorbed by target's Interceptors." }
+        shieldedHits:    { type: integer, description: "Hits absorbed by target's shields." }
+        targetShieldsBefore: { type: integer }
+        targetShieldsAfter:  { type: integer }
+        attackTableRolls:
+          type: array
+          items: { type: integer }
+          description: "Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit."
+        bulkheadHits:    { type: integer }
+        solidHits:       { type: integer }
+        criticalHits:    { type: integer }
+        gegReduction:    { type: integer, description: "Damage AND crew reduction from target's GEG (per-hit X, summed)." }
+        adaptiveHalved:  { type: boolean, description: "True if damage/crew were halved by Adaptive Armour." }
+        blastDoorsDamageSaved: { type: integer }
+        blastDoorsCrewSaved:   { type: integer }
+        blastDoorsDamageRolls:
+          type: array
+          items: { type: integer }
+        blastDoorsCrewRolls:
+          type: array
+          items: { type: integer }
         damageRolls:
           type: array
           items: { type: integer }
-        totalDamage:     { type: integer }
+          description: "Back-compat mirror of attackTableRolls (Slice A)."
+        totalDamage:     { type: integer, description: "Final damage applied to hullPoints AFTER GEG/Adaptive/Blast Doors." }
+        crewLost:        { type: integer, description: "Final crew lost (not yet persisted; Slice C will track crewPoints)." }
         criticalRolls:
           type: array
           items: { type: integer }
+          description: "Cosmetic per-crit d6 rolls (back-compat). Use `criticalsApplied` for structured details."
+        criticalsApplied:
+          type: array
+          items: { $ref: "#/components/schemas/CriticalEffect" }
+          description: "Newly applied critical-effect rows produced by this attack."
+        beamExplosions:  { type: integer }
+        twinRerolls:     { type: integer }
+        concentrateRerolls: { type: integer }
         targetHullBefore: { type: integer }
         targetHullAfter:  { type: integer }
+        targetCrewBefore: { type: integer }
+        targetCrewAfter:  { type: integer }
         targetDestroyed: { type: boolean }
+        damageTable:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/DamageTableResult"
+          description: "Populated when this attack brought target hull to 0 from 'normal' state. Null otherwise."
+        winnerId:
+          type: ["string", "null"]
+          description: "Set to the surviving player's userId when this attack ended the game; null otherwise."
+        explosionVictims:
+          type: array
+          items: { $ref: "#/components/schemas/ExplosionVictim" }
+          description: "Units caught in an immediate-explosion damage-table result (≥18). Empty otherwise."
+
+    DamageTableResult:
+      type: object
+      required: [overkill, roll, total, outcome]
+      properties:
+        overkill: { type: integer, description: "abs(hullPoints - finalDamage), added to the d6." }
+        roll:     { type: integer, description: "1d6 base." }
+        total:    { type: integer, description: "roll + overkill." }
+        outcome:  { type: string, enum: [adrift, destroyed, exploding-end-of-next, explodes-now], description: "1-6 adrift, 7-11 destroyed, 12-17 delayed explode, 18+ explodes now." }
+
+    ExplosionVictim:
+      type: object
+      required: [unitId, hitsTaken, finalDamage, finalCrewLost, hullAfter, destroyed]
+      properties:
+        unitId:        { type: integer }
+        hitsTaken:     { type: integer, description: "min(15, floor(maxDamage/2)) AD landed on this victim." }
+        finalDamage:   { type: integer }
+        finalCrewLost: { type: integer }
+        hullAfter:     { type: integer }
+        destroyed:     { type: boolean }
+
+    CriticalEffect:
+      type: object
+      required: [id, gameUnitId, effectKey, location, name, damageApplied, crewApplied, lostTraits, appliedRound, repairable]
+      properties:
+        id:             { type: integer }
+        gameUnitId:     { type: integer }
+        effectKey:      { type: string, description: "Stable key from the critical-hit table (e.g. 'engines-thrusters')." }
+        location:       { type: integer, description: "1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital." }
+        name:           { type: string }
+        damageApplied:  { type: integer, description: "Hull damage applied when this row was created (reversed on DC success)." }
+        crewApplied:    { type: integer, description: "Crew damage applied when this row was created (Slice C-only counter; logged for UI)." }
+        randomArc:      { type: ["string", "null"], description: "Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control)." }
+        randomWeaponId: { type: ["integer", "null"], description: "Specific weapon rolled for Weapons-Offline." }
+        lostTraits:
+          type: array
+          items: { type: string }
+          description: "Ship traits dropped when this row was created (e.g. ['Stealth', 'Interceptors'])."
+        appliedRound:   { type: integer }
+        repairable:     { type: boolean, description: "False for Vital Systems (location 6) per the sheet." }
+
+    DamageControlInput:
+      type: object
+      required: [effectId]
+      properties:
+        effectId: { type: integer, description: "id of the unit_critical_effects row to repair." }
+
+    DamageControlResult:
+      type: object
+      required: [success, dcRoll, dcTotal, dcThreshold, dcPenalty, effectId, unit]
+      properties:
+        success:    { type: boolean }
+        dcRoll:     { type: integer, description: "1d6 result." }
+        dcTotal:    { type: integer, description: "dcRoll + crewQuality - dcPenalty." }
+        dcThreshold: { type: integer, description: "Target total (always 9)." }
+        dcPenalty:  { type: integer, description: "Sum of damage-control penalties (e.g. Multiple Fires adds 1)." }
+        effectId:   { type: integer }
+        unit:       { $ref: "#/components/schemas/GameUnit" }
 
     SpecialActionInput:
       type: object
