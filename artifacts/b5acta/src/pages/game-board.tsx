@@ -1100,26 +1100,19 @@ export default function GameBoard() {
     // Recompute SA-adjusted caps here (don't read selectedSaCaps — this
     // callback's deps would otherwise need it, and we want the authoritative
     // commit path to be self-contained).
-    // Adrift-style override (mirrors selectedSaCaps + server enforcement):
-    // forward commit only, distance must equal floor(speed/2), heading
-    // locked. Reject anything else here so a stale keyboard plan can't slip
-    // through the regular-SA cap check below.
-    const isAdriftLike =
-      u.damageState === "adrift" || u.damageState === "exploding-end-of-next";
     const baseAction = (u.specialAction ?? "").replace(/-failed$/, "");
     const isAllStop = baseAction === "all-stop";
     const isAllStopPivot = baseAction === "all-stop-pivot";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAbout = u.specialAction === "come-about";
-    const speedCap = isAdriftLike
-      ? Math.floor(u.speed / 2)
-      : isAllStopPivot ? 0 :
-        isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
-        isAllPower ? Math.floor(u.speed * 1.5) :
-        u.speed;
-    const maxTurns = isAdriftLike ? 0 : (u.turns ?? 1) + (isComeAbout ? 1 : 0);
-    const turnsForbidden = isAdriftLike || isAllPower || isRunSilent;
+    const speedCap =
+      isAllStopPivot ? 0 :
+      isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
+      isAllPower ? Math.floor(u.speed * 1.5) :
+      u.speed;
+    const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+    const turnsForbidden = isAllPower || isRunSilent;
     const led = getLedger(u.id);
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
     let distanceCommitted = 0;
@@ -1260,12 +1253,7 @@ export default function GameBoard() {
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
         if (remainingMove <= 0) return;
-        // Adrift-style: open the plan already snapped to the full ½-speed
-        // commit so a player who hits F then Enter (without dragging)
-        // commits the full mandatory drift.
-        const isAdriftLike =
-          u.damageState === "adrift" || u.damageState === "exploding-end-of-next";
-        setMovePlan({ kind: "forward", distance: isAdriftLike ? remainingMove : 0 });
+        setMovePlan({ kind: "forward", distance: 0 });
       } else if (e.key === "Enter" || e.key === " " || e.code === "Space") {
         e.preventDefault();
         confirmMovePlan();
@@ -1286,21 +1274,6 @@ export default function GameBoard() {
   const selectedSaCaps = useMemo(() => {
     if (!selectedUnitData) return null;
     const u = selectedUnitData;
-    // Adrift-style states (adrift + the substate carried by "detonating"
-    // ships) override every other movement modifier: no turns, exact
-    // ½-speed forward commit only. Matches the server's enforcement in
-    // POST /games/:id/units/:id/move.
-    const isAdriftLike =
-      u.damageState === "adrift" || u.damageState === "exploding-end-of-next";
-    if (isAdriftLike) {
-      return {
-        speedCap: Math.floor(u.speed / 2),
-        maxTurns: 0,
-        turnsForbidden: true,
-        isAllStopPivot: false,
-        isAdriftLike: true,
-      };
-    }
     const baseAction = (u.specialAction ?? "").replace(/-failed$/, "");
     const isAllStop = baseAction === "all-stop";
     const isAllStopPivot = baseAction === "all-stop-pivot";
@@ -1314,7 +1287,7 @@ export default function GameBoard() {
       isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
       isAllPower ? Math.floor(u.speed * 1.5) :
       u.speed;
-    return { speedCap, maxTurns, turnsForbidden, isAllStopPivot, isAdriftLike: false };
+    return { speedCap, maxTurns, turnsForbidden, isAllStopPivot };
   }, [selectedUnitData]);
 
   // Selected-ship remaining inches this phase + drag offset for the forward
@@ -1349,6 +1322,57 @@ export default function GameBoard() {
   useEffect(() => {
     setSpecialActionFeedback(null);
     setConcentratePicking(false);
+  }, [activeUnitId]);
+
+  // ── Adrift auto-drift ───────────────────────────────────────────────────────
+  // When the player activates a ship whose damageState is `adrift` or
+  // `exploding-end-of-next`, the engine auto-drifts it floor(speed/2) inches
+  // straight ahead and ends the activation. No player input — the player
+  // has no meaningful movement choice for a derelict ship anyway, so we
+  // skip the planner UI entirely. The dispatch ref guards against React
+  // strict-mode double-invokes and against re-firing while the server
+  // call is in flight.
+  const autoDriftDispatchedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (game?.status !== "active") return;
+    if (currentPhase !== "movement") return;
+    if (!isMyActivation || activeUnitId == null) return;
+    const u = units.find(x => x.id === activeUnitId);
+    if (!u || u.ownerId !== myUserId || u.isDestroyed) return;
+    const isAdriftLike =
+      u.damageState === "adrift" || u.damageState === "exploding-end-of-next";
+    if (!isAdriftLike) return;
+    if (u.hasMovedThisRound) return;
+    if (autoDriftDispatchedRef.current === u.id) return;
+    if (moveUnit.isPending || endActivation.isPending) return;
+    autoDriftDispatchedRef.current = u.id;
+    const driftDistance = Math.floor(u.speed / 2);
+    const v = headingForwardVec(u);
+    const toHexQ = Math.round(u.hexQ + v.x * driftDistance);
+    const toHexR = Math.round(u.hexR + v.z * driftDistance);
+    moveUnit.mutate(
+      { gameId, unitId: u.id, data: { toHexQ, toHexR, newHeading: u.heading } },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          endActivation.mutate({ gameId }, {
+            onSuccess: () => {
+              qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+              setSelectedUnit(null);
+            },
+          });
+        },
+        onError: () => {
+          // Let the player retry by re-activating; clear the latch.
+          autoDriftDispatchedRef.current = null;
+        },
+      },
+    );
+  }, [activeUnitId, isMyActivation, currentPhase, game?.status, units, myUserId, moveUnit, endActivation, gameId, qc]);
+  // Clear the auto-drift latch whenever the active unit changes so the next
+  // adrift ship's activation also auto-drifts.
+  useEffect(() => {
+    autoDriftDispatchedRef.current = null;
   }, [activeUnitId]);
 
   const handleUnitClick = (unitId: number) => {
@@ -1646,14 +1670,7 @@ export default function GameBoard() {
               return;
             }
             // Forward-move drag: project cursor onto heading axis from ship origin.
-            // Adrift-style ships pin to exactly speedCap (no partial drift) — the
-            // ship slides to the full half-speed marker the moment the player
-            // starts dragging, matching the "must be the full distance" rule.
             if (movePlan?.kind === "forward" && selectedUnitData && selectedUnitData.ownerId === myUserId) {
-              if (selectedSaCaps?.isAdriftLike) {
-                setMovePlan(prev => (prev && prev.kind === "forward" ? { kind: "forward", distance: selectedRemainingMove } : prev));
-                return;
-              }
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
               if (!pos) return;
               const [px, pz] = pos;
