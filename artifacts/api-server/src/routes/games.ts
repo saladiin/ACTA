@@ -807,9 +807,34 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const hitThreshold = isBeam ? 4 : targetModel.hullRating;
 
       // Roll attack dice → hits.
+      // Beam rule: every to-hit die showing 4+ "explodes" and rolls one
+      // additional die, which is itself checked for hit AND for further
+      // explosion. p(explode)=0.5 → expected ~2× dice per starting die; tail
+      // is geometric and effectively never exceeds ~30 rolls from one die.
+      // The hard cap of 100 chained rolls per starting die exists purely as
+      // a runaway-loop guard against a future bug that mis-thresholds the
+      // explode face — it will not fire in normal play.
+      const EXPLODE_ON = 4;
+      const EXPLODE_CAP_PER_DIE = 100;
       const attackRolls: number[] = [];
-      for (let i = 0; i < weapon.attackDice; i++) attackRolls.push(rollD6());
-      const hits = attackRolls.filter(r => r >= hitThreshold).length;
+      let hits = 0;
+      let explodedCount = 0; // total chained dice across all starts (for UI)
+      for (let i = 0; i < weapon.attackDice; i++) {
+        let r = rollD6();
+        attackRolls.push(r);
+        if (r >= hitThreshold) hits++;
+        if (isBeam) {
+          let chain = 0;
+          while (r >= EXPLODE_ON && chain < EXPLODE_CAP_PER_DIE) {
+            r = rollD6();
+            attackRolls.push(r);
+            explodedCount++;
+            if (r >= hitThreshold) hits++;
+            chain++;
+          }
+        }
+      }
+      void explodedCount; // reserved for a future "💥 chained N extra dice" log line
 
       // Roll damage dice per hit. 1=0, 2-5=1, 6=2 + cosmetic critical roll.
       const damageRolls: number[] = [];
