@@ -401,6 +401,14 @@ export const DeclineGameResponse = zod.object({
 
 
 /**
+ * @summary Surrender an active game (concede). Deletes the game record entirely (and its units, turns, crit-effect rows) so it disappears from both Active Operations and Recent Engagements. Only callable by the challenger or the opponent while status is 'deploying' or 'active'.
+ */
+export const SurrenderGameParams = zod.object({
+  "gameId": zod.coerce.number()
+})
+
+
+/**
  * @summary Place your fleet on the board at the start of a game
  */
 export const DeployFleetParams = zod.object({

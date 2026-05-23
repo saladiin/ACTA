@@ -280,6 +280,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/Game"
 
+  /games/{gameId}/surrender:
+    post:
+      operationId: surrenderGame
+      tags: [games]
+      summary: Surrender an active game (concede). Deletes the game record entirely (and its units, turns, crit-effect rows) so it disappears from both Active Operations and Recent Engagements. Only callable by the challenger or the opponent while status is 'deploying' or 'active'.
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Surrendered and deleted.
+
   /games/{gameId}/deploy:
     post:
       operationId: deployFleet

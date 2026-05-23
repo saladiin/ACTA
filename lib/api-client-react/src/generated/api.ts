@@ -1096,6 +1096,76 @@ export const useDeclineGame = <TError = ErrorType<unknown>,
       return useMutation(getDeclineGameMutationOptions(options));
     }
 
+export const getSurrenderGameUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/surrender`
+}
+
+/**
+ * @summary Surrender an active game (concede). Deletes the game record entirely (and its units, turns, crit-effect rows) so it disappears from both Active Operations and Recent Engagements. Only callable by the challenger or the opponent while status is 'deploying' or 'active'.
+ */
+export const surrenderGame = async (gameId: number, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getSurrenderGameUrl(gameId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getSurrenderGameMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof surrenderGame>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof surrenderGame>>, TError,{gameId: number}, TContext> => {
+
+const mutationKey = ['surrenderGame'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof surrenderGame>>, {gameId: number}> = (props) => {
+          const {gameId} = props ?? {};
+
+          return  surrenderGame(gameId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SurrenderGameMutationResult = NonNullable<Awaited<ReturnType<typeof surrenderGame>>>
+
+    export type SurrenderGameMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Surrender an active game (concede). Deletes the game record entirely (and its units, turns, crit-effect rows) so it disappears from both Active Operations and Recent Engagements. Only callable by the challenger or the opponent while status is 'deploying' or 'active'.
+ */
+export const useSurrenderGame = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof surrenderGame>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof surrenderGame>>,
+        TError,
+        {gameId: number},
+        TContext
+      > => {
+      return useMutation(getSurrenderGameMutationOptions(options));
+    }
+
 export const getDeployFleetUrl = (gameId: number,) => {
 
 

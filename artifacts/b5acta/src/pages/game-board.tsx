@@ -1,5 +1,5 @@
 import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
@@ -21,6 +21,7 @@ import {
   useEndActivation,
   useFireWeapon,
   useDamageControl,
+  useSurrenderGame,
   useChooseSpecialAction,
   useListFleets,
   useListFleetShips,
@@ -851,6 +852,9 @@ export default function GameBoard() {
   const endActivation = useEndActivation();
   const fireWeapon = useFireWeapon();
   const damageControl = useDamageControl();
+  const surrenderGame = useSurrenderGame();
+  const [, setLocation] = useLocation();
+  const [confirmingSurrender, setConfirmingSurrender] = useState(false);
   const chooseSpecialAction = useChooseSpecialAction();
   // Transient feedback for the most recent special-action attempt
   // (success/fail + dice roll). Cleared when activation ends.
@@ -982,6 +986,18 @@ export default function GameBoard() {
   const turns = gameData?.turns ?? [];
 
   const isChallenger = game?.challengerId === myUserId;
+  // Surrender eligibility: every one of MY ships is at ≤0 hull OR ≤0 crew
+  // (or destroyed). A ship with maxCrewPoints=0 (legacy unit without a crew
+  // pool) shouldn't gate surrender on its non-existent crew, so we only
+  // count crew when the ship has a crew pool to begin with.
+  const myUnits = units.filter(u => u.ownerId === myUserId);
+  const allMyShipsCombatInert =
+    myUnits.length > 0 &&
+    myUnits.every(u =>
+      u.isDestroyed ||
+      u.hullPoints <= 0 ||
+      ((u.maxCrewPoints ?? 0) > 0 && (u.crewPoints ?? 0) <= 0),
+    );
 
   // Deployment-zone clamp for staged ship placement during the deploy phase.
   // Challenger deploys from the +Z short edge, opponent from -Z. The clamp
@@ -2164,6 +2180,67 @@ export default function GameBoard() {
               >
                 <XCircle className="w-3.5 h-3.5" /> Withdraw Challenge
               </Button>
+            </div>
+          )}
+
+          {/* Surrender. Appears only when every one of MY ships is at 0 hp,
+              0 crew, or both — i.e. there's no realistic recovery left.
+              Per product spec, surrender ends AND deletes the game (server
+              cascade-deletes units/turns/crits), so we redirect to /lobby on
+              success. The "Are you sure?" inline confirm prevents misclicks
+              from nuking a still-recoverable engagement. */}
+          {(game.status === "active" || game.status === "deploying") &&
+            (isChallenger || isOpponent) && allMyShipsCombatInert && (
+            <div className="p-4 border-b border-border space-y-2" data-testid="surrender-panel">
+              <p className="text-xs text-red-400/90 font-mono uppercase tracking-wider">
+                All ships disabled — no combat-effective units remain
+              </p>
+              {confirmingSurrender ? (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    data-testid="button-confirm-surrender"
+                    className="flex-1 gap-1.5 uppercase tracking-wider text-xs"
+                    onClick={() => surrenderGame.mutate({ gameId }, {
+                      onSuccess: () => {
+                        qc.invalidateQueries({ queryKey: ["getLobby"] });
+                        qc.invalidateQueries({ queryKey: ["listGames"] });
+                        setLocation("/lobby");
+                      },
+                    })}
+                    disabled={surrenderGame.isPending}
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    {surrenderGame.isPending ? "Surrendering…" : "Confirm Surrender"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    data-testid="button-cancel-surrender"
+                    className="gap-1.5 uppercase tracking-wider text-xs"
+                    onClick={() => setConfirmingSurrender(false)}
+                    disabled={surrenderGame.isPending}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  data-testid="button-surrender"
+                  className="w-full gap-1.5 uppercase tracking-wider text-xs"
+                  onClick={() => setConfirmingSurrender(true)}
+                >
+                  <XCircle className="w-3.5 h-3.5" /> Surrender Engagement
+                </Button>
+              )}
+              {surrenderGame.isError && (
+                <p className="text-[11px] text-red-400 font-mono" data-testid="text-surrender-error">
+                  {(surrenderGame.error as Error).message}
+                </p>
+              )}
             </div>
           )}
 

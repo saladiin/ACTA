@@ -360,6 +360,51 @@ router.post("/games/:gameId/decline", requireAuth, async (req, res): Promise<voi
   }
 });
 
+// Surrender: a player concedes an active (or still-deploying) game. Per the
+// user's product spec, surrender both ends the match AND wipes the record so
+// the game vanishes from Active Operations and never shows up in Recent
+// Engagements. We delete child rows manually because the schema's FKs aren't
+// configured with ON DELETE CASCADE (see lib/db/src/schema/games.ts).
+router.post("/games/:gameId/surrender", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  try {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.challengerId !== userId && game.opponentId !== userId) {
+        // 404 (not 403) to avoid leaking the existence of games this user
+        // isn't party to.
+        throw Object.assign(new Error("Game not found"), { status: 404 });
+      }
+      if (game.status !== "active" && game.status !== "deploying") {
+        throw Object.assign(new Error(`Cannot surrender from status '${game.status}'`), { status: 400 });
+      }
+
+      // Manual cascade: crit effects → units → turns → game. Crit effects
+      // reference gameUnitId, so they must go before gameUnits.
+      const unitRows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable)
+        .where(eq(gameUnitsTable.gameId, params.data.gameId));
+      if (unitRows.length > 0) {
+        await tx.delete(unitCriticalEffectsTable)
+          .where(or(...unitRows.map(u => eq(unitCriticalEffectsTable.gameUnitId, u.id))));
+      }
+      await tx.delete(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
+      await tx.delete(turnsTable).where(eq(turnsTable.gameId, params.data.gameId));
+      await tx.delete(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+    });
+    res.status(204).end();
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
 router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = DeployFleetParams.safeParse(req.params);
@@ -374,153 +419,161 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
     return;
   }
   req.log.info({ body: parsed.data }, "deploy body parsed");
-  const [game] = await db
-    .select()
-    .from(gamesTable)
-    .where(and(
-      eq(gamesTable.id, params.data.gameId),
-      or(eq(gamesTable.challengerId, userId), eq(gamesTable.opponentId, userId))
-    ));
-  if (!game) {
-    res.status(404).json({ error: "Game not found" });
-    return;
-  }
-  if (game.status !== "deploying") {
-    res.status(400).json({ error: "Game is not in deploying phase" });
-    return;
-  }
-
-  const isChallenger = game.challengerId === userId;
-  let fleetId: number | null = parsed.data.fleetId ?? null;
-  let ships: typeof shipsTable.$inferSelect[];
-
-  if (fleetId !== null) {
-    // Saved-fleet path: validate ownership, load the fleet's ships.
-    const [fleet] = await db.select().from(fleetsTable).where(and(eq(fleetsTable.id, fleetId), eq(fleetsTable.ownerId, userId)));
-    if (!fleet) {
-      res.status(404).json({ error: "Fleet not found" });
-      return;
-    }
-    ships = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
-  } else {
-    // Direct-drop path: each placement must carry a shipModelId. We
-    // materialize an ephemeral fleet + Ship rows so all downstream FKs
-    // (gameUnits.shipId → ships → ship_models) keep working without
-    // schema churn. Naming is "Direct Deploy — Game #N" to make it
-    // obvious in the Fleet Manager that the player can clean it up
-    // (or keep it as a starter fleet).
-    const missing = parsed.data.placements.find(p => !p.shipModelId);
-    if (missing) {
-      res.status(400).json({ error: "Each placement requires either a fleetId+shipId pair or a shipModelId." });
-      return;
-    }
-    const modelIds = [...new Set(parsed.data.placements.map(p => p.shipModelId!))];
-    const models = await db.select().from(shipModelsTable).where(inArray(shipModelsTable.id, modelIds));
-    const modelById = new Map(models.map(m => [m.id, m]));
-    for (const id of modelIds) {
-      if (!modelById.has(id)) {
-        res.status(400).json({ error: `Unknown shipModelId ${id}` });
-        return;
+  // Whole deploy flow is wrapped in a transaction with SELECT FOR UPDATE on
+  // the game row. Without the lock, a concurrent POST /surrender could delete
+  // the game row between our status check and our gameUnits inserts, leaving
+  // orphaned units pointing at a deleted gameId (FKs aren't ON DELETE CASCADE
+  // here — see lib/db/src/schema/games.ts). Read-only ship_model / fleet
+  // lookups stay outside the lock-critical section since they don't affect
+  // game lifecycle.
+  let updated: typeof gamesTable.$inferSelect;
+  try {
+    updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx
+        .select()
+        .from(gamesTable)
+        .where(and(
+          eq(gamesTable.id, params.data.gameId),
+          or(eq(gamesTable.challengerId, userId), eq(gamesTable.opponentId, userId))
+        ));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "deploying") {
+        throw Object.assign(new Error("Game is not in deploying phase"), { status: 400 });
       }
-    }
-    const [newFleet] = await db.insert(fleetsTable).values({
-      ownerId: userId,
-      name: `Direct Deploy — Game #${game.id}`,
-    }).returning();
-    fleetId = newFleet.id;
-    const shipRows = parsed.data.placements.map(p => ({
-      fleetId: newFleet.id,
-      shipModelId: p.shipModelId!,
-      name: modelById.get(p.shipModelId!)!.name,
-    }));
-    ships = await db.insert(shipsTable).values(shipRows).returning();
-    // Rewrite each placement's shipId to point at the freshly-inserted
-    // ship row (matched 1:1 by index so duplicates of the same model
-    // each get their own row).
-    parsed.data.placements = parsed.data.placements.map((p, i) => ({
-      ...p, shipId: ships[i]!.id,
-    }));
-  }
 
-  // Zone validation: challenger deploys from +Z short edge, opponent from -Z.
-  // hexQ/hexR are stored as world inches (see game-board.tsx handleYardsDeploy).
-  // Board is 48"×72"; placements must stay inside the player's deployment zone.
-  const D = game.deploymentDepth;
-  const zoneMinR = isChallenger ? 36 - D : -36;
-  const zoneMaxR = isChallenger ? 36 : -36 + D;
-  for (const placement of parsed.data.placements) {
-    if (placement.hexQ < -24 || placement.hexQ > 24 || placement.hexR < zoneMinR || placement.hexR > zoneMaxR) {
-      req.log.warn({ placement, isChallenger, zoneMinR, zoneMaxR, D }, "placement outside zone");
-      res.status(400).json({
-        error: `Placement (${placement.hexQ}, ${placement.hexR}) is outside your ${D}\" deployment zone (allowed: hexQ ∈ [-24, 24], hexR ∈ [${zoneMinR}, ${zoneMaxR}]).`,
-      });
-      return;
-    }
-  }
+      const isChallenger = game.challengerId === userId;
+      let fleetId: number | null = parsed.data.fleetId ?? null;
+      let ships: typeof shipsTable.$inferSelect[];
 
-  // Crew Quality assignment: in "standard" games the server forces every ship
-  // to CQ 4 regardless of what the client sent (cheap defense against a hand-
-  // crafted request bumping CQ in a fixed-quality match). In "custom" games
-  // we honor the per-ship value, defaulting to 4 if omitted, clamped to 1..6.
-  const isStandardCQ = game.crewQualityMode !== "custom";
+      if (fleetId !== null) {
+        // Saved-fleet path: validate ownership, load the fleet's ships.
+        const [fleet] = await tx.select().from(fleetsTable).where(and(eq(fleetsTable.id, fleetId), eq(fleetsTable.ownerId, userId)));
+        if (!fleet) throw Object.assign(new Error("Fleet not found"), { status: 404 });
+        ships = await tx.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
+      } else {
+        // Direct-drop path: each placement must carry a shipModelId. We
+        // materialize an ephemeral fleet + Ship rows so all downstream FKs
+        // (gameUnits.shipId → ships → ship_models) keep working without
+        // schema churn. Naming is "Direct Deploy — Game #N" to make it
+        // obvious in the Fleet Manager that the player can clean it up
+        // (or keep it as a starter fleet).
+        const missing = parsed.data.placements.find(p => !p.shipModelId);
+        if (missing) {
+          throw Object.assign(new Error("Each placement requires either a fleetId+shipId pair or a shipModelId."), { status: 400 });
+        }
+        const modelIds = [...new Set(parsed.data.placements.map(p => p.shipModelId!))];
+        const models = await tx.select().from(shipModelsTable).where(inArray(shipModelsTable.id, modelIds));
+        const modelById = new Map(models.map(m => [m.id, m]));
+        for (const id of modelIds) {
+          if (!modelById.has(id)) {
+            throw Object.assign(new Error(`Unknown shipModelId ${id}`), { status: 400 });
+          }
+        }
+        const [newFleet] = await tx.insert(fleetsTable).values({
+          ownerId: userId,
+          name: `Direct Deploy — Game #${game.id}`,
+        }).returning();
+        fleetId = newFleet.id;
+        const shipRows = parsed.data.placements.map(p => ({
+          fleetId: newFleet.id,
+          shipModelId: p.shipModelId!,
+          name: modelById.get(p.shipModelId!)!.name,
+        }));
+        ships = await tx.insert(shipsTable).values(shipRows).returning();
+        // Rewrite each placement's shipId to point at the freshly-inserted
+        // ship row (matched 1:1 by index so duplicates of the same model
+        // each get their own row).
+        parsed.data.placements = parsed.data.placements.map((p, i) => ({
+          ...p, shipId: ships[i]!.id,
+        }));
+      }
 
-  for (const placement of parsed.data.placements) {
-    const ship = ships.find(s => s.id === placement.shipId);
-    if (!ship) continue;
-    const [model] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-    if (!model) continue;
-    const requestedCQ = placement.crewQuality ?? 4;
-    const crewQuality = isStandardCQ
-      ? 4
-      : Math.max(1, Math.min(6, Math.trunc(requestedCQ)));
-    await db.insert(gameUnitsTable).values({
-      gameId: params.data.gameId,
-      ownerId: userId,
-      shipId: ship.id,
-      name: ship.name,
-      modelFilename: model.filename,
-      faction: model.faction,
-      hullPoints: model.hullPoints,
-      maxHullPoints: model.hullPoints,
-      hexQ: placement.hexQ,
-      hexR: placement.hexR,
-      heading: placement.heading,
-      speed: model.speed,
-      turnAngle: model.turnAngle ?? 45,
-      turns: model.turns ?? 1,
-      weaponRange: model.weaponRange,
-      weaponDamage: model.weaponDamage,
-      crewQuality,
-      // Shields start full per the sheet ("Shields X/Y", regenerates Y per turn).
-      shieldsCurrent: model.shieldMax ?? 0,
-      // Crew defaults from the ship_model record. Used by Skeleton-Crew /
-      // damage-table logic in Slice C.
-      crewPoints: model.crew ?? 0,
-      maxCrewPoints: model.crew ?? 0,
-      damageState: "normal",
-      isDestroyed: false,
+      // Zone validation: challenger deploys from +Z short edge, opponent from -Z.
+      // hexQ/hexR are stored as world inches (see game-board.tsx handleYardsDeploy).
+      // Board is 48"×72"; placements must stay inside the player's deployment zone.
+      const D = game.deploymentDepth;
+      const zoneMinR = isChallenger ? 36 - D : -36;
+      const zoneMaxR = isChallenger ? 36 : -36 + D;
+      for (const placement of parsed.data.placements) {
+        if (placement.hexQ < -24 || placement.hexQ > 24 || placement.hexR < zoneMinR || placement.hexR > zoneMaxR) {
+          req.log.warn({ placement, isChallenger, zoneMinR, zoneMaxR, D }, "placement outside zone");
+          throw Object.assign(new Error(
+            `Placement (${placement.hexQ}, ${placement.hexR}) is outside your ${D}\" deployment zone (allowed: hexQ ∈ [-24, 24], hexR ∈ [${zoneMinR}, ${zoneMaxR}]).`,
+          ), { status: 400 });
+        }
+      }
+
+      // Crew Quality assignment: in "standard" games the server forces every ship
+      // to CQ 4 regardless of what the client sent (cheap defense against a hand-
+      // crafted request bumping CQ in a fixed-quality match). In "custom" games
+      // we honor the per-ship value, defaulting to 4 if omitted, clamped to 1..6.
+      const isStandardCQ = game.crewQualityMode !== "custom";
+
+      for (const placement of parsed.data.placements) {
+        const ship = ships.find(s => s.id === placement.shipId);
+        if (!ship) continue;
+        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        if (!model) continue;
+        const requestedCQ = placement.crewQuality ?? 4;
+        const crewQuality = isStandardCQ
+          ? 4
+          : Math.max(1, Math.min(6, Math.trunc(requestedCQ)));
+        await tx.insert(gameUnitsTable).values({
+          gameId: params.data.gameId,
+          ownerId: userId,
+          shipId: ship.id,
+          name: ship.name,
+          modelFilename: model.filename,
+          faction: model.faction,
+          hullPoints: model.hullPoints,
+          maxHullPoints: model.hullPoints,
+          hexQ: placement.hexQ,
+          hexR: placement.hexR,
+          heading: placement.heading,
+          speed: model.speed,
+          turnAngle: model.turnAngle ?? 45,
+          turns: model.turns ?? 1,
+          weaponRange: model.weaponRange,
+          weaponDamage: model.weaponDamage,
+          crewQuality,
+          // Shields start full per the sheet ("Shields X/Y", regenerates Y per turn).
+          shieldsCurrent: model.shieldMax ?? 0,
+          // Crew defaults from the ship_model record. Used by Skeleton-Crew /
+          // damage-table logic in Slice C.
+          crewPoints: model.crew ?? 0,
+          maxCrewPoints: model.crew ?? 0,
+          damageState: "normal",
+          isDestroyed: false,
+        });
+      }
+
+      const updateData = isChallenger
+        ? { challengerDeployed: true, challengerFleetId: fleetId! }
+        : { opponentDeployed: true, opponentFleetId: fleetId! };
+      let row: typeof game;
+      [row] = await tx.update(gamesTable).set(updateData).where(eq(gamesTable.id, params.data.gameId)).returning();
+
+      // If both deployed, start the game. First round: challenger has initiative
+      // by default (real initiative system is a future feature).
+      if (row.challengerDeployed && row.opponentDeployed) {
+        [row] = await tx.update(gamesTable).set({
+          status: "active",
+          currentTurn: 1,
+          currentRound: 1,
+          activePlayerId: row.challengerId,
+          activeUnitId: null,
+          lastActivatorId: null,
+          phase: "movement",
+          initiativeWinnerId: row.challengerId,
+        }).where(eq(gamesTable.id, params.data.gameId)).returning();
+      }
+      return row;
     });
-  }
-
-  const updateData = isChallenger
-    ? { challengerDeployed: true, challengerFleetId: fleetId! }
-    : { opponentDeployed: true, opponentFleetId: fleetId! };
-  let updated: typeof game;
-  [updated] = await db.update(gamesTable).set(updateData).where(eq(gamesTable.id, params.data.gameId)).returning();
-
-  // If both deployed, start the game. First round: challenger has initiative
-  // by default (real initiative system is a future feature).
-  if (updated.challengerDeployed && updated.opponentDeployed) {
-    [updated] = await db.update(gamesTable).set({
-      status: "active",
-      currentTurn: 1,
-      currentRound: 1,
-      activePlayerId: updated.challengerId,
-      activeUnitId: null,
-      lastActivatorId: null,
-      phase: "movement",
-      initiativeWinnerId: updated.challengerId,
-    }).where(eq(gamesTable.id, params.data.gameId)).returning();
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+    return;
   }
 
   res.json(DeployFleetResponse.parse(updated));
