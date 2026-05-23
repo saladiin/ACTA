@@ -1525,6 +1525,15 @@ export default function GameBoard() {
     if (game?.status === "active" && isMyActivation) {
       const isCurrentlyActive = activeUnitId === unitId;
       const phaseDone = currentPhase === "firing" ? unit.hasFiredThisRound : unit.hasMovedThisRound;
+      // Firing-phase eligibility: a ship at 0 hull or 0 crew (when it has
+      // a crew complement at all) can no longer fire — mirrors the server
+      // check in /activate. Clicking such a ship in the firing phase is a
+      // no-op so the player doesn't waste a server round-trip on a 400.
+      const firingIneligible =
+        currentPhase === "firing" &&
+        (unit.hullPoints <= 0 ||
+          (unit.maxCrewPoints > 0 && unit.crewPoints <= 0));
+      if (firingIneligible) return;
       if (!hasActiveUnit && !phaseDone) {
         // Pick this ship up for its activation.
         if (activateUnit.isPending) return;
@@ -2755,15 +2764,34 @@ export default function GameBoard() {
                 ) : (
                   units.filter(u => u.ownerId === myUserId).map(unit => {
                     const selected = selectedUnit === unit.id;
+                    // Firing-phase derelict: hull or crew gone. Cannot be
+                    // activated to fire. Greyed out + "INERT" badge so the
+                    // player understands why clicking does nothing.
+                    const firingInert =
+                      currentPhase === "firing" && !unit.isDestroyed && (
+                        unit.hullPoints <= 0 ||
+                        (unit.maxCrewPoints > 0 && unit.crewPoints <= 0)
+                      );
                     return (
                       <div
                         key={unit.id}
                         data-testid={`unit-${unit.id}`}
-                        className={`flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors ${selected ? "border border-blue-400/60 bg-blue-400/10" : "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"} ${unit.isDestroyed ? "opacity-40 line-through" : ""}`}
+                        className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-colors ${selected ? "border border-blue-400/60 bg-blue-400/10" : "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"} ${unit.isDestroyed ? "opacity-40 line-through cursor-not-allowed" : firingInert ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                         onClick={() => handleUnitClick(unit.id)}
+                        title={firingInert ? (unit.hullPoints <= 0 ? "Hull breached — cannot fire" : "No surviving crew — cannot fire") : undefined}
                       >
                         <span className={`font-mono truncate max-w-[110px] ${selected ? "text-blue-300" : "text-green-300"}`}>{unit.name}</span>
-                        <span className="font-mono text-muted-foreground shrink-0">{unit.hullPoints}/{unit.maxHullPoints}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {firingInert && (
+                            <span
+                              data-testid={`unit-${unit.id}-inert-badge`}
+                              className="font-mono text-[9px] uppercase tracking-wider px-1 py-px rounded bg-red-500/20 text-red-300 border border-red-500/40"
+                            >
+                              Inert
+                            </span>
+                          )}
+                          <span className="font-mono text-muted-foreground">{unit.hullPoints}/{unit.maxHullPoints}</span>
+                        </div>
                       </div>
                     );
                   })

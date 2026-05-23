@@ -775,6 +775,17 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       // firing activation, and vice-versa.
       if (game.phase === "firing") {
         if (unit.hasFiredThisRound) throw Object.assign(new Error("Unit already fired this round"), { status: 400 });
+        // A ship reduced to 0 hull or 0 crew can no longer fire — even if it
+        // hasn't taken its activation this round. Adrift / hulk / skeleton
+        // crew ships are derelicts: no command, no power. Activating them
+        // for the firing phase would be a pointless tap-and-end, so we
+        // block the activation entirely.
+        if (unit.hullPoints <= 0) {
+          throw Object.assign(new Error("Hull is gone — ship cannot fire"), { status: 400 });
+        }
+        if (unit.maxCrewPoints > 0 && unit.crewPoints <= 0) {
+          throw Object.assign(new Error("No surviving crew — ship cannot fire"), { status: 400 });
+        }
       } else {
         if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
       }
@@ -838,23 +849,54 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       const opponentId = game.opponentId;
       const otherPlayerId = userId === game.challengerId ? opponentId : game.challengerId;
       const doneCol = isFiring ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound;
+      // In the firing phase, derelicts (hull ≤ 0, or no surviving crew on a
+      // ship that has a crew complement) are barred from activation by the
+      // /activate guard. They must therefore be excluded from the "remaining"
+      // pool too — otherwise the phase deadlocks: a ship reduced to 0 crew
+      // during this very firing phase still has `hasFiredThisRound=false`,
+      // so without this filter `remainingFor` would keep returning it
+      // forever and the round could never advance.
+      const eligibilityFilter = isFiring
+        ? sql`${gameUnitsTable.hullPoints} > 0 AND (${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`
+        : sql`TRUE`;
       const remainingFor = async (pid: string) => {
         const rows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
           eq(gameUnitsTable.gameId, game.id),
           eq(gameUnitsTable.ownerId, pid),
           eq(gameUnitsTable.isDestroyed, false),
           eq(doneCol, false),
+          eligibilityFilter,
         ));
         return rows.length;
       };
       const otherRemaining = await remainingFor(otherPlayerId);
       const selfRemaining = await remainingFor(userId);
 
-      let nextActivePlayerId: string;
+      let nextActivePlayerId: string | undefined;
       let nextRound = game.currentRound;
       let nextTurn = game.currentTurn;
       let nextPhase: "movement" | "firing" = isFiring ? "firing" : "movement";
       let nextInitiativeWinnerId = game.initiativeWinnerId;
+
+      // Helper: count firing-eligible ships for a player (used when we're
+      // about to transition movement→firing and need to verify SOMEONE can
+      // legally activate first — otherwise the firing phase deadlocks before
+      // it even starts).
+      const firingEligibleFor = async (pid: string) => {
+        const rows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, game.id),
+          eq(gameUnitsTable.ownerId, pid),
+          eq(gameUnitsTable.isDestroyed, false),
+          eq(gameUnitsTable.hasFiredThisRound, false),
+          sql`${gameUnitsTable.hullPoints} > 0 AND (${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`,
+        ));
+        return rows.length;
+      };
+
+      // Tri-state outcome: hand off to a specific player (string), or
+      // fall through to the round-end branch (true). Default = round-end
+      // if we can't find a valid next activator.
+      let endRound = false;
 
       if (otherRemaining > 0) {
         nextActivePlayerId = otherPlayerId;
@@ -862,10 +904,32 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         nextActivePlayerId = userId;
       } else if (!isFiring) {
         // Movement sub-phase complete → transition to firing. Same initiative
-        // winner activates first in the firing phase; round/turn don't advance.
-        nextPhase = "firing";
-        nextActivePlayerId = game.initiativeWinnerId ?? game.challengerId;
+        // winner activates first in the firing phase, BUT if they have no
+        // firing-eligible ships (all derelicts at 0 hull/crew), hand the
+        // start of the firing phase to the opponent. If neither side has
+        // ANY firing-eligible ships, skip the firing phase entirely and
+        // roll the round directly.
+        const initiativeId = game.initiativeWinnerId ?? game.challengerId;
+        const otherId = initiativeId === game.challengerId ? opponentId : game.challengerId;
+        const initFiring = await firingEligibleFor(initiativeId);
+        const otherFiring = await firingEligibleFor(otherId);
+        if (initFiring > 0) {
+          nextPhase = "firing";
+          nextActivePlayerId = initiativeId;
+        } else if (otherFiring > 0) {
+          nextPhase = "firing";
+          nextActivePlayerId = otherId;
+        } else {
+          // Both fleets are entirely ineligible to fire — skip firing
+          // and roll straight to the next round.
+          endRound = true;
+        }
       } else {
+        // Firing sub-phase complete normally.
+        endRound = true;
+      }
+
+      if (endRound) {
         // Firing sub-phase complete → end of round. Reset BOTH per-phase flags
         // on all surviving units; new initiative winner is whoever did NOT
         // have it this round (last-activator-goes-second-next-round).
@@ -1016,6 +1080,14 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (!attacker) throw Object.assign(new Error("Attacker not found"), { status: 404 });
       if (attacker.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (attacker.isDestroyed) throw Object.assign(new Error("Attacker is destroyed"), { status: 400 });
+      // Hull or crew exhausted → ineligible to fire even if activation was
+      // somehow obtained (race with damage application from another shot).
+      if (attacker.hullPoints <= 0) {
+        throw Object.assign(new Error("Hull is gone — ship cannot fire"), { status: 400 });
+      }
+      if (attacker.maxCrewPoints > 0 && attacker.crewPoints <= 0) {
+        throw Object.assign(new Error("No surviving crew — ship cannot fire"), { status: 400 });
+      }
       // Server-authoritative one-shot-per-weapon-per-activation guard.
       const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
       if (alreadyFired.includes(weaponId)) {
