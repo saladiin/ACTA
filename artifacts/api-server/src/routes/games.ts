@@ -834,14 +834,38 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
       if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
-      if (!game.activeUnitId) throw Object.assign(new Error("No active unit to end"), { status: 400 });
-
-      const endedUnitId = game.activeUnitId;
+      // end-activation doubles as a "pass" when the active player has no
+      // active unit AND no eligible activations remain (every ship of theirs
+      // is destroyed / already done this phase / inert from 0-hull/0-crew).
+      // Without this escape hatch, a fleet that finishes its phase entirely
+      // via derelict-creating shots locks the game forever — there's no
+      // activation to end.
       const isFiring = game.phase === "firing";
-      // Mark the just-ended activation as done for THIS phase only.
-      await tx.update(gameUnitsTable)
-        .set(isFiring ? { hasFiredThisRound: true } : { hasMovedThisRound: true })
-        .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)));
+      const endedUnitId = game.activeUnitId;
+      if (!endedUnitId) {
+        // Verify the pass is legitimate: caller really has nothing to do.
+        const phaseDone = isFiring ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound;
+        const eligibilityCheck = isFiring
+          ? sql`${gameUnitsTable.hullPoints} > 0 AND (${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`
+          : sql`TRUE`;
+        const myEligible = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, game.id),
+          eq(gameUnitsTable.ownerId, userId),
+          eq(gameUnitsTable.isDestroyed, false),
+          eq(phaseDone, false),
+          eligibilityCheck,
+        ));
+        if (myEligible.length > 0) {
+          throw Object.assign(new Error("You still have eligible activations — pick a ship"), { status: 400 });
+        }
+        // Pass is valid. No unit to mark as done; fall through to the
+        // handoff/advance logic which uses the same `remainingFor` filter.
+      } else {
+        // Mark the just-ended activation as done for THIS phase only.
+        await tx.update(gameUnitsTable)
+          .set(isFiring ? { hasFiredThisRound: true } : { hasMovedThisRound: true })
+          .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)));
+      }
 
       // In active games the opponent is always bound; the status check above
       // (game.status === "active") implies an accepted/claimed challenge.
@@ -1034,7 +1058,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       }).where(and(
         eq(gamesTable.id, gameId),
         eq(gamesTable.activePlayerId, userId),
-        eq(gamesTable.activeUnitId, endedUnitId),
+        endedUnitId === null ? isNull(gamesTable.activeUnitId) : eq(gamesTable.activeUnitId, endedUnitId),
         eq(gamesTable.status, "active"),
       )).returning();
       if (result.length === 0) throw Object.assign(new Error("Activation conflict, retry"), { status: 409 });

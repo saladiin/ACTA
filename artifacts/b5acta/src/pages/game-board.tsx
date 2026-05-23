@@ -1306,6 +1306,30 @@ export default function GameBoard() {
 
   const currentPhase: "movement" | "firing" = (game?.phase as "movement" | "firing") ?? "movement";
 
+  // Eligible-to-activate count for the current player in the current phase.
+  // Mirrors the server's `remainingFor` filter so the UI can offer a "Pass
+  // Phase" affordance when the player is active but has no legal moves —
+  // otherwise they'd be stuck staring at "Pick a Ship" forever (e.g. every
+  // remaining ship is destroyed, already activated this phase, or inert from
+  // 0-hull / 0-crew in the firing phase).
+  const myEligibleActivations = useMemo(() => {
+    if (!isMyActivation || !myUserId) return 0;
+    return units.filter(u => {
+      if (u.ownerId !== myUserId) return false;
+      if (u.isDestroyed) return false;
+      const phaseDone = currentPhase === "firing" ? u.hasFiredThisRound : u.hasMovedThisRound;
+      if (phaseDone) return false;
+      if (currentPhase === "firing") {
+        if (u.hullPoints <= 0) return false;
+        const maxCrew = u.maxCrewPoints ?? 0;
+        const crew = u.crewPoints ?? 0;
+        if (maxCrew > 0 && crew <= 0) return false;
+      }
+      return true;
+    }).length;
+  }, [units, isMyActivation, myUserId, currentPhase]);
+  const canPassPhase = isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
+
   // Reset per-activation firing state whenever the active unit changes (new
   // ship picked up, or the previous activation ended). Server clears its own
   // ledger on /activate-unit; we just clear the optimistic overlay + picker.
@@ -1534,7 +1558,7 @@ export default function GameBoard() {
       const firingIneligible =
         currentPhase === "firing" &&
         (unit.hullPoints <= 0 ||
-          (unit.maxCrewPoints > 0 && unit.crewPoints <= 0));
+          ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0));
       if (firingIneligible) return;
       if (!hasActiveUnit && !phaseDone) {
         // Pick this ship up for its activation.
@@ -1565,7 +1589,9 @@ export default function GameBoard() {
   };
 
   const handleEndActivation = useCallback(() => {
-    if (!hasActiveUnit || endActivation.isPending) return;
+    // Either ending a real activation OR passing the phase when zero
+    // eligible ships remain. Pass authorisation is enforced server-side.
+    if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
     endActivation.mutate({ gameId }, {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
@@ -1573,7 +1599,7 @@ export default function GameBoard() {
         setMovePlan(null);
       }
     });
-  }, [hasActiveUnit, endActivation, gameId, qc]);
+  }, [hasActiveUnit, canPassPhase, endActivation, gameId, qc]);
 
   const handleSubmitTurn = () => {
     submitTurn.mutate(
@@ -2438,16 +2464,24 @@ export default function GameBoard() {
                 </Badge>
               </div>
               <p className="text-xs font-mono text-muted-foreground">
-                {hasActiveUnit ? `Activating ${units.find(u => u.id === activeUnitId)?.name ?? "—"}` : "Pick a Ship"}
+                {hasActiveUnit
+                  ? `Activating ${units.find(u => u.id === activeUnitId)?.name ?? "—"}`
+                  : canPassPhase
+                    ? "No eligible ships — pass the phase"
+                    : "Pick a Ship"}
               </p>
               <Button
                 size="sm"
                 data-testid="button-end-activation"
                 className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
                 onClick={handleEndActivation}
-                disabled={!hasActiveUnit || endActivation.isPending}
+                disabled={(!hasActiveUnit && !canPassPhase) || endActivation.isPending}
               >
-                {endActivation.isPending ? "Ending…" : "End Activation (N)"}
+                {endActivation.isPending
+                  ? "Ending…"
+                  : canPassPhase
+                    ? "Pass Phase (N)"
+                    : "End Activation (N)"}
               </Button>
               <div className="space-y-1 text-xs text-muted-foreground font-mono">
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
@@ -2772,7 +2806,7 @@ export default function GameBoard() {
                     const firingInert =
                       currentPhase === "firing" && !unit.isDestroyed && (
                         unit.hullPoints <= 0 ||
-                        (unit.maxCrewPoints > 0 && unit.crewPoints <= 0)
+                        ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
                       );
                     return (
                       <div
