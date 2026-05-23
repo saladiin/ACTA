@@ -1485,7 +1485,13 @@ export default function GameBoard() {
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           setStagedUnits([]);
           setSelectedStagedId(null);
-        }
+        },
+        onError: (err) => {
+          // Surface the server's actual error message instead of the
+          // mutation silently failing. The customFetch ApiError includes
+          // the response body's `error` field in its message.
+          console.error("[deploy] failed", err, { fleetId: fleetIdToSend ?? null, placements });
+        },
       }
     );
   }, [yardsFleetId, yardsFleetShips, stagedUnits, deployFleet, gameId, qc]);
@@ -2023,6 +2029,11 @@ export default function GameBoard() {
               )}
               {/* Deploy — commit the staged fleet. No per-ship lock required;
                   hitting this is the "I'm ready" gesture. */}
+              {deployFleet.error && (
+                <p data-testid="text-deploy-error" className="text-[10px] font-mono text-red-400 leading-snug px-1">
+                  ⚠ {(deployFleet.error as Error).message}
+                </p>
+              )}
               <Button
                 data-testid="button-confirm-deployment"
                 className="w-full mt-2 uppercase tracking-widest text-xs gap-2"

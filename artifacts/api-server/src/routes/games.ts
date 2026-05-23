@@ -367,9 +367,11 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
   }
   const parsed = DeployFleetBody.safeParse(req.body);
   if (!parsed.success) {
+    req.log.warn({ body: req.body, zod: parsed.error.issues }, "deploy body failed zod");
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  req.log.info({ body: parsed.data }, "deploy body parsed");
   const [game] = await db
     .select()
     .from(gamesTable)
@@ -446,8 +448,9 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
   const zoneMaxR = isChallenger ? 36 : -36 + D;
   for (const placement of parsed.data.placements) {
     if (placement.hexQ < -24 || placement.hexQ > 24 || placement.hexR < zoneMinR || placement.hexR > zoneMaxR) {
+      req.log.warn({ placement, isChallenger, zoneMinR, zoneMaxR, D }, "placement outside zone");
       res.status(400).json({
-        error: `Placement (${placement.hexQ}, ${placement.hexR}) is outside your ${D}\" deployment zone.`,
+        error: `Placement (${placement.hexQ}, ${placement.hexR}) is outside your ${D}\" deployment zone (allowed: hexQ ∈ [-24, 24], hexR ∈ [${zoneMinR}, ${zoneMaxR}]).`,
       });
       return;
     }
