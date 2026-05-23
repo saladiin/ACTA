@@ -2505,6 +2505,29 @@ export default function GameBoard() {
                 const activeLabel = baseAction ? SPECIAL_ACTIONS.find(a => a.id === baseAction)?.label ?? baseAction : null;
                 const panelLed = getLedger(selectedUnitData.id);
                 const movedAlready = panelLed.distance > 0 || panelLed.turns > 0;
+                // Pre-compute the server's noSA gates so the buttons can be
+                // disabled with an explanatory banner instead of letting the
+                // user click and eat a 400. Keep keys in sync with
+                // artifacts/api-server/src/lib/critical-table.ts and the
+                // skeleton-crew / adrift rules in /special-action.
+                const NO_SA_CRIT_KEYS = new Set([
+                  "reactor-gas-leak",
+                  "reactor-explosion",
+                  "crew-decompression",
+                  "vital-bridge",
+                ]);
+                const noSACrit = (selectedUnitData.criticals ?? []).find(c => NO_SA_CRIT_KEYS.has(c.effectKey));
+                const isAdrift = selectedUnitData.damageState === "adrift";
+                const maxCrewSA = selectedUnitData.maxCrewPoints ?? 0;
+                const crewSA = selectedUnitData.crewPoints ?? 0;
+                const isSkeletonSA = maxCrewSA > 0 && crewSA * 2 <= maxCrewSA;
+                const noSAReason = noSACrit
+                  ? `Cannot declare — ${noSACrit.name} active`
+                  : isAdrift
+                    ? "Cannot declare — ship is adrift"
+                    : isSkeletonSA
+                      ? "Cannot declare — skeleton crew"
+                      : null;
                 return (
                   <div className="space-y-1.5" data-testid="special-actions-panel">
                     <div className="text-[10px] uppercase tracking-wider text-amber-400/80 font-mono flex items-center justify-between">
@@ -2524,6 +2547,11 @@ export default function GameBoard() {
                         ✗ Cannot declare — movement already begun this activation
                       </div>
                     )}
+                    {!actionLocked && noSAReason && (
+                      <div className="text-[9px] font-mono text-red-300/80 border border-red-500/40 bg-red-500/10 rounded px-2 py-1" data-testid="special-action-locked-by-crit">
+                        ✗ {noSAReason}
+                      </div>
+                    )}
                     {!actionLocked && (
                       <div className="grid grid-cols-1 gap-1">
                         {SPECIAL_ACTIONS.map(a => {
@@ -2537,7 +2565,7 @@ export default function GameBoard() {
                           // Run Silent's stealth without paying its ½-speed cost).
                           const ledAct = getLedger(selectedUnitData.id);
                           const alreadyMoved = ledAct.distance > 0 || ledAct.turns > 0;
-                          const disabled = chooseSpecialAction.isPending || (needsTarget && !enemyAlive) || alreadyMoved;
+                          const disabled = chooseSpecialAction.isPending || (needsTarget && !enemyAlive) || alreadyMoved || !!noSAReason;
                           return (
                             <button
                               key={a.id}
