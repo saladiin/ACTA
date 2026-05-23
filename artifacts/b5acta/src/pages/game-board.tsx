@@ -1,5 +1,5 @@
 import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
-import { useParams } from "wouter";
+import { useParams, Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
@@ -953,8 +953,16 @@ export default function GameBoard() {
   useEffect(() => { setPhaseLedger({}); }, [currentRoundNumber]);
   const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0 }, [phaseLedger]);
 
-  // Fleet Yards: which fleet the player is deploying from
+  // Fleet Yards: which fleet the player is deploying from. Auto-pick the
+  // first fleet once `fleets` arrives so the Commit & Engage button is
+  // immediately actionable instead of stuck on "Select a fleet above"
+  // (which looks like a passive label, not a disabled button).
   const [yardsFleetId, setYardsFleetId] = useState<string>("");
+  useEffect(() => {
+    if (!yardsFleetId && fleets && fleets.length > 0) {
+      setYardsFleetId(String(fleets[0].id));
+    }
+  }, [fleets, yardsFleetId]);
   const { data: yardsFleetShips } = useListFleetShips(parseInt(yardsFleetId || "0"), {
     query: { queryKey: getListFleetShipsQueryKey(parseInt(yardsFleetId || "0")), enabled: !!yardsFleetId }
   });
@@ -1849,6 +1857,21 @@ export default function GameBoard() {
                 <p className="text-[10px] font-mono text-green-400/80" data-testid="text-opponent-ready">
                   ⚡ Opponent has deployed — they're waiting on you.
                 </p>
+              )}
+              {fleets && fleets.length === 0 && (
+                <div data-testid="panel-no-fleets" className="rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-1.5">
+                  <p className="text-[11px] font-mono text-amber-300 uppercase tracking-wider">No fleets on file</p>
+                  <p className="text-[10px] font-mono text-muted-foreground leading-snug">
+                    You need at least one saved fleet to deploy. Build one in the Fleet Manager, then return here.
+                  </p>
+                  <Link
+                    to="/fleets"
+                    data-testid="link-build-fleet"
+                    className="inline-block w-full text-center px-2 py-1 rounded border border-amber-500/60 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[10px] font-mono uppercase tracking-widest transition-colors"
+                  >
+                    Open Fleet Manager →
+                  </Link>
+                </div>
               )}
 
               {/* Fleet selector */}
