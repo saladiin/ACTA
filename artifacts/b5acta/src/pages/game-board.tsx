@@ -42,8 +42,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Wrench, RotateCw, RotateCcw, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
+// Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
+// names are historical). Render coordinates are 1:1 with storage, so this
+// is an identity mapping kept as a single function so we can audit every
+// callsite in one place.
 function hexToWorld(q: number, r: number): [number, number, number] {
-  return [q * 2.25, 0, r * 2.6 + q * 1.3];
+  return [q, 0, r];
 }
 
 // Board is 48" wide × 72" deep, 1 world unit = 1 inch
@@ -1044,11 +1048,10 @@ export default function GameBoard() {
       const v = headingForwardVec(u);
       const dx = v.x * movePlan.distance;
       const dz = v.z * movePlan.distance;
-      // Invert hexToWorld([q,r]) = [q*2.25, 0, r*2.6 + q*1.3]
-      const dq = dx / 2.25;
-      const dr = (dz - dq * 1.3) / 2.6;
-      toHexQ = Math.round(u.hexQ + dq);
-      toHexR = Math.round(u.hexR + dr);
+      // hexQ/hexR are stored as world inches (see hexToWorld above), so the
+      // delta in world space IS the delta in storage units.
+      toHexQ = Math.round(u.hexQ + dx);
+      toHexR = Math.round(u.hexR + dz);
       distanceCommitted = movePlan.distance;
     } else if (movePlan.kind === "turn") {
       // SA cap re-check on turns: forbidden under All Power / Run Silent;

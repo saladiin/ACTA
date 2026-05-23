@@ -52,10 +52,12 @@ import {
 
 // ── Combat helpers ───────────────────────────────────────────────────────────
 // World units = inches (see game-board.tsx: "1 world unit = 1 inch").
-// hexToWorld must mirror the frontend exactly so that arc/range UI agrees
-// with server-side validation.
+// Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES, not axial
+// hex coordinates. The column names are historical — they predate the move
+// to free-form world-inch placement. This identity mapping keeps the server
+// and the frontend renderer in sync.
 function hexToWorld(q: number, r: number): { x: number; z: number } {
-  return { x: q * 2.25, z: r * 2.6 + q * 1.3 };
+  return { x: q, z: r };
 }
 function rollD6(): number { return 1 + Math.floor(Math.random() * 6); }
 
