@@ -69,6 +69,18 @@ export const gameUnitsTable = pgTable("game_units", {
   // always 4 (Veteran); in "custom" games each ship may be assigned
   // individually. Affects to-hit thresholds in combat resolution.
   crewQuality: integer("crew_quality").notNull().default(4),
+  // Special Action chosen by this ship for the current round. Null until the
+  // owner spends one in the movement phase. Cleared at round rollover.
+  // Recognized values (others rejected at the route layer):
+  //   "all-power-engines", "all-stop", "all-stop-pivot", "come-about",
+  //   "blast-doors", "intensify-defense", "run-silent", "concentrate-fire".
+  // A failed CQ attempt is recorded by appending "-failed" (e.g.
+  // "run-silent-failed") so the client can show the attempt while still
+  // applying the always-on restrictions that come with trying.
+  specialAction: text("special_action"),
+  // For "concentrate-fire": the nominated target unit id. Read by the
+  // fire-weapon route to gate the re-roll bonus.
+  specialActionTargetId: integer("special_action_target_id"),
   isDestroyed: boolean("is_destroyed").notNull().default(false),
   hasMovedThisRound: boolean("has_moved_this_round").notNull().default(false),
   hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),

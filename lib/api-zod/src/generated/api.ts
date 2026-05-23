@@ -31,6 +31,7 @@ export const ListShipModelsResponseItem = zod.object({
   "weaponDamage": zod.number(),
   "hullRating": zod.number().describe('Roll-to-hit target (≥) for attacks against this ship\'s class.'),
   "description": zod.string().nullish(),
+  "traits": zod.string().nullish().describe('Semicolon-separated trait list (e.g. \'Lumbering; Agile; Interceptors 2\'). Parsed client-side.'),
   "weapons": zod.array(zod.object({
   "id": zod.number(),
   "shipModelId": zod.number(),
@@ -118,6 +119,7 @@ export const ListFleetShipsResponseItem = zod.object({
   "weaponDamage": zod.number(),
   "hullRating": zod.number().describe('Roll-to-hit target (≥) for attacks against this ship\'s class.'),
   "description": zod.string().nullish(),
+  "traits": zod.string().nullish().describe('Semicolon-separated trait list (e.g. \'Lumbering; Agile; Interceptors 2\'). Parsed client-side.'),
   "weapons": zod.array(zod.object({
   "id": zod.number(),
   "shipModelId": zod.number(),
@@ -269,7 +271,9 @@ export const GetGameResponse = zod.object({
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
-  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.')
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
 })),
   "turns": zod.array(zod.object({
   "id": zod.number(),
@@ -565,6 +569,59 @@ export const FireWeaponResponse = zod.object({
 
 
 /**
+ * @summary Declare a Special Action for the activated ship this round (one per round per ship).
+ */
+export const ChooseSpecialActionParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const ChooseSpecialActionBody = zod.object({
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire']),
+  "targetUnitId": zod.number().nullish().describe('Required for \'concentrate-fire\' — the nominated enemy unit id.')
+})
+
+export const chooseSpecialActionResponseUnitCrewQualityMax = 6;
+
+
+
+export const ChooseSpecialActionResponse = zod.object({
+  "action": zod.string(),
+  "success": zod.boolean().describe('True if action took effect. False = CQ check failed; the failure is still recorded so always-on restrictions (e.g. run-silent\'s no-fire\/no-turn) apply.'),
+  "requiresCq": zod.boolean(),
+  "cqRequired": zod.number().nullish().describe('Target total (1d6 + crewQuality must equal or exceed this).'),
+  "cqRoll": zod.number().nullish().describe('1d6 result.'),
+  "cqTotal": zod.number().nullish().describe('cqRoll + ship\'s crewQuality.'),
+  "unit": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(chooseSpecialActionResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
+})
+})
+
+
+/**
  * @summary DEV ONLY — reposition any unit to a hex with a heading, bypassing turn/phase/ownership checks. Used by the in-app developer mode for setting up test scenarios.
  */
 export const DevMoveUnitParams = zod.object({
@@ -604,7 +661,9 @@ export const DevMoveUnitResponse = zod.object({
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
-  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.')
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
 })
 
 
@@ -648,7 +707,9 @@ export const MoveUnitResponse = zod.object({
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
-  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.')
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
 })
 
 

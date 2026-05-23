@@ -409,6 +409,30 @@ paths:
         "400": { description: "Invalid target (out of arc, out of range, etc.)" }
         "409": { description: "Activation conflict" }
 
+  /games/{gameId}/units/{unitId}/special-action:
+    post:
+      operationId: chooseSpecialAction
+      tags: [turns]
+      summary: Declare a Special Action for the activated ship this round (one per round per ship).
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpecialActionInput"
+      responses:
+        "200":
+          description: Action resolved (success or CQ failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpecialActionResult"
+        "400": { description: "Invalid action, prerequisites not met, or already used this round" }
+        "409": { description: "Activation conflict" }
+
   /games/{gameId}/units/{unitId}/dev-move:
     post:
       operationId: devMoveUnit
@@ -559,6 +583,7 @@ components:
         weaponDamage: { type: integer }
         hullRating:   { type: integer, description: "Roll-to-hit target (≥) for attacks against this ship's class." }
         description:  { type: ["string", "null"] }
+        traits:       { type: ["string", "null"], description: "Semicolon-separated trait list (e.g. 'Lumbering; Agile; Interceptors 2'). Parsed client-side." }
         weapons:
           type: array
           items:
@@ -669,6 +694,12 @@ components:
           type: array
           items: { type: integer }
           description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
+        specialAction:
+          type: ["string", "null"]
+          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed)."
+        specialActionTargetId:
+          type: ["integer", "null"]
+          description: "Nominated target unit id for 'concentrate-fire'; null otherwise."
 
     GameDetail:
       type: object
@@ -746,6 +777,29 @@ components:
         targetHullBefore: { type: integer }
         targetHullAfter:  { type: integer }
         targetDestroyed: { type: boolean }
+
+    SpecialActionInput:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire]
+        targetUnitId:
+          type: ["integer", "null"]
+          description: "Required for 'concentrate-fire' — the nominated enemy unit id."
+
+    SpecialActionResult:
+      type: object
+      required: [action, success, requiresCq, unit]
+      properties:
+        action:       { type: string }
+        success:      { type: boolean, description: "True if action took effect. False = CQ check failed; the failure is still recorded so always-on restrictions (e.g. run-silent's no-fire/no-turn) apply." }
+        requiresCq:   { type: boolean }
+        cqRequired:   { type: ["integer", "null"], description: "Target total (1d6 + crewQuality must equal or exceed this)." }
+        cqRoll:       { type: ["integer", "null"], description: "1d6 result." }
+        cqTotal:      { type: ["integer", "null"], description: "cqRoll + ship's crewQuality." }
+        unit:         { $ref: "#/components/schemas/GameUnit" }
 
     MoveUnitInput:
       type: object

@@ -20,6 +20,7 @@ import {
   useActivateUnit,
   useEndActivation,
   useFireWeapon,
+  useChooseSpecialAction,
   useListFleets,
   useListFleetShips,
   useListShipModels,
@@ -834,6 +835,14 @@ export default function GameBoard() {
   const activateUnit = useActivateUnit();
   const endActivation = useEndActivation();
   const fireWeapon = useFireWeapon();
+  const chooseSpecialAction = useChooseSpecialAction();
+  // Transient feedback for the most recent special-action attempt
+  // (success/fail + dice roll). Cleared when activation ends.
+  const [specialActionFeedback, setSpecialActionFeedback] = useState<
+    { action: string; success: boolean; cqRoll: number | null; cqTotal: number | null; cqRequired: number | null } | null
+  >(null);
+  // For "Concentrate All Fire-power" we need a target picker before sending.
+  const [concentratePicking, setConcentratePicking] = useState(false);
 
   // Staging / fleet yards
   const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
@@ -992,10 +1001,31 @@ export default function GameBoard() {
   const confirmMovePlan = useCallback(() => {
     const u = units.find(x => x.id === selectedUnit);
     if (!u || !movePlan) return;
+    // Recompute SA-adjusted caps here (don't read selectedSaCaps — this
+    // callback's deps would otherwise need it, and we want the authoritative
+    // commit path to be self-contained).
+    const baseAction = (u.specialAction ?? "").replace(/-failed$/, "");
+    const isAllStop = baseAction === "all-stop";
+    const isAllStopPivot = baseAction === "all-stop-pivot";
+    const isAllPower = baseAction === "all-power-engines";
+    const isRunSilent = baseAction === "run-silent";
+    const isComeAbout = u.specialAction === "come-about";
+    const speedCap =
+      isAllStopPivot ? 0 :
+      isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
+      isAllPower ? Math.floor(u.speed * 1.5) :
+      u.speed;
+    const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+    const turnsForbidden = isAllPower || isRunSilent;
+    const led = getLedger(u.id);
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
     let distanceCommitted = 0;
     if (movePlan.kind === "forward") {
       if (movePlan.distance <= 0) { setMovePlan(null); return; }
+      // SA cap re-check: a stale forward plan could otherwise commit a value
+      // larger than the current allowance (e.g. if a Run Silent declaration
+      // happened while a forward plan was open).
+      if (led.distance + movePlan.distance > speedCap + 1e-6) { setMovePlan(null); return; }
       // FLIP_MODELS render their nose along local -Z, so movement direction must
       // mirror the visual nose, not the abstract heading vector.
       const v = headingForwardVec(u);
@@ -1008,6 +1038,10 @@ export default function GameBoard() {
       toHexR = Math.round(u.hexR + dr);
       distanceCommitted = movePlan.distance;
     } else if (movePlan.kind === "turn") {
+      // SA cap re-check on turns: forbidden under All Power / Run Silent;
+      // capped at maxTurns (Come About adds +1).
+      if (turnsForbidden) { setMovePlan(null); return; }
+      if (led.turns >= maxTurns) { setMovePlan(null); return; }
       // Three.js right-handed Y-up: a positive Y rotation takes +Z → +X, which
       // appears CLOCKWISE looking down -Y. That matches the arc preview's
       // "positive deltaDeg sweeps to starboard" convention for unflipped models.
@@ -1084,20 +1118,41 @@ export default function GameBoard() {
       const u = selectedUnitData;
       const max = u.turnAngle;
       const led = getLedger(u.id);
-      const maxTurns = u.turns ?? 1;
-      // First turn is always allowed; subsequent turns require ≥ ½-speed of
-      // forward movement to have been committed earlier in the phase.
-      const canTurn = led.turns < maxTurns && (led.turns === 0 || led.distance >= u.speed / 2);
-      const remainingMove = Math.max(0, u.speed - led.distance);
+      // Special Action modifiers (read the base name; the "-failed" suffix
+      // still applies the penalty side of always-on actions like Run Silent).
+      const baseAction = (u.specialAction ?? "").replace(/-failed$/, "");
+      const isAllStop = baseAction === "all-stop";
+      const isAllStopPivot = baseAction === "all-stop-pivot";
+      const isAllPower = baseAction === "all-power-engines";
+      const isRunSilent = baseAction === "run-silent";
+      const isComeAbout = u.specialAction === "come-about"; // success-only
+      // Come About: +1 extra turn this activation.
+      const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+      // No turns allowed under All Power to Engines or Run Silent.
+      // All Stop and Pivot doubles turn rate but allows turns.
+      const turnsForbidden = isAllPower || isRunSilent;
+      const canTurn = !turnsForbidden && led.turns < maxTurns && (led.turns === 0 || led.distance >= u.speed / 2);
+      // Effective speed cap per action.
+      // All Power: +50% (Afterburner not modeled yet).
+      // All Stop / Run Silent: half speed.
+      // All Stop and Pivot: no movement.
+      const speedCap =
+        isAllStopPivot ? 0 :
+        isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
+        isAllPower ? Math.floor(u.speed * 1.5) :
+        u.speed;
+      const remainingMove = Math.max(0, speedCap - led.distance);
       if (e.key === "r" || e.key === "R") {
         e.preventDefault();
         // Allow refining an in-progress turn plan even if `canTurn` is false,
         // since the plan hasn't been committed yet.
         if (!canTurn && (!movePlan || movePlan.kind !== "turn")) return;
         const step = e.shiftKey ? -5 : 5;
+        // All Stop and Pivot doubles the per-turn cap (any direction).
+        const cap = isAllStopPivot ? max * 2 : max;
         setMovePlan(prev => {
           const current = prev && prev.kind === "turn" ? prev.deltaDeg : 0;
-          const next = Math.max(-max, Math.min(max, current + step));
+          const next = Math.max(-cap, Math.min(cap, current + step));
           return { kind: "turn", deltaDeg: next };
         });
       } else if (e.key === "f" || e.key === "F") {
@@ -1117,10 +1172,34 @@ export default function GameBoard() {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [game?.status, isSelectedUnitActive, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending, endActivation, gameId, qc]);
 
+  // Special-Action-adjusted caps for the selected unit. Single source of truth
+  // shared by keyboard gating, drag clamp, confirmMovePlan re-validation, and
+  // the Special Actions panel (so declarations can't be made after a move that
+  // would violate the declared action's constraints).
+  const selectedSaCaps = useMemo(() => {
+    if (!selectedUnitData) return null;
+    const u = selectedUnitData;
+    const baseAction = (u.specialAction ?? "").replace(/-failed$/, "");
+    const isAllStop = baseAction === "all-stop";
+    const isAllStopPivot = baseAction === "all-stop-pivot";
+    const isAllPower = baseAction === "all-power-engines";
+    const isRunSilent = baseAction === "run-silent";
+    const isComeAbout = u.specialAction === "come-about";
+    const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+    const turnsForbidden = isAllPower || isRunSilent;
+    const speedCap =
+      isAllStopPivot ? 0 :
+      isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
+      isAllPower ? Math.floor(u.speed * 1.5) :
+      u.speed;
+    return { speedCap, maxTurns, turnsForbidden, isAllStopPivot };
+  }, [selectedUnitData]);
+
   // Selected-ship remaining inches this phase + drag offset for the forward
-  // preview / ship slide-along-axis.
-  const selectedRemainingMove = selectedUnitData
-    ? Math.max(0, selectedUnitData.speed - getLedger(selectedUnitData.id).distance)
+  // preview / ship slide-along-axis. Uses SA-adjusted speed cap so the drag
+  // clamp can't bypass Run Silent / All Stop / All Power restrictions.
+  const selectedRemainingMove = selectedUnitData && selectedSaCaps
+    ? Math.max(0, selectedSaCaps.speedCap - getLedger(selectedUnitData.id).distance)
     : 0;
   const selectedDragOffset = useMemo(() => {
     if (!selectedUnitData || !movePlan || movePlan.kind !== "forward") return null;
@@ -1142,6 +1221,14 @@ export default function GameBoard() {
     firingInFlightRef.current = false;
   }, [activeUnitId, currentPhase]);
 
+  // Wipe per-activation Special Action UI state when the active unit changes
+  // (handoff, end-activation, or round rollover). The server still owns the
+  // committed action on the unit row; these are purely transient affordances.
+  useEffect(() => {
+    setSpecialActionFeedback(null);
+    setConcentratePicking(false);
+  }, [activeUnitId]);
+
   const handleUnitClick = (unitId: number) => {
     const unit = units.find(u => u.id === unitId);
     if (!unit || unit.isDestroyed) return;
@@ -1154,6 +1241,42 @@ export default function GameBoard() {
       setSelectedUnit(unitId === selectedUnit ? null : unitId);
       setMoveTarget(null);
       setAttackTarget(null);
+      return;
+    }
+
+    // ── MOVEMENT-PHASE: Concentrate All Fire-power target picker ──
+    // Clicking an enemy ship while picking a target submits the action.
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "movement" &&
+      concentratePicking &&
+      hasActiveUnit &&
+      unit.ownerId !== myUserId
+    ) {
+      const attackerUnitId = activeUnitId!;
+      const targetId = unit.id;
+      setConcentratePicking(false);
+      chooseSpecialAction.mutate(
+        { gameId, unitId: attackerUnitId, data: { action: "concentrate-fire", targetUnitId: targetId } },
+        {
+          onSuccess: (res) => {
+            setSpecialActionFeedback({
+              action: res.action,
+              success: res.success,
+              cqRoll: res.cqRoll ?? null,
+              cqTotal: res.cqTotal ?? null,
+              cqRequired: res.cqRequired ?? null,
+            });
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          },
+          onError: (err: any) => {
+            setSpecialActionFeedback({ action: "concentrate-fire", success: false, cqRoll: null, cqTotal: null, cqRequired: null });
+            // eslint-disable-next-line no-console
+            console.warn("Concentrate failed:", err?.message);
+          },
+        },
+      );
       return;
     }
 
@@ -1311,7 +1434,7 @@ export default function GameBoard() {
     if (!yardsFleetId || !yardsFleetShips || stagedUnits.length === 0) return;
     // Match each staged unit to an available fleet ship by model filename
     const available = [...yardsFleetShips];
-    const placements: Array<{ shipId: number; hexQ: number; hexR: number; heading: number }> = [];
+    const placements: Array<{ shipId: number; hexQ: number; hexR: number; heading: number; crewQuality?: number }> = [];
     for (const staged of stagedUnits) {
       const idx = available.findIndex(s => s.shipModel.filename === staged.modelFilename);
       if (idx === -1) continue;
@@ -2005,6 +2128,124 @@ export default function GameBoard() {
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
               </div>
+              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && isSelectedUnitActive && (() => {
+                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire"; label: string; cq: number | null; hint: string }[] = [
+                  { id: "all-power-engines", label: "All Power to Engines!", cq: null, hint: "Speed +50%; no turns" },
+                  { id: "all-stop",          label: "All Stop!",             cq: null, hint: "0..½ speed; no turns" },
+                  { id: "all-stop-pivot",    label: "All Stop & Pivot!",     cq: null, hint: "No move; 1 weapon; 2× turn rate" },
+                  { id: "come-about",        label: "Come About!",           cq: 9,    hint: "+1 turn this activation" },
+                  { id: "blast-doors",       label: "Close Blast Doors!",    cq: null, hint: "1 weapon; 5+ saves vs damage" },
+                  { id: "intensify-defense", label: "Intensify Defensive Fire!", cq: 8, hint: "½ AD on all weapons" },
+                  { id: "run-silent",        label: "Run Silent!",           cq: 8,    hint: "Stealth; no fire/turn; ≤½ speed" },
+                  { id: "concentrate-fire",  label: "Concentrate All Fire!", cq: 8,    hint: "Re-roll missed AD vs picked target" },
+                ];
+                const rawAction = selectedUnitData.specialAction ?? null;
+                const baseAction = rawAction ? rawAction.replace(/-failed$/, "") : null;
+                const actionFailed = !!rawAction && rawAction.endsWith("-failed");
+                const actionLocked = !!rawAction;
+                const activeLabel = baseAction ? SPECIAL_ACTIONS.find(a => a.id === baseAction)?.label ?? baseAction : null;
+                const panelLed = getLedger(selectedUnitData.id);
+                const movedAlready = panelLed.distance > 0 || panelLed.turns > 0;
+                return (
+                  <div className="space-y-1.5" data-testid="special-actions-panel">
+                    <div className="text-[10px] uppercase tracking-wider text-amber-400/80 font-mono flex items-center justify-between">
+                      <span>Special Action · CQ {selectedUnitData.crewQuality}</span>
+                      {actionLocked && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] font-mono ${actionFailed ? "border-red-500/60 text-red-300 bg-red-500/10" : "border-green-500/60 text-green-300 bg-green-500/10"}`}
+                          data-testid="badge-active-special-action"
+                        >
+                          {actionFailed ? "✗" : "✓"} {activeLabel}
+                        </Badge>
+                      )}
+                    </div>
+                    {!actionLocked && movedAlready && (
+                      <div className="text-[9px] font-mono text-red-300/80 border border-red-500/40 bg-red-500/10 rounded px-2 py-1" data-testid="special-action-locked-by-movement">
+                        ✗ Cannot declare — movement already begun this activation
+                      </div>
+                    )}
+                    {!actionLocked && (
+                      <div className="grid grid-cols-1 gap-1">
+                        {SPECIAL_ACTIONS.map(a => {
+                          const needsTarget = a.id === "concentrate-fire";
+                          const picking = needsTarget && concentratePicking;
+                          const enemyAlive = units.some(x => x.ownerId !== myUserId && !x.isDestroyed);
+                          // Block declarations once any movement/turn has been committed in
+                          // this activation — declared actions exist to constrain the
+                          // activation that follows, so declaring after the fact would let
+                          // a ship bypass speed/turn caps (e.g. move full speed then claim
+                          // Run Silent's stealth without paying its ½-speed cost).
+                          const ledAct = getLedger(selectedUnitData.id);
+                          const alreadyMoved = ledAct.distance > 0 || ledAct.turns > 0;
+                          const disabled = chooseSpecialAction.isPending || (needsTarget && !enemyAlive) || alreadyMoved;
+                          return (
+                            <button
+                              key={a.id}
+                              data-testid={`special-action-${a.id}`}
+                              disabled={disabled}
+                              onClick={() => {
+                                if (needsTarget) {
+                                  setConcentratePicking(p => !p);
+                                  return;
+                                }
+                                chooseSpecialAction.mutate(
+                                  { gameId, unitId: selectedUnitData.id, data: { action: a.id } },
+                                  {
+                                    onSuccess: (res) => {
+                                      setSpecialActionFeedback({
+                                        action: res.action,
+                                        success: res.success,
+                                        cqRoll: res.cqRoll ?? null,
+                                        cqTotal: res.cqTotal ?? null,
+                                        cqRequired: res.cqRequired ?? null,
+                                      });
+                                      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+                                    },
+                                    onError: (err: any) => {
+                                      setSpecialActionFeedback({ action: a.id, success: false, cqRoll: null, cqTotal: null, cqRequired: a.cq });
+                                      // eslint-disable-next-line no-console
+                                      console.warn("Special action failed:", err?.message);
+                                    },
+                                  },
+                                );
+                              }}
+                              className={`text-left rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                picking
+                                  ? "border-amber-400/80 bg-amber-400/15 text-amber-200"
+                                  : "border-amber-500/30 bg-black/40 text-amber-300/90 hover:bg-amber-500/10"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold">{a.label}</span>
+                                <span className="text-[9px] opacity-70">{a.cq === null ? "AUTO" : `CQ ${a.cq}+`}</span>
+                              </div>
+                              <div className="text-[9px] opacity-70">
+                                {picking ? "▸ Click an enemy ship to nominate" : a.hint}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {specialActionFeedback && (
+                      <div
+                        className={`rounded border px-2 py-1 text-[10px] font-mono ${
+                          specialActionFeedback.success
+                            ? "border-green-500/50 bg-green-500/10 text-green-300"
+                            : "border-red-500/50 bg-red-500/10 text-red-300"
+                        }`}
+                        data-testid="special-action-feedback"
+                      >
+                        {specialActionFeedback.cqRoll !== null && specialActionFeedback.cqTotal !== null && specialActionFeedback.cqRequired !== null
+                          ? `Rolled ${specialActionFeedback.cqRoll} + CQ ${selectedUnitData.crewQuality} = ${specialActionFeedback.cqTotal} vs ${specialActionFeedback.cqRequired}+ → ${specialActionFeedback.success ? "SUCCESS" : "FAIL"}`
+                          : `${specialActionFeedback.success ? "✓ ENGAGED" : "✗ FAILED"}`}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && (
                 <div className="space-y-1.5">
                   <div

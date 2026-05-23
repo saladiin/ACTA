@@ -35,4 +35,14 @@ export interface GameUnit {
   hasFiredThisRound: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /**
+     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed).
+     * @nullable
+     */
+  specialAction?: string | null;
+  /**
+     * Nominated target unit id for 'concentrate-fire'; null otherwise.
+     * @nullable
+     */
+  specialActionTargetId?: number | null;
 }

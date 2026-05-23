@@ -22,6 +22,8 @@ import {
   EndActivationParams,
   FireWeaponParams,
   FireWeaponBody,
+  ChooseSpecialActionParams,
+  ChooseSpecialActionBody,
   ListGamesResponse,
   GetGameResponse,
   AcceptGameResponse,
@@ -691,7 +693,15 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         // on all surviving units; new initiative winner is whoever did NOT
         // have it this round (last-activator-goes-second-next-round).
         await tx.update(gameUnitsTable)
-          .set({ hasMovedThisRound: false, hasFiredThisRound: false, firedWeaponIds: [] })
+          .set({
+            hasMovedThisRound: false,
+            hasFiredThisRound: false,
+            firedWeaponIds: [],
+            // Special Actions are one-per-round; wipe at round rollover so
+            // every ship is free to declare again next round.
+            specialAction: null,
+            specialActionTargetId: null,
+          })
           .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
         nextRound = game.currentRound + 1;
         nextTurn = game.currentTurn + 1;
@@ -765,6 +775,29 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         throw Object.assign(new Error("Weapon has already fired this activation"), { status: 400 });
       }
 
+      // ── Special Action gating ──────────────────────────────────────────────
+      // Restrictions apply whether the CQ check succeeded or failed, so we
+      // strip the "-failed" suffix to evaluate the always-on penalty side.
+      const rawAction = attacker.specialAction ?? "";
+      const baseAction = rawAction.replace(/-failed$/, "");
+      // Run Silent: cannot fire at all this turn (always-on penalty side).
+      if (baseAction === "run-silent") {
+        throw Object.assign(new Error("Cannot fire while Running Silent"), { status: 400 });
+      }
+      // Close Blast Doors & All Stop and Pivot: only 1 weapon system per turn.
+      // Failed CQ shouldn't apply here (these are automatic actions), but the
+      // strip handles them uniformly anyway.
+      if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot") && alreadyFired.length >= 1) {
+        throw Object.assign(new Error(`${baseAction === "blast-doors" ? "Close Blast Doors" : "All Stop and Pivot"} limits firing to 1 weapon system`), { status: 400 });
+      }
+      // Concentrate All Fire-power: only the nominated target may be attacked.
+      // Only the successful version locks the target — the failed flavour just
+      // wastes the action with no benefit and no penalty.
+      const concentrateActive = attacker.specialAction === "concentrate-fire";
+      if (concentrateActive && attacker.specialActionTargetId !== null && attacker.specialActionTargetId !== targetUnitId) {
+        throw Object.assign(new Error("Concentrate All Fire-power locks you to the nominated target"), { status: 400 });
+      }
+
       const [target] = await tx.select().from(gameUnitsTable).where(and(
         eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
       ));
@@ -804,7 +837,20 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
       const traits = (weapon.traits ?? "").toLowerCase();
       const isBeam = traits.includes("beam") || traits.includes("mini-beam") || traits.includes("mini beam");
+      // Concentrate-fire reroll is skipped for these per the rulebook.
+      const isTwinLinked = traits.includes("twin-linked") || traits.includes("twin linked");
+      const isEnergyMine = traits.includes("energy mine") || traits.includes("energy-mine");
+      const concentrateRerollEligible = concentrateActive && !isBeam && !isTwinLinked && !isEnergyMine;
       const hitThreshold = isBeam ? 4 : targetModel.hullRating;
+
+      // Intensify Defensive Fire: halve outgoing AD on every arc this turn,
+      // round down, minimum 1. (The interceptors/AF double-up half lives on
+      // the *defender's* incoming path which we don't model yet, so this
+      // wing of the action is a no-op until point-defense exists.)
+      const intensifyActive = baseAction === "intensify-defense";
+      const effectiveAttackDice = intensifyActive
+        ? Math.max(1, Math.floor(weapon.attackDice / 2))
+        : weapon.attackDice;
 
       // Roll attack dice → hits.
       // Beam rule: every to-hit die showing 4+ "explodes" and rolls one
@@ -819,10 +865,22 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const attackRolls: number[] = [];
       let hits = 0;
       let explodedCount = 0; // total chained dice across all starts (for UI)
-      for (let i = 0; i < weapon.attackDice; i++) {
+      let concentrateRerolls = 0; // count of misses re-rolled by Concentrate
+      for (let i = 0; i < weapon.attackDice && i < effectiveAttackDice; i++) {
         let r = rollD6();
         attackRolls.push(r);
-        if (r >= hitThreshold) hits++;
+        let hitFlag = r >= hitThreshold;
+        // Concentrate All Fire-power: missed AD against the nominated target
+        // re-roll once. Re-roll never explodes again (it isn't the original
+        // die) and isn't itself re-rolled. Ineligible weapons: Beam, Energy
+        // Mine, Twin-Linked.
+        if (!hitFlag && concentrateRerollEligible) {
+          const r2 = rollD6();
+          attackRolls.push(r2);
+          concentrateRerolls++;
+          if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
+        }
+        if (hitFlag) hits++;
         if (isBeam) {
           let chain = 0;
           while (r >= EXPLODE_ON && chain < EXPLODE_CAP_PER_DIE) {
@@ -834,7 +892,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           }
         }
       }
-      void explodedCount; // reserved for a future "💥 chained N extra dice" log line
+      void explodedCount; void concentrateRerolls; // reserved for richer combat log UI
 
       // Roll damage dice per hit. 1=0, 2-5=1, 6=2 + cosmetic critical roll.
       const damageRolls: number[] = [];
@@ -877,6 +935,112 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       };
     });
     res.json(result);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── Special Actions ──────────────────────────────────────────────────────────
+// Declared once per ship per round during the movement phase. CQ-checked
+// actions roll 1d6 + crewQuality vs the action's threshold; a miss still
+// records the attempt (suffixed "-failed") so always-on restrictions still
+// apply (e.g. Run Silent's no-fire/no-turn). Cleared at round rollover.
+router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = ChooseSpecialActionParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = ChooseSpecialActionBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+  const { gameId, unitId } = params.data;
+  const { action, targetUnitId } = body.data;
+
+  // CQ thresholds. null = automatic (always succeeds).
+  const cqRequiredByAction: Record<string, number | null> = {
+    "all-power-engines": null,
+    "all-stop": null,
+    "all-stop-pivot": null,
+    "blast-doors": null,
+    "come-about": 9,
+    "intensify-defense": 8,
+    "run-silent": 8,
+    "concentrate-fire": 8,
+  };
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement") throw Object.assign(new Error("Special Actions are declared in the movement phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+      if (game.activeUnitId !== unitId) throw Object.assign(new Error("This unit is not the one you activated"), { status: 409 });
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.specialAction) throw Object.assign(new Error("Already used a Special Action this round"), { status: 400 });
+      if (unit.hasMovedThisRound) throw Object.assign(new Error("Cannot declare a Special Action after the activation has ended"), { status: 400 });
+
+      // Per-action prereqs.
+      let storedTarget: number | null = null;
+      if (action === "concentrate-fire") {
+        if (targetUnitId == null) throw Object.assign(new Error("Concentrate All Fire-power requires a target"), { status: 400 });
+        const [tgt] = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
+        ));
+        if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
+        if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+        if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        storedTarget = targetUnitId;
+      }
+      if (action === "blast-doors") {
+        // Rule: "Ships with only 1 weapon system cannot fire" under blast
+        // doors — there's no point declaring it on a single-system hull, so
+        // we reject it up front rather than silently neutering the ship.
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+        if (ship) {
+          const ws = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, ship.shipModelId));
+          if (ws.length < 2) throw Object.assign(new Error("Close Blast Doors requires a ship with more than 1 weapon system"), { status: 400 });
+        }
+      }
+
+      // CQ check.
+      const cqRequired = cqRequiredByAction[action] ?? null;
+      let cqRoll: number | null = null;
+      let cqTotal: number | null = null;
+      let success = true;
+      if (cqRequired !== null) {
+        cqRoll = rollD6();
+        cqTotal = cqRoll + unit.crewQuality;
+        success = cqTotal >= cqRequired;
+      }
+
+      // Persist. Failed attempts still record (suffix -failed) so the
+      // always-on penalty side of Run Silent / etc. is enforced.
+      const stored = success ? action : `${action}-failed`;
+      const [updated] = await tx.update(gameUnitsTable).set({
+        specialAction: stored,
+        specialActionTargetId: success ? storedTarget : null,
+      }).where(eq(gameUnitsTable.id, unit.id)).returning();
+
+      return {
+        action,
+        success,
+        requiresCq: cqRequired !== null,
+        cqRequired,
+        cqRoll,
+        cqTotal,
+        unit: updated,
+      };
+    });
+    res.json(out);
   } catch (e) {
     const err = e as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });

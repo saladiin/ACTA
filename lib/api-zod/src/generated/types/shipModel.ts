@@ -21,5 +21,10 @@ export interface ShipModel {
   hullRating: number;
   /** @nullable */
   description?: string | null;
+  /**
+     * Semicolon-separated trait list (e.g. 'Lumbering; Agile; Interceptors 2'). Parsed client-side.
+     * @nullable
+     */
+  traits?: string | null;
   weapons?: Weapon[];
 }

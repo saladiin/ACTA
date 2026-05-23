@@ -34,6 +34,11 @@ export interface ShipModel {
   hullRating: number;
   /** @nullable */
   description?: string | null;
+  /**
+     * Semicolon-separated trait list (e.g. 'Lumbering; Agile; Interceptors 2'). Parsed client-side.
+     * @nullable
+     */
+  traits?: string | null;
   weapons?: Weapon[];
 }
 
@@ -226,6 +231,16 @@ export interface GameUnit {
   hasFiredThisRound: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /**
+     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed).
+     * @nullable
+     */
+  specialAction?: string | null;
+  /**
+     * Nominated target unit id for 'concentrate-fire'; null otherwise.
+     * @nullable
+     */
+  specialActionTargetId?: number | null;
 }
 
 export type TurnMoves = { [key: string]: unknown };
@@ -296,6 +311,52 @@ export interface FireWeaponResult {
   targetHullBefore: number;
   targetHullAfter: number;
   targetDestroyed: boolean;
+}
+
+export type SpecialActionInputAction = typeof SpecialActionInputAction[keyof typeof SpecialActionInputAction];
+
+
+export const SpecialActionInputAction = {
+  'all-power-engines': 'all-power-engines',
+  'all-stop': 'all-stop',
+  'all-stop-pivot': 'all-stop-pivot',
+  'come-about': 'come-about',
+  'blast-doors': 'blast-doors',
+  'intensify-defense': 'intensify-defense',
+  'run-silent': 'run-silent',
+  'concentrate-fire': 'concentrate-fire',
+} as const;
+
+export interface SpecialActionInput {
+  action: SpecialActionInputAction;
+  /**
+     * Required for 'concentrate-fire' — the nominated enemy unit id.
+     * @nullable
+     */
+  targetUnitId?: number | null;
+}
+
+export interface SpecialActionResult {
+  action: string;
+  /** True if action took effect. False = CQ check failed; the failure is still recorded so always-on restrictions (e.g. run-silent's no-fire/no-turn) apply. */
+  success: boolean;
+  requiresCq: boolean;
+  /**
+     * Target total (1d6 + crewQuality must equal or exceed this).
+     * @nullable
+     */
+  cqRequired?: number | null;
+  /**
+     * 1d6 result.
+     * @nullable
+     */
+  cqRoll?: number | null;
+  /**
+     * cqRoll + ship's crewQuality.
+     * @nullable
+     */
+  cqTotal?: number | null;
+  unit: GameUnit;
 }
 
 export interface MoveUnitInput {

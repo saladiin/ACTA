@@ -39,6 +39,8 @@ import type {
   Ship,
   ShipInput,
   ShipModel,
+  SpecialActionInput,
+  SpecialActionResult,
   Turn,
   TurnInput
 } from './api.schemas';
@@ -1527,6 +1529,80 @@ export const useFireWeapon = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getFireWeaponMutationOptions(options));
+    }
+
+export const getChooseSpecialActionUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/special-action`
+}
+
+/**
+ * @summary Declare a Special Action for the activated ship this round (one per round per ship).
+ */
+export const chooseSpecialAction = async (gameId: number,
+    unitId: number,
+    specialActionInput: SpecialActionInput, options?: RequestInit): Promise<SpecialActionResult> => {
+
+  return customFetch<SpecialActionResult>(getChooseSpecialActionUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      specialActionInput,)
+  }
+);}
+
+
+
+
+export const getChooseSpecialActionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseSpecialAction>>, TError,{gameId: number;unitId: number;data: BodyType<SpecialActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof chooseSpecialAction>>, TError,{gameId: number;unitId: number;data: BodyType<SpecialActionInput>}, TContext> => {
+
+const mutationKey = ['chooseSpecialAction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof chooseSpecialAction>>, {gameId: number;unitId: number;data: BodyType<SpecialActionInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  chooseSpecialAction(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChooseSpecialActionMutationResult = NonNullable<Awaited<ReturnType<typeof chooseSpecialAction>>>
+    export type ChooseSpecialActionMutationBody = BodyType<SpecialActionInput>
+    export type ChooseSpecialActionMutationError = ErrorType<void>
+
+    /**
+ * @summary Declare a Special Action for the activated ship this round (one per round per ship).
+ */
+export const useChooseSpecialAction = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseSpecialAction>>, TError,{gameId: number;unitId: number;data: BodyType<SpecialActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof chooseSpecialAction>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<SpecialActionInput>},
+        TContext
+      > => {
+      return useMutation(getChooseSpecialActionMutationOptions(options));
     }
 
 export const getDevMoveUnitUrl = (gameId: number,
