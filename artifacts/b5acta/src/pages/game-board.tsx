@@ -1,7 +1,7 @@
 import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Canvas, useLoader, useThree } from "@react-three/fiber";
+import { Canvas, useLoader, useThree, useFrame } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import { WeaponFx } from "@/components/weapon-fx";
@@ -292,6 +292,7 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, 
             <ShipModel3D filename={unit.modelFilename} tint={color} />
           </Suspense>
         </ModelErrorBoundary>
+        {unit.isDestroyed && <DestroyedSmoke />}
       </group>
       {/* HP bar above ship */}
       <group position={[0, 3.2, 0]}>
@@ -307,6 +308,59 @@ function GameUnit3D({ unit, isSelected, onClick, myUserId, weapons, dragOffset, 
       <Text position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
         {unit.name.slice(0, 14)}
       </Text>
+    </group>
+  );
+}
+
+// ── Destroyed-ship smoke puffs ────────────────────────────────────────────────
+// Tiny animated smoke effect for destroyed hulls. Each puff is a billboarded
+// soft sprite that rises slowly and fades. Total horizontal travel is capped
+// at 0.5" from the ship's mesh center per the spec; puffs respawn at the
+// origin when their lifetime expires.
+const SMOKE_PUFF_COUNT = 5;
+const SMOKE_MAX_RADIUS = 0.5;       // inches from mesh center (horizontal cap)
+const SMOKE_MAX_RISE = 0.5;         // inches above mesh center (vertical cap)
+const SMOKE_LIFETIME = 2.2;         // seconds per puff
+function DestroyedSmoke() {
+  const groupRef = useRef<THREE.Group>(null);
+  // Per-puff state: random horizontal drift direction + phase offset so puffs
+  // don't all bloom in lockstep. Allocated once.
+  const puffs = useMemo(() => {
+    return Array.from({ length: SMOKE_PUFF_COUNT }, (_, i) => ({
+      angle: Math.random() * Math.PI * 2,
+      driftRadius: 0.15 + Math.random() * 0.25, // ≤ 0.4" horizontal drift target
+      phase: (i / SMOKE_PUFF_COUNT) * SMOKE_LIFETIME + Math.random() * 0.3,
+      scale: 0.18 + Math.random() * 0.12,
+    }));
+  }, []);
+  useFrame(({ clock }) => {
+    const g = groupRef.current;
+    if (!g) return;
+    const t = clock.getElapsedTime();
+    for (let i = 0; i < puffs.length; i++) {
+      const p = puffs[i]!;
+      const local = ((t + p.phase) % SMOKE_LIFETIME) / SMOKE_LIFETIME; // 0..1
+      const child = g.children[i] as THREE.Mesh | undefined;
+      if (!child) continue;
+      // Horizontal drift eases out; rise is linear; opacity fades quadratically.
+      const drift = Math.min(p.driftRadius * local, SMOKE_MAX_RADIUS);
+      child.position.x = Math.cos(p.angle) * drift;
+      child.position.z = Math.sin(p.angle) * drift;
+      child.position.y = local * SMOKE_MAX_RISE;
+      const s = p.scale * (0.6 + local * 0.8);
+      child.scale.set(s, s, s);
+      const mat = child.material as THREE.MeshBasicMaterial;
+      mat.opacity = (1 - local) * (1 - local) * 0.55;
+    }
+  });
+  return (
+    <group ref={groupRef}>
+      {puffs.map((_, i) => (
+        <mesh key={i} renderOrder={10}>
+          <sphereGeometry args={[1, 8, 8]} />
+          <meshBasicMaterial color="#1f2937" transparent opacity={0} depthWrite={false} />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -3122,9 +3176,9 @@ function DiceRollModal({
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-[9px] uppercase text-muted-foreground">Loc</span>
-                      <DiceFace value={c.locationRoll} rolling={rolling} />
+                      <DiceFace value={c.locationRoll ?? 0} rolling={rolling} />
                       <span className="text-[9px] uppercase text-muted-foreground">Eff</span>
-                      <DiceFace value={c.effectRoll} rolling={rolling} />
+                      <DiceFace value={c.effectRoll ?? 0} rolling={rolling} />
                       {!rolling && (
                         <span className="ml-auto opacity-70 text-[10px]">
                           {c.damageApplied > 0 && `−${c.damageApplied}H `}
