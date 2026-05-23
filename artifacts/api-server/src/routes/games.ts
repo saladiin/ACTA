@@ -659,13 +659,39 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
   if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
   if (unit.hasMovedThisRound) { res.status(400).json({ error: "Unit has already moved this round" }); return; }
-  // Slice C: adrift ships do not take voluntary movement (they drift
-  // compulsorily in the end phase). Crippled / skeleton movement caps
-  // (½ speed, 45°/1 turn) are advisory at the route layer — the client
-  // surfaces them via isCrippled / isSkeletonCrew flags — but adrift is
-  // an absolute block on player-driven movement.
-  if (unit.damageState === "adrift") {
-    res.status(400).json({ error: "Adrift ship cannot be moved by its commander" }); return;
+  // Adrift-style states (`adrift`, `exploding-end-of-next`) get exactly ONE
+  // commander-initiated drift per round: forward along the current heading
+  // at exactly floor(speed/2) inches, no turning. We enforce all three
+  // invariants here and immediately latch hasMovedThisRound so a second
+  // call can't double-drift in the same round.
+  const isAdriftLike =
+    unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next";
+  if (isAdriftLike) {
+    if (body.data.newHeading !== unit.heading) {
+      res.status(400).json({ error: "Adrift ship cannot change heading" }); return;
+    }
+    const driftDistance = Math.floor(unit.speed / 2);
+    const dq = body.data.toHexQ - unit.hexQ;
+    const dr = body.data.toHexR - unit.hexR;
+    const moved = Math.hypot(dq, dr);
+    // Tolerance accounts for hexQ/hexR being rounded to ints (~0.7" diag).
+    if (Math.abs(moved - driftDistance) > 0.75) {
+      res.status(400).json({
+        error: `Adrift ship must drift exactly ${driftDistance}" (got ${moved.toFixed(1)}")`,
+      });
+      return;
+    }
+    const [updated] = await db.update(gameUnitsTable)
+      .set({
+        hexQ: body.data.toHexQ,
+        hexR: body.data.toHexR,
+        heading: unit.heading,
+        hasMovedThisRound: true,
+      })
+      .where(eq(gameUnitsTable.id, params.data.unitId))
+      .returning();
+    res.json(updated);
+    return;
   }
 
   const [updated] = await db.update(gameUnitsTable)
