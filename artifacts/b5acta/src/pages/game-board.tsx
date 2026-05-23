@@ -950,8 +950,8 @@ export default function GameBoard() {
         setStagedUnits(prev => prev.map(u => u.id === selectedStagedId ? { ...u, locked: !u.locked } : u));
       } else if (e.key === "r" || e.key === "R") {
         e.preventDefault();
-        // R = counter-clockwise, Shift+R = clockwise (15° per press)
-        const delta = e.shiftKey ? 15 : -15;
+        // R = clockwise, Shift+R = counter-clockwise (15° per press)
+        const delta = e.shiftKey ? -15 : 15;
         setStagedUnits(prev => prev.map(u => {
           if (u.id !== selectedStagedId || u.locked) return u;
           return { ...u, heading: ((u.heading + delta) % 360 + 360) % 360 };
@@ -1242,7 +1242,9 @@ export default function GameBoard() {
         // Allow refining an in-progress turn plan even if `canTurn` is false,
         // since the plan hasn't been committed yet.
         if (!canTurn && (!movePlan || movePlan.kind !== "turn")) return;
-        const step = e.shiftKey ? -5 : 5;
+        // R = clockwise (+), Shift+R = counter-clockwise (−). Mirrors the
+        // placement-phase R/Shift+R convention.
+        const step = e.shiftKey ? 5 : -5;
         // All Stop and Pivot doubles the per-turn cap (any direction).
         const cap = isAllStopPivot ? max * 2 : max;
         setMovePlan(prev => {
