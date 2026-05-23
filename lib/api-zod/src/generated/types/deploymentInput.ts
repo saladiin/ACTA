@@ -8,6 +8,10 @@
 import type { ShipPlacement } from './shipPlacement';
 
 export interface DeploymentInput {
-  fleetId: number;
+  /**
+     * Optional. When supplied, each placement's `shipId` must reference a Ship in this Fleet. When omitted, each placement must supply `shipModelId` and the server auto-creates an ephemeral fleet/ship rows for FK integrity (direct drop-in deploy).
+     * @nullable
+     */
+  fleetId?: number | null;
   placements: ShipPlacement[];
 }

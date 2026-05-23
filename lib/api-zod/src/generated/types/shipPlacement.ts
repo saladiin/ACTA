@@ -7,7 +7,16 @@
  */
 
 export interface ShipPlacement {
-  shipId: number;
+  /**
+     * Required when DeploymentInput.fleetId is set — references the Ship row in that fleet. Omit for direct-drop deploys; supply shipModelId instead.
+     * @nullable
+     */
+  shipId?: number | null;
+  /**
+     * Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model.
+     * @nullable
+     */
+  shipModelId?: number | null;
   hexQ: number;
   hexR: number;
   heading: number;

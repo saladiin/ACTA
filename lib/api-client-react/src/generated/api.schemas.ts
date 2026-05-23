@@ -327,7 +327,16 @@ export interface GameDetail {
 }
 
 export interface ShipPlacement {
-  shipId: number;
+  /**
+     * Required when DeploymentInput.fleetId is set — references the Ship row in that fleet. Omit for direct-drop deploys; supply shipModelId instead.
+     * @nullable
+     */
+  shipId?: number | null;
+  /**
+     * Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model.
+     * @nullable
+     */
+  shipModelId?: number | null;
   hexQ: number;
   hexR: number;
   heading: number;
@@ -340,7 +349,11 @@ export interface ShipPlacement {
 }
 
 export interface DeploymentInput {
-  fleetId: number;
+  /**
+     * Optional. When supplied, each placement's `shipId` must reference a Ship in this Fleet. When omitted, each placement must supply `shipModelId` and the server auto-creates an ephemeral fleet/ship rows for FK integrity (direct drop-in deploy).
+     * @nullable
+     */
+  fleetId?: number | null;
   placements: ShipPlacement[];
 }
 

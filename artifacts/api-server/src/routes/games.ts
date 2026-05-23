@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, or, isNull, sql } from "drizzle-orm";
+import { eq, and, or, isNull, sql, inArray } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
@@ -387,15 +387,56 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
   }
 
   const isChallenger = game.challengerId === userId;
-  const fleetId = parsed.data.fleetId;
+  let fleetId: number | null = parsed.data.fleetId ?? null;
+  let ships: typeof shipsTable.$inferSelect[];
 
-  const [fleet] = await db.select().from(fleetsTable).where(and(eq(fleetsTable.id, fleetId), eq(fleetsTable.ownerId, userId)));
-  if (!fleet) {
-    res.status(404).json({ error: "Fleet not found" });
-    return;
+  if (fleetId !== null) {
+    // Saved-fleet path: validate ownership, load the fleet's ships.
+    const [fleet] = await db.select().from(fleetsTable).where(and(eq(fleetsTable.id, fleetId), eq(fleetsTable.ownerId, userId)));
+    if (!fleet) {
+      res.status(404).json({ error: "Fleet not found" });
+      return;
+    }
+    ships = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
+  } else {
+    // Direct-drop path: each placement must carry a shipModelId. We
+    // materialize an ephemeral fleet + Ship rows so all downstream FKs
+    // (gameUnits.shipId → ships → ship_models) keep working without
+    // schema churn. Naming is "Direct Deploy — Game #N" to make it
+    // obvious in the Fleet Manager that the player can clean it up
+    // (or keep it as a starter fleet).
+    const missing = parsed.data.placements.find(p => !p.shipModelId);
+    if (missing) {
+      res.status(400).json({ error: "Each placement requires either a fleetId+shipId pair or a shipModelId." });
+      return;
+    }
+    const modelIds = [...new Set(parsed.data.placements.map(p => p.shipModelId!))];
+    const models = await db.select().from(shipModelsTable).where(inArray(shipModelsTable.id, modelIds));
+    const modelById = new Map(models.map(m => [m.id, m]));
+    for (const id of modelIds) {
+      if (!modelById.has(id)) {
+        res.status(400).json({ error: `Unknown shipModelId ${id}` });
+        return;
+      }
+    }
+    const [newFleet] = await db.insert(fleetsTable).values({
+      ownerId: userId,
+      name: `Direct Deploy — Game #${game.id}`,
+    }).returning();
+    fleetId = newFleet.id;
+    const shipRows = parsed.data.placements.map(p => ({
+      fleetId: newFleet.id,
+      shipModelId: p.shipModelId!,
+      name: modelById.get(p.shipModelId!)!.name,
+    }));
+    ships = await db.insert(shipsTable).values(shipRows).returning();
+    // Rewrite each placement's shipId to point at the freshly-inserted
+    // ship row (matched 1:1 by index so duplicates of the same model
+    // each get their own row).
+    parsed.data.placements = parsed.data.placements.map((p, i) => ({
+      ...p, shipId: ships[i]!.id,
+    }));
   }
-
-  const ships = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
 
   // Zone validation: challenger deploys from +Z short edge, opponent from -Z.
   // hexQ/hexR are stored as world inches (see game-board.tsx handleYardsDeploy).
@@ -457,8 +498,8 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
   }
 
   const updateData = isChallenger
-    ? { challengerDeployed: true, challengerFleetId: fleetId }
-    : { opponentDeployed: true, opponentFleetId: fleetId };
+    ? { challengerDeployed: true, challengerFleetId: fleetId! }
+    : { opponentDeployed: true, opponentFleetId: fleetId! };
   let updated: typeof game;
   [updated] = await db.update(gamesTable).set(updateData).where(eq(gamesTable.id, params.data.gameId)).returning();
 

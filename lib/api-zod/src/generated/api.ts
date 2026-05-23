@@ -410,9 +410,10 @@ export const deployFleetBodyPlacementsItemCrewQualityMax = 6;
 
 
 export const DeployFleetBody = zod.object({
-  "fleetId": zod.number(),
+  "fleetId": zod.number().nullish().describe('Optional. When supplied, each placement\'s `shipId` must reference a Ship in this Fleet. When omitted, each placement must supply `shipModelId` and the server auto-creates an ephemeral fleet\/ship rows for FK integrity (direct drop-in deploy).'),
   "placements": zod.array(zod.object({
-  "shipId": zod.number(),
+  "shipId": zod.number().nullish().describe('Required when DeploymentInput.fleetId is set — references the Ship row in that fleet. Omit for direct-drop deploys; supply shipModelId instead.'),
+  "shipModelId": zod.number().nullish().describe('Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model.'),
   "hexQ": zod.number(),
   "hexR": zod.number(),
   "heading": zod.number(),

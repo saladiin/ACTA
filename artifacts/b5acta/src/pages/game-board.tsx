@@ -673,6 +673,7 @@ function MovementPlanner({ unit, plan, flip, remainingMove }: {
 // ── Staged (drag-placed) units ────────────────────────────────────────────────
 interface StagedUnitData {
   id: string;
+  shipModelId: number;
   name: string;
   modelFilename: string;
   faction: string;
@@ -953,16 +954,12 @@ export default function GameBoard() {
   useEffect(() => { setPhaseLedger({}); }, [currentRoundNumber]);
   const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0 }, [phaseLedger]);
 
-  // Fleet Yards: which fleet the player is deploying from. Auto-pick the
-  // first fleet once `fleets` arrives so the Commit & Engage button is
-  // immediately actionable instead of stuck on "Select a fleet above"
-  // (which looks like a passive label, not a disabled button).
+  // Fleet Yards: optional pre-built fleet to deploy from. Empty string =
+  // direct drop-in mode (no fleet — server materializes an ephemeral one
+  // from the staged ships' shipModelIds). We do NOT auto-pick; the
+  // player gets to choose between "Quick-load a saved fleet" and
+  // "Just drag what I want onto the board."
   const [yardsFleetId, setYardsFleetId] = useState<string>("");
-  useEffect(() => {
-    if (!yardsFleetId && fleets && fleets.length > 0) {
-      setYardsFleetId(String(fleets[0].id));
-    }
-  }, [fleets, yardsFleetId]);
   const { data: yardsFleetShips } = useListFleetShips(parseInt(yardsFleetId || "0"), {
     query: { queryKey: getListFleetShipsQueryKey(parseInt(yardsFleetId || "0")), enabled: !!yardsFleetId }
   });
@@ -1441,29 +1438,48 @@ export default function GameBoard() {
   };
 
   const handleYardsDeploy = useCallback(() => {
-    if (!yardsFleetId || !yardsFleetShips || stagedUnits.length === 0) return;
-    // Match each staged unit to an available fleet ship by model filename
-    const available = [...yardsFleetShips];
-    const placements: Array<{ shipId: number; hexQ: number; hexR: number; heading: number; crewQuality?: number }> = [];
-    for (const staged of stagedUnits) {
-      const idx = available.findIndex(s => s.shipModel.filename === staged.modelFilename);
-      if (idx === -1) continue;
-      const ship = available.splice(idx, 1)[0];
-      // Convert world coords (inches) to integer grid positions stored in hexQ/hexR
-      placements.push({
-        shipId: ship.id,
-        hexQ: Math.round(staged.x),
-        hexR: Math.round(staged.z),
-        heading: staged.heading,
-        // Server forces CQ=4 in "standard" games regardless of what we send,
-        // so we always include the staged value — it's authoritative only
-        // when the game's crewQualityMode is "custom".
-        crewQuality: staged.crewQuality,
-      });
+    if (stagedUnits.length === 0) return;
+    // Two paths, mirroring the API's two deploy modes:
+    //   1. A saved fleet is selected → match each staged ship to a fleet
+    //      Ship row by model filename and send `shipId`.
+    //   2. No fleet selected → direct drop-in: send `shipModelId` per
+    //      placement and let the server materialize an ephemeral fleet.
+    let placements: Array<{ shipId?: number; shipModelId?: number; hexQ: number; hexR: number; heading: number; crewQuality?: number }>;
+    let fleetIdToSend: number | undefined;
+
+    if (yardsFleetId && yardsFleetShips) {
+      const available = [...yardsFleetShips];
+      placements = [];
+      for (const staged of stagedUnits) {
+        const idx = available.findIndex(s => s.shipModel.filename === staged.modelFilename);
+        if (idx === -1) {
+          // Staged a ship that isn't in the selected fleet — fall back
+          // to direct drop-in for THIS unit so nothing silently disappears.
+          placements.push({ shipModelId: staged.shipModelId, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: staged.heading, crewQuality: staged.crewQuality });
+          continue;
+        }
+        const ship = available.splice(idx, 1)[0];
+        placements.push({ shipId: ship.id, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: staged.heading, crewQuality: staged.crewQuality });
+      }
+      // Mixed fleet+drop-in payload is not supported by the API. If ANY
+      // placement lacks shipId, drop the fleetId entirely and let the
+      // server treat it as a pure direct-deploy.
+      const allHaveShipId = placements.every(p => p.shipId !== undefined);
+      fleetIdToSend = allHaveShipId ? parseInt(yardsFleetId) : undefined;
+      if (!allHaveShipId) placements = placements.map(p => ({ shipModelId: p.shipModelId ?? stagedUnits.find(s => Math.round(s.x) === p.hexQ && Math.round(s.z) === p.hexR)?.shipModelId, hexQ: p.hexQ, hexR: p.hexR, heading: p.heading, crewQuality: p.crewQuality }));
+    } else {
+      // Pure direct drop-in.
+      placements = stagedUnits.map(s => ({
+        shipModelId: s.shipModelId,
+        hexQ: Math.round(s.x),
+        hexR: Math.round(s.z),
+        heading: s.heading,
+        crewQuality: s.crewQuality,
+      }));
+      fleetIdToSend = undefined;
     }
-    if (placements.length === 0) return;
     deployFleet.mutate(
-      { gameId, data: { fleetId: parseInt(yardsFleetId), placements } },
+      { gameId, data: { fleetId: fleetIdToSend ?? null, placements } },
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
@@ -1533,6 +1549,7 @@ export default function GameBoard() {
             const newId = `staged-${Date.now()}`;
             setStagedUnits(prev => [...prev, {
               id: newId,
+              shipModelId: ship.id,
               name: ship.name,
               modelFilename: ship.filename,
               faction: ship.faction,
@@ -1858,31 +1875,28 @@ export default function GameBoard() {
                   ⚡ Opponent has deployed — they're waiting on you.
                 </p>
               )}
-              {fleets && fleets.length === 0 && (
-                <div data-testid="panel-no-fleets" className="rounded border border-amber-500/40 bg-amber-500/5 p-2 space-y-1.5">
-                  <p className="text-[11px] font-mono text-amber-300 uppercase tracking-wider">No fleets on file</p>
-                  <p className="text-[10px] font-mono text-muted-foreground leading-snug">
-                    You need at least one saved fleet to deploy. Build one in the Fleet Manager, then return here.
-                  </p>
-                  <Link
-                    to="/fleets"
-                    data-testid="link-build-fleet"
-                    className="inline-block w-full text-center px-2 py-1 rounded border border-amber-500/60 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[10px] font-mono uppercase tracking-widest transition-colors"
-                  >
-                    Open Fleet Manager →
-                  </Link>
-                </div>
-              )}
+              <p className="text-[10px] font-mono text-muted-foreground leading-snug" data-testid="text-deploy-hint">
+                Drag ships from the roster below straight onto the board, or quick-load a saved fleet.
+                {fleets && fleets.length === 0 && (
+                  <> No fleets yet? <Link to="/fleets" data-testid="link-build-fleet" className="text-primary hover:underline">Build one →</Link></>
+                )}
+              </p>
 
               {/* Fleet selector */}
               <Select
-                value={yardsFleetId}
-                onValueChange={val => { setYardsFleetId(val); setStagedUnits([]); setSelectedStagedId(null); }}
+                value={yardsFleetId || "__none__"}
+                onValueChange={val => {
+                  const next = val === "__none__" ? "" : val;
+                  setYardsFleetId(next);
+                  setStagedUnits([]);
+                  setSelectedStagedId(null);
+                }}
               >
                 <SelectTrigger data-testid="select-yards-fleet" className="bg-background text-xs h-8">
-                  <SelectValue placeholder="Select your fleet…" />
+                  <SelectValue placeholder="Quick-load a saved fleet (optional)" />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
+                  <SelectItem value="__none__">— None (direct drop) —</SelectItem>
                   {fleets?.map(f => (
                     <SelectItem key={f.id} value={String(f.id)}>{f.name} ({f.shipCount} ships)</SelectItem>
                   ))}
@@ -2012,18 +2026,12 @@ export default function GameBoard() {
               <Button
                 data-testid="button-confirm-deployment"
                 className="w-full mt-2 uppercase tracking-widest text-xs gap-2"
-                disabled={
-                  !yardsFleetId ||
-                  stagedUnits.length === 0 ||
-                  deployFleet.isPending
-                }
+                disabled={stagedUnits.length === 0 || deployFleet.isPending}
                 onClick={handleYardsDeploy}
               >
                 <Swords className="w-3.5 h-3.5" />
                 {deployFleet.isPending
                   ? "Deploying…"
-                  : !yardsFleetId
-                  ? "Select a fleet above"
                   : stagedUnits.length === 0
                   ? "Drag ships onto the board"
                   : `Commit & Engage (${stagedUnits.length} ship${stagedUnits.length === 1 ? "" : "s"})`}
