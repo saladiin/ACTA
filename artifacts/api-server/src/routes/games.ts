@@ -157,6 +157,11 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
   // Clamp belt-and-braces; the Zod schema already enforces 4..30 but the DB
   // would otherwise accept anything an attacker could sneak past the spec.
   const deploymentDepth = Math.max(4, Math.min(30, Math.trunc(parsed.data.deploymentDepth)));
+  // crewQualityMode: belt-and-braces validation. Zod schema already restricts
+  // to the enum, but if a future codegen drift relaxes the type we still want
+  // to reject anything outside the two known modes rather than silently
+  // letting it through as a typo (e.g. "Custom" with capital C).
+  const crewQualityMode = parsed.data.crewQualityMode === "custom" ? "custom" : "standard";
 
   const [game] = await db.insert(gamesTable).values({
     challengerId: userId,
@@ -168,6 +173,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     visibility,
     passwordHash,
     deploymentDepth,
+    crewQualityMode,
     status: "open",
   }).returning();
   res.status(201).json(toGameDto(game));
@@ -367,11 +373,21 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
     }
   }
 
+  // Crew Quality assignment: in "standard" games the server forces every ship
+  // to CQ 4 regardless of what the client sent (cheap defense against a hand-
+  // crafted request bumping CQ in a fixed-quality match). In "custom" games
+  // we honor the per-ship value, defaulting to 4 if omitted, clamped to 1..6.
+  const isStandardCQ = game.crewQualityMode !== "custom";
+
   for (const placement of parsed.data.placements) {
     const ship = ships.find(s => s.id === placement.shipId);
     if (!ship) continue;
     const [model] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
     if (!model) continue;
+    const requestedCQ = placement.crewQuality ?? 4;
+    const crewQuality = isStandardCQ
+      ? 4
+      : Math.max(1, Math.min(6, Math.trunc(requestedCQ)));
     await db.insert(gameUnitsTable).values({
       gameId: params.data.gameId,
       ownerId: userId,
@@ -389,6 +405,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       turns: model.turns ?? 1,
       weaponRange: model.weaponRange,
       weaponDamage: model.weaponDamage,
+      crewQuality,
       isDestroyed: false,
     });
   }

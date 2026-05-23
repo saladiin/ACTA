@@ -93,6 +93,17 @@ export const GameVisibility = {
   private: 'private',
 } as const;
 
+/**
+ * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.
+ */
+export type GameCrewQualityMode = typeof GameCrewQualityMode[keyof typeof GameCrewQualityMode];
+
+
+export const GameCrewQualityMode = {
+  standard: 'standard',
+  custom: 'custom',
+} as const;
+
 export interface Game {
   id: number;
   challengerId: string;
@@ -126,6 +137,8 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
+  /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy. */
+  crewQualityMode?: GameCrewQualityMode;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,6 +152,17 @@ export type GameInputVisibility = typeof GameInputVisibility[keyof typeof GameIn
 export const GameInputVisibility = {
   public: 'public',
   private: 'private',
+} as const;
+
+/**
+ * standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship.
+ */
+export type GameInputCrewQualityMode = typeof GameInputCrewQualityMode[keyof typeof GameInputCrewQualityMode];
+
+
+export const GameInputCrewQualityMode = {
+  standard: 'standard',
+  custom: 'custom',
 } as const;
 
 export interface GameInput {
@@ -161,6 +185,8 @@ export interface GameInput {
      * @maximum 30
      */
   deploymentDepth: number;
+  /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship. */
+  crewQualityMode: GameInputCrewQualityMode;
 }
 
 export interface AcceptGameInput {
@@ -189,6 +215,12 @@ export interface GameUnit {
   turns: number;
   weaponRange: number;
   weaponDamage: number;
+  /**
+     * Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.
+     * @minimum 1
+     * @maximum 6
+     */
+  crewQuality: number;
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
   hasFiredThisRound: boolean;
@@ -222,6 +254,12 @@ export interface ShipPlacement {
   hexQ: number;
   hexR: number;
   heading: number;
+  /**
+     * Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
+     * @minimum 1
+     * @maximum 6
+     */
+  crewQuality?: number;
 }
 
 export interface DeploymentInput {

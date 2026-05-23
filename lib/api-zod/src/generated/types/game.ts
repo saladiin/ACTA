@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { GameCrewQualityMode } from './gameCrewQualityMode';
 import type { GamePhase } from './gamePhase';
 import type { GameStatus } from './gameStatus';
 import type { GameVisibility } from './gameVisibility';
@@ -42,6 +43,8 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
+  /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy. */
+  crewQualityMode?: GameCrewQualityMode;
   createdAt: Date;
   updatedAt: Date;
 }

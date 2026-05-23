@@ -620,18 +620,20 @@ components:
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
+        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy." }
         createdAt:    { type: string, format: date-time }
         updatedAt:    { type: string, format: date-time }
 
     GameInput:
       type: object
-      required: [pointLimit, visibility, deploymentDepth]
+      required: [pointLimit, visibility, deploymentDepth, crewQualityMode]
       properties:
         pointLimit: { type: integer }
         visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
         fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge." }
+        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship." }
 
     AcceptGameInput:
       type: object
@@ -640,7 +642,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -659,6 +661,7 @@ components:
         turns:         { type: integer }
         weaponRange:   { type: integer }
         weaponDamage:  { type: integer }
+        crewQuality:   { type: integer, minimum: 1, maximum: 6, description: "Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops." }
         isDestroyed:   { type: boolean }
         hasMovedThisRound: { type: boolean }
         hasFiredThisRound: { type: boolean }
@@ -683,6 +686,11 @@ components:
         hexQ:    { type: integer }
         hexR:    { type: integer }
         heading: { type: integer }
+        crewQuality:
+          type: integer
+          minimum: 1
+          maximum: 6
+          description: "Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless."
 
     DeploymentInput:
       type: object

@@ -34,6 +34,11 @@ export const gamesTable = pgTable("games", {
   // their short edge of the 48"×72" board. Constrained to 4..30 (creation
   // is validated server-side). Dev mode bypasses this on the client.
   deploymentDepth: integer("deployment_depth").notNull().default(12),
+  // Crew Quality assignment policy for this engagement.
+  // "standard" → every ship is locked to CQ 4 (Veteran) and the deploy UI
+  // hides the per-ship picker. "custom" → each ship's CQ is chosen during
+  // deploy (1=Rookie … 6=Special Ops); the value is stored on each gameUnit.
+  crewQualityMode: text("crew_quality_mode").notNull().default("standard"),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
   challengerDeployed: boolean("challenger_deployed").notNull().default(false),
@@ -60,6 +65,10 @@ export const gameUnitsTable = pgTable("game_units", {
   turns: integer("turns").notNull().default(1),
   weaponRange: integer("weapon_range").notNull(),
   weaponDamage: integer("weapon_damage").notNull(),
+  // Crew Quality (1..6). Set at deploy time. In "standard" games this is
+  // always 4 (Veteran); in "custom" games each ship may be assigned
+  // individually. Affects to-hit thresholds in combat resolution.
+  crewQuality: integer("crew_quality").notNull().default(4),
   isDestroyed: boolean("is_destroyed").notNull().default(false),
   hasMovedThisRound: boolean("has_moved_this_round").notNull().default(false),
   hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),

@@ -24,6 +24,12 @@ export interface GameUnit {
   turns: number;
   weaponRange: number;
   weaponDamage: number;
+  /**
+     * Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.
+     * @minimum 1
+     * @maximum 6
+     */
+  crewQuality: number;
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
   hasFiredThisRound: boolean;

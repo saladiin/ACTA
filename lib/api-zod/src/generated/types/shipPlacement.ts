@@ -11,4 +11,10 @@ export interface ShipPlacement {
   hexQ: number;
   hexR: number;
   heading: number;
+  /**
+     * Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
+     * @minimum 1
+     * @maximum 6
+     */
+  crewQuality?: number;
 }

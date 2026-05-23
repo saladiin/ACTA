@@ -23,6 +23,10 @@ export default function NewGame() {
   // Deployment zone depth in inches (4..30). Each player deploys within this
   // depth from their short edge of the 48"×72" board.
   const [deploymentDepth, setDeploymentDepth] = useState<number>(12);
+  // Crew Quality assignment policy for this engagement.
+  // "standard" = every ship locked to CQ 4 (Veteran). "custom" = deploying
+  // commanders pick CQ 1..6 per ship in the deploy screen.
+  const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
 
   const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
@@ -42,6 +46,7 @@ export default function NewGame() {
           password: visibility === "private" ? password : null,
           fleetId: selectedFleet ? parseInt(selectedFleet) : null,
           deploymentDepth,
+          crewQualityMode,
         },
       },
       {
@@ -155,9 +160,43 @@ export default function NewGame() {
           </div>
         </section>
 
-        {/* Step 4: Optional prefab fleet — can also be chosen at deployment. */}
+        {/* Step 4: Crew Quality policy — locked Veteran for tournament-style
+            play, or per-ship custom CQ during deployment. */}
         <section>
-          {sectionHeader(4, "Prefab Fleet (optional)")}
+          {sectionHeader(4, "Crew Quality")}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              data-testid="button-cq-standard"
+              onClick={() => setCrewQualityMode("standard")}
+              className={`flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-md border text-left transition-colors ${
+                crewQualityMode === "standard"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <span className="text-sm font-mono uppercase tracking-wider">Standard</span>
+              <span className="text-[10px] font-mono opacity-80">All ships CQ 4 (Veteran)</span>
+            </button>
+            <button
+              type="button"
+              data-testid="button-cq-custom"
+              onClick={() => setCrewQualityMode("custom")}
+              className={`flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-md border text-left transition-colors ${
+                crewQualityMode === "custom"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <span className="text-sm font-mono uppercase tracking-wider">Custom</span>
+              <span className="text-[10px] font-mono opacity-80">Assign CQ 1–6 per ship at deploy</span>
+            </button>
+          </div>
+        </section>
+
+        {/* Step 5: Optional prefab fleet — can also be chosen at deployment. */}
+        <section>
+          {sectionHeader(5, "Prefab Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
               <SelectValue placeholder="Choose later in the deployment screen…" />

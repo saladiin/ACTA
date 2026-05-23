@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { GameInputCrewQualityMode } from './gameInputCrewQualityMode';
 import type { GameInputVisibility } from './gameInputVisibility';
 
 export interface GameInput {
@@ -27,4 +28,6 @@ export interface GameInput {
      * @maximum 30
      */
   deploymentDepth: number;
+  /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship. */
+  crewQualityMode: GameInputCrewQualityMode;
 }

@@ -683,7 +683,22 @@ interface StagedUnitData {
   z: number;
   heading: number; // degrees, 0 = +Z axis, clockwise
   locked: boolean;
+  // Crew Quality 1..6. Always 4 in "standard" games; chosen per ship in
+  // "custom" games via the expandable card in the staged-units list.
+  crewQuality: number;
 }
+
+// Crew Quality labels (1=Rookie … 6=Special Ops). Kept here next to the staged
+// unit type so the deploy UI and any future combat overlays render the same
+// names without hardcoding strings throughout the file.
+const CREW_QUALITY_LABELS: Record<number, string> = {
+  1: "Rookie",
+  2: "Green",
+  3: "Competent",
+  4: "Veteran",
+  5: "Elite",
+  6: "Special Ops",
+};
 
 function StagedUnit3D({
   unit, isSelected, onClick, onPointerDown,
@@ -1302,7 +1317,16 @@ export default function GameBoard() {
       if (idx === -1) continue;
       const ship = available.splice(idx, 1)[0];
       // Convert world coords (inches) to integer grid positions stored in hexQ/hexR
-      placements.push({ shipId: ship.id, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: staged.heading });
+      placements.push({
+        shipId: ship.id,
+        hexQ: Math.round(staged.x),
+        hexR: Math.round(staged.z),
+        heading: staged.heading,
+        // Server forces CQ=4 in "standard" games regardless of what we send,
+        // so we always include the staged value — it's authoritative only
+        // when the game's crewQualityMode is "custom".
+        crewQuality: staged.crewQuality,
+      });
     }
     if (placements.length === 0) return;
     deployFleet.mutate(
@@ -1391,6 +1415,10 @@ export default function GameBoard() {
               // Opponent deploys from -Z → faces +Z (heading 0°).
               heading: mySide === "challenger" ? 180 : 0,
               locked: false,
+              // Default CQ is Veteran (4). In "standard" games this is also
+              // the only legal value; in "custom" games the player can pick
+              // 1..6 via the expandable card in the staged-units list.
+              crewQuality: 4,
             }]);
             setSelectedStagedId(newId);
             draggedShipRef.current = null;
@@ -1736,25 +1764,72 @@ export default function GameBoard() {
                       onClick={() => { setStagedUnits([]); setSelectedStagedId(null); }}
                     >clear all</button>
                   </div>
-                  {stagedUnits.map(u => (
-                    <div
-                      key={u.id}
-                      onClick={() => setSelectedStagedId(u.id)}
-                      className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono cursor-pointer transition-colors ${
-                        selectedStagedId === u.id
-                          ? "bg-primary/10 border border-primary/40 text-foreground"
-                          : "bg-background border border-border text-muted-foreground hover:border-border/80"
-                      }`}
-                    >
-                      <span className="flex-1 truncate">{u.locked ? "🔒 " : ""}{u.name}</span>
-                      {!u.locked && selectedStagedId === u.id && (
-                        <button
-                          className="text-muted-foreground hover:text-destructive ml-1"
-                          onClick={e => { e.stopPropagation(); setStagedUnits(prev => prev.filter(s => s.id !== u.id)); setSelectedStagedId(null); }}
-                        >✕</button>
-                      )}
-                    </div>
-                  ))}
+                  {stagedUnits.map(u => {
+                    const isExpanded = selectedStagedId === u.id;
+                    // CQ picker only appears in "custom" games. In "standard"
+                    // games crew quality is fixed at 4 (Veteran) by the
+                    // server, so we don't render the picker at all to keep
+                    // the deploy UI uncluttered.
+                    const showCQ = isExpanded && game?.crewQualityMode === "custom";
+                    return (
+                      <div
+                        key={u.id}
+                        onClick={() => setSelectedStagedId(u.id)}
+                        className={`rounded text-[10px] font-mono cursor-pointer transition-colors ${
+                          isExpanded
+                            ? "bg-primary/10 border border-primary/40 text-foreground"
+                            : "bg-background border border-border text-muted-foreground hover:border-border/80"
+                        }`}
+                        data-testid={`staged-card-${u.id}`}
+                      >
+                        <div className="flex items-center gap-1.5 px-2 py-1">
+                          <span className="flex-1 truncate">{u.locked ? "🔒 " : ""}{u.name}</span>
+                          {game?.crewQualityMode === "custom" && (
+                            <span className="text-[9px] text-amber-400/80 shrink-0" title="Crew Quality">
+                              CQ{u.crewQuality}
+                            </span>
+                          )}
+                          {!u.locked && isExpanded && (
+                            <button
+                              className="text-muted-foreground hover:text-destructive ml-1"
+                              data-testid={`staged-remove-${u.id}`}
+                              onClick={e => { e.stopPropagation(); setStagedUnits(prev => prev.filter(s => s.id !== u.id)); setSelectedStagedId(null); }}
+                            >✕</button>
+                          )}
+                        </div>
+                        {showCQ && (
+                          <div className="px-2 pb-1.5 pt-0.5 border-t border-primary/20">
+                            <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1">
+                              Crew Quality — {CREW_QUALITY_LABELS[u.crewQuality]}
+                            </p>
+                            <div className="grid grid-cols-6 gap-1">
+                              {[1, 2, 3, 4, 5, 6].map(cq => (
+                                <button
+                                  key={cq}
+                                  data-testid={`staged-cq-${u.id}-${cq}`}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setStagedUnits(prev => prev.map(s => s.id === u.id ? { ...s, crewQuality: cq } : s));
+                                  }}
+                                  title={CREW_QUALITY_LABELS[cq]}
+                                  className={`h-6 rounded border text-[10px] font-bold transition-colors ${
+                                    u.crewQuality === cq
+                                      ? "border-amber-400 bg-amber-400/20 text-amber-300"
+                                      : "border-border bg-background text-muted-foreground hover:border-amber-400/40 hover:text-foreground"
+                                  }`}
+                                >
+                                  {cq}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="text-[9px] text-muted-foreground/70 mt-1 text-center">
+                              1 Rookie · 2 Green · 3 Comp · 4 Vet · 5 Elite · 6 Spec Ops
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {/* Deploy — commit the staged fleet. No per-ship lock required;

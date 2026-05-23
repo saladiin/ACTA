@@ -184,6 +184,7 @@ export const ListGamesResponseItem = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -203,7 +204,8 @@ export const CreateGameBody = zod.object({
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
   "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.'),
-  "deploymentDepth": zod.number().min(createGameBodyDeploymentDepthMin).max(createGameBodyDeploymentDepthMax).describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge.')
+  "deploymentDepth": zod.number().min(createGameBodyDeploymentDepthMin).max(createGameBodyDeploymentDepthMax).describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).describe('standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship.')
 })
 
 
@@ -216,6 +218,8 @@ export const GetGameParams = zod.object({
 
 export const getGameResponseGameDeploymentDepthMin = 4;
 export const getGameResponseGameDeploymentDepthMax = 30;
+
+export const getGameResponseUnitsItemCrewQualityMax = 6;
 
 
 
@@ -239,6 +243,7 @@ export const GetGameResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }),
@@ -260,6 +265,7 @@ export const GetGameResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(getGameResponseUnitsItemCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -316,6 +322,7 @@ export const AcceptGameResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -352,6 +359,7 @@ export const DeclineGameResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -364,13 +372,18 @@ export const DeployFleetParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const deployFleetBodyPlacementsItemCrewQualityMax = 6;
+
+
+
 export const DeployFleetBody = zod.object({
   "fleetId": zod.number(),
   "placements": zod.array(zod.object({
   "shipId": zod.number(),
   "hexQ": zod.number(),
   "hexR": zod.number(),
-  "heading": zod.number()
+  "heading": zod.number(),
+  "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.')
 }))
 })
 
@@ -398,6 +411,7 @@ export const DeployFleetResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -479,6 +493,7 @@ export const ActivateUnitResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -515,6 +530,7 @@ export const EndActivationResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -562,6 +578,10 @@ export const DevMoveUnitBody = zod.object({
   "heading": zod.number()
 })
 
+export const devMoveUnitResponseCrewQualityMax = 6;
+
+
+
 export const DevMoveUnitResponse = zod.object({
   "id": zod.number(),
   "gameId": zod.number(),
@@ -580,6 +600,7 @@ export const DevMoveUnitResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(devMoveUnitResponseCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -601,6 +622,10 @@ export const MoveUnitBody = zod.object({
   "newHeading": zod.number()
 })
 
+export const moveUnitResponseCrewQualityMax = 6;
+
+
+
 export const MoveUnitResponse = zod.object({
   "id": zod.number(),
   "gameId": zod.number(),
@@ -619,6 +644,7 @@ export const MoveUnitResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(moveUnitResponseCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -660,6 +686,7 @@ export const GetLobbyResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -682,6 +709,7 @@ export const GetLobbyResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
@@ -704,6 +732,7 @@ export const GetLobbyResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))
