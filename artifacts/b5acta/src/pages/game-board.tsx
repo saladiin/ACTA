@@ -971,12 +971,18 @@ export default function GameBoard() {
   const isChallenger = game?.challengerId === myUserId;
 
   // Deployment-zone clamp for staged ship placement during the deploy phase.
-  // Challenger deploys from the +Z short edge, opponent from -Z. Dev mode
-  // bypasses the clamp entirely so test scenarios can place anywhere.
+  // Challenger deploys from the +Z short edge, opponent from -Z. The clamp
+  // applies in BOTH normal and dev mode — the server enforces the same
+  // zone rules, and silently snapping drops to the legal strip is much
+  // friendlier than letting the user stage ships that will fail on commit.
   const deploymentDepth = game?.deploymentDepth ?? 12;
   const clampToDeployZone = useCallback((x: number, z: number): [number, number] => {
     const cx = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, x));
-    if (devMode || !game) return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
+    if (!game) return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
+    // NOTE: devMode controls *who you are*, not *where you may deploy*.
+    // Even in devMode, deployment must respect your side's zone — the
+    // server enforces it. If you need to seed both sides for a test,
+    // use the `/dev/skip-deploy` endpoint instead.
     const mine: "challenger" | "opponent" | null =
       myUserId === game.challengerId ? "challenger"
       : myUserId === game.opponentId ? "opponent"
@@ -988,7 +994,7 @@ export default function GameBoard() {
       return [cx, Math.max(-36, Math.min(-36 + deploymentDepth, z))];
     }
     return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
-  }, [devMode, game, myUserId, deploymentDepth]);
+  }, [game, myUserId, deploymentDepth]);
   const mySide: "challenger" | "opponent" | null = !game
     ? null
     : myUserId === game.challengerId ? "challenger"
