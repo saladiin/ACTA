@@ -1077,6 +1077,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const concentrateRerollEligible =
         concentrateActive && !wt.beam && !wt.miniBeam && !wt.twinLinked && !wt.energyMine;
       const attackRolls: number[] = [];
+      const attackRollKinds: ("normal" | "explosion" | "twin-reroll" | "concentrate-reroll")[] = [];
       let hits = 0;
       let beamExplosions = 0;
       let twinRerolls = 0;
@@ -1084,15 +1085,18 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       for (let i = 0; i < finalAttackDice; i++) {
         let r = rollD6();
         attackRolls.push(r);
+        attackRollKinds.push("normal");
         let hitFlag = r >= hitThreshold;
         if (!hitFlag && wt.twinLinked) {
           const r2 = rollD6();
           attackRolls.push(r2);
+          attackRollKinds.push("twin-reroll");
           twinRerolls++;
           if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
         } else if (!hitFlag && concentrateRerollEligible) {
           const r2 = rollD6();
           attackRolls.push(r2);
+          attackRollKinds.push("concentrate-reroll");
           concentrateRerolls++;
           if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
         }
@@ -1102,6 +1106,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           while (r >= EXPLODE_ON && chain < EXPLODE_CAP_PER_DIE) {
             r = rollD6();
             attackRolls.push(r);
+            attackRollKinds.push("explosion");
             beamExplosions++;
             if (r >= hitThreshold) hits++;
             chain++;
@@ -1216,7 +1221,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // structural dmg+crew on top of the GEG-reduced totals.
       const criticalsApplied: Array<{
         id: number; gameUnitId: number;
-        location: number; effectKey: string; name: string;
+        location: number; locationRoll: number; effectRoll: number;
+        effectKey: string; name: string;
         damageApplied: number; crewApplied: number;
         randomArc: string | null; randomWeaponId: number | null;
         lostTraits: string[];
@@ -1297,7 +1303,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         insertedGrossDmg.push(dmgApplied);
         criticalsApplied.push({
           id: inserted.id, gameUnitId: inserted.gameUnitId,
-          location: loc, effectKey: entry.effectKey, name: entry.name,
+          location: loc, locationRoll: pc.locationRoll, effectRoll: pc.effectRoll,
+          effectKey: entry.effectKey, name: entry.name,
           damageApplied: dmgApplied, crewApplied,
           randomArc, randomWeaponId, lostTraits,
           appliedRound: currentRound, repairable: entry.repairable,
@@ -1508,6 +1515,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         targetUnitId,
         hitThreshold,
         attackRolls,
+        attackRollKinds,
         hits,
         // Defender pipeline
         dodgeRolls,

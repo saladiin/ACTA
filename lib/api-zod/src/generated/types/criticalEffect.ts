@@ -13,6 +13,10 @@ export interface CriticalEffect {
   effectKey: string;
   /** 1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital. */
   location: number;
+  /** Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET /games (the DB doesn't store the raw rolls). */
+  locationRoll?: number;
+  /** Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits. */
+  effectRoll?: number;
   name: string;
   /** Hull damage applied when this row was created (reversed on DC success). */
   damageApplied: number;

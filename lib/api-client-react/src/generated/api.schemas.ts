@@ -226,6 +226,10 @@ export interface CriticalEffect {
   effectKey: string;
   /** 1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital. */
   location: number;
+  /** Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET /games (the DB doesn't store the raw rolls). */
+  locationRoll?: number;
+  /** Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits. */
+  effectRoll?: number;
   name: string;
   /** Hull damage applied when this row was created (reversed on DC success). */
   damageApplied: number;
@@ -374,6 +378,16 @@ export interface FireWeaponInput {
   targetUnitId: number;
 }
 
+export type FireWeaponResultAttackRollKindsItem = typeof FireWeaponResultAttackRollKindsItem[keyof typeof FireWeaponResultAttackRollKindsItem];
+
+
+export const FireWeaponResultAttackRollKindsItem = {
+  normal: 'normal',
+  explosion: 'explosion',
+  'twin-reroll': 'twin-reroll',
+  'concentrate-reroll': 'concentrate-reroll',
+} as const;
+
 /**
  * 1-6 adrift, 7-11 destroyed, 12-17 delayed explode, 18+ explodes now.
  */
@@ -415,6 +429,8 @@ export interface FireWeaponResult {
   hitThreshold: number;
   /** All d6 results rolled for AD (including beam-explosions and re-rolls). */
   attackRolls: number[];
+  /** Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight. */
+  attackRollKinds: FireWeaponResultAttackRollKindsItem[];
   /** Raw hits scored before defender pipeline (Dodge/Interceptors/Shields). */
   hits: number;
   /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */

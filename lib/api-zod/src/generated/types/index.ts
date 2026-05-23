@@ -18,6 +18,7 @@ export * from './explosionVictim';
 export * from './fireAction';
 export * from './fireWeaponInput';
 export * from './fireWeaponResult';
+export * from './fireWeaponResultAttackRollKindsItem';
 export * from './fleet';
 export * from './fleetInput';
 export * from './game';

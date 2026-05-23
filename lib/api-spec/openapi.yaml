@@ -807,6 +807,7 @@ components:
         - targetUnitId
         - hitThreshold
         - attackRolls
+        - attackRollKinds
         - hits
         - dodgeRolls
         - dodgesSuccessful
@@ -843,6 +844,12 @@ components:
           type: array
           items: { type: integer }
           description: "All d6 results rolled for AD (including beam-explosions and re-rolls)."
+        attackRollKinds:
+          type: array
+          items:
+            type: string
+            enum: [normal, explosion, twin-reroll, concentrate-reroll]
+          description: "Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight."
         hits:            { type: integer, description: "Raw hits scored before defender pipeline (Dodge/Interceptors/Shields)." }
         dodgeRolls:
           type: array
@@ -933,6 +940,8 @@ components:
         gameUnitId:     { type: integer }
         effectKey:      { type: string, description: "Stable key from the critical-hit table (e.g. 'engines-thrusters')." }
         location:       { type: integer, description: "1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital." }
+        locationRoll:   { type: integer, description: "Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET /games (the DB doesn't store the raw rolls)." }
+        effectRoll:     { type: integer, description: "Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits." }
         name:           { type: string }
         damageApplied:  { type: integer, description: "Hull damage applied when this row was created (reversed on DC success)." }
         crewApplied:    { type: integer, description: "Crew damage applied when this row was created (Slice C-only counter; logged for UI)." }

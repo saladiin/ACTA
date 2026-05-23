@@ -19,7 +19,14 @@ import GameBoard from "@/pages/game-board";
 import GamesList from "@/pages/games";
 import NotFound from "@/pages/not-found";
 
-const queryClient = new QueryClient();
+// `refetchOnWindowFocus` disabled globally: while the dice-roll modal is
+// open we deliberately hold off invalidating the game query so the board
+// doesn't reveal damage before the player rolls. A background tab-focus
+// refetch would silently bypass that gate and leak the result, so we
+// opt-out and rely on explicit invalidations after each player action.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+});
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,

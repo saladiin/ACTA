@@ -518,6 +518,12 @@ type DiceModalPhase =
   | "damage-ready"
   | "damage-rolling"
   | "damage-shown"
+  // Per-crit reveal: the server already rolled the location + effect dice
+  // atomically, but the player wants to feel each crit being rolled. We
+  // walk the criticalsApplied array one entry at a time via critIndex.
+  | "crit-ready"
+  | "crit-rolling"
+  | "crit-shown"
   | "error";
 type DiceModalState = {
   weapon: Weapon;
@@ -533,6 +539,9 @@ type DiceModalState = {
   result?: FireWeaponResult;
   error?: string;
   confirmingClose?: boolean;
+  // Index into result.criticalsApplied for the per-crit reveal walk. Only
+  // meaningful in phases crit-ready / crit-rolling / crit-shown.
+  critIndex?: number;
 };
 
 type MovePlan =
@@ -1349,9 +1358,12 @@ export default function GameBoard() {
         {
           onSuccess: (res) => {
             firingInFlightRef.current = false;
-            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-            // Cache the full server result and unlock the first confirm step.
-            // The player must press "Roll to Hit" to begin the reveal.
+            // Do NOT invalidate the game query here — that would refresh the
+            // board (target HP, shields, destroyed flag) BEFORE the player
+            // has even rolled to hit, leaking the outcome. We defer the
+            // invalidation until the player closes the dice modal (see
+            // DiceRollModal.confirmClose). Local state still updates from
+            // the server's authoritative result.
             setDiceModal(m => (m ? { ...m, phase: "attack-ready", result: res } : null));
           },
           onError: (err: any) => {
@@ -2585,6 +2597,14 @@ export default function GameBoard() {
         <DiceRollModal
           modal={diceModal}
           setModal={setDiceModal}
+          onClose={() => {
+            // The shot was already applied authoritatively on the server,
+            // but we deliberately deferred the cache invalidation so the
+            // board didn't reveal the outcome before the player rolled.
+            // Refresh now that the dice modal is dismissed.
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            setDiceModal(null);
+          }}
         />
       )}
     </Layout>
@@ -2621,23 +2641,36 @@ function DiceFace({ value, rolling }: { value: number; rolling: boolean }) {
 function DiceRollModal({
   modal,
   setModal,
+  onClose,
 }: {
   modal: DiceModalState;
   setModal: React.Dispatch<React.SetStateAction<DiceModalState | null>>;
+  onClose: () => void;
 }) {
-  const { weapon, targetName, attackDice, phase, result, error, confirmingClose } = modal;
+  const { weapon, targetName, attackDice, phase, result, error, confirmingClose, critIndex } = modal;
   const attackRolling = phase === "attack-rolling";
   const damageRolling = phase === "damage-rolling";
+  const critRolling = phase === "crit-rolling";
   // Show attack dice once we've started rolling them; before that they're hidden.
   const attackVisible = phase !== "pending" && phase !== "attack-ready" && phase !== "error";
-  // Show damage dice once we've started rolling them.
-  const damageVisible = phase === "damage-rolling" || phase === "damage-shown";
-  // Final summary only after damage is fully resolved (or after attack if no hits).
+  // Show damage dice once we've started rolling them. They persist through the
+  // per-crit reveal so the player keeps the context of where each crit came from.
+  const damageVisible =
+    phase === "damage-rolling" || phase === "damage-shown" ||
+    phase === "crit-ready" || phase === "crit-rolling" || phase === "crit-shown";
+  // Crit reveal panel: only after the first crit roll has started.
+  const critVisible = phase === "crit-rolling" || phase === "crit-shown";
+  const crits = result?.criticalsApplied ?? [];
+  const hasCrits = crits.length > 0;
+  // Final summary only after the entire reveal is done (last crit shown,
+  // or damage-shown with no crits, or attack-shown with no hits).
   const summaryVisible =
-    phase === "damage-shown" ||
+    (phase === "crit-shown" && critIndex !== undefined && critIndex >= crits.length - 1) ||
+    (phase === "damage-shown" && !hasCrits) ||
     (phase === "attack-shown" && result !== undefined && result.hits === 0);
 
   const rolls = result?.attackRolls ?? Array.from({ length: attackDice }, () => 0);
+  const rollKinds = result?.attackRollKinds ?? [];
   const hitThreshold = result?.hitThreshold;
 
   // ── Stage transitions ──
@@ -2660,11 +2693,29 @@ function DiceRollModal({
   const handleProceedToDamage = () => {
     setModal(m => (m ? { ...m, phase: "damage-ready" } : null));
   };
+  // Damage-shown → if any crits queue per-crit reveal, otherwise terminal.
+  const handleProceedToCrits = () => {
+    setModal(m => (m ? { ...m, phase: "crit-ready", critIndex: 0 } : null));
+  };
+  // Crit-ready (or crit-shown for non-last) → start rolling the next crit.
+  const handleRollCrit = () => {
+    setModal(m => {
+      if (!m) return null;
+      // If we're advancing from a previously-shown crit, bump the index.
+      const nextIdx = m.phase === "crit-shown" ? (m.critIndex ?? 0) + 1 : (m.critIndex ?? 0);
+      return { ...m, phase: "crit-rolling", critIndex: nextIdx };
+    });
+    setTimeout(() => {
+      setModal(m => (m && m.phase === "crit-rolling" ? { ...m, phase: "crit-shown" } : m));
+    }, 700);
+  };
   // Close flow always passes through a confirm step so the player can't lose
-  // the result by misclicking the backdrop or the corner X.
+  // the result by misclicking the backdrop or the corner X. Final confirm
+  // delegates to the parent so it can invalidate the game query (deferred
+  // until close so the board doesn't reveal damage before the dice roll).
   const requestClose = () => setModal(m => (m ? { ...m, confirmingClose: true } : null));
   const cancelClose = () => setModal(m => (m ? { ...m, confirmingClose: false } : null));
-  const confirmClose = () => setModal(null);
+  const confirmClose = () => onClose();
 
   // The footer button is contextual based on phase. Disabled while shuffles play.
   const footer = (() => {
@@ -2692,7 +2743,27 @@ function DiceRollModal({
     if (phase === "damage-rolling") {
       return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-damage", disabled: true };
     }
-    // damage-shown
+    if (phase === "damage-shown") {
+      if (hasCrits) {
+        return { label: `Roll Crits · ${crits.length}`, onClick: handleProceedToCrits, testid: "button-proceed-crits", disabled: false };
+      }
+      return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
+    }
+    if (phase === "crit-ready") {
+      const idx = (critIndex ?? 0) + 1;
+      return { label: `Roll Crit ${idx} of ${crits.length}`, onClick: handleRollCrit, testid: "button-roll-crit", disabled: false };
+    }
+    if (phase === "crit-rolling") {
+      return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-crit", disabled: true };
+    }
+    if (phase === "crit-shown") {
+      const cur = (critIndex ?? 0);
+      if (cur < crits.length - 1) {
+        return { label: `Roll Crit ${cur + 2} of ${crits.length}`, onClick: handleRollCrit, testid: "button-roll-next-crit", disabled: false };
+      }
+      return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
+    }
+    // Fallback (unreachable in normal flow): treat as terminal.
     return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
   })();
 
@@ -2802,20 +2873,51 @@ function DiceRollModal({
           </div>
         )}
 
-        {/* Attack dice (revealed during/after rolling) */}
+        {/* Attack dice (revealed during/after rolling). Beam-trait dice that
+            "exploded" (rolled 4+ and spawned another die) get a glowing
+            orange ring + EXPL tag so the player can spot Beam chains at a
+            glance. Twin-Linked / Concentrate Fire re-rolls get a subtler
+            cyan tag. */}
         {attackVisible && (
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
               Attack {hitThreshold ? `· need ${hitThreshold}+` : ""}
+              {!attackRolling && (result?.beamExplosions ?? 0) > 0 && (
+                <span className="ml-2 text-orange-400 animate-pulse" data-testid="badge-beam-chain">
+                  ⚡ {result?.beamExplosions} beam explosion{(result?.beamExplosions ?? 0) === 1 ? "" : "s"}
+                </span>
+              )}
             </p>
-            <div className="flex flex-wrap gap-1.5" data-testid="attack-dice">
+            <div className="flex flex-wrap gap-2" data-testid="attack-dice">
               {rolls.map((r, i) => {
+                const kind = rollKinds[i] ?? "normal";
+                const exploded = kind === "explosion";
+                const reroll = kind === "twin-reroll" || kind === "concentrate-reroll";
                 const hit = !attackRolling && hitThreshold !== undefined && r >= hitThreshold;
+                // Broader orange ring (ring-2 + offset) + soft glow for
+                // exploded dice. Cyan ring for re-rolls so all three flavours
+                // of "extra" die are visually distinct from regular AD.
+                const ringCls = exploded
+                  ? "ring-2 ring-orange-400 ring-offset-2 ring-offset-background shadow-[0_0_8px_rgba(251,146,60,0.7)] rounded"
+                  : reroll
+                  ? "ring-1 ring-cyan-400/70 ring-offset-1 ring-offset-background rounded"
+                  : "";
                 return (
-                  <div key={i} className={`relative ${hit ? "" : !attackRolling ? "opacity-50" : ""}`}>
+                  <div
+                    key={i}
+                    className={`relative ${ringCls} ${hit ? "" : !attackRolling ? "opacity-60" : ""}`}
+                    data-testid={`attack-die-${i}`}
+                    data-kind={kind}
+                  >
                     <DiceFace value={r} rolling={attackRolling} />
                     {hit && (
                       <span className="absolute -bottom-1 -right-1 text-[8px] font-mono text-green-400 bg-black/80 px-1 rounded">HIT</span>
+                    )}
+                    {!attackRolling && exploded && (
+                      <span className="absolute -top-1 -left-1 text-[8px] font-mono text-orange-300 bg-black/80 px-1 rounded">EXPL</span>
+                    )}
+                    {!attackRolling && reroll && (
+                      <span className="absolute -top-1 -left-1 text-[8px] font-mono text-cyan-300 bg-black/80 px-1 rounded">RR</span>
                     )}
                   </div>
                 );
@@ -2858,32 +2960,75 @@ function DiceRollModal({
                 );
               })}
             </div>
-            {!damageRolling && (result.criticalsApplied?.length ?? 0) > 0 && (
-              <div className="mt-2 space-y-1" data-testid="criticals-applied">
-                <p className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
-                  Criticals · {result.criticalsApplied.length}
-                </p>
-                <div className="space-y-1">
-                  {result.criticalsApplied.map((c) => (
-                    <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-mono text-red-200" data-testid={`crit-${c.effectKey}`}>
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold uppercase">{c.name}</span>
-                        <span className="opacity-70">
+          </div>
+        )}
+
+        {/* Per-crit reveal — only after the player has clicked "Roll Crits".
+            Walks one crit at a time; each gets a location-d6 + effect-d6
+            shuffle animation, then the entry is revealed and the player
+            either rolls the next one or closes. The "Roll Crits" prompt
+            sits between Damage and the first crit so the reveal is
+            explicitly player-driven, not automatic. */}
+        {phase === "damage-shown" && hasCrits && (
+          <div className="mt-3 text-sm font-mono text-red-300/90 text-center py-2 border-t border-red-500/30 pt-3" data-testid="crit-prompt">
+            <span className="font-bold">{crits.length}</span> critical hit{crits.length === 1 ? "" : "s"} pending —
+            press <span className="text-amber-300 font-bold">Roll Crits</span> to resolve.
+          </div>
+        )}
+        {phase === "crit-ready" && (
+          <div className="mt-3 text-sm font-mono text-red-300/90 text-center py-2 border-t border-red-500/30 pt-3" data-testid="crit-ready-prompt">
+            Ready to roll crit <span className="text-amber-300 font-bold">{(critIndex ?? 0) + 1}</span> of {crits.length}.
+            <p className="text-[10px] text-muted-foreground mt-1">1d6 location, then 1d6 effect.</p>
+          </div>
+        )}
+        {critVisible && (
+          <div className="mt-3 space-y-2" data-testid="criticals-applied">
+            <p className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
+              Criticals · {(critIndex ?? 0) + (phase === "crit-shown" ? 1 : 1)} of {crits.length}
+            </p>
+            <div className="space-y-2">
+              {crits.map((c, i) => {
+                const cur = critIndex ?? 0;
+                if (i > cur) return null;            // not yet rolled
+                const isCurrent = i === cur;
+                const rolling = isCurrent && critRolling;
+                return (
+                  <div
+                    key={c.id}
+                    className={`rounded px-2 py-1.5 text-[10px] font-mono ${
+                      isCurrent
+                        ? "border-2 border-red-400 bg-red-500/20 text-red-100 shadow-[0_0_8px_rgba(248,113,113,0.5)]"
+                        : "border border-red-500/40 bg-red-500/10 text-red-200"
+                    }`}
+                    data-testid={`crit-${c.effectKey}`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[9px] uppercase text-muted-foreground">Loc</span>
+                      <DiceFace value={c.locationRoll} rolling={rolling} />
+                      <span className="text-[9px] uppercase text-muted-foreground">Eff</span>
+                      <DiceFace value={c.effectRoll} rolling={rolling} />
+                      {!rolling && (
+                        <span className="ml-auto opacity-70 text-[10px]">
                           {c.damageApplied > 0 && `−${c.damageApplied}H `}
                           {c.crewApplied > 0 && `−${c.crewApplied}C`}
                         </span>
-                      </div>
-                      {(c.randomArc || c.lostTraits.length > 0) && (
-                        <div className="opacity-70 mt-0.5">
-                          {c.randomArc && <>arc: {c.randomArc} </>}
-                          {c.lostTraits.length > 0 && <>lost: {c.lostTraits.join(", ")}</>}
-                        </div>
                       )}
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                    {!rolling && (
+                      <>
+                        <div className="font-bold uppercase">{c.name}</div>
+                        {(c.randomArc || c.lostTraits.length > 0) && (
+                          <div className="opacity-70 mt-0.5">
+                            {c.randomArc && <>arc: {c.randomArc} </>}
+                            {c.lostTraits.length > 0 && <>lost: {c.lostTraits.join(", ")}</>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

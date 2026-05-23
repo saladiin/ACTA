@@ -8,6 +8,7 @@
 import type { CriticalEffect } from './criticalEffect';
 import type { DamageTableResult } from './damageTableResult';
 import type { ExplosionVictim } from './explosionVictim';
+import type { FireWeaponResultAttackRollKindsItem } from './fireWeaponResultAttackRollKindsItem';
 
 export interface FireWeaponResult {
   weaponId: number;
@@ -16,6 +17,8 @@ export interface FireWeaponResult {
   hitThreshold: number;
   /** All d6 results rolled for AD (including beam-explosions and re-rolls). */
   attackRolls: number[];
+  /** Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight. */
+  attackRollKinds: FireWeaponResultAttackRollKindsItem[];
   /** Raw hits scored before defender pipeline (Dodge/Interceptors/Shields). */
   hits: number;
   /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */
