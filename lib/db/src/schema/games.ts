@@ -63,6 +63,15 @@ export const gameUnitsTable = pgTable("game_units", {
   // Table is rolled, scaled by the attacker's damage multiplier (Double /
   // Triple / Quad). Mass Driver and Energy Mine bypass shields.
   shieldsCurrent: integer("shields_current").notNull().default(0),
+  // Per-turn Interceptor state. Per the sheet, a ship has Interceptors X
+  // dice each turn rolling at a degrading threshold: start at 2+ with all
+  // X dice; any die that rolls a 1 during an interception attempt is
+  // permanently lost for the rest of the turn, and the threshold ramps
+  // (2+ → 3+ → 4+ → 5+ → 6+) as dice are burned. The final remaining die
+  // always intercepts on 6+. Both fields persist across attacks within a
+  // turn and are refreshed at end-of-round (max dice, threshold 2).
+  interceptorDiceRemaining: integer("interceptor_dice_remaining").notNull().default(0),
+  interceptorThresholdCurrent: integer("interceptor_threshold_current").notNull().default(2),
   // Last round in which this unit attempted Damage Control (Slice B). Used
   // to enforce the once-per-end-phase-per-unit cap. 0 means never.
   lastDcRound: integer("last_dc_round").notNull().default(0),

@@ -9,6 +9,7 @@ import type { CriticalEffect } from './criticalEffect';
 import type { DamageTableResult } from './damageTableResult';
 import type { ExplosionVictim } from './explosionVictim';
 import type { FireWeaponResultAttackRollKindsItem } from './fireWeaponResultAttackRollKindsItem';
+import type { FireWeaponResultInterceptorAttemptsItem } from './fireWeaponResultInterceptorAttemptsItem';
 
 export interface FireWeaponResult {
   weaponId: number;
@@ -30,12 +31,22 @@ export interface FireWeaponResult {
   /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */
   dodgeRolls: number[];
   dodgesSuccessful: number;
-  /** Hits cancelled by target's Interceptors (dice that met interceptorThreshold). */
+  /** Total hits cancelled by target's Interceptors across all per-hit attempts this shot. */
   interceptedHits: number;
-  /** Per-Interceptor-die d6 results. One die per point of target's Interceptors rating, rolled only when there are still surviving hits after Dodge. Empty when no interceptor check was made: target has no Interceptors, weapon bypasses (Beam / Mini Beam / Mass Driver / Energy Mine), no hits scored, or all hits already cancelled by dodges. */
+  /** FLATTENED back-compat list of every Interceptor d6 rolled this shot (across all per-hit attempts). Prefer `interceptorAttempts` for per-hit grouping with the threshold that applied to each attempt. Empty when no interceptor check was made (no Interceptors, weapon bypasses, no surviving hits, or pool was already empty). */
   interceptorRolls: number[];
-  /** Minimum d6 result for an interceptor die to cancel a hit (6 when a check was made; 0 when interceptorRolls is empty). */
+  /** Back-compat: threshold at the START of this shot (== interceptorThresholdBefore). 0 when no interceptor check was made. Per-attempt thresholds may differ as the pool degrades — see interceptorAttempts. */
   interceptorThreshold: number;
+  /** One entry per incoming hit that the defender attempted to intercept (in order). Each entry shows the dice rolled, the threshold that applied to that attempt, and whether the hit was cancelled. Per the sheet: dice rolling 1 are permanently lost for the turn and the threshold ramps 2+ → 3+ → 4+ → 5+ → 6+; the final remaining die always intercepts only on 6+. */
+  interceptorAttempts: FireWeaponResultInterceptorAttemptsItem[];
+  /** Defender's remaining Interceptor dice at the start of this shot. */
+  interceptorDiceBefore: number;
+  /** Remaining Interceptor dice after this shot (persists for the rest of the turn; refreshes at end of round). */
+  interceptorDiceAfter: number;
+  /** Defender's Interceptor threshold (need-roll) at the start of this shot. */
+  interceptorThresholdBefore: number;
+  /** Interceptor threshold after this shot. */
+  interceptorThresholdAfter: number;
   /** Hits absorbed by target's shields. */
   shieldedHits: number;
   targetShieldsBefore: number;

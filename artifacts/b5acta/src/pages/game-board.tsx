@@ -3256,29 +3256,49 @@ function DiceRollModal({
           </div>
         )}
 
-        {/* Interceptor reveal — defender's 1d6-per-rating, each ≥ threshold cancels a hit. */}
-        {phase === "attack-shown" && result && result.interceptorRolls.length > 0 && (
-          <div className="mt-3 space-y-1" data-testid="interceptor-reveal">
+        {/* Interceptor reveal — one row per incoming hit, dice rolled at the
+            then-current threshold; dice showing 1 burn out of the pool and
+            ramp the threshold (2+ → 6+) for subsequent attempts this turn. */}
+        {phase === "attack-shown" && result && (result.interceptorAttempts?.length ?? 0) > 0 && (
+          <div className="mt-3 space-y-1.5" data-testid="interceptor-reveal">
             <p className="text-[10px] uppercase tracking-wider text-cyan-300/80 font-mono">
-              Interceptors · {result.interceptorRolls.length}d6 · need {result.interceptorThreshold}+
+              Interceptors · pool {result.interceptorDiceBefore} → {result.interceptorDiceAfter}
+              {" · threshold "}{result.interceptorThresholdBefore}+
+              {result.interceptorThresholdAfter !== result.interceptorThresholdBefore && <> → {result.interceptorThresholdAfter}+</>}
             </p>
-            <div className="flex flex-wrap gap-1.5" data-testid="interceptor-dice">
-              {result.interceptorRolls.map((d, i) => {
-                const success = d >= result.interceptorThreshold;
-                return (
-                  <div key={i} className="flex flex-col items-center">
-                    <DiceFace value={d} rolling={false} />
-                    <span className={`text-[10px] font-mono mt-0.5 ${success ? "text-cyan-300 font-bold" : "text-muted-foreground"}`}>
-                      {success ? "✓" : "✗"}
-                    </span>
+            <div className="space-y-1" data-testid="interceptor-attempts">
+              {result.interceptorAttempts.map((att, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono text-muted-foreground w-14">
+                    Hit {idx + 1} · {att.threshold}+
+                  </span>
+                  <div className="flex flex-wrap gap-1" data-testid={`interceptor-attempt-${idx}`}>
+                    {att.rolls.map((d, i) => {
+                      const hit = d >= att.threshold;
+                      const burned = d === 1;
+                      return (
+                        <div key={i} className="flex flex-col items-center">
+                          <DiceFace value={d} rolling={false} />
+                          <span className={`text-[9px] font-mono mt-0.5 ${hit ? "text-cyan-300 font-bold" : burned ? "text-red-400 font-bold" : "text-muted-foreground"}`}>
+                            {hit ? "✓" : burned ? "✕" : "·"}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                  <span className={`text-[10px] font-mono ${att.success ? "text-cyan-300" : "text-muted-foreground"}`}>
+                    {att.success ? "intercepted" : "through"}
+                  </span>
+                </div>
+              ))}
             </div>
             <p className="text-[11px] font-mono text-cyan-300/80 pt-0.5">
               {result.interceptedHits > 0
                 ? <>−{result.interceptedHits} hit{result.interceptedHits === 1 ? "" : "s"} intercepted.</>
                 : <>No interceptions.</>}
+              {result.interceptorDiceAfter < result.interceptorDiceBefore && (
+                <> {result.interceptorDiceBefore - result.interceptorDiceAfter} die{result.interceptorDiceBefore - result.interceptorDiceAfter === 1 ? "" : "s"} burned out (lost for the rest of the turn).</>
+              )}
             </p>
           </div>
         )}

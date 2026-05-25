@@ -539,6 +539,9 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           crewQuality,
           // Shields start full per the sheet ("Shields X/Y", regenerates Y per turn).
           shieldsCurrent: model.shieldMax ?? 0,
+          // Interceptors start the engagement at full pool, threshold 2+.
+          interceptorDiceRemaining: parseShipTraits(model.traits).interceptors,
+          interceptorThresholdCurrent: 2,
           // Crew defaults from the ship_model record. Used by Skeleton-Crew /
           // damage-table logic in Slice C.
           crewPoints: model.crew ?? 0,
@@ -1040,6 +1043,36 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
             await tx.update(gameUnitsTable).set({ shieldsCurrent: next }).where(eq(gameUnitsTable.id, u.id));
           }
         }
+        // Interceptor refresh — pool back to max, threshold back to 2+.
+        // Per the sheet, "At the start of the next turn, all interceptor
+        // dice refresh to full strength and reset to 2+". A ship that
+        // permanently lost the Interceptors trait via a critical hit
+        // (power feedback / implosion / catastrophic) refreshes to 0
+        // because the trait is filtered out of model.traits.
+        for (const u of survivors) {
+          const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
+          if (!ship) continue;
+          const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+          const critRows = await tx.select().from(unitCriticalEffectsTable)
+            .where(eq(unitCriticalEffectsTable.gameUnitId, u.id));
+          const crits = deriveCritEffects(critRows.map(r => ({
+            effectKey: r.effectKey,
+            randomArc: r.randomArc,
+            randomWeaponId: r.randomWeaponId,
+            lostTraits: r.lostTraits ?? [],
+          })));
+          const lostLc = new Set(Array.from(crits.lostTraitNames).map(n => n.toLowerCase()));
+          const filteredRaw = (model?.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
+            .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
+            .join("; ");
+          const fullPool = parseShipTraits(filteredRaw).interceptors;
+          if (u.interceptorDiceRemaining !== fullPool || u.interceptorThresholdCurrent !== 2) {
+            await tx.update(gameUnitsTable).set({
+              interceptorDiceRemaining: fullPool,
+              interceptorThresholdCurrent: 2,
+            }).where(eq(gameUnitsTable.id, u.id));
+          }
+        }
         nextRound = game.currentRound + 1;
         nextTurn = game.currentTurn + 1;
         nextPhase = "movement";
@@ -1350,25 +1383,59 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         remainingHits = Math.max(0, remainingHits - dodgesSuccessful);
       }
 
-      // Interceptors: defender rolls 1d6 per point of Interceptors rating;
-      // each die >= interceptorThreshold cancels one surviving hit (capped at
-      // remainingHits). Skipped by Beam, Mini Beam, Mass Driver, Energy Mine.
+      // Interceptors: per the sheet, the defender's Interceptor dice form a
+      // persistent per-turn pool with a degrading threshold:
+      //   • Each incoming surviving hit is resolved individually: roll ALL
+      //     currently-remaining dice at the current threshold; if ≥1 die
+      //     meets it, the hit is negated.
+      //   • Any die that rolls a 1 during the attempt is permanently lost
+      //     for the rest of the turn. After the burn, the threshold ramps:
+      //     2+ (full pool) → 3+ → 4+ → 5+ → 6+ as dice are lost; when only
+      //     one die remains it always intercepts on 6+ regardless of how
+      //     many it lost on the way down.
+      //   • Pool + threshold persist across every fire-weapon call in the
+      //     turn; both reset at end-of-round (see round-rollover block).
+      // Skipped by Beam, Mini Beam, Mass Driver, Energy Mine.
       let interceptedHits = 0;
-      const interceptorRolls: number[] = [];
-      let interceptorThreshold = 0;
-      const interceptorsAvailable = targetTraits.interceptors;
+      const interceptorAttempts: { rolls: number[]; threshold: number; success: boolean }[] = [];
+      // Clamp persisted state by the trait-filtered cap so that a crit which
+      // wipes the Interceptors trait (power feedback / implosion / catastrophic)
+      // immediately drops the pool to 0 — even if the column was non-zero from
+      // an earlier attack this turn before the trait was lost.
+      const interceptorDiceBefore = Math.min(target.interceptorDiceRemaining, targetTraits.interceptors);
+      const interceptorThresholdBefore = target.interceptorThresholdCurrent;
+      let interceptorRemaining = interceptorDiceBefore;
+      let interceptorThreshold = interceptorThresholdBefore;
       const interceptorsBypassed = wt.beam || wt.miniBeam || wt.massDriver || wt.energyMine;
-      if (!interceptorsBypassed && interceptorsAvailable > 0 && remainingHits > 0) {
-        interceptorThreshold = 6;
-        let successes = 0;
-        for (let i = 0; i < interceptorsAvailable; i++) {
-          const d = rollD6();
-          interceptorRolls.push(d);
-          if (d >= interceptorThreshold) successes++;
+      if (!interceptorsBypassed && targetTraits.interceptors > 0 && interceptorRemaining > 0 && remainingHits > 0) {
+        const hitsToAttempt = remainingHits;
+        for (let h = 0; h < hitsToAttempt; h++) {
+          if (interceptorRemaining <= 0) break;
+          const rolls: number[] = [];
+          let anySuccess = false;
+          let onesRolled = 0;
+          for (let i = 0; i < interceptorRemaining; i++) {
+            const d = rollD6();
+            rolls.push(d);
+            if (d >= interceptorThreshold) anySuccess = true;
+            if (d === 1) onesRolled++;
+          }
+          interceptorAttempts.push({ rolls, threshold: interceptorThreshold, success: anySuccess });
+          if (anySuccess) {
+            interceptedHits++;
+            remainingHits--;
+          }
+          // Burn 1s and re-derive threshold for the next attempt.
+          interceptorRemaining = Math.max(0, interceptorRemaining - onesRolled);
+          if (interceptorRemaining > 0) {
+            interceptorThreshold = Math.min(6, interceptorThreshold + onesRolled);
+            if (interceptorRemaining === 1) interceptorThreshold = 6;
+          }
         }
-        interceptedHits = Math.min(remainingHits, successes);
-        remainingHits -= interceptedHits;
       }
+      // Flatten dice for back-compat with the existing combat-log dice
+      // strip; the new structured field is interceptorAttempts.
+      const interceptorRolls: number[] = interceptorAttempts.flatMap(a => a.rolls);
 
       // Shields: each hit costs `mult` shield points (Double Damage hits count
       // double, etc.). Partial absorption: a hit hitting a partly-full shield
@@ -1689,6 +1756,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         hullPoints: targetHullAfter,
         crewPoints: targetCrewAfter,
         shieldsCurrent,
+        // Persist the post-attack interceptor state so the next attack
+        // this turn sees the burned dice / raised threshold.
+        interceptorDiceRemaining: interceptorRemaining,
+        interceptorThresholdCurrent: interceptorThreshold,
         damageState: nextDamageState,
         isDestroyed: targetDestroyed,
       }).where(eq(gameUnitsTable.id, target.id));
@@ -1749,7 +1820,15 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         dodgesSuccessful,
         interceptedHits,
         interceptorRolls,
-        interceptorThreshold,
+        // Back-compat: 0 when no check was made (bypass / no trait / no
+        // surviving hits / empty pool); otherwise the threshold of the
+        // first attempt.
+        interceptorThreshold: interceptorAttempts.length > 0 ? interceptorThresholdBefore : 0,
+        interceptorAttempts,
+        interceptorDiceBefore,
+        interceptorDiceAfter: interceptorRemaining,
+        interceptorThresholdBefore,
+        interceptorThresholdAfter: interceptorThreshold,
         shieldedHits,
         targetShieldsBefore: shieldsBefore,
         targetShieldsAfter: shieldsCurrent,
@@ -2113,6 +2192,8 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
         weaponRange: model.weaponRange,
         weaponDamage: model.weaponDamage,
         shieldsCurrent: model.shieldMax ?? 0,
+        interceptorDiceRemaining: parseShipTraits(model.traits).interceptors,
+        interceptorThresholdCurrent: 2,
         crewPoints: model.crew ?? 0,
         maxCrewPoints: model.crew ?? 0,
         damageState: "normal",

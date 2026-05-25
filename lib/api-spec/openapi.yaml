@@ -832,6 +832,11 @@ components:
         - interceptedHits
         - interceptorRolls
         - interceptorThreshold
+        - interceptorAttempts
+        - interceptorDiceBefore
+        - interceptorDiceAfter
+        - interceptorThresholdBefore
+        - interceptorThresholdAfter
         - shieldedHits
         - targetShieldsBefore
         - targetShieldsAfter
@@ -888,12 +893,26 @@ components:
           items: { type: integer }
           description: "Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible."
         dodgesSuccessful: { type: integer }
-        interceptedHits: { type: integer, description: "Hits cancelled by target's Interceptors (dice that met interceptorThreshold)." }
+        interceptedHits: { type: integer, description: "Total hits cancelled by target's Interceptors across all per-hit attempts this shot." }
         interceptorRolls:
           type: array
           items: { type: integer }
-          description: "Per-Interceptor-die d6 results. One die per point of target's Interceptors rating, rolled only when there are still surviving hits after Dodge. Empty when no interceptor check was made: target has no Interceptors, weapon bypasses (Beam / Mini Beam / Mass Driver / Energy Mine), no hits scored, or all hits already cancelled by dodges."
-        interceptorThreshold: { type: integer, description: "Minimum d6 result for an interceptor die to cancel a hit (6 when a check was made; 0 when interceptorRolls is empty)." }
+          description: "FLATTENED back-compat list of every Interceptor d6 rolled this shot (across all per-hit attempts). Prefer `interceptorAttempts` for per-hit grouping with the threshold that applied to each attempt. Empty when no interceptor check was made (no Interceptors, weapon bypasses, no surviving hits, or pool was already empty)."
+        interceptorThreshold: { type: integer, description: "Back-compat: threshold at the START of this shot (== interceptorThresholdBefore). 0 when no interceptor check was made. Per-attempt thresholds may differ as the pool degrades — see interceptorAttempts." }
+        interceptorAttempts:
+          type: array
+          description: "One entry per incoming hit that the defender attempted to intercept (in order). Each entry shows the dice rolled, the threshold that applied to that attempt, and whether the hit was cancelled. Per the sheet: dice rolling 1 are permanently lost for the turn and the threshold ramps 2+ → 3+ → 4+ → 5+ → 6+; the final remaining die always intercepts only on 6+."
+          items:
+            type: object
+            required: [rolls, threshold, success]
+            properties:
+              rolls:     { type: array, items: { type: integer }, description: "d6 results for every remaining die rolled this attempt." }
+              threshold: { type: integer, description: "Minimum d6 needed for any die to cancel the hit this attempt." }
+              success:   { type: boolean, description: "True if ≥1 die met threshold (hit cancelled)." }
+        interceptorDiceBefore:      { type: integer, description: "Defender's remaining Interceptor dice at the start of this shot." }
+        interceptorDiceAfter:       { type: integer, description: "Remaining Interceptor dice after this shot (persists for the rest of the turn; refreshes at end of round)." }
+        interceptorThresholdBefore: { type: integer, description: "Defender's Interceptor threshold (need-roll) at the start of this shot." }
+        interceptorThresholdAfter:  { type: integer, description: "Interceptor threshold after this shot." }
         shieldedHits:    { type: integer, description: "Hits absorbed by target's shields." }
         targetShieldsBefore: { type: integer }
         targetShieldsAfter:  { type: integer }
