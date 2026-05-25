@@ -643,7 +643,31 @@ function AnnularSector({ rInner, rOuter, startAngle, endAngle, color, opacity }:
   );
 }
 
-function ForwardPreview({ distance, maxDistance }: { distance: number; maxDistance: number }) {
+function ForwardPreview({ distance, maxDistance, minRequired, committedBefore, minExempt }: {
+  distance: number;
+  maxDistance: number;
+  // Inches the ship MUST cover this activation (sheet rule: at least half
+  // base speed). Zero / exempt → no minimum line, arrow always green.
+  minRequired: number;
+  // Distance already committed to the ledger before this in-progress segment.
+  committedBefore: number;
+  // True when ship is All Stop / All Stop & Pivot / under mandatory-move
+  // status (adrift, exploding) — minimum doesn't apply, color stays neutral.
+  minExempt: boolean;
+}) {
+  const totalAfter = committedBefore + distance;
+  const meetsMin = minExempt || minRequired <= 0 || totalAfter + 1e-6 >= minRequired;
+  // Red while short of minimum, green once met. Cyan when no minimum applies
+  // (exempt: All Stop / All Stop & Pivot / adrift) so the arrow doesn't look
+  // urgent for ships that genuinely don't have to move.
+  const arrowColor = minExempt ? "#22d3ee" : meetsMin ? "#22c55e" : "#ef4444";
+  const arrowTextColor = minExempt ? "#67e8f9" : meetsMin ? "#86efac" : "#fca5a5";
+  // Where on the max-range rail the half-speed minimum sits, measured from
+  // the ship's nose. Only render if a) minimum applies and b) it falls inside
+  // the still-available distance (i.e. the player hasn't already covered it
+  // with previously-committed movement this activation).
+  const minRemaining = Math.max(0, minRequired - committedBefore);
+  const showMinTick = !minExempt && minRequired > 0 && minRemaining > 0 && minRemaining <= maxDistance + 1e-6;
   return (
     <group>
       {/* Faint max-range rail showing how far this ship can still go this phase */}
@@ -653,26 +677,33 @@ function ForwardPreview({ distance, maxDistance }: { distance: number; maxDistan
           <meshBasicMaterial color="#0891b2" transparent opacity={0.35} />
         </mesh>
       )}
+      {/* Half-speed minimum tick: small amber crossbar on the rail. */}
+      {showMinTick && (
+        <mesh position={[0, 0.07, 1.2 + minRemaining]}>
+          <boxGeometry args={[0.5, 0.04, 0.06]} />
+          <meshBasicMaterial color="#f59e0b" transparent opacity={0.95} />
+        </mesh>
+      )}
       {/* Active distance arrow */}
       {distance > 0 && (
         <>
           <mesh position={[0, 0.06, 1.2 + distance / 2]}>
             <boxGeometry args={[0.1, 0.04, distance]} />
-            <meshBasicMaterial color="#22d3ee" transparent opacity={0.9} />
+            <meshBasicMaterial color={arrowColor} transparent opacity={0.9} />
           </mesh>
-          <mesh position={[0, 0.06, 1.2 + distance]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[0, 0.06, 1.2 + distance] as [number, number, number]} rotation={[Math.PI / 2, 0, 0]}>
             <coneGeometry args={[0.28, 0.55, 14]} />
-            <meshBasicMaterial color="#22d3ee" transparent opacity={0.95} />
+            <meshBasicMaterial color={arrowColor} transparent opacity={0.95} />
           </mesh>
           <Text
             position={[0.55, 0.1, 1.2 + distance / 2]}
             fontSize={0.34}
-            color="#67e8f9"
+            color={arrowTextColor}
             anchorX="left"
             anchorY="middle"
             outlineWidth={0.04}
             outlineColor="black"
-          >{`${distance.toFixed(1)}"`}</Text>
+          >{`${distance.toFixed(1)}"${minExempt || meetsMin ? "" : ` / min ${minRequired.toFixed(1)}"`}`}</Text>
         </>
       )}
     </group>
@@ -714,11 +745,14 @@ function TurnArcPreview({ deltaDeg }: { deltaDeg: number }) {
   );
 }
 
-function MovementPlanner({ unit, plan, flip, remainingMove }: {
+function MovementPlanner({ unit, plan, flip, remainingMove, minRequired, committedBefore, minExempt }: {
   unit: { hexQ: number; hexR: number; heading: number; speed: number };
   plan: MovePlan;
   flip: boolean;
   remainingMove: number;
+  minRequired: number;
+  committedBefore: number;
+  minExempt: boolean;
 }) {
   if (!plan) return null;
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
@@ -731,7 +765,15 @@ function MovementPlanner({ unit, plan, flip, remainingMove }: {
     <group position={[x, 0, z]}>
       <group rotation={[0, headingRad, 0]}>
         <group scale={flip ? [1, 1, -1] : [1, 1, 1]}>
-          {plan.kind === "forward" && <ForwardPreview distance={plan.distance} maxDistance={remainingMove} />}
+          {plan.kind === "forward" && (
+            <ForwardPreview
+              distance={plan.distance}
+              maxDistance={remainingMove}
+              minRequired={minRequired}
+              committedBefore={committedBefore}
+              minExempt={minExempt}
+            />
+          )}
           {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
         </group>
       </group>
@@ -1808,14 +1850,31 @@ export default function GameBoard() {
                 />
               );
             })}
-            {game.status === "active" && isSelectedUnitActive && selectedUnitData && !selectedUnitData.isDestroyed && (
-              <MovementPlanner
-                unit={selectedUnitData}
-                plan={movePlan}
-                flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
-                remainingMove={selectedRemainingMove}
-              />
-            )}
+            {game.status === "active" && isSelectedUnitActive && selectedUnitData && !selectedUnitData.isDestroyed && (() => {
+              // Per sheet: every ship MUST move at least half its base speed
+              // each activation UNLESS it has declared All Stop / All Stop &
+              // Pivot, or is under mandatory-move status (adrift / about to
+              // explode). Red-until-met / green-once-met arrow surfaces this.
+              const baseAction = (selectedUnitData.specialAction ?? "").replace(/-failed$/, "");
+              const minExempt =
+                baseAction === "all-stop" ||
+                baseAction === "all-stop-pivot" ||
+                selectedUnitData.damageState === "adrift" ||
+                selectedUnitData.damageState === "exploding-end-of-next";
+              const minRequired = minExempt ? 0 : selectedUnitData.speed / 2;
+              const committedBefore = getLedger(selectedUnitData.id).distance;
+              return (
+                <MovementPlanner
+                  unit={selectedUnitData}
+                  plan={movePlan}
+                  flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
+                  remainingMove={selectedRemainingMove}
+                  minRequired={minRequired}
+                  committedBefore={committedBefore}
+                  minExempt={minExempt}
+                />
+              );
+            })()}
             {stagedUnits.map(unit => (
               <StagedUnit3D
                 key={unit.id}
