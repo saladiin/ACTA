@@ -827,6 +827,8 @@ components:
         - dodgeRolls
         - dodgesSuccessful
         - interceptedHits
+        - interceptorRolls
+        - interceptorThreshold
         - shieldedHits
         - targetShieldsBefore
         - targetShieldsAfter
@@ -883,7 +885,12 @@ components:
           items: { type: integer }
           description: "Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible."
         dodgesSuccessful: { type: integer }
-        interceptedHits: { type: integer, description: "Hits absorbed by target's Interceptors." }
+        interceptedHits: { type: integer, description: "Hits cancelled by target's Interceptors (dice that met interceptorThreshold)." }
+        interceptorRolls:
+          type: array
+          items: { type: integer }
+          description: "Per-Interceptor-die d6 results. One die per point of target's Interceptors rating, rolled only when there are still surviving hits after Dodge. Empty when no interceptor check was made: target has no Interceptors, weapon bypasses (Beam / Mini Beam / Mass Driver / Energy Mine), no hits scored, or all hits already cancelled by dodges."
+        interceptorThreshold: { type: integer, description: "Minimum d6 result for an interceptor die to cancel a hit (6 when a check was made; 0 when interceptorRolls is empty)." }
         shieldedHits:    { type: integer, description: "Hits absorbed by target's shields." }
         targetShieldsBefore: { type: integer }
         targetShieldsAfter:  { type: integer }

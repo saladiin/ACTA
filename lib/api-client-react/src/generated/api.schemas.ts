@@ -442,8 +442,12 @@ export interface FireWeaponResult {
   /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */
   dodgeRolls: number[];
   dodgesSuccessful: number;
-  /** Hits absorbed by target's Interceptors. */
+  /** Hits cancelled by target's Interceptors (dice that met interceptorThreshold). */
   interceptedHits: number;
+  /** Per-Interceptor-die d6 results. One die per point of target's Interceptors rating, rolled only when there are still surviving hits after Dodge. Empty when no interceptor check was made: target has no Interceptors, weapon bypasses (Beam / Mini Beam / Mass Driver / Energy Mine), no hits scored, or all hits already cancelled by dodges. */
+  interceptorRolls: number[];
+  /** Minimum d6 result for an interceptor die to cancel a hit (6 when a check was made; 0 when interceptorRolls is empty). */
+  interceptorThreshold: number;
   /** Hits absorbed by target's shields. */
   shieldedHits: number;
   targetShieldsBefore: number;

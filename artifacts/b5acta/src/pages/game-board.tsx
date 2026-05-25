@@ -3246,6 +3246,33 @@ function DiceRollModal({
           </div>
         )}
 
+        {/* Interceptor reveal — defender's 1d6-per-rating, each ≥ threshold cancels a hit. */}
+        {phase === "attack-shown" && result && result.interceptorRolls.length > 0 && (
+          <div className="mt-3 space-y-1" data-testid="interceptor-reveal">
+            <p className="text-[10px] uppercase tracking-wider text-cyan-300/80 font-mono">
+              Interceptors · {result.interceptorRolls.length}d6 · need {result.interceptorThreshold}+
+            </p>
+            <div className="flex flex-wrap gap-1.5" data-testid="interceptor-dice">
+              {result.interceptorRolls.map((d, i) => {
+                const success = d >= result.interceptorThreshold;
+                return (
+                  <div key={i} className="flex flex-col items-center">
+                    <DiceFace value={d} rolling={false} />
+                    <span className={`text-[10px] font-mono mt-0.5 ${success ? "text-cyan-300 font-bold" : "text-muted-foreground"}`}>
+                      {success ? "✓" : "✗"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] font-mono text-cyan-300/80 pt-0.5">
+              {result.interceptedHits > 0
+                ? <>−{result.interceptedHits} hit{result.interceptedHits === 1 ? "" : "s"} intercepted.</>
+                : <>No interceptions.</>}
+            </p>
+          </div>
+        )}
+
         {/* Damage prompt */}
         {phase === "damage-ready" && result && (
           <div className="mt-4 text-sm font-mono text-muted-foreground text-center" data-testid="dice-prompt-damage">

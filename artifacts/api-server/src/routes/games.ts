@@ -1329,13 +1329,23 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         remainingHits = Math.max(0, remainingHits - dodgesSuccessful);
       }
 
-      // Interceptors: defender absorbs up to X hits per firing activation.
-      // Skipped by Beam, Mini Beam, Mass Driver, Energy Mine.
+      // Interceptors: defender rolls 1d6 per point of Interceptors rating;
+      // each die >= interceptorThreshold cancels one surviving hit (capped at
+      // remainingHits). Skipped by Beam, Mini Beam, Mass Driver, Energy Mine.
       let interceptedHits = 0;
+      const interceptorRolls: number[] = [];
+      let interceptorThreshold = 0;
       const interceptorsAvailable = targetTraits.interceptors;
       const interceptorsBypassed = wt.beam || wt.miniBeam || wt.massDriver || wt.energyMine;
       if (!interceptorsBypassed && interceptorsAvailable > 0 && remainingHits > 0) {
-        interceptedHits = Math.min(remainingHits, interceptorsAvailable);
+        interceptorThreshold = 6;
+        let successes = 0;
+        for (let i = 0; i < interceptorsAvailable; i++) {
+          const d = rollD6();
+          interceptorRolls.push(d);
+          if (d >= interceptorThreshold) successes++;
+        }
+        interceptedHits = Math.min(remainingHits, successes);
         remainingHits -= interceptedHits;
       }
 
@@ -1717,6 +1727,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         dodgeRolls,
         dodgesSuccessful,
         interceptedHits,
+        interceptorRolls,
+        interceptorThreshold,
         shieldedHits,
         targetShieldsBefore: shieldsBefore,
         targetShieldsAfter: shieldsCurrent,
