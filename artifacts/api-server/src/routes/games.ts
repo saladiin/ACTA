@@ -829,7 +829,35 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
       if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
       if (game.activeUnitId && game.activeUnitId !== unitId) {
-        throw Object.assign(new Error("End your current activation first"), { status: 400 });
+        // Allow swapping the active unit ONLY if the current pick has made
+        // no committal action yet — i.e. the player has changed their mind
+        // about which ship to take but hasn't started spending it.
+        //   Movement phase: no forward/turn move committed AND no Special
+        //     Action declared this activation. Picking an SA or starting
+        //     to move locks the activation to that ship.
+        //   Firing phase: no weapon has fired yet. Once any shot resolves,
+        //     the activation is locked.
+        // SA state on the prior unit that was DECLARED IN MOVEMENT and
+        // carries into firing phase is not a firing-phase commitment, so
+        // we don't gate firing-phase swaps on `specialAction`.
+        const [curActive] = await tx.select().from(gameUnitsTable).where(
+          and(eq(gameUnitsTable.id, game.activeUnitId), eq(gameUnitsTable.gameId, gameId))
+        );
+        const canSwap = curActive && (
+          game.phase === "firing"
+            ? (curActive.firedWeaponIds ?? []).length === 0
+            : !curActive.hasInitiatedMoveThisActivation && !curActive.specialAction
+        );
+        if (!canSwap) {
+          throw Object.assign(
+            new Error(
+              game.phase === "firing"
+                ? "Cannot switch ships — already fired this activation"
+                : "Cannot switch ships — movement or Special Action already committed"
+            ),
+            { status: 400 }
+          );
+        }
       }
 
       const [unit] = await tx.select().from(gameUnitsTable).where(
@@ -858,14 +886,17 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
         if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
       }
 
-      // Conditional UPDATE: succeeds only if state still matches what we saw.
+      // Conditional UPDATE: the optimistic activeUnitId guard is intentionally
+      // dropped — we already held `FOR UPDATE` on the game row above AND we
+      // explicitly authorised the swap (or had no current pick) just above.
+      // Re-asserting `activeUnitId IS NULL OR = unitId` here would reject the
+      // swap path we just allowed.
       const result = await tx.update(gamesTable)
         .set({ activeUnitId: unitId })
         .where(and(
           eq(gamesTable.id, gameId),
           eq(gamesTable.activePlayerId, userId),
           eq(gamesTable.status, "active"),
-          or(isNull(gamesTable.activeUnitId), eq(gamesTable.activeUnitId, unitId)),
         ))
         .returning();
       if (result.length === 0) throw Object.assign(new Error("Activation conflict, retry"), { status: 409 });

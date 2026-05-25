@@ -1663,7 +1663,28 @@ export default function GameBoard() {
         setAttackTarget(null);
         return;
       }
-      // hasActiveUnit && different ship: ignore — must End Activation first.
+      // hasActiveUnit && different own ship: attempt to SWAP the activation.
+      // The server allows this only if the current pick has made no committal
+      // action yet (no movement / SA in movement phase; no shot fired in
+      // firing phase). On rejection, the prior activation stays put and we
+      // surface the server's reason via the existing error toast path.
+      if (phaseDone) return;
+      if (activateUnit.isPending) return;
+      // Optimistically reflect the new selection so the sidebar swaps even
+      // before the server confirms; revert on error.
+      const prevSelected = selectedUnit;
+      setSelectedUnit(unitId);
+      setMovePlan(null);
+      setMoveTarget(null);
+      setAttackTarget(null);
+      activateUnit.mutate({ gameId, unitId }, {
+        onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+        onError: (err: any) => {
+          setSelectedUnit(prevSelected);
+          // eslint-disable-next-line no-console
+          console.warn("Swap activation failed:", err?.message);
+        },
+      });
       return;
     }
 
