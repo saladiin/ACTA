@@ -659,6 +659,15 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
   if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
   if (unit.hasMovedThisRound) { res.status(400).json({ error: "Unit has already moved this round" }); return; }
+  // "All Stop": ship halts and may not turn this round. Reject any heading
+  // change; position changes (½-speed coast) are still allowed because the
+  // ledger/UI clamps movement to the SA's speed cap.
+  {
+    const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
+    if (baseAction === "all-stop" && body.data.newHeading !== unit.heading) {
+      res.status(400).json({ error: "All Stop forbids turning this round" }); return;
+    }
+  }
   // Adrift-style states (`adrift`, `exploding-end-of-next`) get exactly ONE
   // commander-initiated drift per round: forward along the current heading
   // at exactly floor(speed/2) inches, no turning. We enforce all three
@@ -687,6 +696,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
         hexR: body.data.toHexR,
         heading: unit.heading,
         hasMovedThisRound: true,
+        hasInitiatedMoveThisActivation: true,
+        // Any commander-initiated movement (including the adrift drift)
+        // breaks the All Stop latch — the ship is no longer holding station.
+        allStopReady: false,
       })
       .where(eq(gameUnitsTable.id, params.data.unitId))
       .returning();
@@ -695,7 +708,15 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   }
 
   const [updated] = await db.update(gameUnitsTable)
-    .set({ hexQ: body.data.toHexQ, hexR: body.data.toHexR, heading: body.data.newHeading })
+    .set({
+      hexQ: body.data.toHexQ,
+      hexR: body.data.toHexR,
+      heading: body.data.newHeading,
+      hasInitiatedMoveThisActivation: true,
+      // Movement consumes the All Stop latch (only ships that held station
+      // last round get to pivot this round).
+      allStopReady: false,
+    })
     .where(eq(gameUnitsTable.id, params.data.unitId))
     .returning();
 
@@ -805,7 +826,7 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       // each weapon gets exactly one shot this firing activation. (Harmless
       // for movement-phase activations; firing-phase code reads this.)
       await tx.update(gameUnitsTable)
-        .set({ firedWeaponIds: [] })
+        .set({ firedWeaponIds: [], hasInitiatedMoveThisActivation: false })
         .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
       return result[0];
     });
@@ -1817,6 +1838,13 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
       if (unit.specialAction) throw Object.assign(new Error("Already used a Special Action this round"), { status: 400 });
       if (unit.hasMovedThisRound) throw Object.assign(new Error("Cannot declare a Special Action after the activation has ended"), { status: 400 });
+      // Authoritative per-activation guard: even a partial /move (forward
+      // step or heading change) commits the ship to its current trajectory
+      // and forbids declaring an SA — declarations exist to constrain the
+      // activation that follows, not to retroactively re-frame it. Without
+      // this check a client could /move (e.g. change heading), then declare
+      // all-stop and arm allStopReady, gaining a pivot it never earned.
+      if (unit.hasInitiatedMoveThisActivation) throw Object.assign(new Error("Cannot declare a Special Action after movement has started"), { status: 400 });
       // Slice C: Skeleton Crew (crewPoints ≤ ½ max) and Adrift ships
       // cannot declare Special Actions.
       if (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) {
@@ -1853,6 +1881,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
         storedTarget = targetUnitId;
       }
+      if (action === "all-stop-pivot" && !unit.allStopReady) {
+        throw Object.assign(new Error("All Stop and Pivot requires that this ship declared All Stop the previous round"), { status: 400 });
+      }
       if (action === "blast-doors") {
         // Rule: "Ships with only 1 weapon system cannot fire" under blast
         // doors — there's no point declaring it on a single-system hull, so
@@ -1878,9 +1909,17 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       // Persist. Failed attempts still record (suffix -failed) so the
       // always-on penalty side of Run Silent / etc. is enforced.
       const stored = success ? action : `${action}-failed`;
+      // All Stop latch transitions:
+      //   success "all-stop"        → arm the latch (pivot allowed next round)
+      //   success "all-stop-pivot"  → consume the latch (one-shot prerequisite)
+      //   anything else             → leave the latch untouched
+      let nextAllStopReady = unit.allStopReady;
+      if (success && action === "all-stop") nextAllStopReady = true;
+      else if (success && action === "all-stop-pivot") nextAllStopReady = false;
       const [updated] = await tx.update(gameUnitsTable).set({
         specialAction: stored,
         specialActionTargetId: success ? storedTarget : null,
+        allStopReady: nextAllStopReady,
       }).where(eq(gameUnitsTable.id, unit.id)).returning();
 
       return {

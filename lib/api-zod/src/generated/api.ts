@@ -300,7 +300,8 @@ export const GetGameResponse = zod.object({
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
-  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
 })),
   "turns": zod.array(zod.object({
   "id": zod.number(),
@@ -743,7 +744,8 @@ export const DamageControlResponse = zod.object({
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
-  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
 })
 })
 
@@ -819,7 +821,8 @@ export const ChooseSpecialActionResponse = zod.object({
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
-  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
 })
 })
 
@@ -889,7 +892,8 @@ export const DevMoveUnitResponse = zod.object({
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
-  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
 })
 
 
@@ -958,7 +962,8 @@ export const MoveUnitResponse = zod.object({
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
-  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.')
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
 })
 
 

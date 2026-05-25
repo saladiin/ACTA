@@ -1112,7 +1112,7 @@ export default function GameBoard() {
       isAllPower ? Math.floor(u.speed * 1.5) :
       u.speed;
     const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
-    const turnsForbidden = isAllPower || isRunSilent;
+    const turnsForbidden = isAllPower || isRunSilent || isAllStop;
     const led = getLedger(u.id);
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
     let distanceCommitted = 0;
@@ -1223,9 +1223,9 @@ export default function GameBoard() {
       const isComeAbout = u.specialAction === "come-about"; // success-only
       // Come About: +1 extra turn this activation.
       const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
-      // No turns allowed under All Power to Engines or Run Silent.
+      // No turns allowed under All Power to Engines, Run Silent, or All Stop.
       // All Stop and Pivot doubles turn rate but allows turns.
-      const turnsForbidden = isAllPower || isRunSilent;
+      const turnsForbidden = isAllPower || isRunSilent || isAllStop;
       const canTurn = !turnsForbidden && led.turns < maxTurns && (led.turns === 0 || led.distance >= u.speed / 2);
       // Effective speed cap per action.
       // All Power: +50% (Afterburner not modeled yet).
@@ -1283,7 +1283,9 @@ export default function GameBoard() {
     const isRunSilent = baseAction === "run-silent";
     const isComeAbout = u.specialAction === "come-about";
     const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
-    const turnsForbidden = isAllPower || isRunSilent;
+    // Keep in sync with the keyboard handler's turnsForbidden — All Stop
+    // forbids turning per the sheet ("ship halts; may not turn").
+    const turnsForbidden = isAllPower || isRunSilent || isAllStop;
     const speedCap =
       isAllStopPivot ? 0 :
       isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
@@ -2565,7 +2567,11 @@ export default function GameBoard() {
                           // Run Silent's stealth without paying its ½-speed cost).
                           const ledAct = getLedger(selectedUnitData.id);
                           const alreadyMoved = ledAct.distance > 0 || ledAct.turns > 0;
-                          const disabled = chooseSpecialAction.isPending || (needsTarget && !enemyAlive) || alreadyMoved || !!noSAReason;
+                          // All Stop and Pivot: only available if this ship
+                          // declared All Stop the previous round (server
+                          // enforces the same gate via unit.allStopReady).
+                          const needsAllStopPrereq = a.id === "all-stop-pivot" && !selectedUnitData.allStopReady;
+                          const disabled = chooseSpecialAction.isPending || (needsTarget && !enemyAlive) || alreadyMoved || !!noSAReason || needsAllStopPrereq;
                           return (
                             <button
                               key={a.id}
@@ -2608,7 +2614,11 @@ export default function GameBoard() {
                                 <span className="text-[9px] opacity-70">{a.cq === null ? "AUTO" : `CQ ${a.cq}+`}</span>
                               </div>
                               <div className="text-[9px] opacity-70">
-                                {picking ? "▸ Click an enemy ship to nominate" : a.hint}
+                                {picking
+                                  ? "▸ Click an enemy ship to nominate"
+                                  : needsAllStopPrereq
+                                    ? "Requires All Stop last round"
+                                    : a.hint}
                               </div>
                             </button>
                           );

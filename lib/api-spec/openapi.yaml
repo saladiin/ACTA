@@ -752,6 +752,9 @@ components:
         specialActionTargetId:
           type: ["integer", "null"]
           description: "Nominated target unit id for 'concentrate-fire'; null otherwise."
+        allStopReady:
+          type: boolean
+          description: "True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring 'all-stop-pivot' next round; cleared on /move or successful 'all-stop-pivot' declaration."
 
     GameDetail:
       type: object

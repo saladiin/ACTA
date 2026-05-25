@@ -307,6 +307,8 @@ export interface GameUnit {
      * @nullable
      */
   specialActionTargetId?: number | null;
+  /** True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring 'all-stop-pivot' next round; cleared on /move or successful 'all-stop-pivot' declaration. */
+  allStopReady?: boolean;
 }
 
 export type TurnMoves = { [key: string]: unknown };

@@ -105,8 +105,22 @@ export const gameUnitsTable = pgTable("game_units", {
   // For "concentrate-fire": the nominated target unit id. Read by the
   // fire-weapon route to gate the re-roll bonus.
   specialActionTargetId: integer("special_action_target_id"),
+  // "All Stop and Pivot" prerequisite latch. Set true when a ship
+  // successfully declares "all-stop". Persists across round rollover (the
+  // pivot is granted to ships that spent the prior round at All Stop).
+  // Cleared when (a) the ship moves via /move, or (b) it declares
+  // "all-stop-pivot" (consumed). Declaring "all-stop-pivot" requires this
+  // flag to be true.
+  allStopReady: boolean("all_stop_ready").notNull().default(false),
   isDestroyed: boolean("is_destroyed").notNull().default(false),
   hasMovedThisRound: boolean("has_moved_this_round").notNull().default(false),
+  // Per-activation movement guard (NOT hasMovedThisRound — that latches
+  // only at end-activation). Reset to false on /activate-unit, set true
+  // on any successful /move. Read by /special-action to refuse SA
+  // declarations after a ship has already committed any movement this
+  // activation — closes the bypass where /move could be called first to
+  // change heading, then /special-action all-stop could arm allStopReady.
+  hasInitiatedMoveThisActivation: boolean("has_initiated_move_this_activation").notNull().default(false),
   hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),
   // Weapons this ship has already discharged DURING the current firing
   // activation. Reset to [] each time the ship is picked up for activation so
