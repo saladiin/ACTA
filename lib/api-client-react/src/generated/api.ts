@@ -1166,6 +1166,76 @@ export const useSurrenderGame = <TError = ErrorType<unknown>,
       return useMutation(getSurrenderGameMutationOptions(options));
     }
 
+export const getConcedeGameUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/concede`
+}
+
+/**
+ * @summary Concede an active or deploying game early. Distinct from /surrender — concession is available at any time (no all-ships-disabled prerequisite) and PRESERVES the game record, marking it status='completed' with winnerId set to the other player so it appears in Recent Engagements as a normal loss. Only callable by the challenger or the opponent.
+ */
+export const concedeGame = async (gameId: number, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getConcedeGameUrl(gameId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getConcedeGameMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof concedeGame>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof concedeGame>>, TError,{gameId: number}, TContext> => {
+
+const mutationKey = ['concedeGame'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof concedeGame>>, {gameId: number}> = (props) => {
+          const {gameId} = props ?? {};
+
+          return  concedeGame(gameId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConcedeGameMutationResult = NonNullable<Awaited<ReturnType<typeof concedeGame>>>
+
+    export type ConcedeGameMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Concede an active or deploying game early. Distinct from /surrender — concession is available at any time (no all-ships-disabled prerequisite) and PRESERVES the game record, marking it status='completed' with winnerId set to the other player so it appears in Recent Engagements as a normal loss. Only callable by the challenger or the opponent.
+ */
+export const useConcedeGame = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof concedeGame>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof concedeGame>>,
+        TError,
+        {gameId: number},
+        TContext
+      > => {
+      return useMutation(getConcedeGameMutationOptions(options));
+    }
+
 export const getDeployFleetUrl = (gameId: number,) => {
 
 

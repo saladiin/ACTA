@@ -405,6 +405,50 @@ router.post("/games/:gameId/surrender", requireAuth, async (req, res): Promise<v
   }
 });
 
+// Concede: a player throws in the towel and grants victory to their opponent
+// while preserving the game record (vs. /surrender, which wipes the record
+// entirely). Unlike /surrender — which is gated on "all my ships are
+// combat-inert" as a forfeit-the-corpse escape hatch — concession is
+// available at any time during 'deploying' or 'active' so a player can bow
+// out early. The game ends with status='completed' and winnerId set to the
+// OTHER player, and shows up in Recent Engagements as a normal loss/win.
+router.post("/games/:gameId/concede", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  try {
+    const updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.challengerId !== userId && game.opponentId !== userId) {
+        // 404 (not 403) to avoid leaking the existence of games this user
+        // isn't party to.
+        throw Object.assign(new Error("Game not found"), { status: 404 });
+      }
+      if (game.status !== "active" && game.status !== "deploying") {
+        throw Object.assign(new Error(`Cannot concede from status '${game.status}'`), { status: 400 });
+      }
+      // Winner is the OTHER party. If the opponent slot is somehow empty
+      // (e.g. solo deploying state), fall back to null winner — the match
+      // is just recorded as completed without a victor.
+      const winnerId = userId === game.challengerId ? game.opponentId : game.challengerId;
+      const [row] = await tx.update(gamesTable)
+        .set({ status: "completed", winnerId: winnerId ?? null })
+        .where(eq(gamesTable.id, params.data.gameId))
+        .returning();
+      return row;
+    });
+    res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
 router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = DeployFleetParams.safeParse(req.params);

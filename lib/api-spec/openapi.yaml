@@ -295,6 +295,25 @@ paths:
         "204":
           description: Surrendered and deleted.
 
+  /games/{gameId}/concede:
+    post:
+      operationId: concedeGame
+      tags: [games]
+      summary: Concede an active or deploying game early. Distinct from /surrender — concession is available at any time (no all-ships-disabled prerequisite) and PRESERVES the game record, marking it status='completed' with winnerId set to the other player so it appears in Recent Engagements as a normal loss. Only callable by the challenger or the opponent.
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conceded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
   /games/{gameId}/deploy:
     post:
       operationId: deployFleet

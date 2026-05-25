@@ -410,6 +410,45 @@ export const SurrenderGameParams = zod.object({
 
 
 /**
+ * @summary Concede an active or deploying game early. Distinct from /surrender — concession is available at any time (no all-ships-disabled prerequisite) and PRESERVES the game record, marking it status='completed' with winnerId set to the other player so it appears in Recent Engagements as a normal loss. Only callable by the challenger or the opponent.
+ */
+export const ConcedeGameParams = zod.object({
+  "gameId": zod.coerce.number()
+})
+
+export const concedeGameResponseDeploymentDepthMin = 4;
+export const concedeGameResponseDeploymentDepthMax = 30;
+
+
+
+export const ConcedeGameResponse = zod.object({
+  "id": zod.number(),
+  "challengerId": zod.string(),
+  "opponentId": zod.string().nullish(),
+  "challengerName": zod.string().nullish(),
+  "opponentName": zod.string().nullish(),
+  "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
+  "winnerId": zod.string().nullish(),
+  "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['movement', 'firing']),
+  "initiativeWinnerId": zod.string().nullish(),
+  "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(concedeGameResponseDeploymentDepthMin).max(concedeGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Place your fleet on the board at the start of a game
  */
 export const DeployFleetParams = zod.object({

@@ -22,6 +22,7 @@ import {
   useFireWeapon,
   useDamageControl,
   useSurrenderGame,
+  useConcedeGame,
   useChooseSpecialAction,
   useListFleets,
   useListFleetShips,
@@ -40,7 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Wrench, RotateCw, RotateCcw, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from "lucide-react";
+import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Wrench, RotateCw, RotateCcw, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Flag } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
 // Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
@@ -907,8 +908,10 @@ export default function GameBoard() {
   const fireWeapon = useFireWeapon();
   const damageControl = useDamageControl();
   const surrenderGame = useSurrenderGame();
+  const concedeGame = useConcedeGame();
   const [, setLocation] = useLocation();
   const [confirmingSurrender, setConfirmingSurrender] = useState(false);
+  const [confirmingConcede, setConfirmingConcede] = useState(false);
   const chooseSpecialAction = useChooseSpecialAction();
   // Transient feedback for the most recent special-action attempt
   // (success/fail + dice roll). Cleared when activation ends.
@@ -2324,6 +2327,69 @@ export default function GameBoard() {
               >
                 <XCircle className="w-3.5 h-3.5" /> Withdraw Challenge
               </Button>
+            </div>
+          )}
+
+          {/* Concede. Always available to either player during 'deploying'
+              or 'active' — distinct from Surrender (below), which is the
+              auto-loss escape hatch and wipes the record entirely. Concede
+              ends the match cleanly with the opponent recorded as the
+              victor and preserves the game in Recent Engagements. */}
+          {(game.status === "active" || game.status === "deploying") &&
+            (isChallenger || isOpponent) && (
+            <div className="p-4 border-b border-border space-y-2" data-testid="concede-panel">
+              {confirmingConcede ? (
+                <>
+                  <p className="text-[11px] text-amber-300/90 font-mono uppercase tracking-wider">
+                    Concede this engagement to your opponent? This cannot be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      data-testid="button-confirm-concede"
+                      className="flex-1 gap-1.5 uppercase tracking-wider text-xs"
+                      onClick={() => concedeGame.mutate({ gameId }, {
+                        onSuccess: () => {
+                          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+                          qc.invalidateQueries({ queryKey: ["getLobby"] });
+                          qc.invalidateQueries({ queryKey: ["listGames"] });
+                          setLocation("/lobby");
+                        },
+                      })}
+                      disabled={concedeGame.isPending}
+                    >
+                      <Flag className="w-3.5 h-3.5" />
+                      {concedeGame.isPending ? "Conceding…" : "Confirm Concede"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      data-testid="button-cancel-concede"
+                      className="gap-1.5 uppercase tracking-wider text-xs"
+                      onClick={() => setConfirmingConcede(false)}
+                      disabled={concedeGame.isPending}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-testid="button-concede"
+                  className="w-full gap-1.5 uppercase tracking-wider text-xs border-amber-500/40 text-amber-300/90 hover:bg-amber-500/10"
+                  onClick={() => setConfirmingConcede(true)}
+                >
+                  <Flag className="w-3.5 h-3.5" /> Concede Engagement
+                </Button>
+              )}
+              {concedeGame.isError && (
+                <p className="text-[11px] text-red-400 font-mono" data-testid="text-concede-error">
+                  {(concedeGame.error as Error).message}
+                </p>
+              )}
             </div>
           )}
 
