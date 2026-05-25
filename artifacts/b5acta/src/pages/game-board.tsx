@@ -1065,10 +1065,14 @@ export default function GameBoard() {
   // Per-unit movement-phase ledger. Each ship gets ONE activation per round
   // with `speed` inches and `turns` rotations to spend; the ledger is wiped
   // when the round rolls over.
-  const [phaseLedger, setPhaseLedger] = useState<Record<number, { distance: number; turns: number }>>({});
+  // `distSinceLastTurn` is inches moved since the most recent committed turn
+  // (or since the start of the activation, if no turn yet). It governs the
+  // turn-eligibility gate: first turn requires ≥ half base speed moved;
+  // each follow-up turn requires ≥ 2" moved since the previous turn.
+  const [phaseLedger, setPhaseLedger] = useState<Record<number, { distance: number; turns: number; distSinceLastTurn: number }>>({});
   const currentRoundNumber = gameData?.game?.currentRound ?? 1;
   useEffect(() => { setPhaseLedger({}); }, [currentRoundNumber]);
-  const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0 }, [phaseLedger]);
+  const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0, distSinceLastTurn: 0 }, [phaseLedger]);
 
   // Fleet Yards: optional pre-built fleet to deploy from. Empty string =
   // direct drop-in mode (no fleet — server materializes an ephemeral one
@@ -1199,12 +1203,22 @@ export default function GameBoard() {
     // Optimistically charge the phase ledger BEFORE the mutate resolves —
     // otherwise rapid R/F presses (or another commit) read stale allowances
     // between confirm and onSuccess, bypassing the per-phase limits.
+    // distSinceLastTurn: a forward segment accumulates into it; a turn
+    // commit RESETS it to 0 (next turn's eligibility starts measuring from
+    // the new heading).
     const ledgerDelta = planKind === "forward"
-      ? { distance: distanceCommitted, turns: 0 }
-      : { distance: 0, turns: 1 };
+      ? { distance: distanceCommitted, turns: 0, distSinceLastTurnDelta: distanceCommitted, resetSinceTurn: false }
+      : { distance: 0, turns: 1, distSinceLastTurnDelta: 0, resetSinceTurn: true };
     setPhaseLedger(prev => {
-      const cur = prev[unitId] ?? { distance: 0, turns: 0 };
-      return { ...prev, [unitId]: { distance: cur.distance + ledgerDelta.distance, turns: cur.turns + ledgerDelta.turns } };
+      const cur = prev[unitId] ?? { distance: 0, turns: 0, distSinceLastTurn: 0 };
+      return {
+        ...prev,
+        [unitId]: {
+          distance: cur.distance + ledgerDelta.distance,
+          turns: cur.turns + ledgerDelta.turns,
+          distSinceLastTurn: ledgerDelta.resetSinceTurn ? 0 : cur.distSinceLastTurn + ledgerDelta.distSinceLastTurnDelta,
+        },
+      };
     });
     // Apply the move immediately (real-time, single-ship). Does NOT end the turn.
     moveUnit.mutate(
@@ -1216,7 +1230,19 @@ export default function GameBoard() {
           setPhaseLedger(prev => {
             const cur = prev[unitId];
             if (!cur) return prev;
-            return { ...prev, [unitId]: { distance: Math.max(0, cur.distance - ledgerDelta.distance), turns: Math.max(0, cur.turns - ledgerDelta.turns) } };
+            // Best-effort rollback. We can't perfectly restore
+            // distSinceLastTurn after a rejected turn (we don't remember the
+            // pre-turn value), but a rejected forward CAN be cleanly undone.
+            return {
+              ...prev,
+              [unitId]: {
+                distance: Math.max(0, cur.distance - ledgerDelta.distance),
+                turns: Math.max(0, cur.turns - ledgerDelta.turns),
+                distSinceLastTurn: ledgerDelta.resetSinceTurn
+                  ? cur.distSinceLastTurn // turn was rejected; keep accumulated forward inches
+                  : Math.max(0, cur.distSinceLastTurn - ledgerDelta.distSinceLastTurnDelta),
+              },
+            };
           });
         },
       }
@@ -1271,7 +1297,20 @@ export default function GameBoard() {
       // No turns allowed under All Power to Engines, Run Silent, or All Stop.
       // All Stop and Pivot doubles turn rate but allows turns.
       const turnsForbidden = isAllPower || isRunSilent || isAllStop;
-      const canTurn = !turnsForbidden && led.turns < maxTurns && (led.turns === 0 || led.distance >= u.speed / 2);
+      // Per sheet: a ship must move ≥ ½ base speed before its FIRST turn, and
+      // ≥ 2" of fresh forward motion before each follow-up turn. All Stop &
+      // Pivot bypasses (it's the explicit "pivot in place" SA). Adrift /
+      // exploding ships have mandatory-drift movement and aren't turning by
+      // player choice anyway, but treat them as exempt for consistency.
+      const turnGateExempt = isAllStopPivot
+        || u.damageState === "adrift"
+        || u.damageState === "exploding-end-of-next";
+      const turnDistanceGate = turnGateExempt
+        ? true
+        : led.turns === 0
+          ? led.distance + 1e-6 >= u.speed / 2
+          : led.distSinceLastTurn + 1e-6 >= 2;
+      const canTurn = !turnsForbidden && led.turns < maxTurns && turnDistanceGate;
       // Effective speed cap per action.
       // All Power: +50% (Afterburner not modeled yet).
       // All Stop / Run Silent: half speed.
@@ -2850,6 +2889,33 @@ export default function GameBoard() {
                     <div className="text-[10px] uppercase tracking-wider opacity-70 mt-1">
                       Phase: {getLedger(selectedUnitData.id).distance.toFixed(1)}"/{selectedUnitData.speed}" moved · {getLedger(selectedUnitData.id).turns}/{selectedUnitData.turns ?? 1} turns
                     </div>
+                    {(() => {
+                      // Surface the turn-eligibility gate alongside the phase
+                      // counters so the player knows WHY R is/isn't accepted.
+                      const baseAction = (selectedUnitData.specialAction ?? "").replace(/-failed$/, "");
+                      const isAllStopPivot = baseAction === "all-stop-pivot";
+                      const isAllStop = baseAction === "all-stop";
+                      const isAllPower = baseAction === "all-power-engines";
+                      const isRunSilent = baseAction === "run-silent";
+                      if (isAllStop || isAllPower || isRunSilent) return null;
+                      const led = getLedger(selectedUnitData.id);
+                      const exempt = isAllStopPivot
+                        || selectedUnitData.damageState === "adrift"
+                        || selectedUnitData.damageState === "exploding-end-of-next";
+                      if (exempt) return null;
+                      const isFirstTurn = led.turns === 0;
+                      const need = isFirstTurn ? selectedUnitData.speed / 2 : 2;
+                      const have = isFirstTurn ? led.distance : led.distSinceLastTurn;
+                      const met = have + 1e-6 >= need;
+                      return (
+                        <div
+                          className={`text-[10px] uppercase tracking-wider mt-0.5 ${met ? "text-green-400/80" : "text-red-400/80"}`}
+                          data-testid="turn-eligibility-hud"
+                        >
+                          {met ? "✓" : "✗"} {isFirstTurn ? "1st turn" : "next turn"}: {have.toFixed(1)}"/{need.toFixed(1)}" {isFirstTurn ? "(½ speed)" : "since last turn"}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <p className="text-[10px] text-muted-foreground font-mono leading-relaxed">
                     <span className="text-amber-400">F</span> fwd (drag mouse) · <span className="text-amber-400">R</span> turn CW · <span className="text-amber-400">⇧R</span> turn CCW · <span className="text-amber-400">␣</span>/<span className="text-amber-400">↵</span> commit · <span className="text-amber-400">Esc</span> cancel
