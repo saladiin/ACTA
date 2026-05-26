@@ -238,14 +238,32 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     list.push(r);
     critsByUnit.set(r.gameUnitId, list);
   }
-  const unitsWithCrits = units.map(u => ({
-    ...u,
-    criticals: critsByUnit.get(u.id) ?? [],
-    // Slice C derived flags — surfaced to the client so badges can render
-    // without re-deriving the rule.
-    isCrippled: u.maxHullPoints > 0 && u.hullPoints * 2 <= u.maxHullPoints && !u.isDestroyed,
-    isSkeletonCrew: u.maxCrewPoints > 0 && u.crewPoints * 2 <= u.maxCrewPoints && !u.isDestroyed,
-  }));
+  const unitsWithCrits = units.map(u => {
+    const rows = critsByUnit.get(u.id) ?? [];
+    // Engines 6 ("Engines Disabled") and any future crit flagged
+    // adrift force the ship to behave exactly like a hulled-out adrift
+    // unit — halved speed, compulsory drift, no turning, no SAs. The DB
+    // damageState column tracks the hull-zero kill table; crit-adrift
+    // is an orthogonal source that we resolve here so EVERY read path
+    // (movement gating, SA gating, auto-drift, UI badges) sees a single
+    // canonical state without having to re-check the crit rows.
+    const critAdrift = deriveCritEffects(rows.map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    }))).adrift;
+    const damageState = (critAdrift && u.damageState === "normal") ? "adrift" : u.damageState;
+    return {
+      ...u,
+      damageState,
+      criticals: rows,
+      // Slice C derived flags — surfaced to the client so badges can render
+      // without re-deriving the rule.
+      isCrippled: u.maxHullPoints > 0 && u.hullPoints * 2 <= u.maxHullPoints && !u.isDestroyed,
+      isSkeletonCrew: u.maxCrewPoints > 0 && u.crewPoints * 2 <= u.maxCrewPoints && !u.isDestroyed,
+    };
+  });
   res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns }));
 });
 
@@ -720,8 +738,22 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   // at exactly floor(speed/2) inches, no turning. We enforce all three
   // invariants here and immediately latch hasMovedThisRound so a second
   // call can't double-drift in the same round.
+  //
+  // Crit-derived adrift (Engines 6 "Engines Disabled") is treated the same
+  // as a hull-zero adrift — without this check a Nova carrying an active
+  // engines-disabled crit could still declare normal movement.
+  const moveCritRows = await db.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+  const moveCrits = deriveCritEffects(moveCritRows.map(r => ({
+    effectKey: r.effectKey,
+    randomArc: r.randomArc,
+    randomWeaponId: r.randomWeaponId,
+    lostTraits: r.lostTraits ?? [],
+  })));
   const isAdriftLike =
-    unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next";
+    unit.damageState === "adrift"
+    || unit.damageState === "exploding-end-of-next"
+    || moveCrits.adrift;
   if (isAdriftLike) {
     if (body.data.newHeading !== unit.heading) {
       res.status(400).json({ error: "Adrift ship cannot change heading" }); return;
@@ -2010,7 +2042,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
 
       // Critical-effect gate: Reactor 5/6, Bridge, Decompression all set
       // noSA. Block the action entirely (no -failed bookkeeping — the rule
-      // is "cannot declare", not "declare and roll").
+      // is "cannot declare", not "declare and roll"). Engines 6 sets
+      // crit-adrift which is treated identically to hull-zero adrift for
+      // SA purposes (sheet: adrift ships cannot declare SAs).
       const saCritRows = await tx.select().from(unitCriticalEffectsTable)
         .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
       const saCrits = deriveCritEffects(saCritRows.map(r => ({
@@ -2019,6 +2053,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         randomWeaponId: r.randomWeaponId,
         lostTraits: r.lostTraits ?? [],
       })));
+      if (saCrits.adrift) {
+        throw Object.assign(new Error("Adrift ship cannot declare Special Actions"), { status: 400 });
+      }
       if (saCrits.noSA) {
         throw Object.assign(new Error("Cannot declare Special Actions — Bridge / Reactor crit active"), { status: 400 });
       }
