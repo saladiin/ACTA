@@ -12,6 +12,7 @@ import {
 } from "../lib/traits";
 import {
   CRITICAL_TABLE,
+  effectiveDamageState,
   locationFromRoll,
   findEntry,
   rollDice,
@@ -240,23 +241,12 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const unitsWithCrits = units.map(u => {
     const rows = critsByUnit.get(u.id) ?? [];
-    // Engines 6 ("Engines Disabled") and any future crit flagged
-    // adrift force the ship to behave exactly like a hulled-out adrift
-    // unit — halved speed, compulsory drift, no turning, no SAs. The DB
-    // damageState column tracks the hull-zero kill table; crit-adrift
-    // is an orthogonal source that we resolve here so EVERY read path
-    // (movement gating, SA gating, auto-drift, UI badges) sees a single
-    // canonical state without having to re-check the crit rows.
-    const critAdrift = deriveCritEffects(rows.map(r => ({
-      effectKey: r.effectKey,
-      randomArc: r.randomArc,
-      randomWeaponId: r.randomWeaponId,
-      lostTraits: r.lostTraits ?? [],
-    }))).adrift;
-    const damageState = (critAdrift && u.damageState === "normal") ? "adrift" : u.damageState;
     return {
       ...u,
-      damageState,
+      // Centralized adrift overlay — see `effectiveDamageState` for the
+      // why. Used here AND by every mutation route that echoes a unit row,
+      // so all consumers see the same canonical state.
+      damageState: effectiveDamageState(u.damageState, rows),
       criticals: rows,
       // Slice C derived flags — surfaced to the client so badges can render
       // without re-deriving the rule.
@@ -782,7 +772,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       })
       .where(eq(gameUnitsTable.id, params.data.unitId))
       .returning();
-    res.json(updated);
+    res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, moveCritRows) });
     return;
   }
 
@@ -799,7 +789,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     .where(eq(gameUnitsTable.id, params.data.unitId))
     .returning();
 
-  res.json(updated);
+  res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, moveCritRows) });
 });
 
 // ── DEV ONLY: free-form ship reposition ─────────────────────────────────────
@@ -838,7 +828,9 @@ router.post("/games/:gameId/units/:unitId/dev-move", requireAuth, async (req, re
     .returning();
 
   req.log.warn({ unitId: params.data.unitId, gameId: params.data.gameId, hexQ: body.data.hexQ, hexR: body.data.hexR, heading }, "dev-move applied");
-  res.json(updated);
+  const dmCrits = await db.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, updated.id));
+  res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, dmCrits) });
 });
 
 // ── Pick up a ship for its activation this round ─────────────────────────────
@@ -992,6 +984,30 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         // Pass is valid. No unit to mark as done; fall through to the
         // handoff/advance logic which uses the same `remainingFor` filter.
       } else {
+        // Compulsory-drift gate: an adrift-like ship (hull-table adrift,
+        // delayed-explode, OR crit-derived adrift via Engines Disabled)
+        // MUST execute its forced drift before its movement activation can
+        // end. Without this, a custom client could activate a crippled
+        // Nova and call /end-activation directly, skipping the drift
+        // entirely. Firing-phase end-activation is unaffected — the drift
+        // is a movement-phase obligation.
+        if (!isFiring) {
+          const [endedUnit] = await tx.select().from(gameUnitsTable).where(and(
+            eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId),
+          ));
+          if (endedUnit) {
+            const endedCritRows = await tx.select().from(unitCriticalEffectsTable)
+              .where(eq(unitCriticalEffectsTable.gameUnitId, endedUnit.id));
+            const eff = effectiveDamageState(endedUnit.damageState, endedCritRows);
+            const isAdriftLike = eff === "adrift" || eff === "exploding-end-of-next";
+            if (isAdriftLike && !endedUnit.hasInitiatedMoveThisActivation) {
+              throw Object.assign(
+                new Error("Adrift ship must complete its compulsory drift before ending activation"),
+                { status: 400 },
+              );
+            }
+          }
+        }
         // Mark the just-ended activation as done for THIS phase only.
         await tx.update(gameUnitsTable)
           .set(isFiring ? { hasFiredThisRound: true } : { hasMovedThisRound: true })
@@ -2120,7 +2136,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         cqRequired,
         cqRoll,
         cqTotal,
-        unit: updated,
+        // Apply the canonical adrift overlay so the mutation response
+        // matches what GET would return for the same unit.
+        unit: { ...updated, damageState: effectiveDamageState(updated.damageState, saCritRows) },
       };
     });
     res.json(out);
@@ -2224,7 +2242,7 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
         .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
       return {
         success, dcRoll, dcTotal, dcThreshold, dcPenalty, effectId,
-        unit: { ...updated, criticals: liveCrits },
+        unit: { ...updated, damageState: effectiveDamageState(updated.damageState, liveCrits), criticals: liveCrits },
       };
     });
     res.json(out);

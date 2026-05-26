@@ -186,6 +186,33 @@ export interface DerivedCritEffects {
   lostTraitNames: Set<string>;
 }
 
+// Single canonical projection used by every read/mutation path that returns
+// a gameUnit row. The DB `damageState` column tracks the hull-zero kill
+// table; an Engines-Disabled-style crit ("flags.adrift") is an orthogonal
+// source of "adrift" that we MUST overlay here, otherwise different routes
+// would disagree about whether the ship is adrift (e.g. GET reports adrift,
+// /move's response still says "normal"). Returns the raw state unchanged
+// when it's already a hull-table state (adrift / exploding / destroyed) so
+// the kill-table semantics aren't downgraded by a parallel crit.
+export function effectiveDamageState(
+  rawDamageState: string,
+  critRows: ReadonlyArray<{
+    effectKey: string;
+    randomArc: string | null;
+    randomWeaponId: number | null;
+    lostTraits: ReadonlyArray<string>;
+  }>,
+): string {
+  if (rawDamageState !== "normal") return rawDamageState;
+  const d = deriveCritEffects(critRows.map(r => ({
+    effectKey: r.effectKey,
+    randomArc: r.randomArc,
+    randomWeaponId: r.randomWeaponId,
+    lostTraits: r.lostTraits ?? [],
+  })));
+  return d.adrift ? "adrift" : rawDamageState;
+}
+
 export function deriveCritEffects(rows: ReadonlyArray<{
   effectKey: string;
   randomArc: string | null;
