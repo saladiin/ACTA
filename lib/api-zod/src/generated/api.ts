@@ -805,6 +805,53 @@ export const RollInitiativeResponse = zod.object({
 
 
 /**
+ * @summary After initiative is decided, the winner chooses which player activates first this round. Transitions phase to movement.
+ */
+export const ChooseFirstActivatorParams = zod.object({
+  "gameId": zod.coerce.number()
+})
+
+export const ChooseFirstActivatorBody = zod.object({
+  "activatorUserId": zod.string().describe('userId (challenger or opponent) who will activate the first ship this round.')
+})
+
+export const chooseFirstActivatorResponseDeploymentDepthMin = 4;
+export const chooseFirstActivatorResponseDeploymentDepthMax = 30;
+
+
+
+export const ChooseFirstActivatorResponse = zod.object({
+  "id": zod.number(),
+  "challengerId": zod.string(),
+  "opponentId": zod.string().nullish(),
+  "challengerName": zod.string().nullish(),
+  "opponentName": zod.string().nullish(),
+  "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
+  "winnerId": zod.string().nullish(),
+  "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['initiative', 'movement', 'firing', 'end']),
+  "initiativeWinnerId": zod.string().nullish(),
+  "initiativeChallengerRoll": zod.number().nullish().describe('Challenger\'s 2d6 initiative roll for the current round (null if not yet rolled or already consumed).'),
+  "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
+  "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
+  "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
+  "pointLimit": zod.number(),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(chooseFirstActivatorResponseDeploymentDepthMin).max(chooseFirstActivatorResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Pass the End Phase (no more damage-control attempts this round). When both players pass, the round advances.
  */
 export const PassEndPhaseParams = zod.object({

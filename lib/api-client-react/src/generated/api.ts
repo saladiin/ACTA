@@ -21,6 +21,7 @@ import type {
 
 import type {
   AcceptGameInput,
+  ChooseFirstActivatorInput,
   DamageControlInput,
   DamageControlResult,
   DeploymentInput,
@@ -1743,6 +1744,78 @@ export const useRollInitiative = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getRollInitiativeMutationOptions(options));
+    }
+
+export const getChooseFirstActivatorUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/choose-first-activator`
+}
+
+/**
+ * @summary After initiative is decided, the winner chooses which player activates first this round. Transitions phase to movement.
+ */
+export const chooseFirstActivator = async (gameId: number,
+    chooseFirstActivatorInput: ChooseFirstActivatorInput, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getChooseFirstActivatorUrl(gameId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      chooseFirstActivatorInput,)
+  }
+);}
+
+
+
+
+export const getChooseFirstActivatorMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseFirstActivator>>, TError,{gameId: number;data: BodyType<ChooseFirstActivatorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof chooseFirstActivator>>, TError,{gameId: number;data: BodyType<ChooseFirstActivatorInput>}, TContext> => {
+
+const mutationKey = ['chooseFirstActivator'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof chooseFirstActivator>>, {gameId: number;data: BodyType<ChooseFirstActivatorInput>}> = (props) => {
+          const {gameId,data} = props ?? {};
+
+          return  chooseFirstActivator(gameId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChooseFirstActivatorMutationResult = NonNullable<Awaited<ReturnType<typeof chooseFirstActivator>>>
+    export type ChooseFirstActivatorMutationBody = BodyType<ChooseFirstActivatorInput>
+    export type ChooseFirstActivatorMutationError = ErrorType<void>
+
+    /**
+ * @summary After initiative is decided, the winner chooses which player activates first this round. Transitions phase to movement.
+ */
+export const useChooseFirstActivator = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseFirstActivator>>, TError,{gameId: number;data: BodyType<ChooseFirstActivatorInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof chooseFirstActivator>>,
+        TError,
+        {gameId: number;data: BodyType<ChooseFirstActivatorInput>},
+        TContext
+      > => {
+      return useMutation(getChooseFirstActivatorMutationOptions(options));
     }
 
 export const getPassEndPhaseUrl = (gameId: number,) => {

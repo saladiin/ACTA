@@ -459,6 +459,29 @@ paths:
                 $ref: "#/components/schemas/Game"
         "400": { description: "Not in initiative phase, not a participant, or already rolled this round." }
 
+  /games/{gameId}/choose-first-activator:
+    post:
+      operationId: chooseFirstActivator
+      tags: [turns]
+      summary: After initiative is decided, the winner chooses which player activates first this round. Transitions phase to movement.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChooseFirstActivatorInput"
+      responses:
+        "200":
+          description: First activator chosen and phase advanced to movement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Not in initiative phase, initiative not yet decided, or activatorUserId invalid." }
+        "403": { description: "Only the initiative winner may make this call." }
+
   /games/{gameId}/pass-end-phase:
     post:
       operationId: passEndPhase
@@ -1106,6 +1129,12 @@ components:
           description: "Ship traits dropped when this row was created (e.g. ['Stealth', 'Interceptors'])."
         appliedRound:   { type: integer }
         repairable:     { type: boolean, description: "False for Vital Systems (location 6) per the sheet." }
+
+    ChooseFirstActivatorInput:
+      type: object
+      required: [activatorUserId]
+      properties:
+        activatorUserId: { type: string, description: "userId (challenger or opponent) who will activate the first ship this round." }
 
     DamageControlInput:
       type: object

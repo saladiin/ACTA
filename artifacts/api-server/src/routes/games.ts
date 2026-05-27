@@ -2352,14 +2352,59 @@ router.post("/games/:gameId/roll-initiative", requireAuth, async (req, res): Pro
         return row;
       }
 
-      // Winner determined → transition to movement.
+      // Winner determined. Record both rolls and the winner, but DO NOT
+      // auto-transition to movement — the winner chooses who activates
+      // first via POST /games/:id/choose-first-activator. activePlayerId
+      // stays null until that choice is made so neither side can act yet.
       const winnerId = cRoll > oRoll ? game.challengerId : game.opponentId;
       const [row] = await tx.update(gamesTable).set({
         initiativeChallengerRoll: cRoll,
         initiativeOpponentRoll: oRoll,
         initiativeWinnerId: winnerId,
+        activePlayerId: null,
+        activeUnitId: null,
+      }).where(eq(gamesTable.id, gameId)).returning();
+      return row;
+    });
+    res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── Choose First Activator ──────────────────────────────────────────────────
+// After both players have rolled initiative and a winner is determined, the
+// initiative winner decides who activates first this round (themself or the
+// opponent — sometimes you want to make the other side commit a movement
+// first so you can react). This transitions phase → movement.
+router.post("/games/:gameId/choose-first-activator", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  if (!Number.isFinite(gameId)) { res.status(400).json({ error: "Invalid gameId" }); return; }
+  const activatorUserId = String((req.body ?? {}).activatorUserId ?? "");
+  if (!activatorUserId) { res.status(400).json({ error: "activatorUserId is required" }); return; }
+  try {
+    const updated = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "initiative") throw Object.assign(new Error("Not in Initiative phase"), { status: 400 });
+      if (!game.initiativeWinnerId) throw Object.assign(new Error("Initiative winner not yet determined"), { status: 400 });
+      if (game.initiativeChallengerRoll === null || game.initiativeOpponentRoll === null) {
+        throw Object.assign(new Error("Both players must roll first"), { status: 400 });
+      }
+      if (userId !== game.initiativeWinnerId) {
+        throw Object.assign(new Error("Only the initiative winner may choose the first activator"), { status: 403 });
+      }
+      if (activatorUserId !== game.challengerId && activatorUserId !== game.opponentId) {
+        throw Object.assign(new Error("activatorUserId must be a participant in this game"), { status: 400 });
+      }
+      const [row] = await tx.update(gamesTable).set({
         phase: "movement",
-        activePlayerId: winnerId,
+        activePlayerId: activatorUserId,
         activeUnitId: null,
       }).where(eq(gamesTable.id, gameId)).returning();
       return row;

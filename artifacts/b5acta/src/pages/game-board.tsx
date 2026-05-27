@@ -22,6 +22,7 @@ import {
   useFireWeapon,
   useDamageControl,
   useRollInitiative,
+  useChooseFirstActivator,
   usePassEndPhase,
   useSurrenderGame,
   useConcedeGame,
@@ -953,6 +954,7 @@ export default function GameBoard() {
   const fireWeapon = useFireWeapon();
   const damageControl = useDamageControl();
   const rollInitiative = useRollInitiative();
+  const chooseFirstActivator = useChooseFirstActivator();
   const passEndPhase = usePassEndPhase();
   const surrenderGame = useSurrenderGame();
   const concedeGame = useConcedeGame();
@@ -2729,43 +2731,116 @@ export default function GameBoard() {
                 </Badge>
               </div>
               <p className="text-[10px] font-mono text-muted-foreground leading-relaxed">
-                Both commanders roll 2d6. High roll activates first this round (ties re-roll).
+                Both commanders roll 2d6. High roll wins initiative (ties re-roll). The winner then chooses who activates first this round.
               </p>
               {(() => {
                 const isChallenger = myUserId === game.challengerId;
                 const myRoll = isChallenger ? game.initiativeChallengerRoll : game.initiativeOpponentRoll;
                 const oppRoll = isChallenger ? game.initiativeOpponentRoll : game.initiativeChallengerRoll;
                 const haveRolled = myRoll !== null && myRoll !== undefined;
+                const oppRolled = oppRoll !== null && oppRoll !== undefined;
+                const bothRolled = haveRolled && oppRolled;
+                const winnerKnown = bothRolled && !!game.initiativeWinnerId;
+                const iWon = winnerKnown && game.initiativeWinnerId === myUserId;
+                const oppName = isChallenger ? game.opponentName : game.challengerName;
                 return (
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2 text-center">
-                      <div className="rounded border border-purple-500/40 bg-purple-500/5 px-2 py-1.5">
+                      <div className={`rounded border px-2 py-1.5 ${winnerKnown && iWon ? "border-green-500/60 bg-green-500/10" : "border-purple-500/40 bg-purple-500/5"}`}>
                         <div className="text-[9px] uppercase tracking-wider text-purple-300/70 font-mono">You</div>
-                        <div className="text-lg font-bold font-mono text-purple-200" data-testid="text-my-init-roll">
+                        <div className={`text-lg font-bold font-mono ${winnerKnown && iWon ? "text-green-300" : "text-purple-200"}`} data-testid="text-my-init-roll">
                           {haveRolled ? myRoll : "—"}
                         </div>
                       </div>
-                      <div className="rounded border border-muted/40 bg-muted/5 px-2 py-1.5">
-                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono">Opponent</div>
-                        <div className="text-lg font-bold font-mono text-muted-foreground" data-testid="text-opp-init-roll">
-                          {oppRoll !== null && oppRoll !== undefined ? oppRoll : "—"}
+                      <div className={`rounded border px-2 py-1.5 ${winnerKnown && !iWon ? "border-green-500/60 bg-green-500/10" : "border-muted/40 bg-muted/5"}`}>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono">{oppName ?? "Opponent"}</div>
+                        <div className={`text-lg font-bold font-mono ${winnerKnown && !iWon ? "text-green-300" : "text-muted-foreground"}`} data-testid="text-opp-init-roll">
+                          {oppRolled ? oppRoll : "—"}
                         </div>
                       </div>
                     </div>
-                    <Button
-                      size="sm"
-                      data-testid="button-roll-initiative"
-                      className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
-                      disabled={haveRolled || rollInitiative.isPending}
-                      onClick={() => {
-                        rollInitiative.mutate(
-                          { gameId },
-                          { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
-                        );
-                      }}
-                    >
-                      {rollInitiative.isPending ? "Rolling…" : haveRolled ? "Waiting for opponent…" : "Roll 2d6"}
-                    </Button>
+
+                    {/* Outcome banner — only visible after both rolls are in.
+                        Tied rolls are auto-cleared server-side so we never
+                        land here with cRoll === oRoll. */}
+                    {winnerKnown && (
+                      <div
+                        className={`rounded border px-2 py-1.5 text-center font-mono text-[11px] uppercase tracking-widest ${
+                          iWon
+                            ? "border-green-500/60 bg-green-500/10 text-green-300"
+                            : "border-amber-500/60 bg-amber-500/10 text-amber-300"
+                        }`}
+                        data-testid="text-initiative-outcome"
+                      >
+                        {iWon ? "✓ You won initiative" : `✗ ${oppName ?? "Opponent"} won initiative`}
+                      </div>
+                    )}
+
+                    {/* Pre-roll / waiting-for-opponent: Roll button. */}
+                    {!winnerKnown && (
+                      <Button
+                        size="sm"
+                        data-testid="button-roll-initiative"
+                        className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
+                        disabled={haveRolled || rollInitiative.isPending}
+                        onClick={() => {
+                          rollInitiative.mutate(
+                            { gameId },
+                            { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                          );
+                        }}
+                      >
+                        {rollInitiative.isPending ? "Rolling…" : haveRolled ? "Waiting for opponent…" : "Roll 2d6"}
+                      </Button>
+                    )}
+
+                    {/* Winner picks who moves first. Loser waits. */}
+                    {winnerKnown && iWon && (
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider text-center">
+                          Choose who activates first
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            size="sm"
+                            data-testid="button-first-activator-me"
+                            variant="default"
+                            className="uppercase tracking-widest text-[10px] font-bold"
+                            disabled={chooseFirstActivator.isPending}
+                            onClick={() => {
+                              chooseFirstActivator.mutate(
+                                { gameId, data: { activatorUserId: myUserId! } },
+                                { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                              );
+                            }}
+                          >
+                            We Move First
+                          </Button>
+                          <Button
+                            size="sm"
+                            data-testid="button-first-activator-opp"
+                            variant="outline"
+                            className="uppercase tracking-widest text-[10px] font-bold"
+                            disabled={chooseFirstActivator.isPending}
+                            onClick={() => {
+                              const oppId = isChallenger ? game.opponentId : game.challengerId;
+                              if (!oppId) return;
+                              chooseFirstActivator.mutate(
+                                { gameId, data: { activatorUserId: oppId } },
+                                { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                              );
+                            }}
+                          >
+                            Opponent First
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {winnerKnown && !iWon && (
+                      <div className="text-[10px] font-mono text-muted-foreground text-center italic" data-testid="text-awaiting-first-activator">
+                        Waiting for {oppName ?? "opponent"} to choose who moves first…
+                      </div>
+                    )}
                   </div>
                 );
               })()}

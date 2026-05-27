@@ -552,6 +552,11 @@ export interface FireWeaponResult {
   explosionVictims?: ExplosionVictim[];
 }
 
+export interface ChooseFirstActivatorInput {
+  /** userId (challenger or opponent) who will activate the first ship this round. */
+  activatorUserId: string;
+}
+
 export interface DamageControlInput {
   /** id of the unit_critical_effects row to repair. */
   effectId: number;

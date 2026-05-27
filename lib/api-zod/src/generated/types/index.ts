@@ -7,6 +7,7 @@
  */
 
 export * from './acceptGameInput';
+export * from './chooseFirstActivatorInput';
 export * from './criticalEffect';
 export * from './damageControlInput';
 export * from './damageControlResult';
