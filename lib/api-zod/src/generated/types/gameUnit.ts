@@ -53,6 +53,8 @@ export interface GameUnit {
   hasFiredThisRound: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
+  hitByUnitIdsThisRound?: number[];
   /**
      * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).
      * @nullable

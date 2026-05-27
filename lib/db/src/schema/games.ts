@@ -164,6 +164,13 @@ export const gameUnitsTable = pgTable("game_units", {
   // the server can authoritatively enforce one-shot-per-weapon. (Per the
   // rules, each weapon can fire at one target per firing activation.)
   firedWeaponIds: jsonb("fired_weapon_ids").$type<number[]>().notNull().default([]),
+  // Allied attacker unit IDs that have landed at least one to-hit on THIS
+  // unit during the current round. Used to apply the Stealth "fleet support"
+  // -1 modifier per the sheet: if another fleet member (still on the table,
+  // not adrift or destroyed) has already successfully attacked this target
+  // this round, every subsequent attacker drops the target's Stealth by an
+  // additional -1. Cleared at round rollover.
+  hitByUnitIdsThisRound: jsonb("hit_by_unit_ids_this_round").$type<number[]>().notNull().default([]),
 });
 
 export const turnsTable = pgTable("turns", {

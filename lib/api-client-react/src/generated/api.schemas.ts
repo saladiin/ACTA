@@ -313,6 +313,8 @@ export interface GameUnit {
   hasFiredThisRound: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
+  hitByUnitIdsThisRound?: number[];
   /**
      * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).
      * @nullable
@@ -532,6 +534,12 @@ export interface FireWeaponResult {
   concentrateRerolls: number;
   /** How much the defender's Stealth rating was reduced by active 'counter-stealth' tokens this round (one per successful Scout counter-stealth). */
   scoutStealthReduction: number;
+  /** Additional -1 (0 or 1) applied to the defender's Stealth this attack because another allied fleet ship — still alive and not adrift — has already successfully hit this target earlier in the round. */
+  fleetSupportStealthReduction: number;
+  /** True when the stealth check passed solely because the attacker rolled a natural 6 (which always succeeds per the sheet, even if the threshold exceeds 6). */
+  stealthCheckNat6Auto: boolean;
+  /** True when the stealth check failed AND the weapon has Slow-Loading or One-Shot — per the sheet, the shot does not count as fired and may be loosed again later. */
+  stealthFailWastedSlowLoading: boolean;
   /** True if a Scout 'coord' re-roll token was consumed by this shot. */
   scoutCoordApplied: boolean;
   /** Count of failed AD re-rolled because of the Scout coordination bonus this shot. */

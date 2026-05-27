@@ -1350,23 +1350,56 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         s.scoutAction === "coord" && !s.scoutCoordConsumed,
       ) ?? null;
 
+      // ── Fleet-support stealth reduction (sheet rule) ─────────────────────
+      // An additional -1 to the target's Stealth if any OTHER ship in the
+      // attacker's fleet has already successfully attacked the target this
+      // round, AND is still on the table (not destroyed, not adrift). The
+      // bonus is binary (-1, not stacking per ally).
+      const priorHitterIds = ((target.hitByUnitIdsThisRound ?? []) as number[])
+        .filter(id => id !== attacker.id);
+      let fleetSupportStealthReduction = 0;
+      if (priorHitterIds.length > 0) {
+        const priorRows = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, gameId),
+          inArray(gameUnitsTable.id, priorHitterIds),
+        ));
+        const eligibleAlly = priorRows.some(r =>
+          r.ownerId === attacker.ownerId
+          && !r.isDestroyed
+          && r.damageState !== "adrift",
+        );
+        if (eligibleAlly) fleetSupportStealthReduction = 1;
+      }
+
       // ── Stealth check (per-attack, single 1d6) ───────────────────────────
-      // House rule: a Stealth-trait defender forces ONE 1d6 stealth check
-      // per attack. Attacker must roll >= the defender's Stealth value
-      // (with range/already-hit modifiers, clamped 2..6) or the whole
-      // attack misses — no AD rolled, no defender pipeline.
-      // Energy Mine ignores Stealth (sheet rule preserved). Scout
-      // Counter-Stealth drops the effective Stealth rating by 1 per stack
-      // before clamping.
-      const effectiveStealth = Math.max(0, targetTraits.stealth - scoutStealthReduction);
+      // A Stealth-trait defender forces ONE 1d6 stealth check per attack.
+      // Attacker must roll >= the effective Stealth threshold (range/
+      // already-hit modifiers, clamped 2..6) or the whole attack misses —
+      // no AD rolled, no defender pipeline. A natural 6 ALWAYS passes per
+      // the sheet, even if the threshold somehow exceeds 6.
+      // Energy Mine ignores Stealth entirely. Scout Counter-Stealth and
+      // Fleet Support each reduce the effective Stealth before clamping.
+      const effectiveStealth = Math.max(0,
+        targetTraits.stealth - scoutStealthReduction - fleetSupportStealthReduction,
+      );
       let stealthCheckTarget: number | null = null;
       let stealthCheckRoll: number | null = null;
       let stealthCheckPassed = true;
+      let stealthCheckNat6Auto = false;
       if (effectiveStealth > 0 && !wt.energyMine) {
-        stealthCheckTarget = stealthFloor(effectiveStealth, dist, false);
+        stealthCheckTarget = stealthFloor(effectiveStealth, dist);
         stealthCheckRoll = rollD6();
         stealthCheckPassed = stealthCheckRoll >= stealthCheckTarget;
+        if (!stealthCheckPassed && stealthCheckRoll === 6) {
+          stealthCheckPassed = true;
+          stealthCheckNat6Auto = true;
+        }
       }
+      // Slow-Loading / One-Shot exemption: when stealth check fails, the
+      // shot "fizzles" rather than firing — these weapons may try again
+      // later this round / game.
+      const stealthFailWastedSlowLoading =
+        !stealthCheckPassed && (wt.slowLoading || wt.oneShot);
 
       // ── Validate Scout Coordination opt-in ───────────────────────────────
       // Per the rules, Beam / Mini Beam / Energy Mine / Twin Linked weapons
@@ -1856,9 +1889,29 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }).where(eq(gameUnitsTable.id, target.id));
 
       // Record that this weapon has fired this activation.
-      await tx.update(gameUnitsTable)
-        .set({ firedWeaponIds: [...alreadyFired, weaponId] })
-        .where(eq(gameUnitsTable.id, attacker.id));
+      // Sheet exception: if the stealth check failed AND the weapon is
+      // Slow-Loading or One-Shot, the shot doesn't count as fired (the
+      // power was held, not loosed). All other stealth failures still
+      // consume the shot — the gun went off, it just hit nothing.
+      if (!stealthFailWastedSlowLoading) {
+        await tx.update(gameUnitsTable)
+          .set({ firedWeaponIds: [...alreadyFired, weaponId] })
+          .where(eq(gameUnitsTable.id, attacker.id));
+      }
+
+      // Record successful hits on the target so subsequent allied attackers
+      // get the -1 Fleet Support stealth modifier. We use "hits > 0" (raw
+      // to-hits, before interceptors/shields) — the target had to actually
+      // be tracked and hit for the rule to apply. Stealth-failed attacks
+      // never reach this branch (hits stays 0).
+      if (hits > 0) {
+        const prevHitters = (target.hitByUnitIdsThisRound ?? []) as number[];
+        if (!prevHitters.includes(attacker.id)) {
+          await tx.update(gameUnitsTable)
+            .set({ hitByUnitIdsThisRound: [...prevHitters, attacker.id] })
+            .where(eq(gameUnitsTable.id, target.id));
+        }
+      }
 
       // ── Win condition (Slice C) ──────────────────────────────────────────
       // After any damage application, if all of one player's units are
@@ -2466,6 +2519,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         scoutAction: null,
         scoutActionTargetId: null,
         scoutCoordConsumed: false,
+        hitByUnitIdsThisRound: [],
       }).where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
 
       // 2. Resolve delayed catastrophic kills.

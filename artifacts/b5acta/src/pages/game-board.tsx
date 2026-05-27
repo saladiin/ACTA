@@ -3793,7 +3793,14 @@ function DiceRollModal({
             {result?.stealthCheckTarget != null && (
               <div className="mt-2 text-[11px] text-cyan-300/80" data-testid="stealth-prompt">
                 Target is stealthed — single 1d6 must hit{" "}
-                <span className="font-bold">{result.stealthCheckTarget}+</span> or the attack misses.
+                <span className="font-bold">{result.stealthCheckTarget}+</span> (nat 6 always passes) or the attack misses.
+                {((result.scoutStealthReduction ?? 0) > 0 || (result.fleetSupportStealthReduction ?? 0) > 0) && (
+                  <span className="ml-1 text-amber-300/90" data-testid="stealth-mods">
+                    [−{(result.scoutStealthReduction ?? 0) + (result.fleetSupportStealthReduction ?? 0)} Stealth:
+                    {(result.scoutStealthReduction ?? 0) > 0 ? ` Scout ×${result.scoutStealthReduction}` : ""}
+                    {(result.fleetSupportStealthReduction ?? 0) > 0 ? " · Fleet Support" : ""}]
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -3808,7 +3815,9 @@ function DiceRollModal({
               Stealth Check · need {result.stealthCheckTarget}+
               {!attackRolling && (
                 result.stealthCheckPassed
-                  ? <span className="ml-2 text-green-400" data-testid="stealth-result-pass">PASS</span>
+                  ? <span className="ml-2 text-green-400" data-testid="stealth-result-pass">
+                      PASS{result.stealthCheckNat6Auto ? " (NAT 6)" : ""}
+                    </span>
                   : <span className="ml-2 text-red-400 animate-pulse" data-testid="stealth-result-fail">MISS — STEALTH</span>
               )}
             </p>
@@ -3828,6 +3837,11 @@ function DiceRollModal({
               {!attackRolling && !result.stealthCheckPassed && (
                 <span className="text-[11px] font-mono text-red-400/90">
                   Attack does not get through.
+                  {result.stealthFailWastedSlowLoading && (
+                    <span className="ml-1 text-amber-300/90" data-testid="stealth-fail-not-fired">
+                      Slow-Loading/One-Shot — weapon NOT marked as fired.
+                    </span>
+                  )}
                 </span>
               )}
             </div>

@@ -122,19 +122,21 @@ export function parseWeaponTraits(s: string | null | undefined): WeaponTraits {
 
 // Stealth-adjusted to-hit threshold per the sheet:
 //   "After an Attack has been declared only hits on X, if distance > 20"
-//    add 1 to X, if < 8" minus 1, if target has already been hit -1 again."
+//    add 1 to X, if < 8" minus 1."
 // Returns the *minimum* threshold (so callers can `Math.max(baseHitThreshold, stealthFloor)`).
+// The "target already been hit -1" sheet rule is now handled separately at
+// the route layer as `fleetSupportStealthReduction` (subtracted from the
+// stealth value BEFORE this floor is computed), so it is intentionally
+// absent here to avoid double-dipping.
 // Energy Mine ignores Stealth → callers should skip this.
 export function stealthFloor(
   stealth: number,
   distanceInches: number,
-  targetAlreadyHitThisActivation: boolean,
 ): number {
   if (stealth <= 0) return 0;
   let x = stealth;
   if (distanceInches > 20) x += 1;
   if (distanceInches < 8) x -= 1;
-  if (targetAlreadyHitThisActivation) x -= 1;
   return Math.max(2, Math.min(6, x));
 }
 

@@ -79,6 +79,12 @@ export interface FireWeaponResult {
   concentrateRerolls: number;
   /** How much the defender's Stealth rating was reduced by active 'counter-stealth' tokens this round (one per successful Scout counter-stealth). */
   scoutStealthReduction: number;
+  /** Additional -1 (0 or 1) applied to the defender's Stealth this attack because another allied fleet ship — still alive and not adrift — has already successfully hit this target earlier in the round. */
+  fleetSupportStealthReduction: number;
+  /** True when the stealth check passed solely because the attacker rolled a natural 6 (which always succeeds per the sheet, even if the threshold exceeds 6). */
+  stealthCheckNat6Auto: boolean;
+  /** True when the stealth check failed AND the weapon has Slow-Loading or One-Shot — per the sheet, the shot does not count as fired and may be loosed again later. */
+  stealthFailWastedSlowLoading: boolean;
   /** True if a Scout 'coord' re-roll token was consumed by this shot. */
   scoutCoordApplied: boolean;
   /** Count of failed AD re-rolled because of the Scout coordination bonus this shot. */
