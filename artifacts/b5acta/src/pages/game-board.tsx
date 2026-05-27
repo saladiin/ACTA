@@ -1460,20 +1460,30 @@ export default function GameBoard() {
   // skip the planner UI entirely. The dispatch ref guards against React
   // strict-mode double-invokes and against re-firing while the server
   // call is in flight.
-  const autoDriftDispatchedRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (game?.status !== "active") return;
-    if (currentPhase !== "movement") return;
-    if (!isMyActivation || activeUnitId == null) return;
-    const u = units.find(x => x.id === activeUnitId);
-    if (!u || u.ownerId !== myUserId || u.isDestroyed) return;
-    const isAdriftLike =
-      u.damageState === "adrift" || u.damageState === "exploding-end-of-next";
-    if (!isAdriftLike) return;
-    if (u.hasMovedThisRound) return;
-    if (autoDriftDispatchedRef.current === u.id) return;
+  // ── Compulsory drift commit ─────────────────────────────────────────────────
+  // Adrift / about-to-explode ships have no movement choices — they must
+  // drift their half-speed forward along current heading, after which the
+  // activation ends. We used to fire this automatically the moment the
+  // ship was activated, but that looked exactly like "I picked the ship
+  // up and it locked instantly" to a player who hadn't realised an
+  // Engines Disabled crit made the ship adrift. Now the drift is an
+  // explicit button (rendered in the sidebar Adrift-Drift panel) so the
+  // player sees what's about to happen and approves it. The shared
+  // commit handler lives here so the panel button and the (still-valid)
+  // keyboard fallback can both reuse it.
+  const isAdriftActive = useMemo(() => {
+    if (!selectedUnitData || !isSelectedUnitActive) return false;
+    if (currentPhase !== "movement") return false;
+    return selectedUnitData.damageState === "adrift"
+      || selectedUnitData.damageState === "exploding-end-of-next";
+  }, [selectedUnitData, isSelectedUnitActive, currentPhase]);
+  const commitDriftRef = useRef(false);
+  const commitCompulsoryDrift = useCallback(() => {
+    if (!selectedUnitData) return;
+    if (commitDriftRef.current) return;
     if (moveUnit.isPending || endActivation.isPending) return;
-    autoDriftDispatchedRef.current = u.id;
+    const u = selectedUnitData;
+    commitDriftRef.current = true;
     const driftDistance = Math.floor(u.speed / 2);
     const v = headingForwardVec(u);
     const toHexQ = Math.round(u.hexQ + v.x * driftDistance);
@@ -1487,20 +1497,19 @@ export default function GameBoard() {
             onSuccess: () => {
               qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
               setSelectedUnit(null);
+              commitDriftRef.current = false;
             },
+            onError: () => { commitDriftRef.current = false; },
           });
         },
-        onError: () => {
-          // Let the player retry by re-activating; clear the latch.
-          autoDriftDispatchedRef.current = null;
-        },
+        onError: () => { commitDriftRef.current = false; },
       },
     );
-  }, [activeUnitId, isMyActivation, currentPhase, game?.status, units, myUserId, moveUnit, endActivation, gameId, qc]);
-  // Clear the auto-drift latch whenever the active unit changes so the next
-  // adrift ship's activation also auto-drifts.
+  }, [selectedUnitData, moveUnit, endActivation, gameId, qc]);
+  // Reset the in-flight latch whenever the active unit changes so a new
+  // adrift activation can drift on its own button click.
   useEffect(() => {
-    autoDriftDispatchedRef.current = null;
+    commitDriftRef.current = false;
   }, [activeUnitId]);
 
   const handleUnitClick = (unitId: number) => {
@@ -2729,7 +2738,42 @@ export default function GameBoard() {
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
               </div>
-              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && isSelectedUnitActive && (() => {
+              {/* ── Adrift compulsory-drift panel ── Visible whenever the
+                  active own-ship is adrift/exploding in movement phase.
+                  Replaces the (now removed) silent auto-fire that made it
+                  look like activating the ship instantly locked it. The
+                  player explicitly clicks Drift to commit the half-speed
+                  forward drift + end activation. */}
+              {isAdriftActive && selectedUnitData && selectedUnitData.ownerId === myUserId && (() => {
+                const driftDist = Math.floor(selectedUnitData.speed / 2);
+                const reason = selectedUnitData.damageState === "exploding-end-of-next"
+                  ? "Reactor breaching — explodes next round end"
+                  : "Engines disabled / hull adrift";
+                return (
+                  <div className="space-y-1.5" data-testid="adrift-drift-panel">
+                    <div className="text-[10px] uppercase tracking-wider text-yellow-400/90 font-mono flex items-center justify-between">
+                      <span>Adrift · Compulsory Drift</span>
+                      <Badge variant="outline" className="text-[9px] font-mono border-yellow-500/60 text-yellow-300 bg-yellow-500/10">
+                        {driftDist}" forward
+                      </Badge>
+                    </div>
+                    <div className="text-[10px] font-mono text-yellow-300/80 border border-yellow-500/40 bg-yellow-500/10 rounded px-2 py-1">
+                      {reason}. No turns, no Special Actions, no free movement
+                      — this ship must drift {driftDist}" along current heading
+                      and end its activation.
+                    </div>
+                    <Button
+                      className="w-full bg-yellow-500/15 hover:bg-yellow-500/25 text-yellow-200 border border-yellow-500/50 font-mono text-xs"
+                      onClick={commitCompulsoryDrift}
+                      disabled={moveUnit.isPending || endActivation.isPending || commitDriftRef.current}
+                      data-testid="button-commit-drift"
+                    >
+                      {moveUnit.isPending || endActivation.isPending ? "Drifting…" : `Drift ${driftDist}" & End Activation`}
+                    </Button>
+                  </div>
+                );
+              })()}
+              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && isSelectedUnitActive && !isAdriftActive && (() => {
                 const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire"; label: string; cq: number | null; hint: string }[] = [
                   { id: "all-power-engines", label: "All Power to Engines!", cq: null, hint: "Speed +50%; no turns" },
                   { id: "all-stop",          label: "All Stop!",             cq: null, hint: "0..½ speed; no turns" },
