@@ -1,0 +1,1 @@
+- [Deploy-path parity](deploy-paths-parity.md) — b5acta has two routes that move a game to `active` (`/deploy` and `/dev/skip-deploy`); they must initialize identical phase/round/shield bookkeeping or dev silently runs the old state machine.

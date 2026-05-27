@@ -443,6 +443,38 @@ paths:
         "400": { description: "Invalid target (out of arc, out of range, etc.)" }
         "409": { description: "Activation conflict" }
 
+  /games/{gameId}/roll-initiative:
+    post:
+      operationId: rollInitiative
+      tags: [turns]
+      summary: Roll 2d6 for initiative during the Initiative phase. Each player calls once per round; ties re-roll automatically.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Roll recorded (and phase advanced if both players have now rolled and didn't tie).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Not in initiative phase, not a participant, or already rolled this round." }
+
+  /games/{gameId}/pass-end-phase:
+    post:
+      operationId: passEndPhase
+      tags: [turns]
+      summary: Pass the End Phase (no more damage-control attempts this round). When both players pass, the round advances.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Pass recorded (and round advanced if both players have now passed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Not in end phase, not a participant, or already passed." }
+
   /games/{gameId}/units/{unitId}/damage-control:
     post:
       operationId: damageControl
@@ -721,8 +753,12 @@ components:
         activePlayerId:  { type: ["string", "null"] }
         activeUnitId:    { type: ["integer", "null"] }
         lastActivatorId: { type: ["string", "null"] }
-        phase:           { type: string, enum: [movement, firing] }
+        phase:           { type: string, enum: [initiative, movement, firing, end] }
         initiativeWinnerId: { type: ["string", "null"] }
+        initiativeChallengerRoll: { type: ["integer", "null"], description: "Challenger's 2d6 initiative roll for the current round (null if not yet rolled or already consumed)." }
+        initiativeOpponentRoll:   { type: ["integer", "null"], description: "Opponent's 2d6 initiative roll for the current round." }
+        endPhaseChallengerPassed: { type: boolean, description: "True once the challenger has passed the current end phase. Reset at start of each end phase." }
+        endPhaseOpponentPassed:   { type: boolean, description: "True once the opponent has passed the current end phase. Reset at start of each end phase." }
         pointLimit:   { type: integer }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }

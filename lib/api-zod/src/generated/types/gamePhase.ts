@@ -10,6 +10,8 @@ export type GamePhase = typeof GamePhase[keyof typeof GamePhase];
 
 
 export const GamePhase = {
+  initiative: 'initiative',
   movement: 'movement',
   firing: 'firing',
+  end: 'end',
 } as const;

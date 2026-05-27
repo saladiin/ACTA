@@ -1675,6 +1675,146 @@ export const useFireWeapon = <TError = ErrorType<void>,
       return useMutation(getFireWeaponMutationOptions(options));
     }
 
+export const getRollInitiativeUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/roll-initiative`
+}
+
+/**
+ * @summary Roll 2d6 for initiative during the Initiative phase. Each player calls once per round; ties re-roll automatically.
+ */
+export const rollInitiative = async (gameId: number, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getRollInitiativeUrl(gameId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRollInitiativeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rollInitiative>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rollInitiative>>, TError,{gameId: number}, TContext> => {
+
+const mutationKey = ['rollInitiative'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rollInitiative>>, {gameId: number}> = (props) => {
+          const {gameId} = props ?? {};
+
+          return  rollInitiative(gameId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RollInitiativeMutationResult = NonNullable<Awaited<ReturnType<typeof rollInitiative>>>
+
+    export type RollInitiativeMutationError = ErrorType<void>
+
+    /**
+ * @summary Roll 2d6 for initiative during the Initiative phase. Each player calls once per round; ties re-roll automatically.
+ */
+export const useRollInitiative = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rollInitiative>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rollInitiative>>,
+        TError,
+        {gameId: number},
+        TContext
+      > => {
+      return useMutation(getRollInitiativeMutationOptions(options));
+    }
+
+export const getPassEndPhaseUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/pass-end-phase`
+}
+
+/**
+ * @summary Pass the End Phase (no more damage-control attempts this round). When both players pass, the round advances.
+ */
+export const passEndPhase = async (gameId: number, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getPassEndPhaseUrl(gameId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getPassEndPhaseMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof passEndPhase>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof passEndPhase>>, TError,{gameId: number}, TContext> => {
+
+const mutationKey = ['passEndPhase'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof passEndPhase>>, {gameId: number}> = (props) => {
+          const {gameId} = props ?? {};
+
+          return  passEndPhase(gameId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PassEndPhaseMutationResult = NonNullable<Awaited<ReturnType<typeof passEndPhase>>>
+
+    export type PassEndPhaseMutationError = ErrorType<void>
+
+    /**
+ * @summary Pass the End Phase (no more damage-control attempts this round). When both players pass, the round advances.
+ */
+export const usePassEndPhase = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof passEndPhase>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof passEndPhase>>,
+        TError,
+        {gameId: number},
+        TContext
+      > => {
+      return useMutation(getPassEndPhaseMutationOptions(options));
+    }
+
 export const getDamageControlUrl = (gameId: number,
     unitId: number,) => {
 

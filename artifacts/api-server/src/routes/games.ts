@@ -611,18 +611,23 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       let row: typeof game;
       [row] = await tx.update(gamesTable).set(updateData).where(eq(gamesTable.id, params.data.gameId)).returning();
 
-      // If both deployed, start the game. First round: challenger has initiative
-      // by default (real initiative system is a future feature).
+      // If both deployed, start the game in the Initiative phase — both
+      // players must roll 2d6 before anyone activates a ship. No active
+      // player yet (initiative determines that).
       if (row.challengerDeployed && row.opponentDeployed) {
         [row] = await tx.update(gamesTable).set({
           status: "active",
           currentTurn: 1,
           currentRound: 1,
-          activePlayerId: row.challengerId,
+          activePlayerId: null,
           activeUnitId: null,
           lastActivatorId: null,
-          phase: "movement",
-          initiativeWinnerId: row.challengerId,
+          phase: "initiative",
+          initiativeWinnerId: null,
+          initiativeChallengerRoll: null,
+          initiativeOpponentRoll: null,
+          endPhaseChallengerPassed: false,
+          endPhaseOpponentPassed: false,
         }).where(eq(gamesTable.id, params.data.gameId)).returning();
       }
       return row;
@@ -1048,7 +1053,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       let nextActivePlayerId: string | undefined;
       let nextRound = game.currentRound;
       let nextTurn = game.currentTurn;
-      let nextPhase: "movement" | "firing" = isFiring ? "firing" : "movement";
+      let nextPhase: "initiative" | "movement" | "firing" | "end" = isFiring ? "firing" : "movement";
       let nextInitiativeWinnerId = game.initiativeWinnerId;
 
       // Helper: count firing-eligible ships for a player (used when we're
@@ -1066,10 +1071,18 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         return rows.length;
       };
 
-      // Tri-state outcome: hand off to a specific player (string), or
-      // fall through to the round-end branch (true). Default = round-end
-      // if we can't find a valid next activator.
-      let endRound = false;
+      // Helper: transition into the end phase. Initiative winner gets the
+      // first damage-control window; opponent follows after they pass.
+      // End-pass latches reset on every entry so a fresh round starts clean.
+      const enterEndPhase = async () => {
+        const initiativeId = game.initiativeWinnerId ?? game.challengerId;
+        nextPhase = "end";
+        nextActivePlayerId = initiativeId;
+        await tx.update(gamesTable).set({
+          endPhaseChallengerPassed: false,
+          endPhaseOpponentPassed: false,
+        }).where(eq(gamesTable.id, game.id));
+      };
 
       if (otherRemaining > 0) {
         nextActivePlayerId = otherPlayerId;
@@ -1081,7 +1094,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         // firing-eligible ships (all derelicts at 0 hull/crew), hand the
         // start of the firing phase to the opponent. If neither side has
         // ANY firing-eligible ships, skip the firing phase entirely and
-        // roll the round directly.
+        // jump straight to end (the round still gets a repair window).
         const initiativeId = game.initiativeWinnerId ?? game.challengerId;
         const otherId = initiativeId === game.challengerId ? opponentId : game.challengerId;
         const initFiring = await firingEligibleFor(initiativeId);
@@ -1093,123 +1106,17 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
           nextPhase = "firing";
           nextActivePlayerId = otherId;
         } else {
-          // Both fleets are entirely ineligible to fire — skip firing
-          // and roll straight to the next round.
-          endRound = true;
+          await enterEndPhase();
         }
       } else {
-        // Firing sub-phase complete normally.
-        endRound = true;
+        // Firing sub-phase complete → end phase. Actual round rollover
+        // (resets, shield regen, delayed-kill resolution) now lives in
+        // /pass-end-phase and fires only once both players pass end.
+        await enterEndPhase();
       }
 
-      if (endRound) {
-        // Firing sub-phase complete → end of round. Reset BOTH per-phase flags
-        // on all surviving units; new initiative winner is whoever did NOT
-        // have it this round (last-activator-goes-second-next-round).
-        await tx.update(gameUnitsTable)
-          .set({
-            hasMovedThisRound: false,
-            hasFiredThisRound: false,
-            firedWeaponIds: [],
-            // Special Actions are one-per-round; wipe at round rollover so
-            // every ship is free to declare again next round.
-            specialAction: null,
-            specialActionTargetId: null,
-            // Scout support actions (counter-stealth, coord) and the coord
-            // consumption latch are likewise one-per-round.
-            scoutAction: null,
-            scoutActionTargetId: null,
-            scoutCoordConsumed: false,
-          })
-          .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
-        // Slice C: resolve delayed catastrophic kills. Any ship marked
-        // "exploding-end-of-next" at the previous round's damage table
-        // detonates now and is removed. (Round-precision is approximated:
-        // we destroy at the first end-of-round after the marker is set.
-        // Tightening to "end of NEXT round" would require an extra
-        // damageStateRound column; deferred until proven necessary.)
-        await tx.update(gameUnitsTable).set({
-          damageState: "destroyed",
-          isDestroyed: true,
-        }).where(and(
-          eq(gameUnitsTable.gameId, game.id),
-          eq(gameUnitsTable.damageState, "exploding-end-of-next"),
-        ));
-        // Re-evaluate win condition after delayed kills.
-        const postExplosion = await tx.select().from(gameUnitsTable)
-          .where(eq(gameUnitsTable.gameId, game.id));
-        let cAlive = 0, oAlive = 0;
-        for (const u of postExplosion) {
-          if (u.isDestroyed) continue;
-          if (u.ownerId === game.challengerId) cAlive++;
-          else if (u.ownerId === game.opponentId) oAlive++;
-        }
-        if (game.opponentId && cAlive === 0 && oAlive > 0) {
-          await tx.update(gamesTable).set({ status: "completed", winnerId: game.opponentId })
-            .where(eq(gamesTable.id, game.id));
-        } else if (game.opponentId && oAlive === 0 && cAlive > 0) {
-          await tx.update(gamesTable).set({ status: "completed", winnerId: game.challengerId })
-            .where(eq(gamesTable.id, game.id));
-        } else if (game.opponentId && cAlive === 0 && oAlive === 0) {
-          // Double-KO via delayed explosions → draw (winnerId stays null).
-          await tx.update(gamesTable).set({ status: "completed", winnerId: null })
-            .where(eq(gamesTable.id, game.id));
-        }
-        // Shield regen — each surviving ship recovers `shieldRegenRate` toward
-        // its `shieldMax`. Done per-row because the cap is row-specific.
-        const survivors = await tx.select().from(gameUnitsTable).where(and(
-          eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
-        ));
-        for (const u of survivors) {
-          // game_units.shipId → ships.id → ship_models.id
-          const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
-          if (!ship) continue;
-          const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-          const max = model?.shieldMax ?? 0;
-          const regen = model?.shieldRegenRate ?? 0;
-          if (max <= 0 || regen <= 0) continue;
-          const next = Math.min(max, u.shieldsCurrent + regen);
-          if (next !== u.shieldsCurrent) {
-            await tx.update(gameUnitsTable).set({ shieldsCurrent: next }).where(eq(gameUnitsTable.id, u.id));
-          }
-        }
-        // Interceptor refresh — pool back to max, threshold back to 2+.
-        // Per the sheet, "At the start of the next turn, all interceptor
-        // dice refresh to full strength and reset to 2+". A ship that
-        // permanently lost the Interceptors trait via a critical hit
-        // (power feedback / implosion / catastrophic) refreshes to 0
-        // because the trait is filtered out of model.traits.
-        for (const u of survivors) {
-          const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
-          if (!ship) continue;
-          const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-          const critRows = await tx.select().from(unitCriticalEffectsTable)
-            .where(eq(unitCriticalEffectsTable.gameUnitId, u.id));
-          const crits = deriveCritEffects(critRows.map(r => ({
-            effectKey: r.effectKey,
-            randomArc: r.randomArc,
-            randomWeaponId: r.randomWeaponId,
-            lostTraits: r.lostTraits ?? [],
-          })));
-          const lostLc = new Set(Array.from(crits.lostTraitNames).map(n => n.toLowerCase()));
-          const filteredRaw = (model?.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
-            .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
-            .join("; ");
-          const fullPool = parseShipTraits(filteredRaw).interceptors;
-          if (u.interceptorDiceRemaining !== fullPool || u.interceptorThresholdCurrent !== 2) {
-            await tx.update(gameUnitsTable).set({
-              interceptorDiceRemaining: fullPool,
-              interceptorThresholdCurrent: 2,
-            }).where(eq(gameUnitsTable.id, u.id));
-          }
-        }
-        nextRound = game.currentRound + 1;
-        nextTurn = game.currentTurn + 1;
-        nextPhase = "movement";
-        nextInitiativeWinnerId =
-          game.initiativeWinnerId === game.challengerId ? opponentId : game.challengerId;
-        nextActivePlayerId = nextInitiativeWinnerId;
-      }
+      // (Round rollover bookkeeping moved to /pass-end-phase — fires only
+      // once both players have passed the End Phase.)
 
       // If a delayed catastrophic explosion just ended the game (status
       // flipped to 'completed' inside this same transaction), short-circuit
@@ -2399,6 +2306,221 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
   }
 });
 
+// ── Initiative Roll ─────────────────────────────────────────────────────────
+// Each player rolls 2d6 once during the Initiative phase. When both have
+// rolled, the higher total wins and the phase transitions to movement with
+// that player active. Ties clear both rolls so players re-roll.
+router.post("/games/:gameId/roll-initiative", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  if (!Number.isFinite(gameId)) { res.status(400).json({ error: "Invalid gameId" }); return; }
+  try {
+    const updated = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "initiative") throw Object.assign(new Error("Not in Initiative phase"), { status: 400 });
+      const isChallenger = userId === game.challengerId;
+      const isOpponent = userId === game.opponentId;
+      if (!isChallenger && !isOpponent) throw Object.assign(new Error("Not a participant"), { status: 403 });
+      const alreadyRolled = isChallenger
+        ? game.initiativeChallengerRoll !== null
+        : game.initiativeOpponentRoll !== null;
+      if (alreadyRolled) throw Object.assign(new Error("Already rolled this round"), { status: 400 });
+
+      const myRoll = rollD6() + rollD6();
+      const cRoll = isChallenger ? myRoll : game.initiativeChallengerRoll;
+      const oRoll = isOpponent ? myRoll : game.initiativeOpponentRoll;
+
+      // Only one player has rolled so far — record and wait.
+      if (cRoll === null || oRoll === null) {
+        const [row] = await tx.update(gamesTable).set({
+          initiativeChallengerRoll: cRoll,
+          initiativeOpponentRoll: oRoll,
+        }).where(eq(gamesTable.id, gameId)).returning();
+        return row;
+      }
+
+      // Both rolled. Tie → clear both, re-roll.
+      if (cRoll === oRoll) {
+        const [row] = await tx.update(gamesTable).set({
+          initiativeChallengerRoll: null,
+          initiativeOpponentRoll: null,
+        }).where(eq(gamesTable.id, gameId)).returning();
+        return row;
+      }
+
+      // Winner determined → transition to movement.
+      const winnerId = cRoll > oRoll ? game.challengerId : game.opponentId;
+      const [row] = await tx.update(gamesTable).set({
+        initiativeChallengerRoll: cRoll,
+        initiativeOpponentRoll: oRoll,
+        initiativeWinnerId: winnerId,
+        phase: "movement",
+        activePlayerId: winnerId,
+        activeUnitId: null,
+      }).where(eq(gamesTable.id, gameId)).returning();
+      return row;
+    });
+    res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── Pass End Phase ──────────────────────────────────────────────────────────
+// Initiative winner passes first, control then hands to the opponent. When
+// both pass, the round actually rolls over (resets, shield regen, delayed
+// catastrophic kills, interceptor refresh, win-check, init rolls cleared,
+// phase → initiative for the new round).
+router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  if (!Number.isFinite(gameId)) { res.status(400).json({ error: "Invalid gameId" }); return; }
+  try {
+    const updated = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "end") throw Object.assign(new Error("Not in End Phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your end-phase window"), { status: 400 });
+      const isChallenger = userId === game.challengerId;
+      const isOpponent = userId === game.opponentId;
+      if (!isChallenger && !isOpponent) throw Object.assign(new Error("Not a participant"), { status: 403 });
+
+      const cPassed = isChallenger ? true : game.endPhaseChallengerPassed;
+      const oPassed = isOpponent ? true : game.endPhaseOpponentPassed;
+
+      if (!(cPassed && oPassed)) {
+        // First passer — hand off to the other player. (Already-passed is
+        // covered by activePlayerId guard above; the OTHER player can never
+        // be the active player while still owing a pass.)
+        const otherId = isChallenger ? game.opponentId : game.challengerId;
+        const [row] = await tx.update(gamesTable).set({
+          endPhaseChallengerPassed: cPassed,
+          endPhaseOpponentPassed: oPassed,
+          activePlayerId: otherId,
+          activeUnitId: null,
+        }).where(eq(gamesTable.id, gameId)).returning();
+        return row;
+      }
+
+      // Both passed → run round rollover.
+      // 1. Reset per-round flags on surviving units.
+      await tx.update(gameUnitsTable).set({
+        hasMovedThisRound: false,
+        hasFiredThisRound: false,
+        firedWeaponIds: [],
+        specialAction: null,
+        specialActionTargetId: null,
+        scoutAction: null,
+        scoutActionTargetId: null,
+        scoutCoordConsumed: false,
+      }).where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
+
+      // 2. Resolve delayed catastrophic kills.
+      await tx.update(gameUnitsTable).set({
+        damageState: "destroyed",
+        isDestroyed: true,
+      }).where(and(
+        eq(gameUnitsTable.gameId, game.id),
+        eq(gameUnitsTable.damageState, "exploding-end-of-next"),
+      ));
+
+      // 3. Re-evaluate win condition.
+      const postExplosion = await tx.select().from(gameUnitsTable)
+        .where(eq(gameUnitsTable.gameId, game.id));
+      let cAlive = 0, oAlive = 0;
+      for (const u of postExplosion) {
+        if (u.isDestroyed) continue;
+        if (u.ownerId === game.challengerId) cAlive++;
+        else if (u.ownerId === game.opponentId) oAlive++;
+      }
+      if (game.opponentId && cAlive === 0 && oAlive > 0) {
+        const [row] = await tx.update(gamesTable).set({ status: "completed", winnerId: game.opponentId, activePlayerId: null, activeUnitId: null })
+          .where(eq(gamesTable.id, game.id)).returning();
+        return row;
+      } else if (game.opponentId && oAlive === 0 && cAlive > 0) {
+        const [row] = await tx.update(gamesTable).set({ status: "completed", winnerId: game.challengerId, activePlayerId: null, activeUnitId: null })
+          .where(eq(gamesTable.id, game.id)).returning();
+        return row;
+      } else if (game.opponentId && cAlive === 0 && oAlive === 0) {
+        const [row] = await tx.update(gamesTable).set({ status: "completed", winnerId: null, activePlayerId: null, activeUnitId: null })
+          .where(eq(gamesTable.id, game.id)).returning();
+        return row;
+      }
+
+      // 4. Shield regen.
+      const survivors = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
+      ));
+      for (const u of survivors) {
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
+        if (!ship) continue;
+        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        const max = model?.shieldMax ?? 0;
+        const regen = model?.shieldRegenRate ?? 0;
+        if (max <= 0 || regen <= 0) continue;
+        const next = Math.min(max, u.shieldsCurrent + regen);
+        if (next !== u.shieldsCurrent) {
+          await tx.update(gameUnitsTable).set({ shieldsCurrent: next }).where(eq(gameUnitsTable.id, u.id));
+        }
+      }
+
+      // 5. Interceptor refresh (filtered against permanently-lost traits).
+      for (const u of survivors) {
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
+        if (!ship) continue;
+        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        const critRows = await tx.select().from(unitCriticalEffectsTable)
+          .where(eq(unitCriticalEffectsTable.gameUnitId, u.id));
+        const crits = deriveCritEffects(critRows.map(r => ({
+          effectKey: r.effectKey,
+          randomArc: r.randomArc,
+          randomWeaponId: r.randomWeaponId,
+          lostTraits: r.lostTraits ?? [],
+        })));
+        const lostLc = new Set(Array.from(crits.lostTraitNames).map(n => n.toLowerCase()));
+        const filteredRaw = (model?.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
+          .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
+          .join("; ");
+        const fullPool = parseShipTraits(filteredRaw).interceptors;
+        if (u.interceptorDiceRemaining !== fullPool || u.interceptorThresholdCurrent !== 2) {
+          await tx.update(gameUnitsTable).set({
+            interceptorDiceRemaining: fullPool,
+            interceptorThresholdCurrent: 2,
+          }).where(eq(gameUnitsTable.id, u.id));
+        }
+      }
+
+      // 6. Advance round → Initiative phase. Clear init rolls & end-pass
+      // latches so both players have to roll fresh.
+      const [row] = await tx.update(gamesTable).set({
+        currentRound: game.currentRound + 1,
+        currentTurn: game.currentTurn + 1,
+        phase: "initiative",
+        activePlayerId: null,
+        activeUnitId: null,
+        initiativeWinnerId: null,
+        initiativeChallengerRoll: null,
+        initiativeOpponentRoll: null,
+        endPhaseChallengerPassed: false,
+        endPhaseOpponentPassed: false,
+      }).where(eq(gamesTable.id, gameId)).returning();
+      return row;
+    });
+    res.json(updated);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
 // ── Damage Control ──────────────────────────────────────────────────────────
 // Attempt to repair one critical-effect row. Once per ship per round; cannot
 // target Vital Systems (location 6); cannot repair the round the crit was
@@ -2431,12 +2553,21 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       if (unit.lastDcRound === game.currentRound) {
         throw Object.assign(new Error("Damage control already attempted this round"), { status: 400 });
       }
-      // End-phase modelling is pending (Slice C). For now, gate DC to the
-      // firing phase — the only phase where damage exists and the closest
-      // available approximation of "end of round". Movement-phase DC would
-      // let the active player repair before the opponent has fired.
-      if (game.phase !== "firing") {
-        throw Object.assign(new Error("Damage control may only be attempted in the firing/end phase"), { status: 400 });
+      // Damage control happens only during the End Phase, and only while
+      // it's THIS player's end-phase window (initiative winner repairs
+      // first, then the opponent after they pass).
+      if (game.phase !== "end") {
+        throw Object.assign(new Error("Damage control may only be attempted in the End Phase"), { status: 400 });
+      }
+      if (game.activePlayerId !== userId) {
+        throw Object.assign(new Error("It's not your turn to repair — wait for the other player to pass the End Phase"), { status: 400 });
+      }
+      // If this player has already passed the end phase, they're done.
+      const alreadyPassed = userId === game.challengerId
+        ? game.endPhaseChallengerPassed
+        : game.endPhaseOpponentPassed;
+      if (alreadyPassed) {
+        throw Object.assign(new Error("You've already passed the End Phase this round"), { status: 400 });
       }
 
       const [effect] = await tx.select().from(unitCriticalEffectsTable)
@@ -2587,6 +2718,10 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
   await autoPlace(challengerFleetId, game.challengerId, -8, 180);
   await autoPlace(opponentFleetId, opponentId, 8, 0);
 
+  // Match canonical deploy-completion state: enter Initiative phase with
+  // no active player, no winner, both rolls + end-pass flags cleared.
+  // (Was previously seeding the old movement-first model, which silently
+  // bypassed the initiative roll and broke the new phase contract.)
   const [updated] = await db.update(gamesTable).set({
     challengerDeployed: true,
     opponentDeployed: true,
@@ -2594,11 +2729,15 @@ router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> =>
     status: "active",
     currentTurn: 1,
     currentRound: 1,
-    activePlayerId: game.challengerId,
+    activePlayerId: null,
     activeUnitId: null,
     lastActivatorId: null,
-    phase: "movement",
-    initiativeWinnerId: game.challengerId,
+    phase: "initiative",
+    initiativeWinnerId: null,
+    initiativeChallengerRoll: null,
+    initiativeOpponentRoll: null,
+    endPhaseChallengerPassed: false,
+    endPhaseOpponentPassed: false,
   }).where(eq(gamesTable.id, game.id)).returning();
 
   res.json(updated);

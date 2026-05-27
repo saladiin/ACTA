@@ -86,8 +86,10 @@ export type GamePhase = typeof GamePhase[keyof typeof GamePhase];
 
 
 export const GamePhase = {
+  initiative: 'initiative',
   movement: 'movement',
   firing: 'firing',
+  end: 'end',
 } as const;
 
 export type GameVisibility = typeof GameVisibility[keyof typeof GameVisibility];
@@ -132,6 +134,20 @@ export interface Game {
   phase: GamePhase;
   /** @nullable */
   initiativeWinnerId?: string | null;
+  /**
+     * Challenger's 2d6 initiative roll for the current round (null if not yet rolled or already consumed).
+     * @nullable
+     */
+  initiativeChallengerRoll?: number | null;
+  /**
+     * Opponent's 2d6 initiative roll for the current round.
+     * @nullable
+     */
+  initiativeOpponentRoll?: number | null;
+  /** True once the challenger has passed the current end phase. Reset at start of each end phase. */
+  endPhaseChallengerPassed?: boolean;
+  /** True once the opponent has passed the current end phase. Reset at start of each end phase. */
+  endPhaseOpponentPassed?: boolean;
   pointLimit: number;
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */

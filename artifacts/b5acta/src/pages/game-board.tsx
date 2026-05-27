@@ -21,6 +21,8 @@ import {
   useEndActivation,
   useFireWeapon,
   useDamageControl,
+  useRollInitiative,
+  usePassEndPhase,
   useSurrenderGame,
   useConcedeGame,
   useChooseSpecialAction,
@@ -950,6 +952,8 @@ export default function GameBoard() {
   const endActivation = useEndActivation();
   const fireWeapon = useFireWeapon();
   const damageControl = useDamageControl();
+  const rollInitiative = useRollInitiative();
+  const passEndPhase = usePassEndPhase();
   const surrenderGame = useSurrenderGame();
   const concedeGame = useConcedeGame();
   const [, setLocation] = useLocation();
@@ -1420,7 +1424,8 @@ export default function GameBoard() {
     return { x: v.x * movePlan.distance, z: v.z * movePlan.distance };
   }, [selectedUnitData, movePlan]);
 
-  const currentPhase: "movement" | "firing" = (game?.phase as "movement" | "firing") ?? "movement";
+  const currentPhase: "initiative" | "movement" | "firing" | "end" =
+    (game?.phase as "initiative" | "movement" | "firing" | "end") ?? "movement";
 
   // Eligible-to-activate count for the current player in the current phase.
   // Mirrors the server's `remainingFor` filter so the UI can offer a "Pass
@@ -2709,6 +2714,120 @@ export default function GameBoard() {
             </div>
           )}
 
+          {/* ── INITIATIVE PHASE PANEL ───────────────────────────────────────
+              Both participants see this whenever phase === initiative. The
+              roll button is enabled only for the local player and only until
+              they've submitted their 2d6 this round. */}
+          {game.status === "active" && currentPhase === "initiative" && (myUserId === game.challengerId || myUserId === game.opponentId) && (
+            <div className="p-4 border-b border-border space-y-3" data-testid="initiative-panel">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs font-mono text-primary uppercase tracking-wider">
+                  Round {game.currentRound}
+                </p>
+                <Badge variant="outline" className="text-[10px] font-mono uppercase tracking-widest border-purple-500/60 text-purple-300 bg-purple-500/10">
+                  Initiative
+                </Badge>
+              </div>
+              <p className="text-[10px] font-mono text-muted-foreground leading-relaxed">
+                Both commanders roll 2d6. High roll activates first this round (ties re-roll).
+              </p>
+              {(() => {
+                const isChallenger = myUserId === game.challengerId;
+                const myRoll = isChallenger ? game.initiativeChallengerRoll : game.initiativeOpponentRoll;
+                const oppRoll = isChallenger ? game.initiativeOpponentRoll : game.initiativeChallengerRoll;
+                const haveRolled = myRoll !== null && myRoll !== undefined;
+                return (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <div className="rounded border border-purple-500/40 bg-purple-500/5 px-2 py-1.5">
+                        <div className="text-[9px] uppercase tracking-wider text-purple-300/70 font-mono">You</div>
+                        <div className="text-lg font-bold font-mono text-purple-200" data-testid="text-my-init-roll">
+                          {haveRolled ? myRoll : "—"}
+                        </div>
+                      </div>
+                      <div className="rounded border border-muted/40 bg-muted/5 px-2 py-1.5">
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono">Opponent</div>
+                        <div className="text-lg font-bold font-mono text-muted-foreground" data-testid="text-opp-init-roll">
+                          {oppRoll !== null && oppRoll !== undefined ? oppRoll : "—"}
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      data-testid="button-roll-initiative"
+                      className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
+                      disabled={haveRolled || rollInitiative.isPending}
+                      onClick={() => {
+                        rollInitiative.mutate(
+                          { gameId },
+                          { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                        );
+                      }}
+                    >
+                      {rollInitiative.isPending ? "Rolling…" : haveRolled ? "Waiting for opponent…" : "Roll 2d6"}
+                    </Button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* ── END PHASE PANEL ──────────────────────────────────────────────
+              Both participants see this whenever phase === end. Pass button
+              is enabled only for the current end-phase active player. Damage
+              Control buttons live in the per-ship crit panel below; this
+              block is the round-progression control. */}
+          {game.status === "active" && currentPhase === "end" && (myUserId === game.challengerId || myUserId === game.opponentId) && (
+            <div className="p-4 border-b border-border space-y-3" data-testid="end-phase-panel">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-xs font-mono text-primary uppercase tracking-wider">
+                  Round {game.currentRound}
+                </p>
+                <Badge variant="outline" className="text-[10px] font-mono uppercase tracking-widest border-amber-500/60 text-amber-300 bg-amber-500/10">
+                  End Phase
+                </Badge>
+              </div>
+              {(() => {
+                const isChallenger = myUserId === game.challengerId;
+                const myPassed = isChallenger ? game.endPhaseChallengerPassed : game.endPhaseOpponentPassed;
+                const oppPassed = isChallenger ? game.endPhaseOpponentPassed : game.endPhaseChallengerPassed;
+                const myTurn = game.activePlayerId === myUserId;
+                return (
+                  <>
+                    <p className="text-[10px] font-mono text-muted-foreground leading-relaxed">
+                      Damage Control window — one repair attempt per ship. Initiative winner repairs first.
+                      {myTurn
+                        ? " It's your repair window — DC eligible ships from the crit panel, then pass."
+                        : myPassed
+                        ? " You've passed. Waiting for opponent to finish."
+                        : " Waiting for the other commander."}
+                    </p>
+                    <Button
+                      size="sm"
+                      data-testid="button-pass-end-phase"
+                      className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
+                      disabled={!myTurn || myPassed || passEndPhase.isPending}
+                      onClick={() => {
+                        passEndPhase.mutate(
+                          { gameId },
+                          { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                        );
+                      }}
+                    >
+                      {passEndPhase.isPending
+                        ? "Passing…"
+                        : myPassed
+                        ? "Passed"
+                        : !myTurn
+                        ? `Waiting · Opponent ${oppPassed ? "passed" : "repairing"}`
+                        : "Pass End Phase"}
+                    </Button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Turn actions */}
           {game.status === "active" && isMyActivation && (
             <div className="p-4 border-b border-border space-y-3">
@@ -2722,10 +2841,20 @@ export default function GameBoard() {
                   className={`text-[10px] font-mono uppercase tracking-widest ${
                     currentPhase === "firing"
                       ? "border-red-500/60 text-red-300 bg-red-500/10"
+                      : currentPhase === "end"
+                      ? "border-amber-500/60 text-amber-300 bg-amber-500/10"
+                      : currentPhase === "initiative"
+                      ? "border-purple-500/60 text-purple-300 bg-purple-500/10"
                       : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"
                   }`}
                 >
-                  {currentPhase === "firing" ? "Firing" : "Movement"}
+                  {currentPhase === "firing"
+                    ? "Firing"
+                    : currentPhase === "end"
+                    ? "End"
+                    : currentPhase === "initiative"
+                    ? "Initiative"
+                    : "Movement"}
                 </Badge>
               </div>
               <p className="text-xs font-mono text-muted-foreground">
@@ -2964,7 +3093,8 @@ export default function GameBoard() {
                     </div>
                     {crits.map((c) => {
                       const isSameRound = c.appliedRound === currentRound;
-                      const canRepair = c.repairable && !isSameRound && !dcAttemptedThisRound && !damageControl.isPending;
+                      const isMyEndWindow = currentPhase === "end" && game?.activePlayerId === myUserId;
+                const canRepair = c.repairable && !isSameRound && !dcAttemptedThisRound && !damageControl.isPending && isMyEndWindow;
                       return (
                         <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200" data-testid={`crit-row-${c.id}`}>
                           <div className="flex items-center justify-between gap-2">
@@ -2997,6 +3127,8 @@ export default function GameBoard() {
                               ? "Wait until next round"
                               : dcAttemptedThisRound
                               ? "DC locked this round"
+                              : !isMyEndWindow
+                              ? "Available in End Phase"
                               : `Damage Control (1d6+CQ${selectedUnitData.crewQuality}≥9)`}
                           </button>
                         </div>

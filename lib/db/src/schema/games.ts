@@ -20,11 +20,25 @@ export const gamesTable = pgTable("games", {
   activePlayerId: text("active_player_id"),
   activeUnitId: integer("active_unit_id"),
   lastActivatorId: text("last_activator_id"),
-  // Each round is split into two sub-phases: movement (all ships activate
-  // alternately to move/turn) → firing (all ships activate alternately to
-  // shoot). The same initiative winner fires first within each round.
-  phase: text("phase").notNull().default("movement"), // "movement" | "firing"
+  // Each round is split into FOUR sub-phases:
+  //   initiative — both players roll 2d6; high roll wins (ties re-roll).
+  //                Winner activates first in movement, firing, and end.
+  //   movement   — ships activate alternately to move/turn.
+  //   firing     — ships activate alternately to shoot.
+  //   end        — damage-control window. Initiative winner repairs first,
+  //                then opponent, then round advances.
+  phase: text("phase").notNull().default("initiative"),
   initiativeWinnerId: text("initiative_winner_id"),
+  // Per-round initiative dice. Null = that player has not yet rolled this
+  // round. Both filled & unequal → winner picked, rolls cleared on phase
+  // transition out of "initiative". Both filled & equal → tie; rolls
+  // cleared so players re-roll.
+  initiativeChallengerRoll: integer("initiative_challenger_roll"),
+  initiativeOpponentRoll: integer("initiative_opponent_roll"),
+  // Per-player "I've passed the end phase" latches. Cleared at the start
+  // of every end phase. When both are true, the round advances.
+  endPhaseChallengerPassed: boolean("end_phase_challenger_passed").notNull().default(false),
+  endPhaseOpponentPassed: boolean("end_phase_opponent_passed").notNull().default(false),
   pointLimit: integer("point_limit").notNull().default(500),
   // "public" — anyone in the lobby can join. "private" — must supply the
   // matching password (stored as scrypt hash in passwordHash).
