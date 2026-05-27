@@ -309,6 +309,18 @@ export interface GameUnit {
   specialActionTargetId?: number | null;
   /** True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring 'all-stop-pivot' next round; cleared on /move or successful 'all-stop-pivot' declaration. */
   allStopReady?: boolean;
+  /**
+     * Scout support action this Scout-trait ship declared this round. Values: 'counter-stealth', 'counter-stealth-failed', 'coord', 'coord-failed'. Null if no scout action used this round. Cleared at round rollover.
+     * @nullable
+     */
+  scoutAction?: string | null;
+  /**
+     * Enemy unit id this Scout's support action is targeting. Null when no scout action declared.
+     * @nullable
+     */
+  scoutActionTargetId?: number | null;
+  /** True once an allied weapon has spent this Scout's successful 'coord' re-roll bonus on a single weapon system this round. Cleared at round rollover. */
+  scoutCoordConsumed?: boolean;
 }
 
 export type TurnMoves = { [key: string]: unknown };
@@ -378,6 +390,8 @@ export interface FireAction {
 export interface FireWeaponInput {
   weaponId: number;
   targetUnitId: number;
+  /** Opt-in: consume an unspent allied Scout 'coord' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam / Mini Beam / Energy Mine / Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false. */
+  useScoutCoordination?: boolean;
 }
 
 export type FireWeaponResultAttackRollKindsItem = typeof FireWeaponResultAttackRollKindsItem[keyof typeof FireWeaponResultAttackRollKindsItem];
@@ -388,6 +402,7 @@ export const FireWeaponResultAttackRollKindsItem = {
   explosion: 'explosion',
   'twin-reroll': 'twin-reroll',
   'concentrate-reroll': 'concentrate-reroll',
+  'scout-coord-reroll': 'scout-coord-reroll',
 } as const;
 
 export type FireWeaponResultInterceptorAttemptsItem = {
@@ -499,6 +514,12 @@ export interface FireWeaponResult {
   beamExplosions: number;
   twinRerolls: number;
   concentrateRerolls: number;
+  /** How much the defender's Stealth rating was reduced by active 'counter-stealth' tokens this round (one per successful Scout counter-stealth). */
+  scoutStealthReduction: number;
+  /** True if a Scout 'coord' re-roll token was consumed by this shot. */
+  scoutCoordApplied: boolean;
+  /** Count of failed AD re-rolled because of the Scout coordination bonus this shot. */
+  scoutCoordRerolls: number;
   targetHullBefore: number;
   targetHullAfter: number;
   targetCrewBefore?: number;
@@ -577,6 +598,46 @@ export interface SpecialActionResult {
      * @nullable
      */
   cqTotal?: number | null;
+  unit: GameUnit;
+}
+
+/**
+ * counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons).
+ */
+export type ScoutActionInputAction = typeof ScoutActionInputAction[keyof typeof ScoutActionInputAction];
+
+
+export const ScoutActionInputAction = {
+  'counter-stealth': 'counter-stealth',
+  coord: 'coord',
+} as const;
+
+export interface ScoutActionInput {
+  /** counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons). */
+  action: ScoutActionInputAction;
+  /** Enemy unit id to support against. Must be within 36" of the Scout. */
+  targetUnitId: number;
+}
+
+export type ScoutActionResultAction = typeof ScoutActionResultAction[keyof typeof ScoutActionResultAction];
+
+
+export const ScoutActionResultAction = {
+  'counter-stealth': 'counter-stealth',
+  coord: 'coord',
+} as const;
+
+export interface ScoutActionResult {
+  action: ScoutActionResultAction;
+  targetUnitId: number;
+  /** True if the 1d6 + crewQuality CQ check met cqRequired. */
+  success: boolean;
+  /** 1d6 result. */
+  cqRoll: number;
+  /** cqRoll + scout's crewQuality. */
+  cqTotal: number;
+  /** Always 8 per the sheet. */
+  cqRequired: number;
   unit: GameUnit;
 }
 

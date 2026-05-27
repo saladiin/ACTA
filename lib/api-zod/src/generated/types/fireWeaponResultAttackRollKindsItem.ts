@@ -14,4 +14,5 @@ export const FireWeaponResultAttackRollKindsItem = {
   explosion: 'explosion',
   'twin-reroll': 'twin-reroll',
   'concentrate-reroll': 'concentrate-reroll',
+  'scout-coord-reroll': 'scout-coord-reroll',
 } as const;

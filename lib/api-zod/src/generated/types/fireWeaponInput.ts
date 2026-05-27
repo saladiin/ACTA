@@ -9,4 +9,6 @@
 export interface FireWeaponInput {
   weaponId: number;
   targetUnitId: number;
+  /** Opt-in: consume an unspent allied Scout 'coord' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam / Mini Beam / Energy Mine / Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false. */
+  useScoutCoordination?: boolean;
 }

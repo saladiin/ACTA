@@ -24,6 +24,7 @@ import {
   useSurrenderGame,
   useConcedeGame,
   useChooseSpecialAction,
+  useChooseScoutAction,
   useListFleets,
   useListFleetShips,
   useListShipModels,
@@ -955,6 +956,7 @@ export default function GameBoard() {
   const [confirmingSurrender, setConfirmingSurrender] = useState(false);
   const [confirmingConcede, setConfirmingConcede] = useState(false);
   const chooseSpecialAction = useChooseSpecialAction();
+  const chooseScoutAction = useChooseScoutAction();
   // Transient feedback for the most recent special-action attempt
   // (success/fail + dice roll). Cleared when activation ends.
   const [specialActionFeedback, setSpecialActionFeedback] = useState<
@@ -1044,6 +1046,20 @@ export default function GameBoard() {
   // next ship's button state. Merged with the server's authoritative
   // `activeUnit.firedWeaponIds` (which survives reload) for display.
   const [pendingFired, setPendingFired] = useState<{ unitId: number; ids: Set<number> } | null>(null);
+  // Scout coordination opt-in: when true, the NEXT fire-weapon call from
+  // the active ship sends `useScoutCoordination: true`, consuming an
+  // allied scout's coord token to re-roll failed AD on that weapon. The
+  // server validates token availability and weapon eligibility (Beam /
+  // Mini Beam / Energy Mine / Twin Linked are rejected). Auto-clears
+  // after a shot fires (or errors).
+  const [useCoordOnNext, setUseCoordOnNext] = useState<boolean>(false);
+  // Per-scout target-picking state for Scout Support actions. Mirrors the
+  // concentrate-fire picker pattern: click an action button to enter
+  // pick-mode, then click an enemy ship to declare against.
+  const [scoutPicking, setScoutPicking] = useState<{ action: "counter-stealth" | "coord" } | null>(null);
+  const [scoutFeedback, setScoutFeedback] = useState<{
+    action: string; success: boolean; cqRoll: number | null; cqTotal: number | null; cqRequired: number | null;
+  } | null>(null);
   // Synchronous re-entry guard for the firing-phase target click. A single
   // user click on an enemy ship produces multiple R3F onClick events (one per
   // intersected child mesh inside the ship's <group>), so React state updates
@@ -1538,6 +1554,43 @@ export default function GameBoard() {
       return;
     }
 
+    // ── SCOUT SUPPORT target click ──
+    // While a Scout-support action is in pick-mode, clicking an enemy ship
+    // declares the action against that target. Independent of the weapon
+    // picker — takes priority so a player who's mid-scout-pick doesn't
+    // accidentally fire a weapon at the same click.
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "firing" &&
+      scoutPicking !== null &&
+      selectedUnit !== null &&
+      unit.ownerId !== myUserId
+    ) {
+      const scout = units.find(u => u.id === selectedUnit);
+      if (!scout || scout.ownerId !== myUserId) return;
+      const declared = scoutPicking.action;
+      setScoutPicking(null);
+      chooseScoutAction.mutate(
+        { gameId, unitId: scout.id, data: { action: declared, targetUnitId: unit.id } },
+        {
+          onSuccess: (res) => {
+            setScoutFeedback({
+              action: res.action, success: res.success,
+              cqRoll: res.cqRoll ?? null, cqTotal: res.cqTotal ?? null, cqRequired: res.cqRequired ?? null,
+            });
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          },
+          onError: (err: any) => {
+            setScoutFeedback({ action: declared, success: false, cqRoll: null, cqTotal: null, cqRequired: 8 });
+            // eslint-disable-next-line no-console
+            console.warn("Scout action failed:", err?.message);
+          },
+        },
+      );
+      return;
+    }
+
     // ── FIRING-PHASE target click ──
     // While picking a target for a weapon, clicking an enemy ship resolves
     // the shot immediately via the server.
@@ -1587,10 +1640,11 @@ export default function GameBoard() {
         phase: "pending",
       });
       fireWeapon.mutate(
-        { gameId, unitId: firingUnitId, data: { weaponId: firedWeaponId, targetUnitId: unit.id } },
+        { gameId, unitId: firingUnitId, data: { weaponId: firedWeaponId, targetUnitId: unit.id, useScoutCoordination: useCoordOnNext || undefined } },
         {
           onSuccess: (res) => {
             firingInFlightRef.current = false;
+            setUseCoordOnNext(false);
             // Do NOT invalidate the game query here — that would refresh the
             // board (target HP, shields, destroyed flag) BEFORE the player
             // has even rolled to hit, leaking the outcome. We defer the
@@ -1601,6 +1655,7 @@ export default function GameBoard() {
           },
           onError: (err: any) => {
             firingInFlightRef.current = false;
+            setUseCoordOnNext(false);
             // Roll back the optimistic fired-marker so the player can retry.
             setPendingFired(prev => {
               if (!prev || prev.unitId !== firingUnitId) return prev;
@@ -2998,9 +3053,106 @@ export default function GameBoard() {
                         </button>
                       );
                     })}
+                    {/* Scout Coordination opt-in. Server validates token /
+                        weapon eligibility on submit; we show the checkbox
+                        unconditionally so the player can see it as an
+                        option. */}
+                    <label
+                      className="flex items-center gap-2 text-[10px] font-mono text-cyan-300/80 cursor-pointer select-none border border-cyan-500/30 bg-cyan-500/5 rounded px-2 py-1 hover:bg-cyan-500/10"
+                      data-testid="scout-coord-toggle"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={useCoordOnNext}
+                        onChange={(e) => setUseCoordOnNext(e.target.checked)}
+                        className="accent-cyan-400"
+                        data-testid="scout-coord-checkbox"
+                      />
+                      <span>Use Scout Coord on next shot · re-roll missed AD</span>
+                    </label>
                     <p className="text-[10px] text-muted-foreground font-mono">
                       Pick weapons → target → End Activation when done.
                     </p>
+                  </div>
+                );
+              })()}
+
+              {/* ── SCOUT SUPPORT panel ── Visible whenever the selected
+                  own-ship has the Scout trait during the firing phase
+                  while it's our activation. Doesn't require the scout to
+                  be the active ship — scouts can declare while any of
+                  our ships is activating. */}
+              {currentPhase === "firing" && isMyActivation && selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (() => {
+                const traitsStr = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
+                const hasScout = /\bscout\b/i.test(traitsStr);
+                if (!hasScout) return null;
+                const rawAct = selectedUnitData.scoutAction ?? null;
+                const baseAct = rawAct ? rawAct.replace(/-failed$/, "") : null;
+                const actFailed = !!rawAct && rawAct.endsWith("-failed");
+                const actLocked = !!rawAct;
+                return (
+                  <div className="space-y-1.5" data-testid="scout-actions-panel">
+                    <div className="text-[10px] uppercase tracking-wider text-cyan-400/80 font-mono flex items-center justify-between">
+                      <span>Scout Support · CQ {selectedUnitData.crewQuality} · 36"</span>
+                      {actLocked && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] font-mono ${actFailed ? "border-red-500/60 text-red-300 bg-red-500/10" : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"}`}
+                          data-testid="badge-active-scout-action"
+                        >
+                          {actFailed ? "✗" : "✓"} {baseAct}
+                          {baseAct === "coord" && selectedUnitData.scoutCoordConsumed ? " · spent" : ""}
+                        </Badge>
+                      )}
+                    </div>
+                    {!actLocked && (
+                      <div className="grid grid-cols-1 gap-1">
+                        {(["counter-stealth", "coord"] as const).map(a => {
+                          const picking = scoutPicking?.action === a;
+                          const enemyAlive = units.some(x => x.ownerId !== myUserId && !x.isDestroyed);
+                          const disabled = chooseScoutAction.isPending || !enemyAlive;
+                          const label = a === "counter-stealth" ? "Counter-Stealth" : "Coordination";
+                          const hint = a === "counter-stealth"
+                            ? "Reduce target Stealth by 1 this round"
+                            : "Grant one allied weapon re-roll vs target";
+                          return (
+                            <button
+                              key={a}
+                              data-testid={`scout-action-${a}`}
+                              disabled={disabled}
+                              onClick={() => setScoutPicking(p => p?.action === a ? null : { action: a })}
+                              className={`text-left rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                picking
+                                  ? "border-cyan-400/80 bg-cyan-400/15 text-cyan-200"
+                                  : "border-cyan-500/30 bg-black/40 text-cyan-300/90 hover:bg-cyan-500/10"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold">{label}</span>
+                                <span className="text-[9px] opacity-70">CQ 8+</span>
+                              </div>
+                              <div className="text-[9px] opacity-70">
+                                {picking ? "▸ Click an enemy ship to declare" : hint}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {scoutFeedback && (
+                      <div
+                        className={`rounded border px-2 py-1 text-[10px] font-mono ${
+                          scoutFeedback.success
+                            ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
+                            : "border-red-500/50 bg-red-500/10 text-red-300"
+                        }`}
+                        data-testid="scout-action-feedback"
+                      >
+                        {scoutFeedback.cqRoll !== null && scoutFeedback.cqTotal !== null && scoutFeedback.cqRequired !== null
+                          ? `${scoutFeedback.action} · Rolled ${scoutFeedback.cqRoll} + CQ ${selectedUnitData.crewQuality} = ${scoutFeedback.cqTotal} vs ${scoutFeedback.cqRequired}+ → ${scoutFeedback.success ? "SUCCESS" : "FAIL"}`
+                          : `${scoutFeedback.action} · ${scoutFeedback.success ? "✓ ENGAGED" : "✗ FAILED"}`}
+                      </div>
+                    )}
                   </div>
                 );
               })()}

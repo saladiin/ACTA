@@ -114,6 +114,19 @@ export const gameUnitsTable = pgTable("game_units", {
   // For "concentrate-fire": the nominated target unit id. Read by the
   // fire-weapon route to gate the re-roll bonus.
   specialActionTargetId: integer("special_action_target_id"),
+  // Scout-trait support action declared this round. One per round per
+  // ship. Cleared at round rollover alongside specialAction.
+  // Recognized values (others rejected at the route layer):
+  //   "counter-stealth", "counter-stealth-failed",
+  //   "coord", "coord-failed".
+  // Coordination is consumed when an allied weapon spends the re-roll
+  // (scoutCoordConsumed flips true); counter-stealth is "always-on"
+  // for the round once successful.
+  scoutAction: text("scout_action"),
+  scoutActionTargetId: integer("scout_action_target_id"),
+  // True after a successful 'coord' has been spent on one weapon
+  // system this round. Cleared at round rollover.
+  scoutCoordConsumed: boolean("scout_coord_consumed").notNull().default(false),
   // "All Stop and Pivot" prerequisite latch. Set true when a ship
   // successfully declares "all-stop". Persists across round rollover (the
   // pivot is granted to ships that spent the prior round at All Stop).

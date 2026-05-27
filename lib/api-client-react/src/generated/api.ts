@@ -37,6 +37,8 @@ import type {
   LobbyState,
   MoveUnitInput,
   PlayerProfile,
+  ScoutActionInput,
+  ScoutActionResult,
   SearchPlayersParams,
   Ship,
   ShipInput,
@@ -1819,6 +1821,80 @@ export const useChooseSpecialAction = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getChooseSpecialActionMutationOptions(options));
+    }
+
+export const getChooseScoutActionUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/scout-action`
+}
+
+/**
+ * @summary Declare a Scout-trait support action (counter-stealth or coord) targeting an enemy ship this round.
+ */
+export const chooseScoutAction = async (gameId: number,
+    unitId: number,
+    scoutActionInput: ScoutActionInput, options?: RequestInit): Promise<ScoutActionResult> => {
+
+  return customFetch<ScoutActionResult>(getChooseScoutActionUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scoutActionInput,)
+  }
+);}
+
+
+
+
+export const getChooseScoutActionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseScoutAction>>, TError,{gameId: number;unitId: number;data: BodyType<ScoutActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof chooseScoutAction>>, TError,{gameId: number;unitId: number;data: BodyType<ScoutActionInput>}, TContext> => {
+
+const mutationKey = ['chooseScoutAction'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof chooseScoutAction>>, {gameId: number;unitId: number;data: BodyType<ScoutActionInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  chooseScoutAction(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChooseScoutActionMutationResult = NonNullable<Awaited<ReturnType<typeof chooseScoutAction>>>
+    export type ChooseScoutActionMutationBody = BodyType<ScoutActionInput>
+    export type ChooseScoutActionMutationError = ErrorType<void>
+
+    /**
+ * @summary Declare a Scout-trait support action (counter-stealth or coord) targeting an enemy ship this round.
+ */
+export const useChooseScoutAction = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseScoutAction>>, TError,{gameId: number;unitId: number;data: BodyType<ScoutActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof chooseScoutAction>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<ScoutActionInput>},
+        TContext
+      > => {
+      return useMutation(getChooseScoutActionMutationOptions(options));
     }
 
 export const getDevMoveUnitUrl = (gameId: number,

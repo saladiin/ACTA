@@ -77,6 +77,12 @@ export interface FireWeaponResult {
   beamExplosions: number;
   twinRerolls: number;
   concentrateRerolls: number;
+  /** How much the defender's Stealth rating was reduced by active 'counter-stealth' tokens this round (one per successful Scout counter-stealth). */
+  scoutStealthReduction: number;
+  /** True if a Scout 'coord' re-roll token was consumed by this shot. */
+  scoutCoordApplied: boolean;
+  /** Count of failed AD re-rolled because of the Scout coordination bonus this shot. */
+  scoutCoordRerolls: number;
   targetHullBefore: number;
   targetHullAfter: number;
   targetCrewBefore?: number;

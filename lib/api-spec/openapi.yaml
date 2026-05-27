@@ -491,6 +491,30 @@ paths:
         "400": { description: "Invalid action, prerequisites not met, or already used this round" }
         "409": { description: "Activation conflict" }
 
+  /games/{gameId}/units/{unitId}/scout-action:
+    post:
+      operationId: chooseScoutAction
+      tags: [turns]
+      summary: "Declare a Scout-trait support action (counter-stealth or coord) targeting an enemy ship this round."
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoutActionInput"
+      responses:
+        "200":
+          description: Scout action resolved (CQ success or failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoutActionResult"
+        "400": { description: "Ship lacks Scout trait, target out of 36\" range, target lacks Stealth (counter-stealth), or scout already used a support action this round." }
+        "409": { description: "Phase / activation conflict" }
+
   /games/{gameId}/units/{unitId}/dev-move:
     post:
       operationId: devMoveUnit
@@ -774,6 +798,15 @@ components:
         allStopReady:
           type: boolean
           description: "True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring 'all-stop-pivot' next round; cleared on /move or successful 'all-stop-pivot' declaration."
+        scoutAction:
+          type: ["string", "null"]
+          description: "Scout support action this Scout-trait ship declared this round. Values: 'counter-stealth', 'counter-stealth-failed', 'coord', 'coord-failed'. Null if no scout action used this round. Cleared at round rollover."
+        scoutActionTargetId:
+          type: ["integer", "null"]
+          description: "Enemy unit id this Scout's support action is targeting. Null when no scout action declared."
+        scoutCoordConsumed:
+          type: boolean
+          description: "True once an allied weapon has spent this Scout's successful 'coord' re-roll bonus on a single weapon system this round. Cleared at round rollover."
 
     GameDetail:
       type: object
@@ -836,6 +869,9 @@ components:
       properties:
         weaponId:     { type: integer }
         targetUnitId: { type: integer }
+        useScoutCoordination:
+          type: boolean
+          description: "Opt-in: consume an unspent allied Scout 'coord' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam / Mini Beam / Energy Mine / Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false."
 
     FireWeaponResult:
       type: object
@@ -877,6 +913,9 @@ components:
         - beamExplosions
         - twinRerolls
         - concentrateRerolls
+        - scoutStealthReduction
+        - scoutCoordApplied
+        - scoutCoordRerolls
         - targetHullBefore
         - targetHullAfter
         - targetDestroyed
@@ -904,7 +943,7 @@ components:
           type: array
           items:
             type: string
-            enum: [normal, explosion, twin-reroll, concentrate-reroll]
+            enum: [normal, explosion, twin-reroll, concentrate-reroll, scout-coord-reroll]
           description: "Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight."
         hits:            { type: integer, description: "Raw hits scored before defender pipeline (Dodge/Interceptors/Shields)." }
         dodgeRolls:
@@ -969,6 +1008,9 @@ components:
         beamExplosions:  { type: integer }
         twinRerolls:     { type: integer }
         concentrateRerolls: { type: integer }
+        scoutStealthReduction: { type: integer, description: "How much the defender's Stealth rating was reduced by active 'counter-stealth' tokens this round (one per successful Scout counter-stealth)." }
+        scoutCoordApplied: { type: boolean, description: "True if a Scout 'coord' re-roll token was consumed by this shot." }
+        scoutCoordRerolls: { type: integer, description: "Count of failed AD re-rolled because of the Scout coordination bonus this shot." }
         targetHullBefore: { type: integer }
         targetHullAfter:  { type: integer }
         targetCrewBefore: { type: integer }
@@ -1068,6 +1110,30 @@ components:
         cqRequired:   { type: ["integer", "null"], description: "Target total (1d6 + crewQuality must equal or exceed this)." }
         cqRoll:       { type: ["integer", "null"], description: "1d6 result." }
         cqTotal:      { type: ["integer", "null"], description: "cqRoll + ship's crewQuality." }
+        unit:         { $ref: "#/components/schemas/GameUnit" }
+
+    ScoutActionInput:
+      type: object
+      required: [action, targetUnitId]
+      properties:
+        action:
+          type: string
+          enum: [counter-stealth, coord]
+          description: "counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons)."
+        targetUnitId:
+          type: integer
+          description: "Enemy unit id to support against. Must be within 36\" of the Scout."
+
+    ScoutActionResult:
+      type: object
+      required: [action, targetUnitId, success, cqRoll, cqTotal, cqRequired, unit]
+      properties:
+        action:       { type: string, enum: [counter-stealth, coord] }
+        targetUnitId: { type: integer }
+        success:      { type: boolean, description: "True if the 1d6 + crewQuality CQ check met cqRequired." }
+        cqRoll:       { type: integer, description: "1d6 result." }
+        cqTotal:      { type: integer, description: "cqRoll + scout's crewQuality." }
+        cqRequired:   { type: integer, description: "Always 8 per the sheet." }
         unit:         { $ref: "#/components/schemas/GameUnit" }
 
     MoveUnitInput:

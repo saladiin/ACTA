@@ -41,6 +41,8 @@ import {
   FireWeaponBody,
   ChooseSpecialActionParams,
   ChooseSpecialActionBody,
+  ChooseScoutActionParams,
+  ChooseScoutActionBody,
   DamageControlParams,
   DamageControlBody,
   ListGamesResponse,
@@ -1113,6 +1115,11 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
             // every ship is free to declare again next round.
             specialAction: null,
             specialActionTargetId: null,
+            // Scout support actions (counter-stealth, coord) and the coord
+            // consumption latch are likewise one-per-round.
+            scoutAction: null,
+            scoutActionTargetId: null,
+            scoutCoordConsumed: false,
           })
           .where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
         // Slice C: resolve delayed catastrophic kills. Any ship marked
@@ -1261,7 +1268,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
   const body = FireWeaponBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const { gameId, unitId } = params.data;
-  const { weaponId, targetUnitId } = body.data;
+  const { weaponId, targetUnitId, useScoutCoordination } = body.data;
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -1416,20 +1423,61 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const critFloor = attackerCrits.weaponsHitOn4 ? 4 : 0;
       const hitThreshold = Math.max(baseThreshold, critFloor);
 
+      // ── Scout support: gather allied scout-action rows targeting defender ─
+      // Counter-Stealth (successful): each successful "counter-stealth" by an
+      // allied Scout reduces this defender's effective Stealth rating by 1
+      // for the rest of the round. Coordination (successful, unconsumed):
+      // gives ONE allied weapon system a re-roll-failed-AD token vs this
+      // target. The "coord" token is opt-in (body.useScoutCoordination) and
+      // is marked consumed at the end of this transaction. Allied = same
+      // ownerId as the attacker. Failed scout actions (suffixed "-failed")
+      // contribute nothing.
+      const alliedScoutRows = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, gameId),
+        eq(gameUnitsTable.ownerId, attacker.ownerId),
+        eq(gameUnitsTable.scoutActionTargetId, target.id),
+      ));
+      const counterStealthRows = alliedScoutRows.filter(s => s.scoutAction === "counter-stealth");
+      const scoutStealthReduction = counterStealthRows.length;
+      const availableCoordScout = alliedScoutRows.find(s =>
+        s.scoutAction === "coord" && !s.scoutCoordConsumed,
+      ) ?? null;
+
       // ── Stealth check (per-attack, single 1d6) ───────────────────────────
       // House rule: a Stealth-trait defender forces ONE 1d6 stealth check
       // per attack. Attacker must roll >= the defender's Stealth value
       // (with range/already-hit modifiers, clamped 2..6) or the whole
       // attack misses — no AD rolled, no defender pipeline.
-      // Energy Mine ignores Stealth (sheet rule preserved).
+      // Energy Mine ignores Stealth (sheet rule preserved). Scout
+      // Counter-Stealth drops the effective Stealth rating by 1 per stack
+      // before clamping.
+      const effectiveStealth = Math.max(0, targetTraits.stealth - scoutStealthReduction);
       let stealthCheckTarget: number | null = null;
       let stealthCheckRoll: number | null = null;
       let stealthCheckPassed = true;
-      if (targetTraits.stealth > 0 && !wt.energyMine) {
-        stealthCheckTarget = stealthFloor(targetTraits.stealth, dist, false);
+      if (effectiveStealth > 0 && !wt.energyMine) {
+        stealthCheckTarget = stealthFloor(effectiveStealth, dist, false);
         stealthCheckRoll = rollD6();
         stealthCheckPassed = stealthCheckRoll >= stealthCheckTarget;
       }
+
+      // ── Validate Scout Coordination opt-in ───────────────────────────────
+      // Per the rules, Beam / Mini Beam / Energy Mine / Twin Linked weapons
+      // cannot benefit from the coord re-roll. We reject the opt-in up
+      // front rather than silently dropping it so the client can surface
+      // the error to the player.
+      const scoutCoordRequested = useScoutCoordination === true;
+      const scoutCoordWeaponEligible =
+        !wt.beam && !wt.miniBeam && !wt.energyMine && !wt.twinLinked;
+      if (scoutCoordRequested) {
+        if (!availableCoordScout) {
+          throw Object.assign(new Error("No unspent Scout coordination token available for this target"), { status: 400 });
+        }
+        if (!scoutCoordWeaponEligible) {
+          throw Object.assign(new Error("Scout coordination cannot re-roll Beam, Mini Beam, Energy Mine, or Twin Linked weapons"), { status: 400 });
+        }
+      }
+      const scoutCoordActive = scoutCoordRequested && availableCoordScout != null && scoutCoordWeaponEligible;
 
       // ── Roll AD → raw hits ───────────────────────────────────────────────
       // Beam: every to-hit die showing 4+ "explodes" and rolls one additional
@@ -1444,11 +1492,12 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const concentrateRerollEligible =
         concentrateActive && !wt.beam && !wt.miniBeam && !wt.twinLinked && !wt.energyMine;
       const attackRolls: number[] = [];
-      const attackRollKinds: ("normal" | "explosion" | "twin-reroll" | "concentrate-reroll")[] = [];
+      const attackRollKinds: ("normal" | "explosion" | "twin-reroll" | "concentrate-reroll" | "scout-coord-reroll")[] = [];
       let hits = 0;
       let beamExplosions = 0;
       let twinRerolls = 0;
       let concentrateRerolls = 0;
+      let scoutCoordRerolls = 0;
       // Stealth check failure short-circuits the AD roll entirely — attackRolls
       // stays empty, hits stays 0, and the defender pipeline naturally cascades
       // to no damage.
@@ -1457,6 +1506,12 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         attackRolls.push(r);
         attackRollKinds.push("normal");
         let hitFlag = r >= hitThreshold;
+        // At most ONE re-roll per AD, in this priority: Twin Linked,
+        // Concentrate Fire, Scout Coordination. Scout Coord eligibility
+        // was already validated above to exclude Beam / Mini Beam /
+        // Energy Mine / Twin Linked weapons; the priority order
+        // effectively reduces to "use coord when twin/concentrate
+        // didn't apply".
         if (!hitFlag && wt.twinLinked) {
           const r2 = rollD6();
           attackRolls.push(r2);
@@ -1468,6 +1523,12 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           attackRolls.push(r2);
           attackRollKinds.push("concentrate-reroll");
           concentrateRerolls++;
+          if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
+        } else if (!hitFlag && scoutCoordActive) {
+          const r2 = rollD6();
+          attackRolls.push(r2);
+          attackRollKinds.push("scout-coord-reroll");
+          scoutCoordRerolls++;
           if (r2 >= hitThreshold) { hitFlag = true; r = r2; }
         }
         if (hitFlag) hits++;
@@ -1922,6 +1983,20 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           .where(eq(gamesTable.id, game.id));
       }
 
+      // Consume the Scout coordination token ONLY if it actually drove at
+      // least one re-roll on this attack. Twin Linked / Concentrate Fire
+      // take priority in the per-AD reroll chain (see the loop above),
+      // so it's possible to opt in with no dice left for coord to touch
+      // (e.g. weapon also benefits from Concentrate Fire and every miss
+      // was already re-rolled). In that case we leave the token unspent
+      // rather than silently wasting it.
+      const scoutCoordActuallyUsed = scoutCoordActive && scoutCoordRerolls > 0;
+      if (scoutCoordActuallyUsed && availableCoordScout) {
+        await tx.update(gameUnitsTable)
+          .set({ scoutCoordConsumed: true })
+          .where(eq(gameUnitsTable.id, availableCoordScout.id));
+      }
+
       // damageRolls retained for back-compat with existing combat log UI:
       // map (bulkhead=1, solid=3, crit=6) so the legacy "1=miss, 2-5=hit,
       // 6=crit" rendering keeps showing meaningful pips. Slice A's richer
@@ -1977,6 +2052,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         beamExplosions,
         twinRerolls,
         concentrateRerolls,
+        scoutStealthReduction,
+        scoutCoordApplied: scoutCoordActuallyUsed,
+        scoutCoordRerolls,
         targetHullBefore,
         targetHullAfter,
         targetCrewBefore,
@@ -2139,6 +2217,165 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         // Apply the canonical adrift overlay so the mutation response
         // matches what GET would return for the same unit.
         unit: { ...updated, damageState: effectiveDamageState(updated.damageState, saCritRows) },
+      };
+    });
+    res.json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// ── Scout Support Actions ───────────────────────────────────────────────────
+// Scout-trait ships may declare one of two support actions per round during
+// the Attack Phase, targeting an enemy ship within 36" (world inches).
+//   counter-stealth: CQ 8+ → target's Stealth rating drops by 1 for the
+//                    rest of the round (target must have Stealth trait).
+//   coord:           CQ 8+ → one allied weapon system attacking that target
+//                    re-rolls failed AD (consumed at fire time; excludes
+//                    Beam / Mini Beam / Energy Mine / Twin Linked).
+// One scout action per ship per round; cleared at round rollover alongside
+// specialAction. Independent of the activation system — any of the player's
+// scouts may declare while it's their turn to activate in firing phase.
+router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = ChooseScoutActionParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = ChooseScoutActionBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
+  const { gameId, unitId } = params.data;
+  const { action, targetUnitId } = body.data;
+
+  const SCOUT_RANGE_INCHES = 36;
+  const SCOUT_CQ_REQUIRED = 8;
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "firing") throw Object.assign(new Error("Scout support actions are declared during the firing phase"), { status: 400 });
+      // Gate on the player having the activation token (alternating turn
+      // system) so opponents can't declare scout actions out-of-band while
+      // it's the other player's window to act.
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+
+      const [scout] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!scout) throw Object.assign(new Error("Scout unit not found"), { status: 404 });
+      if (scout.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (scout.isDestroyed) throw Object.assign(new Error("Scout is destroyed"), { status: 400 });
+      if (scout.hullPoints <= 0) throw Object.assign(new Error("Scout has no hull — cannot support"), { status: 400 });
+      if (scout.maxCrewPoints > 0 && scout.crewPoints <= 0) {
+        throw Object.assign(new Error("Scout has no surviving crew — cannot support"), { status: 400 });
+      }
+      // Skeleton crew (≤½ max) loses Command/Fleet Carrier/Admiral and is
+      // already barred from Special Actions — treat scout support the same
+      // way (electronic warfare requires a functional crew).
+      if (scout.maxCrewPoints > 0 && scout.crewPoints * 2 <= scout.maxCrewPoints) {
+        throw Object.assign(new Error("Skeleton crew cannot declare scout support"), { status: 400 });
+      }
+      // Adrift / no-SA crits block scout support too.
+      const scoutCritRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, scout.id));
+      const scoutCrits = deriveCritEffects(scoutCritRows.map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+      if (scoutCrits.adrift) {
+        throw Object.assign(new Error("Adrift scout cannot declare support actions"), { status: 400 });
+      }
+      if (scoutCrits.noSA) {
+        throw Object.assign(new Error("Cannot declare scout support — Bridge / Reactor crit active"), { status: 400 });
+      }
+      if (scout.scoutAction) {
+        throw Object.assign(new Error("Scout already used a support action this round"), { status: 400 });
+      }
+
+      // Scout trait check — filter out lost traits from crits before parsing
+      // so a crit that nuked the Scout trait disables this action.
+      const [scoutShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, scout.shipId));
+      if (!scoutShip) throw Object.assign(new Error("Scout ship record missing"), { status: 500 });
+      const [scoutModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, scoutShip.shipModelId));
+      if (!scoutModel) throw Object.assign(new Error("Scout model missing"), { status: 500 });
+      const lostLc = new Set(Array.from(scoutCrits.lostTraitNames).map(n => n.toLowerCase()));
+      const filteredTraits = (scoutModel.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
+        .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0])).join("; ");
+      const scoutTraits = parseShipTraits(filteredTraits);
+      if (!scoutTraits.scout) {
+        throw Object.assign(new Error("This ship does not have the Scout trait"), { status: 400 });
+      }
+
+      // Target validation.
+      const [tgt] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
+      if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+      if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+
+      // 36" range — same hex-to-world identity mapping as fire-weapon.
+      const sPos = hexToWorld(scout.hexQ, scout.hexR);
+      const tPos = hexToWorld(tgt.hexQ, tgt.hexR);
+      const dist = Math.hypot(tPos.x - sPos.x, tPos.z - sPos.z);
+      if (dist > SCOUT_RANGE_INCHES) {
+        throw Object.assign(new Error(`Target out of range (${dist.toFixed(1)}" > ${SCOUT_RANGE_INCHES}")`), { status: 400 });
+      }
+
+      // Counter-Stealth requires the target to actually have Stealth.
+      // Parse with the same lost-trait filtering used by fire-weapon so a
+      // target whose Stealth was crit-stripped can't be counter-stealthed.
+      if (action === "counter-stealth") {
+        const [tgtShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, tgt.shipId));
+        if (!tgtShip) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
+        const [tgtModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, tgtShip.shipModelId));
+        if (!tgtModel) throw Object.assign(new Error("Target model missing"), { status: 500 });
+        const tgtCritRows = await tx.select().from(unitCriticalEffectsTable)
+          .where(eq(unitCriticalEffectsTable.gameUnitId, tgt.id));
+        const tgtCrits = deriveCritEffects(tgtCritRows.map(r => ({
+          effectKey: r.effectKey,
+          randomArc: r.randomArc,
+          randomWeaponId: r.randomWeaponId,
+          lostTraits: r.lostTraits ?? [],
+        })));
+        const tgtLostLc = new Set(Array.from(tgtCrits.lostTraitNames).map(n => n.toLowerCase()));
+        const tgtFiltered = (tgtModel.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
+          .filter(t => !tgtLostLc.has(t.toLowerCase().split(/\s+/)[0])).join("; ");
+        const tgtTraits = parseShipTraits(tgtFiltered);
+        if (tgtTraits.stealth <= 0) {
+          throw Object.assign(new Error("Counter-Stealth requires a target with the Stealth trait"), { status: 400 });
+        }
+      }
+
+      // CQ check: 1d6 + crewQuality ≥ 8.
+      const cqRoll = rollD6();
+      const cqTotal = cqRoll + scout.crewQuality;
+      const success = cqTotal >= SCOUT_CQ_REQUIRED;
+      // Failed attempts still occupy the per-round slot (the scout tried
+      // and burned its window), so we record a "-failed" suffix mirroring
+      // the Special Action convention. Target id is only kept on success
+      // since failed attempts have no downstream effect to key on.
+      const stored = success ? action : `${action}-failed`;
+      const [updated] = await tx.update(gameUnitsTable).set({
+        scoutAction: stored,
+        scoutActionTargetId: success ? targetUnitId : null,
+        scoutCoordConsumed: false,
+      }).where(eq(gameUnitsTable.id, scout.id)).returning();
+
+      return {
+        action,
+        targetUnitId,
+        success,
+        cqRoll,
+        cqTotal,
+        cqRequired: SCOUT_CQ_REQUIRED,
+        unit: { ...updated, damageState: effectiveDamageState(updated.damageState, scoutCritRows) },
       };
     });
     res.json(out);

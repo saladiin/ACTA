@@ -65,4 +65,16 @@ export interface GameUnit {
   specialActionTargetId?: number | null;
   /** True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring 'all-stop-pivot' next round; cleared on /move or successful 'all-stop-pivot' declaration. */
   allStopReady?: boolean;
+  /**
+     * Scout support action this Scout-trait ship declared this round. Values: 'counter-stealth', 'counter-stealth-failed', 'coord', 'coord-failed'. Null if no scout action used this round. Cleared at round rollover.
+     * @nullable
+     */
+  scoutAction?: string | null;
+  /**
+     * Enemy unit id this Scout's support action is targeting. Null when no scout action declared.
+     * @nullable
+     */
+  scoutActionTargetId?: number | null;
+  /** True once an allied weapon has spent this Scout's successful 'coord' re-roll bonus on a single weapon system this round. Cleared at round rollover. */
+  scoutCoordConsumed?: boolean;
 }

@@ -301,7 +301,10 @@ export const GetGameResponse = zod.object({
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
-  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
 })),
   "turns": zod.array(zod.object({
   "id": zod.number(),
@@ -636,7 +639,8 @@ export const FireWeaponParams = zod.object({
 
 export const FireWeaponBody = zod.object({
   "weaponId": zod.number(),
-  "targetUnitId": zod.number()
+  "targetUnitId": zod.number(),
+  "useScoutCoordination": zod.boolean().optional().describe('Opt-in: consume an unspent allied Scout \'coord\' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam \/ Mini Beam \/ Energy Mine \/ Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false.')
 })
 
 export const FireWeaponResponse = zod.object({
@@ -647,7 +651,7 @@ export const FireWeaponResponse = zod.object({
   "stealthCheckRoll": zod.number().nullish().describe('Single 1d6 the attacker rolled against the defender\'s Stealth. Null when no stealth check was made.'),
   "stealthCheckPassed": zod.boolean().nullish().describe('True if stealthCheckRoll >= stealthCheckTarget (or no stealth check was needed). False means the attack misses entirely — no AD rolled, hits=0, defender pipeline skipped.'),
   "attackRolls": zod.array(zod.number()).describe('All d6 results rolled for AD (including beam-explosions and re-rolls).'),
-  "attackRollKinds": zod.array(zod.enum(['normal', 'explosion', 'twin-reroll', 'concentrate-reroll'])).describe('Parallel array to attackRolls labelling each die\'s origin. Same length as attackRolls. Use \'explosion\' dice for the Beam-trait visual highlight.'),
+  "attackRollKinds": zod.array(zod.enum(['normal', 'explosion', 'twin-reroll', 'concentrate-reroll', 'scout-coord-reroll'])).describe('Parallel array to attackRolls labelling each die\'s origin. Same length as attackRolls. Use \'explosion\' dice for the Beam-trait visual highlight.'),
   "hits": zod.number().describe('Raw hits scored before defender pipeline (Dodge\/Interceptors\/Shields).'),
   "dodgeRolls": zod.array(zod.number()).describe('Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible.'),
   "dodgesSuccessful": zod.number(),
@@ -699,6 +703,9 @@ export const FireWeaponResponse = zod.object({
   "beamExplosions": zod.number(),
   "twinRerolls": zod.number(),
   "concentrateRerolls": zod.number(),
+  "scoutStealthReduction": zod.number().describe('How much the defender\'s Stealth rating was reduced by active \'counter-stealth\' tokens this round (one per successful Scout counter-stealth).'),
+  "scoutCoordApplied": zod.boolean().describe('True if a Scout \'coord\' re-roll token was consumed by this shot.'),
+  "scoutCoordRerolls": zod.number().describe('Count of failed AD re-rolled because of the Scout coordination bonus this shot.'),
   "targetHullBefore": zod.number(),
   "targetHullAfter": zod.number(),
   "targetCrewBefore": zod.number().optional(),
@@ -793,7 +800,10 @@ export const DamageControlResponse = zod.object({
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
-  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
 })
 })
 
@@ -870,7 +880,90 @@ export const ChooseSpecialActionResponse = zod.object({
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
-  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+})
+})
+
+
+/**
+ * @summary Declare a Scout-trait support action (counter-stealth or coord) targeting an enemy ship this round.
+ */
+export const ChooseScoutActionParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const ChooseScoutActionBody = zod.object({
+  "action": zod.enum(['counter-stealth', 'coord']).describe('counter-stealth = reduce target\'s Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam \/ Mini Beam \/ Energy Mine \/ Twin Linked weapons).'),
+  "targetUnitId": zod.number().describe('Enemy unit id to support against. Must be within 36\" of the Scout.')
+})
+
+export const chooseScoutActionResponseUnitCrewQualityMax = 6;
+
+
+
+export const ChooseScoutActionResponse = zod.object({
+  "action": zod.enum(['counter-stealth', 'coord']),
+  "targetUnitId": zod.number(),
+  "success": zod.boolean().describe('True if the 1d6 + crewQuality CQ check met cqRequired.'),
+  "cqRoll": zod.number().describe('1d6 result.'),
+  "cqTotal": zod.number().describe('cqRoll + scout\'s crewQuality.'),
+  "cqRequired": zod.number().describe('Always 8 per the sheet.'),
+  "unit": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "crewPoints": zod.number().optional().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().optional().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(chooseScoutActionResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
 })
 })
 
@@ -941,7 +1034,10 @@ export const DevMoveUnitResponse = zod.object({
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
-  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
 })
 
 
@@ -1011,7 +1107,10 @@ export const MoveUnitResponse = zod.object({
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
-  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.')
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
 })
 
 
