@@ -299,7 +299,7 @@ export const GetGameResponse = zod.object({
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -798,7 +798,7 @@ export const DamageControlResponse = zod.object({
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -817,7 +817,7 @@ export const ChooseSpecialActionParams = zod.object({
 })
 
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire']),
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire']),
   "targetUnitId": zod.number().nullish().describe('Required for \'concentrate-fire\' — the nominated enemy unit id.')
 })
 
@@ -878,7 +878,7 @@ export const ChooseSpecialActionResponse = zod.object({
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -958,7 +958,7 @@ export const ChooseScoutActionResponse = zod.object({
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -1032,7 +1032,7 @@ export const DevMoveUnitResponse = zod.object({
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -1105,7 +1105,7 @@ export const MoveUnitResponse = zod.object({
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),

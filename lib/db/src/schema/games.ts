@@ -105,7 +105,8 @@ export const gameUnitsTable = pgTable("game_units", {
   // Special Action chosen by this ship for the current round. Null until the
   // owner spends one in the movement phase. Cleared at round rollover.
   // Recognized values (others rejected at the route layer):
-  //   "all-power-engines", "all-stop", "all-stop-pivot", "come-about",
+  //   "all-power-engines", "all-stop", "all-stop-pivot",
+  //   "come-about-extra-turn", "come-about-sharp-turn",
   //   "blast-doors", "intensify-defense", "run-silent", "concentrate-fire".
   // A failed CQ attempt is recorded by appending "-failed" (e.g.
   // "run-silent-failed") so the client can show the attempt while still

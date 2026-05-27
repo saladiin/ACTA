@@ -2092,7 +2092,8 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "all-stop": null,
     "all-stop-pivot": null,
     "blast-doors": null,
-    "come-about": 9,
+    "come-about-extra-turn": 9,
+    "come-about-sharp-turn": 9,
     "intensify-defense": 8,
     "run-silent": 8,
     "concentrate-fire": 8,
@@ -2168,6 +2169,19 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       }
       if (action === "all-stop-pivot" && !unit.allStopReady) {
         throw Object.assign(new Error("All Stop and Pivot requires that this ship declared All Stop the previous round"), { status: 400 });
+      }
+      // Come About (extra-turn variant): Lumbering hulls cannot use this
+      // variant per sheet — they must use sharp-turn instead. Authoritative
+      // server check; the client also hides the button but we don't trust
+      // the client across the multiplayer boundary.
+      if (action === "come-about-extra-turn") {
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+        if (ship) {
+          const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+          if (model && parseShipTraits(model.traits).lumbering) {
+            throw Object.assign(new Error("Lumbering ships cannot use Come About — Extra Turn; use Sharp Turn instead"), { status: 400 });
+          }
+        }
       }
       if (action === "blast-doors") {
         // Rule: "Ships with only 1 weapon system cannot fire" under blast

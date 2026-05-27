@@ -1170,13 +1170,13 @@ export default function GameBoard() {
     const isAllStopPivot = baseAction === "all-stop-pivot";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
-    const isComeAbout = u.specialAction === "come-about";
+    const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
     const speedCap =
       isAllStopPivot ? 0 :
       isAllStop || isRunSilent ? Math.floor(u.speed / 2) :
       isAllPower ? Math.floor(u.speed * 1.5) :
       u.speed;
-    const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+    const maxTurns = (u.turns ?? 1) + (isComeAboutExtra ? 1 : 0);
     const turnsForbidden = isAllPower || isRunSilent || isAllStop;
     const led = getLedger(u.id);
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
@@ -1199,9 +1199,15 @@ export default function GameBoard() {
       distanceCommitted = movePlan.distance;
     } else if (movePlan.kind === "turn") {
       // SA cap re-check on turns: forbidden under All Power / Run Silent;
-      // capped at maxTurns (Come About adds +1).
+      // capped at maxTurns (Come About extra-turn adds +1); per-turn angle
+      // capped at turnAngle (×2 for All Stop & Pivot; +45° for one turn
+      // under Come About sharp-turn).
       if (turnsForbidden) { setMovePlan(null); return; }
       if (led.turns >= maxTurns) { setMovePlan(null); return; }
+      const isComeAboutSharp = u.specialAction === "come-about-sharp-turn";
+      const sharpBonus = isComeAboutSharp && led.turns === 0 ? 45 : 0;
+      const angleCap = isAllStopPivot ? u.turnAngle * 2 : u.turnAngle + sharpBonus;
+      if (Math.abs(movePlan.deltaDeg) > angleCap + 1e-6) { setMovePlan(null); return; }
       // Three.js right-handed Y-up: a positive Y rotation takes +Z → +X, which
       // appears CLOCKWISE looking down -Y. That matches the arc preview's
       // "positive deltaDeg sweeps to starboard" convention for unflipped models.
@@ -1307,9 +1313,10 @@ export default function GameBoard() {
       const isAllStopPivot = baseAction === "all-stop-pivot";
       const isAllPower = baseAction === "all-power-engines";
       const isRunSilent = baseAction === "run-silent";
-      const isComeAbout = u.specialAction === "come-about"; // success-only
-      // Come About: +1 extra turn this activation.
-      const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+      const isComeAboutExtra = u.specialAction === "come-about-extra-turn"; // success-only
+      const isComeAboutSharp = u.specialAction === "come-about-sharp-turn"; // success-only
+      // Come About (extra-turn variant): +1 extra turn this activation.
+      const maxTurns = (u.turns ?? 1) + (isComeAboutExtra ? 1 : 0);
       // No turns allowed under All Power to Engines, Run Silent, or All Stop.
       // All Stop and Pivot doubles turn rate but allows turns.
       const turnsForbidden = isAllPower || isRunSilent || isAllStop;
@@ -1346,7 +1353,14 @@ export default function GameBoard() {
         // placement-phase R/Shift+R convention.
         const step = e.shiftKey ? 5 : -5;
         // All Stop and Pivot doubles the per-turn cap (any direction).
-        const cap = isAllStopPivot ? max * 2 : max;
+        // Come About (sharp-turn variant): adds 45° to ONE turn this
+        // activation — applied to the first turn the player makes
+        // (`led.turns === 0`); subsequent turns revert to the normal cap.
+        // Most ships have turns=1 so this is the only turn anyway; the
+        // gate matters only for ships with turns≥2 that already used
+        // their bonus on the first turn.
+        const sharpBonus = isComeAboutSharp && led.turns === 0 ? 45 : 0;
+        const cap = isAllStopPivot ? max * 2 : max + sharpBonus;
         setMovePlan(prev => {
           const current = prev && prev.kind === "turn" ? prev.deltaDeg : 0;
           const next = Math.max(-cap, Math.min(cap, current + step));
@@ -1381,8 +1395,8 @@ export default function GameBoard() {
     const isAllStopPivot = baseAction === "all-stop-pivot";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
-    const isComeAbout = u.specialAction === "come-about";
-    const maxTurns = (u.turns ?? 1) + (isComeAbout ? 1 : 0);
+    const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
+    const maxTurns = (u.turns ?? 1) + (isComeAboutExtra ? 1 : 0);
     // Keep in sync with the keyboard handler's turnsForbidden — All Stop
     // forbids turning per the sheet ("ship halts; may not turn").
     const turnsForbidden = isAllPower || isRunSilent || isAllStop;
@@ -2774,11 +2788,18 @@ export default function GameBoard() {
                 );
               })()}
               {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && isSelectedUnitActive && !isAdriftActive && (() => {
-                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire"; label: string; cq: number | null; hint: string }[] = [
+                const traitsForSA = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
+                const isLumbering = /\blumbering\b/i.test(traitsForSA);
+                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about-extra-turn" | "come-about-sharp-turn" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire"; label: string; cq: number | null; hint: string; hidden?: boolean }[] = [
                   { id: "all-power-engines", label: "All Power to Engines!", cq: null, hint: "Speed +50%; no turns" },
                   { id: "all-stop",          label: "All Stop!",             cq: null, hint: "0..½ speed; no turns" },
                   { id: "all-stop-pivot",    label: "All Stop & Pivot!",     cq: null, hint: "No move; 1 weapon; 2× turn rate" },
-                  { id: "come-about",        label: "Come About!",           cq: 9,    hint: "+1 turn this activation" },
+                  // Come About splits into two mutually-exclusive variants.
+                  // Lumbering ships cannot use the extra-turn variant
+                  // (sheet rule: lumbering hulls only get the sharp-turn
+                  // bonus).
+                  { id: "come-about-extra-turn", label: "Come About — Extra Turn", cq: 9, hint: isLumbering ? "Forbidden: Lumbering" : "+1 turn this activation", hidden: isLumbering },
+                  { id: "come-about-sharp-turn", label: "Come About — Sharp Turn", cq: 9, hint: "+45° to one turn this activation" },
                   { id: "blast-doors",       label: "Close Blast Doors!",    cq: null, hint: "1 weapon; 5+ saves vs damage" },
                   { id: "intensify-defense", label: "Intensify Defensive Fire!", cq: 8, hint: "½ AD on all weapons" },
                   { id: "run-silent",        label: "Run Silent!",           cq: 8,    hint: "Stealth; no fire/turn; ≤½ speed" },
@@ -2840,7 +2861,7 @@ export default function GameBoard() {
                     )}
                     {!actionLocked && (
                       <div className="grid grid-cols-1 gap-1">
-                        {SPECIAL_ACTIONS.map(a => {
+                        {SPECIAL_ACTIONS.filter(a => !a.hidden).map(a => {
                           const needsTarget = a.id === "concentrate-fire";
                           const picking = needsTarget && concentratePicking;
                           const enemyAlive = units.some(x => x.ownerId !== myUserId && !x.isDestroyed);

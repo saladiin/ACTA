@@ -298,7 +298,7 @@ export interface GameUnit {
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
   /**
-     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed).
+     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).
      * @nullable
      */
   specialAction?: string | null;
@@ -562,7 +562,8 @@ export const SpecialActionInputAction = {
   'all-power-engines': 'all-power-engines',
   'all-stop': 'all-stop',
   'all-stop-pivot': 'all-stop-pivot',
-  'come-about': 'come-about',
+  'come-about-extra-turn': 'come-about-extra-turn',
+  'come-about-sharp-turn': 'come-about-sharp-turn',
   'blast-doors': 'blast-doors',
   'intensify-defense': 'intensify-defense',
   'run-silent': 'run-silent',

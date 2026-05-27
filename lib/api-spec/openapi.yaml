@@ -791,7 +791,7 @@ components:
           description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
         specialAction:
           type: ["string", "null"]
-          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed)."
+          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn)."
         specialActionTargetId:
           type: ["integer", "null"]
           description: "Nominated target unit id for 'concentrate-fire'; null otherwise."
@@ -1095,7 +1095,7 @@ components:
       properties:
         action:
           type: string
-          enum: [all-power-engines, all-stop, all-stop-pivot, come-about, blast-doors, intensify-defense, run-silent, concentrate-fire]
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire]
         targetUnitId:
           type: ["integer", "null"]
           description: "Required for 'concentrate-fire' — the nominated enemy unit id."
