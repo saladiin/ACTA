@@ -311,6 +311,8 @@ export interface GameUnit {
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
   hasFiredThisRound: boolean;
+  /** Total inches travelled in the current movement activation (sum of /move step distances). Reset to 0 on /activate-unit. Used to enforce the ACTA minimum-speed rule at /end-activation. */
+  inchesMovedThisActivation?: number;
   /** True when this ship may fire only one weapon system this round, as the cost of a successful 'all-hands-on-deck' declaration this round. Latched on successful declaration in /special-action; cleared at round rollover. */
   oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */

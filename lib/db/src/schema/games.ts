@@ -158,6 +158,12 @@ export const gameUnitsTable = pgTable("game_units", {
   // activation — closes the bypass where /move could be called first to
   // change heading, then /special-action all-stop could arm allStopReady.
   hasInitiatedMoveThisActivation: boolean("has_initiated_move_this_activation").notNull().default(false),
+  // Total inches travelled in the CURRENT movement activation (sum of
+  // each /move step's hex-distance). Reset to 0 on /activate-unit. Read
+  // by /end-activation to enforce the ACTA minimum-speed rule (a ship
+  // must move at least ceil(effectiveMaxSpeed/2) inches each round
+  // unless it declares All Stop / All Stop and Pivot, or is adrift).
+  inchesMovedThisActivation: integer("inches_moved_this_activation").notNull().default(0),
   hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),
   // "All Hands on Deck" cost: when set, this ship may only fire ONE weapon
   // system this round (per ACTA rule). Set at round rollover for any ship

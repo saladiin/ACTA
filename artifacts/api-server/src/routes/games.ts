@@ -773,6 +773,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
         heading: unit.heading,
         hasMovedThisRound: true,
         hasInitiatedMoveThisActivation: true,
+        inchesMovedThisActivation: unit.inchesMovedThisActivation + Math.round(driftDistance),
         // Any commander-initiated movement (including the adrift drift)
         // breaks the All Stop latch — the ship is no longer holding station.
         allStopReady: false,
@@ -783,12 +784,21 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     return;
   }
 
+  // Accumulate inches moved this activation. Each /move call is a single
+  // path segment (the UI sends one per planned step); summing them gives
+  // the total travelled distance enforced by /end-activation. We use
+  // hex-Euclidean since hexQ/hexR are stored as world inches.
+  const stepDq = body.data.toHexQ - unit.hexQ;
+  const stepDr = body.data.toHexR - unit.hexR;
+  const stepInches = Math.round(Math.hypot(stepDq, stepDr));
+
   const [updated] = await db.update(gameUnitsTable)
     .set({
       hexQ: body.data.toHexQ,
       hexR: body.data.toHexR,
       heading: body.data.newHeading,
       hasInitiatedMoveThisActivation: true,
+      inchesMovedThisActivation: unit.inchesMovedThisActivation + stepInches,
       // Movement consumes the All Stop latch (only ships that held station
       // last round get to pivot this round).
       allStopReady: false,
@@ -934,9 +944,24 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       // Fresh activation → wipe the per-activation fired-weapon ledger so
       // each weapon gets exactly one shot this firing activation. (Harmless
       // for movement-phase activations; firing-phase code reads this.)
-      await tx.update(gameUnitsTable)
-        .set({ firedWeaponIds: [], hasInitiatedMoveThisActivation: false })
-        .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
+      //
+      // CRITICAL: only reset on a TRUE pickup transition (no prior active
+      // unit, or an allowed swap to a DIFFERENT unit). Re-calling /activate
+      // with the same unitId that's already active must be a no-op — without
+      // this guard a custom client could partially move, re-activate the
+      // same ship to wipe `inchesMovedThisActivation` /
+      // `hasInitiatedMoveThisActivation`, and then declare All Stop (or
+      // swap away) in violation of the movement-commitment and
+      // minimum-speed rules enforced by /end-activation and /special-action.
+      if (game.activeUnitId !== unitId) {
+        await tx.update(gameUnitsTable)
+          .set({
+            firedWeaponIds: [],
+            hasInitiatedMoveThisActivation: false,
+            inchesMovedThisActivation: 0,
+          })
+          .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
+      }
       return result[0];
     });
     res.json(updated);
@@ -1012,6 +1037,38 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                 new Error("Adrift ship must complete its compulsory drift before ending activation"),
                 { status: 400 },
               );
+            }
+            // ACTA minimum-speed rule: a non-adrift ship must either
+            // (a) declare All Stop / All Stop and Pivot, or (b) move at
+            // least ceil(effectiveMaxSpeed/2) inches this activation
+            // (where effectiveMaxSpeed accounts for engine-crit
+            // speedReduce). Without this check, the End Activation
+            // button would silently let players hold station in
+            // violation of the rules.
+            if (!isAdriftLike) {
+              const baseSA = (endedUnit.specialAction ?? "").replace(/-failed$/, "");
+              const allStopDeclared = baseSA === "all-stop" || baseSA === "all-stop-pivot";
+              if (!allStopDeclared) {
+                // Compute effective max speed: printed speed minus the
+                // cumulative crit speedReduce from this ship's active
+                // criticals.
+                const cap = deriveCritEffects(endedCritRows.map(r => ({
+                  effectKey: r.effectKey,
+                  randomArc: r.randomArc,
+                  randomWeaponId: r.randomWeaponId,
+                  lostTraits: r.lostTraits ?? [],
+                })));
+                const effectiveMax = Math.max(0, endedUnit.speed - cap.speedReduce);
+                const minRequired = effectiveMax > 0 ? Math.max(1, Math.ceil(effectiveMax / 2)) : 0;
+                if (minRequired > 0 && endedUnit.inchesMovedThisActivation < minRequired) {
+                  throw Object.assign(
+                    new Error(
+                      `Ship must move at least ${minRequired}" this activation or declare All Stop (moved ${endedUnit.inchesMovedThisActivation}")`,
+                    ),
+                    { status: 400 },
+                  );
+                }
+              }
             }
           }
         }

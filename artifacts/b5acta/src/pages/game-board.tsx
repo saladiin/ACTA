@@ -1453,6 +1453,32 @@ export default function GameBoard() {
   }, [units, isMyActivation, myUserId, currentPhase]);
   const canPassPhase = isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
 
+  // Movement-phase minimum-speed gate (mirrors the server check in
+  // /end-activation). A ship must either move at least ceil(speed/2)
+  // inches this activation OR declare All Stop / All Stop and Pivot,
+  // unless it is adrift (which has its own compulsory-drift gate).
+  // We surface this in the UI so the End Activation button explains
+  // itself instead of just bouncing off the server with a 400.
+  const activeUnitData = hasActiveUnit ? units.find(u => u.id === activeUnitId) ?? null : null;
+  const minMoveGate = useMemo(() => {
+    if (!activeUnitData || currentPhase !== "movement") {
+      return { blocked: false, required: 0, moved: 0 };
+    }
+    if (activeUnitData.damageState === "adrift" || activeUnitData.damageState === "exploding-end-of-next") {
+      return { blocked: false, required: 0, moved: 0 };
+    }
+    const baseSA = (activeUnitData.specialAction ?? "").replace(/-failed$/, "");
+    if (baseSA === "all-stop" || baseSA === "all-stop-pivot") {
+      return { blocked: false, required: 0, moved: 0 };
+    }
+    // Client doesn't know crit speedReduce, so this is a best-effort
+    // floor based on printed speed. Server is the source of truth and
+    // re-checks against effective max speed (crit-adjusted).
+    const required = Math.max(1, Math.ceil(activeUnitData.speed / 2));
+    const moved = activeUnitData.inchesMovedThisActivation ?? 0;
+    return { blocked: moved < required, required, moved };
+  }, [activeUnitData, currentPhase]);
+
   // Reset per-activation firing state whenever the active unit changes (new
   // ship picked up, or the previous activation ended). Server clears its own
   // ledger on /activate-unit; we just clear the optimistic overlay + picker.
@@ -2944,7 +2970,7 @@ export default function GameBoard() {
                 data-testid="button-end-activation"
                 className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
                 onClick={handleEndActivation}
-                disabled={(!hasActiveUnit && !canPassPhase) || endActivation.isPending}
+                disabled={(!hasActiveUnit && !canPassPhase) || endActivation.isPending || minMoveGate.blocked}
               >
                 {endActivation.isPending
                   ? "Ending…"
@@ -2952,6 +2978,14 @@ export default function GameBoard() {
                     ? "Pass Phase (N)"
                     : "End Activation (N)"}
               </Button>
+              {minMoveGate.blocked && (
+                <p
+                  data-testid="text-min-move-gate"
+                  className="text-[10px] font-mono uppercase tracking-wider text-amber-400/90"
+                >
+                  Must move ≥ {minMoveGate.required}" or declare All Stop (moved {minMoveGate.moved}")
+                </p>
+              )}
               <div className="space-y-1 text-xs text-muted-foreground font-mono">
                 <p className="flex items-center gap-1"><Move className="w-3 h-3" /> {turnMoves.length} moves queued</p>
                 <p className="flex items-center gap-1"><Target className="w-3 h-3" /> {turnAttacks.length} attacks queued</p>
