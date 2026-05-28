@@ -3468,7 +3468,7 @@ export default function GameBoard() {
                     </div>
                     <div className="text-[9px] opacity-70">
                       {allHandsActive
-                        ? "+2 DC, unlimited repairs this round · cost: 1 weapon next round"
+                        ? "+2 DC, unlimited repairs this round · cost: 1 weapon system this round"
                         : allHandsFailed
                           ? "CQ check failed — no DC bonus this round"
                           : saLockedOther
@@ -3485,7 +3485,7 @@ export default function GameBoard() {
                                       ? "Available in your End Phase window"
                                       : myPassedEnd
                                         ? "You've passed the End Phase"
-                                        : `+2 DC, repair unlimited crits (1d6+CQ${cq}+2 vs 9+) · cost: 1 weapon next round`}
+                                        : `+2 DC, repair unlimited crits (1d6+CQ${cq}+2 vs 9+) · cost: 1 weapon system this round`}
                     </div>
                   </button>
                 )}

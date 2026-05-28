@@ -1224,9 +1224,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot") && alreadyFired.length >= 1) {
         throw Object.assign(new Error(`${baseAction === "blast-doors" ? "Close Blast Doors" : "All Stop and Pivot"} limits firing to 1 weapon system`), { status: 400 });
       }
-      // All Hands on Deck (cost paid this round): only 1 weapon system
-      // may fire. Latched at round rollover from the prior round's
-      // successful all-hands declaration.
+      // All Hands on Deck (cost): only 1 weapon system may fire this
+      // round. Latched on successful declaration in /special-action;
+      // cleared at round rollover.
       if (attacker.oneWeaponThisRound && alreadyFired.length >= 1) {
         throw Object.assign(new Error("All Hands on Deck limits firing to 1 weapon system this round"), { status: 400 });
       }
@@ -2070,8 +2070,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
   // adds +2 to the ship's d6+CQ damage-control rolls AND lifts the
   // once-per-round-per-ship DC cap (any number of crits may be repaired).
   // Must be declared BEFORE the player attempts any DC this round. The
-  // cost — only one weapon system may fire NEXT round — is forwarded via
-  // gameUnits.oneWeaponThisRound at round rollover.
+  // cost — only one weapon system may fire THIS round — is latched on
+  // gameUnits.oneWeaponThisRound at successful declaration and cleared
+  // at round rollover.
   const endPhaseActions = new Set<string>(["all-hands-on-deck"]);
 
   try {
@@ -2219,10 +2220,17 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       let nextAllStopReady = unit.allStopReady;
       if (success && action === "all-stop") nextAllStopReady = true;
       else if (success && action === "all-stop-pivot") nextAllStopReady = false;
+      // All Hands on Deck cost: limit firing to 1 weapon system THIS
+      // round. Set immediately on success so any further /fire-weapon
+      // calls this round are gated. Cleared at the next round rollover.
+      const nextOneWeapon = success && action === "all-hands-on-deck"
+        ? true
+        : unit.oneWeaponThisRound;
       const [updated] = await tx.update(gameUnitsTable).set({
         specialAction: stored,
         specialActionTargetId: success ? storedTarget : null,
         allStopReady: nextAllStopReady,
+        oneWeaponThisRound: nextOneWeapon,
       }).where(eq(gameUnitsTable.id, unit.id)).returning();
 
       return {
@@ -2553,29 +2561,22 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
       }
 
       // Both passed → run round rollover.
-      // 1. Reset per-round flags on surviving units.
-      // All Hands on Deck cost: any ship that successfully declared
-      // all-hands this round must fire only ONE weapon system next
-      // round. We forward that as `oneWeaponThisRound`, which is also
-      // cleared here for everyone else (one-round latch).
-      const survivorsForLatch = await tx.select().from(gameUnitsTable).where(and(
-        eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
-      ));
-      for (const s of survivorsForLatch) {
-        const nextOneWeapon = s.specialAction === "all-hands-on-deck";
-        await tx.update(gameUnitsTable).set({
-          hasMovedThisRound: false,
-          hasFiredThisRound: false,
-          firedWeaponIds: [],
-          specialAction: null,
-          specialActionTargetId: null,
-          scoutAction: null,
-          scoutActionTargetId: null,
-          scoutCoordConsumed: false,
-          hitByUnitIdsThisRound: [],
-          oneWeaponThisRound: nextOneWeapon,
-        }).where(eq(gameUnitsTable.id, s.id));
-      }
+      // 1. Reset per-round flags on surviving units. All Hands on Deck's
+      // one-weapon-fired restriction applies to the SAME round in which
+      // it was declared, so we clear `oneWeaponThisRound` here alongside
+      // every other per-round flag.
+      await tx.update(gameUnitsTable).set({
+        hasMovedThisRound: false,
+        hasFiredThisRound: false,
+        firedWeaponIds: [],
+        specialAction: null,
+        specialActionTargetId: null,
+        scoutAction: null,
+        scoutActionTargetId: null,
+        scoutCoordConsumed: false,
+        hitByUnitIdsThisRound: [],
+        oneWeaponThisRound: false,
+      }).where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
 
       // 2. Resolve delayed catastrophic kills.
       await tx.update(gameUnitsTable).set({
@@ -2760,9 +2761,8 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       // All Hands on Deck (end-phase SA): +2 to all damage-control rolls
       // this round AND removes the once-per-round-per-ship cap (any
       // number of crits can be repaired). The cost — only one weapon
-      // system may fire next round — is latched on round rollover via
-      // `oneWeaponThisRound`. Cleared at round rollover with every other
-      // specialAction.
+      // system may fire THIS round — is latched on successful
+      // declaration via `oneWeaponThisRound` and cleared at rollover.
       const allHandsBonus = allHandsActive ? 2 : 0;
       const dcTotal = dcRoll + unit.crewQuality - dcPenalty + allHandsBonus;
       const dcThreshold = 9;
