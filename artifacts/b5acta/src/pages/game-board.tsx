@@ -2903,8 +2903,12 @@ export default function GameBoard() {
             </div>
           )}
 
-          {/* Turn actions */}
-          {game.status === "active" && isMyActivation && (
+          {/* Turn actions — hidden during End phase, which has no
+              per-ship activations. End-phase commitment is handled by
+              the dedicated "Pass End Phase" panel above; rendering this
+              generic activation panel here would show a redundant
+              "Pass Phase" button alongside it. */}
+          {game.status === "active" && isMyActivation && currentPhase !== "end" && (
             <div className="p-4 border-b border-border space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-xs font-mono text-primary uppercase tracking-wider">
