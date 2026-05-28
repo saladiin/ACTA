@@ -17,7 +17,7 @@ export interface DamageControlResult {
   dcThreshold: number;
   /** Sum of damage-control penalties (e.g. Multiple Fires adds 1, Skeleton Crew adds 2). */
   dcPenalty: number;
-  /** Sum of damage-control bonuses (All Hands on Deck adds 5). */
+  /** Sum of damage-control bonuses (All Hands on Deck adds 2). */
   dcBonus: number;
   effectId: number;
   unit: GameUnit;

@@ -1224,6 +1224,12 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot") && alreadyFired.length >= 1) {
         throw Object.assign(new Error(`${baseAction === "blast-doors" ? "Close Blast Doors" : "All Stop and Pivot"} limits firing to 1 weapon system`), { status: 400 });
       }
+      // All Hands on Deck (cost paid this round): only 1 weapon system
+      // may fire. Latched at round rollover from the prior round's
+      // successful all-hands declaration.
+      if (attacker.oneWeaponThisRound && alreadyFired.length >= 1) {
+        throw Object.assign(new Error("All Hands on Deck limits firing to 1 weapon system this round"), { status: 400 });
+      }
       // Concentrate All Fire-power: only the nominated target may be attacked.
       // Only the successful version locks the target — the failed flavour just
       // wastes the action with no benefit and no penalty.
@@ -2060,9 +2066,12 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "all-hands-on-deck": 9,
   };
   // Actions declared during the End Phase rather than the Movement Phase.
-  // All Hands on Deck is the only end-phase SA right now — it buffs the
-  // ship's damage-control rolls this round (+5 to the d6+CQ check) and
-  // must be declared BEFORE the player attempts any DC this round.
+  // All Hands on Deck is the only end-phase SA right now — on success it
+  // adds +2 to the ship's d6+CQ damage-control rolls AND lifts the
+  // once-per-round-per-ship DC cap (any number of crits may be repaired).
+  // Must be declared BEFORE the player attempts any DC this round. The
+  // cost — only one weapon system may fire NEXT round — is forwarded via
+  // gameUnits.oneWeaponThisRound at round rollover.
   const endPhaseActions = new Set<string>(["all-hands-on-deck"]);
 
   try {
@@ -2545,17 +2554,28 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
 
       // Both passed → run round rollover.
       // 1. Reset per-round flags on surviving units.
-      await tx.update(gameUnitsTable).set({
-        hasMovedThisRound: false,
-        hasFiredThisRound: false,
-        firedWeaponIds: [],
-        specialAction: null,
-        specialActionTargetId: null,
-        scoutAction: null,
-        scoutActionTargetId: null,
-        scoutCoordConsumed: false,
-        hitByUnitIdsThisRound: [],
-      }).where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
+      // All Hands on Deck cost: any ship that successfully declared
+      // all-hands this round must fire only ONE weapon system next
+      // round. We forward that as `oneWeaponThisRound`, which is also
+      // cleared here for everyone else (one-round latch).
+      const survivorsForLatch = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
+      ));
+      for (const s of survivorsForLatch) {
+        const nextOneWeapon = s.specialAction === "all-hands-on-deck";
+        await tx.update(gameUnitsTable).set({
+          hasMovedThisRound: false,
+          hasFiredThisRound: false,
+          firedWeaponIds: [],
+          specialAction: null,
+          specialActionTargetId: null,
+          scoutAction: null,
+          scoutActionTargetId: null,
+          scoutCoordConsumed: false,
+          hitByUnitIdsThisRound: [],
+          oneWeaponThisRound: nextOneWeapon,
+        }).where(eq(gameUnitsTable.id, s.id));
+      }
 
       // 2. Resolve delayed catastrophic kills.
       await tx.update(gameUnitsTable).set({
@@ -2684,7 +2704,10 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
-      if (unit.lastDcRound === game.currentRound) {
+      // All Hands on Deck (success) lifts the once-per-round-per-ship DC
+      // cap — the ship may repair any number of criticals this End Phase.
+      const allHandsActive = unit.specialAction === "all-hands-on-deck";
+      if (!allHandsActive && unit.lastDcRound === game.currentRound) {
         throw Object.assign(new Error("Damage control already attempted this round"), { status: 400 });
       }
       // Damage control happens only during the End Phase, and only while
@@ -2734,18 +2757,25 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       // Slice C: Skeleton Crew levies an additional -2 to damage control.
       const skeletonPenalty = (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) ? 2 : 0;
       const dcPenalty = crits.damageControlPenalty + skeletonPenalty;
-      // All Hands on Deck (end-phase SA): +5 to all damage-control rolls
-      // this round on the declaring ship. Cleared at round rollover with
-      // every other specialAction.
-      const allHandsBonus = unit.specialAction === "all-hands-on-deck" ? 5 : 0;
+      // All Hands on Deck (end-phase SA): +2 to all damage-control rolls
+      // this round AND removes the once-per-round-per-ship cap (any
+      // number of crits can be repaired). The cost — only one weapon
+      // system may fire next round — is latched on round rollover via
+      // `oneWeaponThisRound`. Cleared at round rollover with every other
+      // specialAction.
+      const allHandsBonus = allHandsActive ? 2 : 0;
       const dcTotal = dcRoll + unit.crewQuality - dcPenalty + allHandsBonus;
       const dcThreshold = 9;
       const success = dcTotal >= dcThreshold;
 
-      // Record the attempt regardless of outcome.
-      await tx.update(gameUnitsTable)
-        .set({ lastDcRound: game.currentRound })
-        .where(eq(gameUnitsTable.id, unit.id));
+      // Record the attempt. When all-hands is active we deliberately do
+      // NOT update lastDcRound — the cap is suspended for the round, so
+      // setting it would falsely lock out follow-up repairs.
+      if (!allHandsActive) {
+        await tx.update(gameUnitsTable)
+          .set({ lastDcRound: game.currentRound })
+          .where(eq(gameUnitsTable.id, unit.id));
+      }
 
       if (success) {
         await tx.delete(unitCriticalEffectsTable).where(eq(unitCriticalEffectsTable.id, effect.id));

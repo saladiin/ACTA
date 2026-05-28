@@ -3419,7 +3419,7 @@ export default function GameBoard() {
               && selectedUnitData.damageState !== "adrift"
               && !noSACritEnd
               && !chooseSpecialAction.isPending;
-            const allHandsBonus = allHandsActive ? 5 : 0;
+            const allHandsBonus = allHandsActive ? 2 : 0;
             return (
               <div className="p-4 border-b border-border space-y-1.5" data-testid="crit-panel">
                 <div className="text-[10px] uppercase tracking-wider text-red-400/80 font-mono flex items-center justify-between">
@@ -3464,11 +3464,11 @@ export default function GameBoard() {
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-bold">{allHandsActive ? "✓ All Hands on Deck!" : allHandsFailed ? "✗ All Hands on Deck (failed)" : "All Hands on Deck!"}</span>
-                      <span className="text-[9px] opacity-70">{allHandsActive ? "+5 DC" : `CQ ${allHandsCqRequired}+`}</span>
+                      <span className="text-[9px] opacity-70">{allHandsActive ? "+2 DC · ∞" : `CQ ${allHandsCqRequired}+`}</span>
                     </div>
                     <div className="text-[9px] opacity-70">
                       {allHandsActive
-                        ? "+5 to every damage-control roll this round"
+                        ? "+2 DC, unlimited repairs this round · cost: 1 weapon next round"
                         : allHandsFailed
                           ? "CQ check failed — no DC bonus this round"
                           : saLockedOther
@@ -3485,7 +3485,7 @@ export default function GameBoard() {
                                       ? "Available in your End Phase window"
                                       : myPassedEnd
                                         ? "You've passed the End Phase"
-                                        : `+5 bonus to all DC rolls (1d6+CQ${cq}+5 vs 9+)`}
+                                        : `+2 DC, repair unlimited crits (1d6+CQ${cq}+2 vs 9+) · cost: 1 weapon next round`}
                     </div>
                   </button>
                 )}
@@ -3496,7 +3496,10 @@ export default function GameBoard() {
                 )}
                 {crits.map((c) => {
                   const isSameRound = c.appliedRound === currentRound;
-                  const canRepair = c.repairable && !isSameRound && !dcAttemptedThisRound && !damageControl.isPending && isMyEndWindow && !myPassedEnd;
+                  // All Hands on Deck lifts the once-per-round DC cap — when
+                  // active, dcAttemptedThisRound no longer locks repairs.
+                  const dcLocked = dcAttemptedThisRound && !allHandsActive;
+                  const canRepair = c.repairable && !isSameRound && !dcLocked && !damageControl.isPending && isMyEndWindow && !myPassedEnd;
                   const dcFormula = `1d6+CQ${cq}${allHandsBonus > 0 ? `+${allHandsBonus}` : ""}≥9`;
                   return (
                     <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200" data-testid={`crit-row-${c.id}`}>
@@ -3528,7 +3531,7 @@ export default function GameBoard() {
                           ? "Unrepairable (Vital Systems)"
                           : isSameRound
                           ? "Wait until next round"
-                          : dcAttemptedThisRound
+                          : dcLocked
                           ? "DC locked this round"
                           : myPassedEnd
                           ? "You've passed End Phase"

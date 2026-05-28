@@ -159,6 +159,11 @@ export const gameUnitsTable = pgTable("game_units", {
   // change heading, then /special-action all-stop could arm allStopReady.
   hasInitiatedMoveThisActivation: boolean("has_initiated_move_this_activation").notNull().default(false),
   hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),
+  // "All Hands on Deck" cost: when set, this ship may only fire ONE weapon
+  // system this round (per ACTA rule). Set at round rollover for any ship
+  // whose previous-round specialAction was "all-hands-on-deck" (success).
+  // Cleared at the next round rollover (one-round latch).
+  oneWeaponThisRound: boolean("one_weapon_this_round").notNull().default(false),
   // Weapons this ship has already discharged DURING the current firing
   // activation. Reset to [] each time the ship is picked up for activation so
   // the server can authoritatively enforce one-shot-per-weapon. (Per the

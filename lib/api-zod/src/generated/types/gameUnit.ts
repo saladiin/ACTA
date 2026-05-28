@@ -51,12 +51,14 @@ export interface GameUnit {
   isDestroyed: boolean;
   hasMovedThisRound: boolean;
   hasFiredThisRound: boolean;
+  /** True when this ship may fire only one weapon system this round, as the cost of a successful 'all-hands-on-deck' declaration in the previous End Phase. Latched at round rollover; cleared at the next rollover. */
+  oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
   /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
   hitByUnitIdsThisRound?: number[];
   /**
-     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the End Phase (not Movement) and adds +5 to that ship's damage-control rolls this round.
+     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the End Phase (not Movement); on success it adds +2 to that ship's damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system on the following round (tracked via oneWeaponThisRound).
      * @nullable
      */
   specialAction?: string | null;
