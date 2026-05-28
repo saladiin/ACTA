@@ -2920,20 +2920,16 @@ export default function GameBoard() {
                   className={`text-[10px] font-mono uppercase tracking-widest ${
                     currentPhase === "firing"
                       ? "border-red-500/60 text-red-300 bg-red-500/10"
-                      : currentPhase === "end"
-                      ? "border-amber-500/60 text-amber-300 bg-amber-500/10"
                       : currentPhase === "initiative"
-                      ? "border-purple-500/60 text-purple-300 bg-purple-500/10"
-                      : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"
+                        ? "border-purple-500/60 text-purple-300 bg-purple-500/10"
+                        : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"
                   }`}
                 >
                   {currentPhase === "firing"
                     ? "Firing"
-                    : currentPhase === "end"
-                    ? "End"
                     : currentPhase === "initiative"
-                    ? "Initiative"
-                    : "Movement"}
+                      ? "Initiative"
+                      : "Movement"}
                 </Badge>
               </div>
               <p className="text-xs font-mono text-muted-foreground">
@@ -3156,69 +3152,9 @@ export default function GameBoard() {
                 );
               })()}
 
-              {/* Critical-damage panel: persistent list of active crits on the
-                  selected own-ship, with damage-control buttons. */}
-              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (selectedUnitData.criticals?.length ?? 0) > 0 && (() => {
-                const crits = selectedUnitData.criticals ?? [];
-                const currentRound = game?.currentRound ?? 0;
-                const dcAttemptedThisRound = (selectedUnitData.lastDcRound ?? 0) === currentRound;
-                return (
-                  <div className="space-y-1.5" data-testid="crit-panel">
-                    <div className="text-[10px] uppercase tracking-wider text-red-400/80 font-mono flex items-center justify-between">
-                      <span>Critical Damage · {crits.length}</span>
-                      {dcAttemptedThisRound && (
-                        <span className="text-[9px] text-red-300/60">DC used this round</span>
-                      )}
-                    </div>
-                    {crits.map((c) => {
-                      const isSameRound = c.appliedRound === currentRound;
-                      const isMyEndWindow = currentPhase === "end" && game?.activePlayerId === myUserId;
-                const canRepair = c.repairable && !isSameRound && !dcAttemptedThisRound && !damageControl.isPending && isMyEndWindow;
-                      return (
-                        <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200" data-testid={`crit-row-${c.id}`}>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold uppercase">{c.name}</span>
-                            <span className="text-[9px] opacity-70">
-                              {c.damageApplied > 0 && `−${c.damageApplied}H `}
-                              {c.crewApplied > 0 && `−${c.crewApplied}C`}
-                            </span>
-                          </div>
-                          {(c.randomArc || (c.lostTraits?.length ?? 0) > 0) && (
-                            <div className="text-[9px] opacity-70 mt-0.5">
-                              {c.randomArc && <>arc: {c.randomArc} </>}
-                              {(c.lostTraits?.length ?? 0) > 0 && <>lost: {c.lostTraits.join(", ")}</>}
-                            </div>
-                          )}
-                          <button
-                            data-testid={`damage-control-${c.id}`}
-                            disabled={!canRepair}
-                            onClick={() => {
-                              damageControl.mutate(
-                                { gameId, unitId: selectedUnitData.id, data: { effectId: c.id } },
-                                { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
-                              );
-                            }}
-                            className="mt-1 w-full rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            {!c.repairable
-                              ? "Unrepairable"
-                              : isSameRound
-                              ? "Wait until next round"
-                              : dcAttemptedThisRound
-                              ? "DC locked this round"
-                              : !isMyEndWindow
-                              ? "Available in End Phase"
-                              : `Damage Control (1d6+CQ${selectedUnitData.crewQuality}≥9)`}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-
-              {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && (
-                <div className="space-y-1.5">
+              {/* Critical-damage / End-Phase damage-control panel has moved
+                  outside this movement-only parent block so it renders during
+                  the End Phase too. See the sibling block below the parent
                   <div
                     className={`rounded border px-2 py-1.5 font-mono text-xs ${
                       movePlan
@@ -3434,6 +3370,178 @@ export default function GameBoard() {
               })()}
             </div>
           )}
+
+          {/* ── Critical-damage / End-Phase Damage-Control panel ─────────────
+              Rendered as a sibling of the activation panel above so it
+              survives the End Phase (when that panel is hidden). Shows
+              for own non-destroyed ships either when crits exist, or
+              unconditionally during the End Phase so the player always
+              sees what DC + All Hands on Deck options are available. */}
+          {game.status === "active" && selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (
+            currentPhase === "end" || (selectedUnitData.criticals?.length ?? 0) > 0
+          ) && (() => {
+            const crits = selectedUnitData.criticals ?? [];
+            const currentRound = game.currentRound ?? 0;
+            const dcAttemptedThisRound = (selectedUnitData.lastDcRound ?? 0) === currentRound;
+            const inEndPhase = currentPhase === "end";
+            const isMyEndWindow = inEndPhase && game.activePlayerId === myUserId;
+            const myPassedEnd = inEndPhase && (
+              myUserId === game.challengerId ? !!game.endPhaseChallengerPassed
+              : myUserId === game.opponentId ? !!game.endPhaseOpponentPassed
+              : false
+            );
+            const rawSA = selectedUnitData.specialAction ?? null;
+            const baseSA = rawSA ? rawSA.replace(/-failed$/, "") : null;
+            const allHandsActive = baseSA === "all-hands-on-deck" && !rawSA?.endsWith("-failed");
+            const allHandsFailed = rawSA === "all-hands-on-deck-failed";
+            const saLockedOther = !!rawSA && baseSA !== "all-hands-on-deck";
+            const cq = selectedUnitData.crewQuality;
+            const maxCrew = selectedUnitData.maxCrewPoints ?? 0;
+            const crew = selectedUnitData.crewPoints ?? 0;
+            const isSkeleton = maxCrew > 0 && crew * 2 <= maxCrew;
+            const allHandsCqRequired = 9;
+            // Parity with server `/special-action` noSA gate — Bridge /
+            // Reactor 5-6 / Decompression crits block any SA declaration.
+            // Keep keys in sync with NO_SA_CRIT_KEYS in the movement-SA
+            // panel and `noSA` in critical-table.ts.
+            const NO_SA_CRIT_KEYS_END = new Set([
+              "reactor-gas-leak",
+              "reactor-explosion",
+              "crew-decompression",
+              "vital-bridge",
+            ]);
+            const noSACritEnd = (selectedUnitData.criticals ?? []).find(c => NO_SA_CRIT_KEYS_END.has(c.effectKey));
+            const canDeclareAllHands = isMyEndWindow
+              && !myPassedEnd
+              && !rawSA
+              && !dcAttemptedThisRound
+              && !isSkeleton
+              && selectedUnitData.damageState !== "adrift"
+              && !noSACritEnd
+              && !chooseSpecialAction.isPending;
+            const allHandsBonus = allHandsActive ? 5 : 0;
+            return (
+              <div className="p-4 border-b border-border space-y-1.5" data-testid="crit-panel">
+                <div className="text-[10px] uppercase tracking-wider text-red-400/80 font-mono flex items-center justify-between">
+                  <span>{inEndPhase ? `End Phase · Damage Control · ${selectedUnitData.name}` : `Critical Damage · ${crits.length}`}</span>
+                  {dcAttemptedThisRound && (
+                    <span className="text-[9px] text-red-300/60">DC used this round</span>
+                  )}
+                </div>
+                {inEndPhase && (
+                  <button
+                    data-testid="special-action-all-hands-on-deck"
+                    disabled={!canDeclareAllHands}
+                    onClick={() => {
+                      chooseSpecialAction.mutate(
+                        { gameId, unitId: selectedUnitData.id, data: { action: "all-hands-on-deck" } },
+                        {
+                          onSuccess: (res) => {
+                            setSpecialActionFeedback({
+                              action: res.action,
+                              success: res.success,
+                              cqRoll: res.cqRoll ?? null,
+                              cqTotal: res.cqTotal ?? null,
+                              cqRequired: res.cqRequired ?? null,
+                            });
+                            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+                          },
+                          onError: (err: { message?: string }) => {
+                            setSpecialActionFeedback({ action: "all-hands-on-deck", success: false, cqRoll: null, cqTotal: null, cqRequired: allHandsCqRequired });
+                            // eslint-disable-next-line no-console
+                            console.warn("All Hands on Deck failed:", err?.message);
+                          },
+                        },
+                      );
+                    }}
+                    className={`text-left w-full rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                      allHandsActive
+                        ? "border-green-500/60 bg-green-500/10 text-green-300"
+                        : allHandsFailed
+                          ? "border-red-500/50 bg-red-500/10 text-red-300"
+                          : "border-amber-500/30 bg-black/40 text-amber-300/90 hover:bg-amber-500/10"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold">{allHandsActive ? "✓ All Hands on Deck!" : allHandsFailed ? "✗ All Hands on Deck (failed)" : "All Hands on Deck!"}</span>
+                      <span className="text-[9px] opacity-70">{allHandsActive ? "+5 DC" : `CQ ${allHandsCqRequired}+`}</span>
+                    </div>
+                    <div className="text-[9px] opacity-70">
+                      {allHandsActive
+                        ? "+5 to every damage-control roll this round"
+                        : allHandsFailed
+                          ? "CQ check failed — no DC bonus this round"
+                          : saLockedOther
+                            ? `Locked — ship already used ${baseSA}`
+                            : dcAttemptedThisRound
+                              ? "Already rolled DC — declare before repairing"
+                              : noSACritEnd
+                                ? `Cannot declare — ${noSACritEnd.name} active`
+                                : selectedUnitData.damageState === "adrift"
+                                  ? "Cannot declare — ship is adrift"
+                                  : isSkeleton
+                                    ? "Skeleton crew cannot declare SAs"
+                                    : !isMyEndWindow
+                                      ? "Available in your End Phase window"
+                                      : myPassedEnd
+                                        ? "You've passed the End Phase"
+                                        : `+5 bonus to all DC rolls (1d6+CQ${cq}+5 vs 9+)`}
+                    </div>
+                  </button>
+                )}
+                {crits.length === 0 && inEndPhase && (
+                  <div className="rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] text-emerald-300/80" data-testid="crit-panel-empty">
+                    No critical damage to repair on this ship.
+                  </div>
+                )}
+                {crits.map((c) => {
+                  const isSameRound = c.appliedRound === currentRound;
+                  const canRepair = c.repairable && !isSameRound && !dcAttemptedThisRound && !damageControl.isPending && isMyEndWindow && !myPassedEnd;
+                  const dcFormula = `1d6+CQ${cq}${allHandsBonus > 0 ? `+${allHandsBonus}` : ""}≥9`;
+                  return (
+                    <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200" data-testid={`crit-row-${c.id}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold uppercase">{c.name}</span>
+                        <span className="text-[9px] opacity-70">
+                          {c.damageApplied > 0 && `−${c.damageApplied}H `}
+                          {c.crewApplied > 0 && `−${c.crewApplied}C`}
+                        </span>
+                      </div>
+                      {(c.randomArc || (c.lostTraits?.length ?? 0) > 0) && (
+                        <div className="text-[9px] opacity-70 mt-0.5">
+                          {c.randomArc && <>arc: {c.randomArc} </>}
+                          {(c.lostTraits?.length ?? 0) > 0 && <>lost: {c.lostTraits.join(", ")}</>}
+                        </div>
+                      )}
+                      <button
+                        data-testid={`damage-control-${c.id}`}
+                        disabled={!canRepair}
+                        onClick={() => {
+                          damageControl.mutate(
+                            { gameId, unitId: selectedUnitData.id, data: { effectId: c.id } },
+                            { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                          );
+                        }}
+                        className="mt-1 w-full rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {!c.repairable
+                          ? "Unrepairable (Vital Systems)"
+                          : isSameRound
+                          ? "Wait until next round"
+                          : dcAttemptedThisRound
+                          ? "DC locked this round"
+                          : myPassedEnd
+                          ? "You've passed End Phase"
+                          : !isMyEndWindow
+                          ? "Available in End Phase"
+                          : `Damage Control (${dcFormula})`}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Enemy fleet roster (top) */}
           <div className="flex-1 overflow-hidden flex flex-col border-b border-border">

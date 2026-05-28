@@ -11,12 +11,14 @@ export interface DamageControlResult {
   success: boolean;
   /** 1d6 result. */
   dcRoll: number;
-  /** dcRoll + crewQuality - dcPenalty. */
+  /** dcRoll + crewQuality - dcPenalty + dcBonus. */
   dcTotal: number;
   /** Target total (always 9). */
   dcThreshold: number;
-  /** Sum of damage-control penalties (e.g. Multiple Fires adds 1). */
+  /** Sum of damage-control penalties (e.g. Multiple Fires adds 1, Skeleton Crew adds 2). */
   dcPenalty: number;
+  /** Sum of damage-control bonuses (All Hands on Deck adds 5). */
+  dcBonus: number;
   effectId: number;
   unit: GameUnit;
 }

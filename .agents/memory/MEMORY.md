@@ -1,1 +1,2 @@
-- [Deploy-path parity](deploy-paths-parity.md) — b5acta has two routes that move a game to `active` (`/deploy` and `/dev/skip-deploy`); they must initialize identical phase/round/shield bookkeeping or dev silently runs the old state machine.
+- [Game-board sidebar phase gating](game-board-phase-gating.md) — sidebar sub-panels are nested inside phase-gated parent blocks; new panels must verify their parent's phase guard or they'll silently never render.
+- [SA gate parity](sa-gate-parity.md) — when adding a UI Special Action button, mirror every server gate in `/special-action` (phase, activePlayer, skeleton, adrift, noSA crit keys, declared-already, dc-already) or the button shows enabled and 400s on click.

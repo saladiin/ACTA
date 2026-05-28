@@ -19,4 +19,5 @@ export const SpecialActionInputAction = {
   'intensify-defense': 'intensify-defense',
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
+  'all-hands-on-deck': 'all-hands-on-deck',
 } as const;

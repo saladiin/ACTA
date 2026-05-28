@@ -854,7 +854,7 @@ components:
           description: "Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover."
         specialAction:
           type: ["string", "null"]
-          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn)."
+          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the End Phase (not Movement) and adds +5 to that ship's damage-control rolls this round."
         specialActionTargetId:
           type: ["integer", "null"]
           description: "Nominated target unit id for 'concentrate-fire'; null otherwise."
@@ -1154,13 +1154,14 @@ components:
 
     DamageControlResult:
       type: object
-      required: [success, dcRoll, dcTotal, dcThreshold, dcPenalty, effectId, unit]
+      required: [success, dcRoll, dcTotal, dcThreshold, dcPenalty, dcBonus, effectId, unit]
       properties:
         success:    { type: boolean }
         dcRoll:     { type: integer, description: "1d6 result." }
-        dcTotal:    { type: integer, description: "dcRoll + crewQuality - dcPenalty." }
+        dcTotal:    { type: integer, description: "dcRoll + crewQuality - dcPenalty + dcBonus." }
         dcThreshold: { type: integer, description: "Target total (always 9)." }
-        dcPenalty:  { type: integer, description: "Sum of damage-control penalties (e.g. Multiple Fires adds 1)." }
+        dcPenalty:  { type: integer, description: "Sum of damage-control penalties (e.g. Multiple Fires adds 1, Skeleton Crew adds 2)." }
+        dcBonus:    { type: integer, description: "Sum of damage-control bonuses (All Hands on Deck adds 5)." }
         effectId:   { type: integer }
         unit:       { $ref: "#/components/schemas/GameUnit" }
 
@@ -1170,7 +1171,7 @@ components:
       properties:
         action:
           type: string
-          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire]
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck]
         targetUnitId:
           type: ["integer", "null"]
           description: "Required for 'concentrate-fire' — the nominated enemy unit id."

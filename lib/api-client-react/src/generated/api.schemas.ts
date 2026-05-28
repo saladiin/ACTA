@@ -316,7 +316,7 @@ export interface GameUnit {
   /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
   hitByUnitIdsThisRound?: number[];
   /**
-     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn).
+     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the End Phase (not Movement) and adds +5 to that ship's damage-control rolls this round.
      * @nullable
      */
   specialAction?: string | null;
@@ -574,12 +574,14 @@ export interface DamageControlResult {
   success: boolean;
   /** 1d6 result. */
   dcRoll: number;
-  /** dcRoll + crewQuality - dcPenalty. */
+  /** dcRoll + crewQuality - dcPenalty + dcBonus. */
   dcTotal: number;
   /** Target total (always 9). */
   dcThreshold: number;
-  /** Sum of damage-control penalties (e.g. Multiple Fires adds 1). */
+  /** Sum of damage-control penalties (e.g. Multiple Fires adds 1, Skeleton Crew adds 2). */
   dcPenalty: number;
+  /** Sum of damage-control bonuses (All Hands on Deck adds 5). */
+  dcBonus: number;
   effectId: number;
   unit: GameUnit;
 }
@@ -597,6 +599,7 @@ export const SpecialActionInputAction = {
   'intensify-defense': 'intensify-defense',
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
+  'all-hands-on-deck': 'all-hands-on-deck',
 } as const;
 
 export interface SpecialActionInput {
