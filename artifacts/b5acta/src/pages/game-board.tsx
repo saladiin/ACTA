@@ -1745,7 +1745,15 @@ export default function GameBoard() {
     // server enforces this — UI only fires when it's actually our turn AND
     // the ship hasn't done THIS phase's activation yet AND nothing else is
     // currently activated.
-    if (game?.status === "active" && isMyActivation) {
+    //
+    // The End Phase has NO per-ship activation (it's the Damage Control /
+    // All Hands window), so we deliberately skip this block then. Otherwise
+    // `phaseDone` (= hasMovedThisRound, always true by the End Phase) would
+    // make the swap guard bail at `if (phaseDone) return`, and the click
+    // would never select the ship — leaving the player unable to open the
+    // crit / Damage Control panel. End-phase clicks fall through to the
+    // plain inspection-selection path below.
+    if (game?.status === "active" && isMyActivation && currentPhase !== "end") {
       const isCurrentlyActive = activeUnitId === unitId;
       const phaseDone = currentPhase === "firing" ? unit.hasFiredThisRound : unit.hasMovedThisRound;
       // Firing-phase eligibility: a ship at 0 hull or 0 crew (when it has
