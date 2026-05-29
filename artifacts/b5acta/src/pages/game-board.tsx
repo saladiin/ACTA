@@ -3036,7 +3036,7 @@ export default function GameBoard() {
               {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && isSelectedUnitActive && !isAdriftActive && (() => {
                 const traitsForSA = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
                 const isLumbering = /\blumbering\b/i.test(traitsForSA);
-                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about-extra-turn" | "come-about-sharp-turn" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire"; label: string; cq: number | null; hint: string; hidden?: boolean }[] = [
+                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about-extra-turn" | "come-about-sharp-turn" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire" | "all-hands-on-deck"; label: string; cq: number | null; hint: string; hidden?: boolean }[] = [
                   { id: "all-power-engines", label: "All Power to Engines!", cq: null, hint: "Speed +50%; no turns" },
                   { id: "all-stop",          label: "All Stop!",             cq: null, hint: "0..½ speed; no turns" },
                   { id: "all-stop-pivot",    label: "All Stop & Pivot!",     cq: null, hint: "No move; 1 weapon; 2× turn rate" },
@@ -3050,6 +3050,7 @@ export default function GameBoard() {
                   { id: "intensify-defense", label: "Intensify Defensive Fire!", cq: 8, hint: "½ AD on all weapons" },
                   { id: "run-silent",        label: "Run Silent!",           cq: 8,    hint: "Stealth; no fire/turn; ≤½ speed" },
                   { id: "concentrate-fire",  label: "Concentrate All Fire!", cq: 8,    hint: "Re-roll missed AD vs picked target" },
+                  { id: "all-hands-on-deck", label: "All Hands on Deck!",    cq: 9,    hint: "1 weapon this round; +2 DC & ∞ repairs in End Phase" },
                 ];
                 const rawAction = selectedUnitData.specialAction ?? null;
                 const baseAction = rawAction ? rawAction.replace(/-failed$/, "") : null;
@@ -3436,31 +3437,7 @@ export default function GameBoard() {
             const baseSA = rawSA ? rawSA.replace(/-failed$/, "") : null;
             const allHandsActive = baseSA === "all-hands-on-deck" && !rawSA?.endsWith("-failed");
             const allHandsFailed = rawSA === "all-hands-on-deck-failed";
-            const saLockedOther = !!rawSA && baseSA !== "all-hands-on-deck";
             const cq = selectedUnitData.crewQuality;
-            const maxCrew = selectedUnitData.maxCrewPoints ?? 0;
-            const crew = selectedUnitData.crewPoints ?? 0;
-            const isSkeleton = maxCrew > 0 && crew * 2 <= maxCrew;
-            const allHandsCqRequired = 9;
-            // Parity with server `/special-action` noSA gate — Bridge /
-            // Reactor 5-6 / Decompression crits block any SA declaration.
-            // Keep keys in sync with NO_SA_CRIT_KEYS in the movement-SA
-            // panel and `noSA` in critical-table.ts.
-            const NO_SA_CRIT_KEYS_END = new Set([
-              "reactor-gas-leak",
-              "reactor-explosion",
-              "crew-decompression",
-              "vital-bridge",
-            ]);
-            const noSACritEnd = (selectedUnitData.criticals ?? []).find(c => NO_SA_CRIT_KEYS_END.has(c.effectKey));
-            const canDeclareAllHands = isMyEndWindow
-              && !myPassedEnd
-              && !rawSA
-              && !dcAttemptedThisRound
-              && !isSkeleton
-              && selectedUnitData.damageState !== "adrift"
-              && !noSACritEnd
-              && !chooseSpecialAction.isPending;
             const allHandsBonus = allHandsActive ? 2 : 0;
             return (
               <div className="p-4 border-b border-border space-y-1.5" data-testid="crit-panel">
@@ -3470,66 +3447,21 @@ export default function GameBoard() {
                     <span className="text-[9px] text-red-300/60">DC used this round</span>
                   )}
                 </div>
-                {inEndPhase && (
-                  <button
-                    data-testid="special-action-all-hands-on-deck"
-                    disabled={!canDeclareAllHands}
-                    onClick={() => {
-                      chooseSpecialAction.mutate(
-                        { gameId, unitId: selectedUnitData.id, data: { action: "all-hands-on-deck" } },
-                        {
-                          onSuccess: (res) => {
-                            setSpecialActionFeedback({
-                              action: res.action,
-                              success: res.success,
-                              cqRoll: res.cqRoll ?? null,
-                              cqTotal: res.cqTotal ?? null,
-                              cqRequired: res.cqRequired ?? null,
-                            });
-                            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-                          },
-                          onError: (err: { message?: string }) => {
-                            setSpecialActionFeedback({ action: "all-hands-on-deck", success: false, cqRoll: null, cqTotal: null, cqRequired: allHandsCqRequired });
-                            // eslint-disable-next-line no-console
-                            console.warn("All Hands on Deck failed:", err?.message);
-                          },
-                        },
-                      );
-                    }}
-                    className={`text-left w-full rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                      allHandsActive
-                        ? "border-green-500/60 bg-green-500/10 text-green-300"
-                        : allHandsFailed
-                          ? "border-red-500/50 bg-red-500/10 text-red-300"
-                          : "border-amber-500/30 bg-black/40 text-amber-300/90 hover:bg-amber-500/10"
-                    }`}
+                {inEndPhase && allHandsActive && (
+                  <div
+                    className="rounded border border-green-500/60 bg-green-500/10 px-2 py-1 font-mono text-[10px] text-green-300"
+                    data-testid="all-hands-status-active"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold">{allHandsActive ? "✓ All Hands on Deck!" : allHandsFailed ? "✗ All Hands on Deck (failed)" : "All Hands on Deck!"}</span>
-                      <span className="text-[9px] opacity-70">{allHandsActive ? "+2 DC · ∞" : `CQ ${allHandsCqRequired}+`}</span>
-                    </div>
-                    <div className="text-[9px] opacity-70">
-                      {allHandsActive
-                        ? "+2 DC, unlimited repairs this round · cost: 1 weapon system this round"
-                        : allHandsFailed
-                          ? "CQ check failed — no DC bonus this round"
-                          : saLockedOther
-                            ? `Locked — ship already used ${baseSA}`
-                            : dcAttemptedThisRound
-                              ? "Already rolled DC — declare before repairing"
-                              : noSACritEnd
-                                ? `Cannot declare — ${noSACritEnd.name} active`
-                                : selectedUnitData.damageState === "adrift"
-                                  ? "Cannot declare — ship is adrift"
-                                  : isSkeleton
-                                    ? "Skeleton crew cannot declare SAs"
-                                    : !isMyEndWindow
-                                      ? "Available in your End Phase window"
-                                      : myPassedEnd
-                                        ? "You've passed the End Phase"
-                                        : `+2 DC, repair unlimited crits (1d6+CQ${cq}+2 vs 9+) · cost: 1 weapon system this round`}
-                    </div>
-                  </button>
+                    ✓ All Hands on Deck — +2 DC &amp; unlimited repairs this round (declared in Movement)
+                  </div>
+                )}
+                {inEndPhase && allHandsFailed && (
+                  <div
+                    className="rounded border border-red-500/50 bg-red-500/10 px-2 py-1 font-mono text-[10px] text-red-300"
+                    data-testid="all-hands-status-failed"
+                  >
+                    ✗ All Hands on Deck failed this round — no DC bonus
+                  </div>
                 )}
                 {crits.length === 0 && inEndPhase && (
                   <div className="rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] text-emerald-300/80" data-testid="crit-panel-empty">

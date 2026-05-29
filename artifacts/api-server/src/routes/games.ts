@@ -2122,15 +2122,14 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "concentrate-fire": 8,
     "all-hands-on-deck": 9,
   };
-  // Actions declared during the End Phase rather than the Movement Phase.
-  // All Hands on Deck is the only end-phase SA right now — on success it
-  // adds +2 to the ship's d6+CQ damage-control rolls AND lifts the
-  // once-per-round-per-ship DC cap (any number of crits may be repaired).
-  // Must be declared BEFORE the player attempts any DC this round. The
-  // cost — only one weapon system may fire THIS round — is latched on
-  // gameUnits.oneWeaponThisRound at successful declaration and cleared
-  // at round rollover.
-  const endPhaseActions = new Set<string>(["all-hands-on-deck"]);
+  // All Special Actions — including All Hands on Deck — are declared in
+  // the Movement Phase during a ship's activation. All Hands on Deck's
+  // effect is deferred: on success it adds +2 to that ship's d6+CQ
+  // damage-control rolls AND lifts the once-per-round-per-ship DC cap in
+  // the End Phase. Its cost — only one weapon system may fire this round
+  // — is latched on gameUnits.oneWeaponThisRound at successful
+  // declaration (so it bites in the firing phase that follows) and
+  // cleared at round rollover.
 
   try {
     const out = await db.transaction(async (tx) => {
@@ -2140,17 +2139,10 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
       if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
-      const isEndPhaseAction = endPhaseActions.has(action);
-      if (isEndPhaseAction) {
-        if (game.phase !== "end") throw Object.assign(new Error("This Special Action is declared in the End Phase"), { status: 400 });
-      } else {
-        if (game.phase !== "movement") throw Object.assign(new Error("Special Actions are declared in the movement phase"), { status: 400 });
-      }
+      if (game.phase !== "movement") throw Object.assign(new Error("Special Actions are declared in the movement phase"), { status: 400 });
       if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
-      // Movement-phase SAs are gated to the currently-activated unit;
-      // End-phase SAs (All Hands on Deck) are declared per ship outside
-      // any activation, so we skip the activeUnitId check for them.
-      if (!isEndPhaseAction && game.activeUnitId !== unitId) {
+      // All Special Actions are gated to the currently-activated unit.
+      if (game.activeUnitId !== unitId) {
         throw Object.assign(new Error("This unit is not the one you activated"), { status: 409 });
       }
 
@@ -2161,33 +2153,16 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
       if (unit.specialAction) throw Object.assign(new Error("Already used a Special Action this round"), { status: 400 });
-      // Movement-phase SAs must be declared before the activation's
-      // movement is committed. End-phase SAs run outside the activation
-      // system entirely, so these per-activation gates don't apply.
-      if (!isEndPhaseAction) {
-        if (unit.hasMovedThisRound) throw Object.assign(new Error("Cannot declare a Special Action after the activation has ended"), { status: 400 });
-        // Authoritative per-activation guard: even a partial /move (forward
-        // step or heading change) commits the ship to its current trajectory
-        // and forbids declaring an SA — declarations exist to constrain the
-        // activation that follows, not to retroactively re-frame it. Without
-        // this check a client could /move (e.g. change heading), then declare
-        // all-stop and arm allStopReady, gaining a pivot it never earned.
-        if (unit.hasInitiatedMoveThisActivation) throw Object.assign(new Error("Cannot declare a Special Action after movement has started"), { status: 400 });
-      } else {
-        // End-phase SAs (All Hands on Deck) must be declared BEFORE any
-        // DC attempt this round — once the player has rolled DC the
-        // bonus can't retroactively apply to the prior roll.
-        if (unit.lastDcRound === game.currentRound) {
-          throw Object.assign(new Error("Already attempted damage control this round — declare All Hands on Deck before rolling"), { status: 400 });
-        }
-        // Player must still be in their end-phase window.
-        const playerPassed = userId === game.challengerId
-          ? game.endPhaseChallengerPassed
-          : game.endPhaseOpponentPassed;
-        if (playerPassed) {
-          throw Object.assign(new Error("You've already passed the End Phase this round"), { status: 400 });
-        }
-      }
+      // Special Actions must be declared before the activation's movement
+      // is committed.
+      if (unit.hasMovedThisRound) throw Object.assign(new Error("Cannot declare a Special Action after the activation has ended"), { status: 400 });
+      // Authoritative per-activation guard: even a partial /move (forward
+      // step or heading change) commits the ship to its current trajectory
+      // and forbids declaring an SA — declarations exist to constrain the
+      // activation that follows, not to retroactively re-frame it. Without
+      // this check a client could /move (e.g. change heading), then declare
+      // all-stop and arm allStopReady, gaining a pivot it never earned.
+      if (unit.hasInitiatedMoveThisActivation) throw Object.assign(new Error("Cannot declare a Special Action after movement has started"), { status: 400 });
       // Slice C: Skeleton Crew (crewPoints ≤ ½ max) and Adrift ships
       // cannot declare Special Actions.
       if (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) {
@@ -2815,11 +2790,12 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       // Slice C: Skeleton Crew levies an additional -2 to damage control.
       const skeletonPenalty = (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) ? 2 : 0;
       const dcPenalty = crits.damageControlPenalty + skeletonPenalty;
-      // All Hands on Deck (end-phase SA): +2 to all damage-control rolls
-      // this round AND removes the once-per-round-per-ship cap (any
-      // number of crits can be repaired). The cost — only one weapon
-      // system may fire THIS round — is latched on successful
-      // declaration via `oneWeaponThisRound` and cleared at rollover.
+      // All Hands on Deck (declared as a movement-phase SA): +2 to all
+      // damage-control rolls this round AND removes the
+      // once-per-round-per-ship cap (any number of crits can be
+      // repaired). The cost — only one weapon system may fire this round
+      // — is latched on successful declaration via `oneWeaponThisRound`
+      // and cleared at rollover.
       const allHandsBonus = allHandsActive ? 2 : 0;
       const dcTotal = dcRoll + unit.crewQuality - dcPenalty + allHandsBonus;
       const dcThreshold = 9;
