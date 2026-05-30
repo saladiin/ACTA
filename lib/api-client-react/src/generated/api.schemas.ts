@@ -705,6 +705,16 @@ export interface PlayerProfile {
   avatarUrl?: string | null;
 }
 
+export interface UpdateProfileInput {
+  /**
+     * Public callsign shown to other commanders. Never derived from email.
+     * @minLength 2
+     * @maxLength 24
+     * @pattern ^[A-Za-z0-9 _-]+$
+     */
+  username: string;
+}
+
 export type SearchPlayersParams = {
 q: string;
 };

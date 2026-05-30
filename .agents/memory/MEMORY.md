@@ -1,3 +1,4 @@
 - [Game-board sidebar phase gating](game-board-phase-gating.md) — sidebar sub-panels are nested inside phase-gated parent blocks; new panels must verify their parent's phase guard or they'll silently never render.
 - [SA gate parity](sa-gate-parity.md) — when adding a UI Special Action button, mirror every server gate in `/special-action` (phase, activePlayer, skeleton, adrift, noSA crit keys, declared-already, dc-already) or the button shows enabled and 400s on click.
 - [Special Action timing](special-action-timing.md) — ALL Special Actions (incl. All Hands on Deck) declared in Movement Phase; effects may defer to later phases.
+- [Callsign vs email identity](callsign-identity.md) — public name (players.username) is never email-derived and intentionally NOT unique (challenges resolve by clerkUserId).

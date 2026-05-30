@@ -1361,3 +1361,27 @@ export const GetMyProfileResponse = zod.object({
 })
 
 
+/**
+ * @summary Update the authenticated user's public callsign (display name)
+ */
+export const updateMyProfileBodyUsernameMin = 2;
+export const updateMyProfileBodyUsernameMax = 24;
+
+
+export const updateMyProfileBodyUsernameRegExp = new RegExp('^[A-Za-z0-9 _-]+$');
+
+
+export const UpdateMyProfileBody = zod.object({
+  "username": zod.string().min(updateMyProfileBodyUsernameMin).max(updateMyProfileBodyUsernameMax).regex(updateMyProfileBodyUsernameRegExp).describe('Public callsign shown to other commanders. Never derived from email.')
+})
+
+export const UpdateMyProfileResponse = zod.object({
+  "clerkUserId": zod.string(),
+  "username": zod.string(),
+  "wins": zod.number(),
+  "losses": zod.number(),
+  "gamesPlayed": zod.number(),
+  "avatarUrl": zod.string().nullish()
+})
+
+

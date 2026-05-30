@@ -1,10 +1,18 @@
+import { useState } from "react";
 import { Link } from "wouter";
-import { useGetLobby, useGetMyProfile } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useGetLobby,
+  useGetMyProfile,
+  useUpdateMyProfile,
+  getGetMyProfileQueryKey,
+  getGetLobbyQueryKey,
+} from "@workspace/api-client-react";
 import { Layout } from "@/components/layout";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Swords, Clock, Trophy, Plus, ChevronRight, Target } from "lucide-react";
+import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X } from "lucide-react";
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
@@ -24,6 +32,46 @@ function StatusBadge({ status }: { status: string }) {
 export default function Lobby() {
   const { data: lobby, isLoading } = useGetLobby();
   const { data: profile } = useGetMyProfile();
+  const qc = useQueryClient();
+  const updateProfile = useUpdateMyProfile();
+
+  const [editing, setEditing] = useState(false);
+  const [callsign, setCallsign] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const startEdit = () => {
+    setCallsign(profile?.username ?? "");
+    setEditError(null);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setEditError(null);
+  };
+
+  const saveCallsign = () => {
+    const trimmed = callsign.trim();
+    if (trimmed.length < 2 || trimmed.length > 24) {
+      setEditError("Callsign must be 2–24 characters.");
+      return;
+    }
+    if (!/^[A-Za-z0-9 _-]+$/.test(trimmed)) {
+      setEditError("Use letters, numbers, spaces, - or _ only.");
+      return;
+    }
+    updateProfile.mutate(
+      { data: { username: trimmed } },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getGetMyProfileQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetLobbyQueryKey() });
+          setEditing(false);
+        },
+        onError: (err) => setEditError((err as Error).message || "Could not update callsign."),
+      },
+    );
+  };
 
   return (
     <Layout title="Command Lobby">
@@ -35,10 +83,63 @@ export default function Lobby() {
               <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center text-primary font-bold text-sm">
                 {profile.username?.slice(0, 1).toUpperCase()}
               </div>
-              <div>
-                <div data-testid="text-username" className="font-bold tracking-wide text-sm">{profile.username}</div>
-                <div className="text-xs text-muted-foreground font-mono">{profile.gamesPlayed} engagements &mdash; {profile.wins}W / {profile.losses}L</div>
-              </div>
+              {editing ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      data-testid="input-callsign"
+                      value={callsign}
+                      onChange={(e) => setCallsign(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveCallsign();
+                        if (e.key === "Escape") cancelEdit();
+                      }}
+                      maxLength={24}
+                      autoFocus
+                      placeholder="Your callsign"
+                      className="h-8 w-48 bg-background font-bold tracking-wide text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      data-testid="button-save-callsign"
+                      className="h-8 w-8 p-0"
+                      disabled={updateProfile.isPending}
+                      onClick={saveCallsign}
+                    >
+                      <Check className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid="button-cancel-callsign"
+                      className="h-8 w-8 p-0"
+                      disabled={updateProfile.isPending}
+                      onClick={cancelEdit}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  {editError && (
+                    <span data-testid="text-callsign-error" className="text-[11px] text-red-400 font-mono">{editError}</span>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span data-testid="text-username" className="font-bold tracking-wide text-sm">{profile.username}</span>
+                    <button
+                      type="button"
+                      data-testid="button-edit-callsign"
+                      onClick={startEdit}
+                      className="text-muted-foreground hover:text-primary transition-colors"
+                      title="Edit callsign"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="text-xs text-muted-foreground font-mono">{profile.gamesPlayed} engagements &mdash; {profile.wins}W / {profile.losses}L</div>
+                </div>
+              )}
             </div>
             <Link href="/games/new">
               <Button size="sm" data-testid="button-new-game" className="gap-2 uppercase tracking-widest text-xs font-bold">

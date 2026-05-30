@@ -54,4 +54,5 @@ export * from './turn';
 export * from './turnAttacks';
 export * from './turnInput';
 export * from './turnMoves';
+export * from './updateProfileInput';
 export * from './weapon';

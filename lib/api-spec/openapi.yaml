@@ -649,6 +649,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PlayerProfile"
+    patch:
+      operationId: updateMyProfile
+      tags: [lobby]
+      summary: Update the authenticated user's public callsign (display name)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerProfile"
 
 components:
   schemas:
@@ -1244,3 +1261,14 @@ components:
         losses:      { type: integer }
         gamesPlayed: { type: integer }
         avatarUrl:   { type: ["string", "null"] }
+
+    UpdateProfileInput:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 24
+          pattern: "^[A-Za-z0-9 _-]+$"
+          description: Public callsign shown to other commanders. Never derived from email.
