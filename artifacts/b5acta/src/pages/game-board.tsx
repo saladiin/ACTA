@@ -922,7 +922,29 @@ export default function GameBoard() {
   const myUserId = user?.id ?? "";
   const qc = useQueryClient();
 
-  const { data: gameData, isLoading } = useGetGame(gameId, { query: { queryKey: getGetGameQueryKey(gameId) } });
+  // Live sync for two simultaneous players: poll the game state on an interval
+  // so an opponent's action (movement, firing, end-phase, etc.) appears on this
+  // client within a few seconds without a manual reload. We pause polling while
+  // the dice-roll modal is open so a background refetch can never yank away the
+  // staged dice reveal the player is stepping through, and we only poll while
+  // the game is actually in progress (pending/deploying/active) — finished
+  // games (completed/declined) never change, so there's nothing to fetch.
+  const pausePollingRef = useRef(false);
+  const POLL_INTERVAL_MS = 4000;
+
+  const { data: gameData, isLoading } = useGetGame(gameId, {
+    query: {
+      queryKey: getGetGameQueryKey(gameId),
+      refetchInterval: (query) => {
+        if (pausePollingRef.current) return false;
+        const status = query.state.data?.game?.status;
+        if (status === "pending" || status === "deploying" || status === "active") {
+          return POLL_INTERVAL_MS;
+        }
+        return false;
+      },
+    },
+  });
   const { data: fleets } = useListFleets();
   const { data: shipModels } = useListShipModels();
   const acceptGame = useAcceptGame();
@@ -1049,6 +1071,17 @@ export default function GameBoard() {
   // damage-ready → damage-rolling → damage-shown → close (confirmed). The
   // server returns the full result in one shot; the staging is purely UX.
   const [diceModal, setDiceModal] = useState<DiceModalState | null>(null);
+  // Keep the polling-pause flag in sync with the dice modal: while the staged
+  // dice reveal is open we must not let a background refetch replace game state
+  // mid-sequence. Pausing the interval alone isn't enough — a poll already in
+  // flight when the modal opens would still resolve and clobber the cache mid-
+  // reveal, so we also cancel any outstanding game fetch on open. Re-enables
+  // polling as soon as the modal closes.
+  useEffect(() => {
+    const open = diceModal !== null;
+    pausePollingRef.current = open;
+    if (open) qc.cancelQueries({ queryKey: getGetGameQueryKey(gameId) });
+  }, [diceModal, qc, gameId]);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
@@ -1126,6 +1159,14 @@ export default function GameBoard() {
   const isMyActivation = game?.status === "active" && game.activePlayerId === myUserId;
   const activeUnitId = game?.activeUnitId ?? null;
   const hasActiveUnit = activeUnitId !== null;
+  // With live polling, an opponent's action can advance the turn/activation
+  // while this client still has a staged move preview. Drop any pending preview
+  // the moment it's no longer our activation so a stale ghost can't linger; this
+  // only fires on the transition away from our turn, so it never wipes a plan
+  // we're actively building during our own activation.
+  useEffect(() => {
+    if (!isMyActivation) setMovePlan(null);
+  }, [isMyActivation]);
   const selectedUnitData = units.find(u => u.id === selectedUnit);
   // The selected ship is only "controllable" if it's the one the server
   // currently has activated for THIS player.

@@ -4,5 +4,6 @@
 - [Callsign identity](callsign-identity.md) — public display name (players.username) is decoupled from email; ensurePlayer generates neutral Commander-XXXX defaults; callsigns not unique.
 - [Deploy-path parity](deploy-paths-parity.md) — the two api-server routes that move a game to active must initialize identical phase/round bookkeeping.
 - [game-board phase gating](game-board-phase-gating.md) — sub-panels nested in the activation panel inherit its phase guard; nesting an end-phase panel there silently no-renders.
+- [Game board live polling](game-board-live-polling.md) — opponent sync via React Query refetchInterval; pausing the interval doesn't cancel an in-flight fetch — also cancelQueries on dice-modal open.
 - [Special Action timing](special-action-timing.md) — when/where Special Actions are declared in the combat engine.
 - [Special Action gate parity](sa-gate-parity.md) — every UI Special Action button must mirror the full server gate set in /special-action or it 400s on click.
