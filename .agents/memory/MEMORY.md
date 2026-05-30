@@ -1,4 +1,5 @@
 - [Server static file paths](server-static-paths.md) — API-server must resolve served assets via import.meta.url (dist/), not process.cwd(); prod runs from repo root and breaks cwd paths.
+- [Prod DB data not migrated](prod-db-data-not-migrated.md) — Publish migrates schema only, not rows; prod is read-only to tooling. Fix catalog drift via idempotent app-side self-heal at startup.
 - [Dev player-switch](dev-player-switch.md) — testing-only impersonation via x-dev-user-id is double-gated (client import.meta.env.DEV + server NODE_ENV!=="production"); server gate is the real boundary.
 - [Callsign identity](callsign-identity.md) — public display name (players.username) is decoupled from email; ensurePlayer generates neutral Commander-XXXX defaults; callsigns not unique.
 - [Deploy-path parity](deploy-paths-parity.md) — the two api-server routes that move a game to active must initialize identical phase/round bookkeeping.
