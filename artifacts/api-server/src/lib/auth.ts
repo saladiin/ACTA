@@ -1,17 +1,14 @@
 import { getAuth } from "@clerk/express";
 import type { Request, Response, NextFunction } from "express";
 
-const TEST_USER_ID = "test-user-1";
-
 export const requireAuth = (req: Request, res: Response, next: NextFunction): void => {
   const auth = getAuth(req);
-  const clerkUserId = auth?.sessionClaims?.userId as string | undefined || auth?.userId;
-  // In non-production environments allow a header override for dev/testing
-  const devOverride =
-    process.env.NODE_ENV !== "production"
-      ? (req.headers["x-dev-user-id"] as string | undefined)
-      : undefined;
-  (req as any).userId = devOverride ?? clerkUserId ?? TEST_USER_ID;
+  const clerkUserId = (auth?.sessionClaims?.userId as string | undefined) || auth?.userId;
+  if (!clerkUserId) {
+    res.status(401).json({ title: "Unauthorized", detail: "Authentication required." });
+    return;
+  }
+  (req as any).userId = clerkUserId;
   next();
 };
 

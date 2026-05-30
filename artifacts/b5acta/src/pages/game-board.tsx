@@ -16,7 +16,6 @@ import {
   useDeployFleet,
   useSubmitTurn,
   useMoveUnit,
-  useDevMoveUnit,
   useActivateUnit,
   useEndActivation,
   useFireWeapon,
@@ -37,7 +36,6 @@ import {
 } from "@workspace/api-client-react";
 import type { ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
-import { useDevUserId } from "../lib/dev-user";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,8 +43,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Wrench, RotateCw, RotateCcw, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Flag } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
+import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag } from "lucide-react";
 
 // Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
 // names are historical). Render coordinates are 1:1 with storage, so this
@@ -922,8 +919,7 @@ export default function GameBoard() {
   const params = useParams<{ id: string }>();
   const gameId = parseInt(params.id ?? "0");
   const { user } = useUser();
-  const devUserId = useDevUserId();
-  const myUserId = import.meta.env.DEV ? devUserId : (user?.id ?? "");
+  const myUserId = user?.id ?? "";
   const qc = useQueryClient();
 
   const { data: gameData, isLoading } = useGetGame(gameId, { query: { queryKey: getGetGameQueryKey(gameId) } });
@@ -934,21 +930,6 @@ export default function GameBoard() {
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
   const moveUnit = useMoveUnit();
-  const devMoveUnit = useDevMoveUnit();
-  // ── DEV MODE ────────────────────────────────────────────────────────────────
-  // Free-form "god mode" for setting up test scenarios: click any ship of any
-  // side and shove it around with nudge / rotate buttons. Bypasses all
-  // turn / phase / ownership / activation checks on both the client and the
-  // server (see POST /games/:id/units/:id/dev-move). Persisted to
-  // localStorage so a reload keeps the toggle state.
-  const [devMode, setDevMode] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("b5acta-dev-mode") === "1";
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("b5acta-dev-mode", devMode ? "1" : "0");
-  }, [devMode]);
   const activateUnit = useActivateUnit();
   const endActivation = useEndActivation();
   const fireWeapon = useFireWeapon();
@@ -979,20 +960,9 @@ export default function GameBoard() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [selectedFaction, setSelectedFaction] = useState<string>("");
   const [isDragOver, setIsDragOver] = useState(false);
-  const [devSkipping, setDevSkipping] = useState(false);
   // Password an accepter types to join a private engagement (only shown when
   // the open challenge has hasPassword=true).
   const [joinPassword, setJoinPassword] = useState("");
-
-  const handleDevSkipDeploy = useCallback(async () => {
-    setDevSkipping(true);
-    try {
-      await fetch(`/api/games/${gameId}/dev/skip-deploy`, { method: "POST" });
-      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-    } finally {
-      setDevSkipping(false);
-    }
-  }, [gameId, qc]);
 
   // Keyboard handler for placement phase
   useEffect(() => {
@@ -1125,18 +1095,14 @@ export default function GameBoard() {
     );
 
   // Deployment-zone clamp for staged ship placement during the deploy phase.
-  // Challenger deploys from the +Z short edge, opponent from -Z. The clamp
-  // applies in BOTH normal and dev mode — the server enforces the same
-  // zone rules, and silently snapping drops to the legal strip is much
-  // friendlier than letting the user stage ships that will fail on commit.
+  // Challenger deploys from the +Z short edge, opponent from -Z. The server
+  // enforces the same zone rules, and silently snapping drops to the legal
+  // strip is much friendlier than letting the user stage ships that will
+  // fail on commit.
   const deploymentDepth = game?.deploymentDepth ?? 12;
   const clampToDeployZone = useCallback((x: number, z: number): [number, number] => {
     const cx = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, x));
     if (!game) return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
-    // NOTE: devMode controls *who you are*, not *where you may deploy*.
-    // Even in devMode, deployment must respect your side's zone — the
-    // server enforces it. If you need to seed both sides for a test,
-    // use the `/dev/skip-deploy` endpoint instead.
     const mine: "challenger" | "opponent" | null =
       myUserId === game.challengerId ? "challenger"
       : myUserId === game.opponentId ? "opponent"
@@ -1562,17 +1528,6 @@ export default function GameBoard() {
   const handleUnitClick = (unitId: number) => {
     const unit = units.find(u => u.id === unitId);
     if (!unit || unit.isDestroyed) return;
-
-    // ── DEV MODE: hard short-circuit ──
-    // Must run BEFORE firing-target / attack-queue / activation branches so
-    // that clicking an enemy ship in dev mode selects it for repositioning
-    // instead of (e.g.) firing the currently-picked weapon at it.
-    if (devMode) {
-      setSelectedUnit(unitId === selectedUnit ? null : unitId);
-      setMoveTarget(null);
-      setAttackTarget(null);
-      return;
-    }
 
     // ── MOVEMENT-PHASE: Concentrate All Fire-power target picker ──
     // Clicking an enemy ship while picking a target submits the action.
@@ -2166,112 +2121,6 @@ export default function GameBoard() {
         {/* Sidebar panel */}
         <div className="w-full lg:w-72 border-t lg:border-t-0 lg:border-l border-border bg-card flex flex-col">
 
-          {/* ── DEV MODE ── */}
-          {(() => {
-            const devUnit = devMode ? units.find(u => u.id === selectedUnit) : null;
-            const applyDev = (dq: number, dr: number, dh: number) => {
-              if (!devUnit || devMoveUnit.isPending) return;
-              const hexQ = devUnit.hexQ + dq;
-              const hexR = devUnit.hexR + dr;
-              const heading = devUnit.heading + dh;
-              devMoveUnit.mutate(
-                { gameId, unitId: devUnit.id, data: { hexQ, hexR, heading } },
-                { onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
-              );
-            };
-            return (
-              <div className="p-3 border-b border-border space-y-2" data-testid="dev-mode-panel">
-                <label className="flex items-center justify-between gap-2 cursor-pointer">
-                  <span className="text-xs font-mono uppercase tracking-widest flex items-center gap-1.5 text-fuchsia-400">
-                    <Wrench className="w-3 h-3" /> Dev Mode
-                  </span>
-                  <Switch
-                    checked={devMode}
-                    onCheckedChange={setDevMode}
-                    data-testid="switch-dev-mode"
-                  />
-                </label>
-                {devMode && (
-                  <>
-                    <p className="text-[10px] font-mono text-fuchsia-300/70 leading-snug">
-                      Click any ship · bypass all turn/phase/ownership rules.
-                    </p>
-                    {devUnit ? (
-                      <div className="space-y-1.5 rounded border border-fuchsia-500/40 bg-fuchsia-500/5 p-2">
-                        <div className="flex items-center justify-between font-mono text-[11px]">
-                          <span className="text-fuchsia-200 font-bold truncate">{devUnit.name}</span>
-                          <span className="text-fuchsia-300/70">
-                            q{devUnit.hexQ} r{devUnit.hexR} · {((devUnit.heading % 360) + 360) % 360}°
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-1">
-                          <div />
-                          <Button
-                            variant="outline" size="sm"
-                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
-                            disabled={devMoveUnit.isPending}
-                            onClick={() => applyDev(0, -1, 0)}
-                            data-testid="dev-r-minus"
-                          ><ArrowUp className="w-3 h-3" /></Button>
-                          <div />
-                          <Button
-                            variant="outline" size="sm"
-                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
-                            disabled={devMoveUnit.isPending}
-                            onClick={() => applyDev(-1, 0, 0)}
-                            data-testid="dev-q-minus"
-                          ><ArrowLeft className="w-3 h-3" /></Button>
-                          <div className="text-center text-[9px] font-mono text-fuchsia-300/60 self-center">HEX</div>
-                          <Button
-                            variant="outline" size="sm"
-                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
-                            disabled={devMoveUnit.isPending}
-                            onClick={() => applyDev(1, 0, 0)}
-                            data-testid="dev-q-plus"
-                          ><ArrowRight className="w-3 h-3" /></Button>
-                          <div />
-                          <Button
-                            variant="outline" size="sm"
-                            className="h-7 px-0 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20"
-                            disabled={devMoveUnit.isPending}
-                            onClick={() => applyDev(0, 1, 0)}
-                            data-testid="dev-r-plus"
-                          ><ArrowDown className="w-3 h-3" /></Button>
-                          <div />
-                        </div>
-                        <div className="grid grid-cols-2 gap-1 pt-0.5">
-                          <Button
-                            variant="outline" size="sm"
-                            className="h-7 gap-1 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20 font-mono text-[10px]"
-                            disabled={devMoveUnit.isPending}
-                            onClick={() => applyDev(0, 0, -15)}
-                            data-testid="dev-rot-ccw"
-                          ><RotateCcw className="w-3 h-3" />−15°</Button>
-                          <Button
-                            variant="outline" size="sm"
-                            className="h-7 gap-1 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/20 font-mono text-[10px]"
-                            disabled={devMoveUnit.isPending}
-                            onClick={() => applyDev(0, 0, 15)}
-                            data-testid="dev-rot-cw"
-                          ><RotateCw className="w-3 h-3" />+15°</Button>
-                        </div>
-                        {devMoveUnit.isError && (
-                          <p className="text-[10px] font-mono text-red-400">
-                            {(devMoveUnit.error as { message?: string } | undefined)?.message ?? "dev-move failed"}
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-[10px] font-mono text-muted-foreground italic">
-                        Click any ship to nudge / rotate it.
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            );
-          })()}
-
           {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
           {game.status === "deploying" && ((mySide === "challenger" && game.challengerDeployed) || (mySide === "opponent" && game.opponentDeployed)) && (
             <div className="p-4 border-b border-border space-y-2" data-testid="panel-awaiting-opponent">
@@ -2281,16 +2130,6 @@ export default function GameBoard() {
               <p className="text-xs font-mono text-muted-foreground">
                 Standing by for {mySide === "challenger" ? (game.opponentName ?? "opponent") : (game.challengerName ?? "challenger")} to commit their fleet. The engagement will begin automatically.
               </p>
-              {import.meta.env.DEV && (
-                <button
-                  data-testid="button-dev-skip-deploy"
-                  onClick={handleDevSkipDeploy}
-                  disabled={devSkipping}
-                  className="w-full mt-1 px-2 py-1 rounded border border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/15 text-amber-400 text-[10px] font-mono uppercase tracking-widest transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {devSkipping ? "Skipping…" : "⚡ Dev: Force-Deploy Opponent & Start"}
-                </button>
-              )}
             </div>
           )}
 
@@ -2475,16 +2314,6 @@ export default function GameBoard() {
                 Engage</span> when ready; the battle starts once both
                 commanders commit.
               </p>
-              {import.meta.env.DEV && (
-                <button
-                  data-testid="button-dev-skip-deploy"
-                  onClick={handleDevSkipDeploy}
-                  disabled={devSkipping}
-                  className="w-full mt-1 px-2 py-1 rounded border border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/15 text-amber-400 text-[10px] font-mono uppercase tracking-widest transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {devSkipping ? "Skipping…" : "⚡ Dev: Skip to Movement"}
-                </button>
-              )}
             </div>
           )}
 

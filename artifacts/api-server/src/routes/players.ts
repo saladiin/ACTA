@@ -13,7 +13,7 @@ async function ensurePlayer(userId: string): Promise<void> {
     let username = userId.slice(0, 12);
     let avatarUrl: string | null = null;
     try {
-      const clerkUser = await clerkClient().users.getUser(userId);
+      const clerkUser = await clerkClient.users.getUser(userId);
       username = clerkUser.username || clerkUser.firstName || clerkUser.emailAddresses[0]?.emailAddress?.split("@")[0] || username;
       avatarUrl = clerkUser.imageUrl || null;
     } catch {}

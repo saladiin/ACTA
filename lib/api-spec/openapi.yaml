@@ -570,40 +570,6 @@ paths:
         "400": { description: "Ship lacks Scout trait, target out of 36\" range, target lacks Stealth (counter-stealth), or scout already used a support action this round." }
         "409": { description: "Phase / activation conflict" }
 
-  /games/{gameId}/units/{unitId}/dev-move:
-    post:
-      operationId: devMoveUnit
-      tags: [turns]
-      summary: "DEV ONLY — reposition any unit to a hex with a heading, bypassing turn/phase/ownership checks. Used by the in-app developer mode for setting up test scenarios."
-      parameters:
-        - name: gameId
-          in: path
-          required: true
-          schema:
-            type: integer
-        - name: unitId
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DevMoveUnitInput"
-      responses:
-        "200":
-          description: Unit updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GameUnit"
-        "400":
-          description: Invalid input
-        "404":
-          description: Game or unit not found
-
   /games/{gameId}/units/{unitId}/move:
     post:
       operationId: moveUnit
@@ -1225,14 +1191,6 @@ components:
         toHexQ:     { type: integer }
         toHexR:     { type: integer }
         newHeading: { type: integer }
-
-    DevMoveUnitInput:
-      type: object
-      required: [hexQ, hexR, heading]
-      properties:
-        hexQ:    { type: integer }
-        hexR:    { type: integer }
-        heading: { type: integer }
 
     TurnInput:
       type: object

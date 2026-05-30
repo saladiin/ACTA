@@ -33,8 +33,6 @@ import {
   SubmitTurnBody,
   MoveUnitParams,
   MoveUnitBody,
-  DevMoveUnitParams,
-  DevMoveUnitBody,
   ActivateUnitParams,
   EndActivationParams,
   FireWeaponParams,
@@ -807,47 +805,6 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     .returning();
 
   res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, moveCritRows) });
-});
-
-// ── DEV ONLY: free-form ship reposition ─────────────────────────────────────
-// Used by the in-app developer mode to set up test scenarios. Bypasses all
-// ownership / phase / activation / hasMovedThisRound checks; the only
-// invariants are that the game exists, the unit belongs to that game, and the
-// unit isn't destroyed. Heading is wrapped to [0, 360).
-router.post("/games/:gameId/units/:unitId/dev-move", requireAuth, async (req, res): Promise<void> => {
-  const userId = getUserId(req);
-  const params = DevMoveUnitParams.safeParse(req.params);
-  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-  const body = DevMoveUnitBody.safeParse(req.body);
-  if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
-
-  const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
-  if (!game) { res.status(404).json({ error: "Game not found" }); return; }
-  // Participant gate: dev-move bypasses turn/phase/ownership rules but must
-  // still be confined to a game the caller is actually in. Without this, any
-  // authenticated user could reach in and shove ships around in arbitrary
-  // strangers' games.
-  if (game.challengerId !== userId && game.opponentId !== userId) {
-    res.status(403).json({ error: "Not a participant in this game" });
-    return;
-  }
-
-  const [unit] = await db.select().from(gameUnitsTable).where(
-    and(eq(gameUnitsTable.id, params.data.unitId), eq(gameUnitsTable.gameId, params.data.gameId))
-  );
-  if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
-  if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
-
-  const heading = ((body.data.heading % 360) + 360) % 360;
-  const [updated] = await db.update(gameUnitsTable)
-    .set({ hexQ: body.data.hexQ, hexR: body.data.hexR, heading })
-    .where(eq(gameUnitsTable.id, params.data.unitId))
-    .returning();
-
-  req.log.warn({ unitId: params.data.unitId, gameId: params.data.gameId, hexQ: body.data.hexQ, hexR: body.data.hexR, heading }, "dev-move applied");
-  const dmCrits = await db.select().from(unitCriticalEffectsTable)
-    .where(eq(unitCriticalEffectsTable.gameUnitId, updated.id));
-  res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, dmCrits) });
 });
 
 // ── Pick up a ship for its activation this round ─────────────────────────────
@@ -2833,115 +2790,6 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
     const err = e as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
   }
-});
-
-// ── DEV-ONLY: auto-deploy both fleets and start the game ──────────────────────
-router.post("/games/:gameId/dev/skip-deploy", async (req, res): Promise<void> => {
-  if (process.env.NODE_ENV === "production") {
-    res.status(404).json({ error: "Not found" });
-    return;
-  }
-
-  const params = GetGameParams.safeParse(req.params);
-  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
-
-  let [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
-  if (!game) { res.status(404).json({ error: "Game not found" }); return; }
-
-  // Allow from pending (auto-accept) or deploying
-  if (game.status === "pending") {
-    [game] = await db.update(gamesTable).set({ status: "deploying" }).where(eq(gamesTable.id, game.id)).returning();
-  }
-  if (game.status !== "deploying") {
-    res.status(400).json({ error: `Cannot skip deploy from status '${game.status}'` });
-    return;
-  }
-  // skip-deploy only makes sense once both sides exist; open challenges have
-  // no opponent until someone accepts them.
-  const opponentId = game.opponentId;
-  if (!opponentId) {
-    res.status(400).json({ error: "No opponent has accepted this challenge yet" });
-    return;
-  }
-
-  // Find challenger fleet — prefer the one stored on the game, else pick any fleet they own
-  let challengerFleetId = game.challengerFleetId;
-  if (!challengerFleetId) {
-    const [anyFleet] = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, game.challengerId));
-    if (!anyFleet) { res.status(400).json({ error: "Challenger has no fleet" }); return; }
-    challengerFleetId = anyFleet.id;
-  }
-  // Find opponent fleet — prefer stored, else pick any they own, else reuse challenger's
-  let opponentFleetId = game.opponentFleetId;
-  if (!opponentFleetId) {
-    const [anyFleet] = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, opponentId));
-    opponentFleetId = anyFleet?.id ?? challengerFleetId;
-  }
-
-  // Clear any units from a previous partial deployment
-  await db.delete(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
-
-  const autoPlace = async (fleetId: number, ownerId: string, hexR: number, heading: number) => {
-    const ships = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, fleetId));
-    const startQ = -Math.floor(ships.length / 2);
-    for (let i = 0; i < ships.length; i++) {
-      const ship = ships[i];
-      const [model] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-      if (!model) continue;
-      await db.insert(gameUnitsTable).values({
-        gameId: game.id,
-        ownerId,
-        shipId: ship.id,
-        name: ship.name,
-        modelFilename: model.filename,
-        faction: model.faction,
-        hullPoints: model.hullPoints,
-        maxHullPoints: model.hullPoints,
-        hexQ: startQ + i * 2,
-        hexR,
-        heading,
-        speed: model.speed,
-        turnAngle: model.turnAngle ?? 45,
-        weaponRange: model.weaponRange,
-        weaponDamage: model.weaponDamage,
-        shieldsCurrent: model.shieldMax ?? 0,
-        interceptorDiceRemaining: parseShipTraits(model.traits).interceptors,
-        interceptorThresholdCurrent: 2,
-        crewPoints: model.crew ?? 0,
-        maxCrewPoints: model.crew ?? 0,
-        damageState: "normal",
-        isDestroyed: false,
-      });
-    }
-  };
-
-  // Challenger near top (negative hexR, facing down); opponent near bottom (facing up)
-  await autoPlace(challengerFleetId, game.challengerId, -8, 180);
-  await autoPlace(opponentFleetId, opponentId, 8, 0);
-
-  // Match canonical deploy-completion state: enter Initiative phase with
-  // no active player, no winner, both rolls + end-pass flags cleared.
-  // (Was previously seeding the old movement-first model, which silently
-  // bypassed the initiative roll and broke the new phase contract.)
-  const [updated] = await db.update(gamesTable).set({
-    challengerDeployed: true,
-    opponentDeployed: true,
-    opponentFleetId,
-    status: "active",
-    currentTurn: 1,
-    currentRound: 1,
-    activePlayerId: null,
-    activeUnitId: null,
-    lastActivatorId: null,
-    phase: "initiative",
-    initiativeWinnerId: null,
-    initiativeChallengerRoll: null,
-    initiativeOpponentRoll: null,
-    endPhaseChallengerPassed: false,
-    endPhaseOpponentPassed: false,
-  }).where(eq(gamesTable.id, game.id)).returning();
-
-  res.json(updated);
 });
 
 export default router;

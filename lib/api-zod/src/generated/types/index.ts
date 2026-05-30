@@ -14,7 +14,6 @@ export * from './damageControlResult';
 export * from './damageTableResult';
 export * from './damageTableResultOutcome';
 export * from './deploymentInput';
-export * from './devMoveUnitInput';
 export * from './explosionVictim';
 export * from './fireAction';
 export * from './fireWeaponInput';

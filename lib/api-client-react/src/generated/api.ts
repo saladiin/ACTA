@@ -25,7 +25,6 @@ import type {
   DamageControlInput,
   DamageControlResult,
   DeploymentInput,
-  DevMoveUnitInput,
   FireWeaponInput,
   FireWeaponResult,
   Fleet,
@@ -2108,80 +2107,6 @@ export const useChooseScoutAction = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getChooseScoutActionMutationOptions(options));
-    }
-
-export const getDevMoveUnitUrl = (gameId: number,
-    unitId: number,) => {
-
-
-
-
-  return `/api/games/${gameId}/units/${unitId}/dev-move`
-}
-
-/**
- * @summary DEV ONLY — reposition any unit to a hex with a heading, bypassing turn/phase/ownership checks. Used by the in-app developer mode for setting up test scenarios.
- */
-export const devMoveUnit = async (gameId: number,
-    unitId: number,
-    devMoveUnitInput: DevMoveUnitInput, options?: RequestInit): Promise<GameUnit> => {
-
-  return customFetch<GameUnit>(getDevMoveUnitUrl(gameId,unitId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      devMoveUnitInput,)
-  }
-);}
-
-
-
-
-export const getDevMoveUnitMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof devMoveUnit>>, TError,{gameId: number;unitId: number;data: BodyType<DevMoveUnitInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof devMoveUnit>>, TError,{gameId: number;unitId: number;data: BodyType<DevMoveUnitInput>}, TContext> => {
-
-const mutationKey = ['devMoveUnit'];
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof devMoveUnit>>, {gameId: number;unitId: number;data: BodyType<DevMoveUnitInput>}> = (props) => {
-          const {gameId,unitId,data} = props ?? {};
-
-          return  devMoveUnit(gameId,unitId,data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DevMoveUnitMutationResult = NonNullable<Awaited<ReturnType<typeof devMoveUnit>>>
-    export type DevMoveUnitMutationBody = BodyType<DevMoveUnitInput>
-    export type DevMoveUnitMutationError = ErrorType<void>
-
-    /**
- * @summary DEV ONLY — reposition any unit to a hex with a heading, bypassing turn/phase/ownership checks. Used by the in-app developer mode for setting up test scenarios.
- */
-export const useDevMoveUnit = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof devMoveUnit>>, TError,{gameId: number;unitId: number;data: BodyType<DevMoveUnitInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof devMoveUnit>>,
-        TError,
-        {gameId: number;unitId: number;data: BodyType<DevMoveUnitInput>},
-        TContext
-      > => {
-      return useMutation(getDevMoveUnitMutationOptions(options));
     }
 
 export const getMoveUnitUrl = (gameId: number,

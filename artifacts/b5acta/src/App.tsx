@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ClerkProvider, SignIn, SignUp, Show, useClerk } from "@clerk/react";
+import { ClerkProvider, useClerk, useAuth } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
 import { Switch, Route, useLocation, Router as WouterRouter, Redirect } from "wouter";
@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/reac
 
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { DevModeToggle } from "@/components/dev-mode-toggle";
 
 import Home from "@/pages/home";
 import SignInPage from "@/pages/sign-in";
@@ -122,6 +121,9 @@ function HomeRedirect() {
 }
 
 function ProtectedRoute({ component: Component }: { component: any }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return null;
+  if (!isSignedIn) return <Redirect to="/sign-in" />;
   return <Component />;
 }
 
@@ -153,7 +155,6 @@ function ClerkProviderWithRoutes() {
             <Route component={NotFound} />
           </Switch>
           <Toaster />
-          <DevModeToggle />
         </TooltipProvider>
       </QueryClientProvider>
     </ClerkProvider>
