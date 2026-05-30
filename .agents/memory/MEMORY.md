@@ -1,4 +1,7 @@
-- [Game-board sidebar phase gating](game-board-phase-gating.md) — sidebar sub-panels are nested inside phase-gated parent blocks; new panels must verify their parent's phase guard or they'll silently never render.
-- [SA gate parity](sa-gate-parity.md) — when adding a UI Special Action button, mirror every server gate in `/special-action` (phase, activePlayer, skeleton, adrift, noSA crit keys, declared-already, dc-already) or the button shows enabled and 400s on click.
-- [Special Action timing](special-action-timing.md) — ALL Special Actions (incl. All Hands on Deck) declared in Movement Phase; effects may defer to later phases.
-- [Callsign vs email identity](callsign-identity.md) — public name (players.username) is never email-derived and intentionally NOT unique (challenges resolve by clerkUserId).
+- [Server static file paths](server-static-paths.md) — API-server must resolve served assets via import.meta.url (dist/), not process.cwd(); prod runs from repo root and breaks cwd paths.
+- [Dev player-switch](dev-player-switch.md) — testing-only impersonation via x-dev-user-id is double-gated (client import.meta.env.DEV + server NODE_ENV!=="production"); server gate is the real boundary.
+- [Callsign identity](callsign-identity.md) — public display name (players.username) is decoupled from email; ensurePlayer generates neutral Commander-XXXX defaults; callsigns not unique.
+- [Deploy-path parity](deploy-paths-parity.md) — the two api-server routes that move a game to active must initialize identical phase/round bookkeeping.
+- [game-board phase gating](game-board-phase-gating.md) — sub-panels nested in the activation panel inherit its phase guard; nesting an end-phase panel there silently no-renders.
+- [Special Action timing](special-action-timing.md) — when/where Special Actions are declared in the combat engine.
+- [Special Action gate parity](sa-gate-parity.md) — every UI Special Action button must mirror the full server gate set in /special-action or it 400s on click.

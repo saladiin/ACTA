@@ -17,6 +17,7 @@ import NewGame from "@/pages/new-game";
 import GameBoard from "@/pages/game-board";
 import GamesList from "@/pages/games";
 import NotFound from "@/pages/not-found";
+import { DevModeToggle } from "@/components/dev-mode-toggle";
 
 // `refetchOnWindowFocus` disabled globally: while the dice-roll modal is
 // open we deliberately hold off invalidating the game query so the board
@@ -171,6 +172,7 @@ function ClerkProviderWithRoutes() {
             <Route component={NotFound} />
           </Switch>
           <Toaster />
+          <DevModeToggle />
         </TooltipProvider>
       </QueryClientProvider>
     </ClerkProvider>

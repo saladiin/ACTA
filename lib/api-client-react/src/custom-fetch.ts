@@ -17,6 +17,18 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _extraHeaders: Record<string, string> | null = null;
+
+/**
+ * Set extra headers that are merged into every request. DEV-ONLY use: the
+ * b5acta player-switch toggle injects an `x-dev-user-id` header so a single
+ * tester can act as both commanders. The server only honours this header when
+ * NODE_ENV !== "production", and the toggle only renders in dev builds — so it
+ * is inert on the published site. Pass `null` to clear.
+ */
+export function setExtraHeaders(headers: Record<string, string> | null): void {
+  _extraHeaders = headers;
+}
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -347,6 +359,13 @@ export async function customFetch<T = unknown>(
 
   if (responseType === "json" && !headers.has("accept")) {
     headers.set("accept", DEFAULT_JSON_ACCEPT);
+  }
+
+  // Merge any extra headers (dev-only user override). Inert in production.
+  if (_extraHeaders) {
+    for (const [key, value] of Object.entries(_extraHeaders)) {
+      headers.set(key, value);
+    }
   }
 
   // Attach bearer token when an auth getter is configured and no
