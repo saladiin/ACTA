@@ -45,6 +45,21 @@ if (!clerkPubKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY in .env file");
 }
 
+const clerkLocalization = {
+  signIn: {
+    start: {
+      title: "Access B5: ACTA",
+      subtitle: "Commander, authenticate to resume operations",
+    },
+  },
+  signUp: {
+    start: {
+      title: "Enlist in B5: ACTA",
+      subtitle: "Register your command to deploy fleets",
+    },
+  },
+};
+
 const clerkAppearance = {
   theme: shadcn,
   cssLayerName: "clerk",
@@ -135,6 +150,7 @@ function ClerkProviderWithRoutes() {
       publishableKey={clerkPubKey}
       proxyUrl={clerkProxyUrl}
       appearance={clerkAppearance}
+      localization={clerkLocalization}
       signInUrl={`${basePath}/sign-in`}
       signUpUrl={`${basePath}/sign-up`}
       routerPush={(to) => setLocation(stripBase(to))}
