@@ -37,6 +37,7 @@ import {
 import type { ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { Layout } from "@/components/layout";
+import skyboxUrl from "@assets/space-1780214293316-4389_1780214305180.jpg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -56,6 +57,27 @@ function hexToWorld(q: number, r: number): [number, number, number] {
 // Board is 48" wide × 72" deep, 1 world unit = 1 inch
 const BOARD_W = 48;
 const BOARD_D = 72;
+
+// Deep-space backdrop: an equirectangular (2:1) panorama mapped onto the scene
+// background. We set it as `scene.background` only — NOT `scene.environment` —
+// so it's purely a visual backdrop and doesn't change how the explicit scene
+// lights fall on the ships. The texture suspends while loading, so it must be
+// rendered inside a Suspense boundary. Restores the previous background on
+// unmount so nothing leaks between scenes.
+function Skybox({ url }: { url: string }) {
+  const texture = useLoader(THREE.TextureLoader, url);
+  const { scene } = useThree();
+  useEffect(() => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const prev = scene.background;
+    scene.background = texture;
+    return () => {
+      scene.background = prev;
+    };
+  }, [texture, scene]);
+  return null;
+}
 
 function SpaceGrid() {
   return (
@@ -1986,10 +2008,15 @@ export default function GameBoard() {
           )}
           <Canvas camera={{ position: [0, 40, 50], fov: 45 }} shadows>
             <CameraCapture refs={threeRef} />
+            <Suspense fallback={null}>
+              <Skybox url={skyboxUrl} />
+            </Suspense>
             <ambientLight intensity={0.4} />
             <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
             <pointLight position={[0, 10, 0]} intensity={0.5} color="#f59e0b" />
-            <fog attach="fog" args={["#050505", 60, 110]} />
+            {/* Fog tinted a very dark warm tone so distant ships fade into the
+                nebula backdrop instead of a mismatched cold grey-black. */}
+            <fog attach="fog" args={["#0a0503", 60, 110]} />
             <SpaceGrid />
             <BoardBoundary />
             {game.status === "deploying" && (
