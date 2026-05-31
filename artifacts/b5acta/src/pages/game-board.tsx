@@ -83,11 +83,11 @@ function SpaceGrid() {
   return (
     <>
       {/* Semi-opaque board floor: dims the bright nebula skybox under the
-          playing field by ~20% so the grid and ships read clearly against the
+          playing field (~60%) so the grid and ships read clearly against the
           busy backdrop. Sits just below the grid lines. */}
       <mesh position={[0, -0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={0}>
         <planeGeometry args={[BOARD_W, BOARD_D]} />
-        <meshBasicMaterial color="#020303" transparent opacity={0.2} depthWrite={false} />
+        <meshBasicMaterial color="#020303" transparent opacity={0.6} depthWrite={false} />
       </mesh>
       {/* Fine 1" grid */}
       <gridHelper args={[72, 72, "#0d1a0d", "#0a140a"]} position={[0, -0.01, 0]} />
