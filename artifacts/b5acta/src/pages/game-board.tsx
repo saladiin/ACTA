@@ -37,7 +37,7 @@ import {
 import type { ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { Layout } from "@/components/layout";
-import skyboxUrl from "@assets/space-1780214293316-4389_1780214305180.jpg";
+import skyboxUrl from "@assets/skybox_1780215222009.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
