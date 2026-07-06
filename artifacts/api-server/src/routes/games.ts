@@ -326,6 +326,60 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter || /\bfighter\b/i.test(model.shipClass ?? "");
 }
 
+const DEFAULT_BASE_RADIUS_INCHES = 1.2;
+const BASE_CONTACT_EPSILON = 0.05;
+
+type UnitFootprint = {
+  id: number;
+  ownerId: string;
+  x: number;
+  z: number;
+  baseRadiusInches: number;
+  isFighter: boolean;
+};
+
+function rulesBaseRadius(unit: { baseRadiusInches?: number | null }): number {
+  return unit.baseRadiusInches && unit.baseRadiusInches > 0
+    ? unit.baseRadiusInches
+    : DEFAULT_BASE_RADIUS_INCHES;
+}
+
+function centerDistance(a: { x: number; z: number }, b: { x: number; z: number }): number {
+  return Math.hypot(b.x - a.x, b.z - a.z);
+}
+
+function edgeDistance(
+  a: { x: number; z: number; baseRadiusInches?: number | null },
+  b: { x: number; z: number; baseRadiusInches?: number | null },
+): number {
+  return Math.max(0, centerDistance(a, b) - rulesBaseRadius(a) - rulesBaseRadius(b));
+}
+
+function canBasesOverlap(a: Pick<UnitFootprint, "isFighter">, b: Pick<UnitFootprint, "isFighter">): boolean {
+  return a.isFighter !== b.isFighter;
+}
+
+function basesOverlap(a: UnitFootprint, b: UnitFootprint): boolean {
+  return centerDistance(a, b) < rulesBaseRadius(a) + rulesBaseRadius(b) - BASE_CONTACT_EPSILON;
+}
+
+function findIllegalBaseOverlap(candidate: UnitFootprint, others: UnitFootprint[]): UnitFootprint | null {
+  for (const other of others) {
+    if (candidate.id === other.id) continue;
+    if (canBasesOverlap(candidate, other)) continue;
+    if (basesOverlap(candidate, other)) return other;
+  }
+  return null;
+}
+
+function fighterWeaponRangeDistance(
+  attacker: UnitFootprint,
+  target: { x: number; z: number },
+): number {
+  const dist = centerDistance(attacker, target);
+  return attacker.isFighter ? Math.max(0, dist - rulesBaseRadius(attacker)) : dist;
+}
+
 const router: IRouter = Router();
 
 router.get("/games", requireAuth, async (req, res): Promise<void> => {
@@ -798,6 +852,49 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         }
       }
 
+      const existingUnits = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, params.data.gameId),
+        eq(gameUnitsTable.isDestroyed, false),
+      ));
+      const existingFootprints: UnitFootprint[] = [];
+      for (const existing of existingUnits) {
+        const [existingShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, existing.shipId));
+        if (!existingShip) continue;
+        const [existingModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, existingShip.shipModelId));
+        existingFootprints.push({
+          id: existing.id,
+          ownerId: existing.ownerId,
+          x: existing.hexQ,
+          z: existing.hexR,
+          baseRadiusInches: rulesBaseRadius(existing),
+          isFighter: existingModel ? shipModelIsFighter(existingModel) : false,
+        });
+      }
+      const pendingFootprints: UnitFootprint[] = [];
+      parsed.data.placements.forEach((placement, index) => {
+        const ship = placedShips[index];
+        const model = ship ? placedModelByShipId.get(ship.id) : undefined;
+        if (!ship || !model) return;
+        pendingFootprints.push({
+          id: -1 - index,
+          ownerId: userId,
+          x: placement.hexQ,
+          z: placement.hexR,
+          baseRadiusInches: rulesBaseRadius(model),
+          isFighter: shipModelIsFighter(model),
+        });
+      });
+      for (const candidate of pendingFootprints) {
+        const illegalExisting = findIllegalBaseOverlap(candidate, existingFootprints);
+        if (illegalExisting) {
+          throw Object.assign(new Error("Deployment overlaps another base illegally"), { status: 400 });
+        }
+        const illegalPending = findIllegalBaseOverlap(candidate, pendingFootprints);
+        if (illegalPending) {
+          throw Object.assign(new Error("Deployment contains overlapping bases"), { status: 400 });
+        }
+      }
+
       // Crew Quality assignment: in "standard" games the server forces every ship
       // to CQ 4 regardless of what the client sent (cheap defense against a hand-
       // crafted request bumping CQ in a fixed-quality match). In "custom" games
@@ -820,6 +917,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           name: ship.name,
           modelFilename: model.filename,
           faction: model.faction,
+          baseRadiusInches: model.baseRadiusInches,
           hullPoints: model.hullPoints,
           maxHullPoints: model.hullPoints,
           damageThreshold: model.damageThreshold ?? Math.ceil(model.hullPoints / 2),
@@ -1061,6 +1159,39 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       });
       return;
     }
+  }
+
+  const candidateFootprint: UnitFootprint = {
+    id: unit.id,
+    ownerId: unit.ownerId,
+    x: body.data.toHexQ,
+    z: body.data.toHexR,
+    baseRadiusInches: rulesBaseRadius(unit),
+    isFighter: shipModelIsFighter(moveModel),
+  };
+  const otherUnits = await db.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, params.data.gameId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const otherFootprints: UnitFootprint[] = [];
+  for (const other of otherUnits) {
+    if (other.id === unit.id) continue;
+    const [otherShip] = await db.select().from(shipsTable).where(eq(shipsTable.id, other.shipId));
+    if (!otherShip) continue;
+    const [otherModel] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, otherShip.shipModelId));
+    otherFootprints.push({
+      id: other.id,
+      ownerId: other.ownerId,
+      x: other.hexQ,
+      z: other.hexR,
+      baseRadiusInches: rulesBaseRadius(other),
+      isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
+    });
+  }
+  const illegalOverlap = findIllegalBaseOverlap(candidateFootprint, otherFootprints);
+  if (illegalOverlap) {
+    res.status(400).json({ error: "Move would overlap another base illegally" });
+    return;
   }
 
   const nextDistanceSinceLastTurn = isTurn
@@ -1728,7 +1859,14 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // in inches and the board is laid out at 1 unit = 1 inch).
       const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
       const tPos = hexToWorld(target.hexQ, target.hexR);
-      const dist = Math.hypot(tPos.x - aPos.x, tPos.z - aPos.z);
+      const dist = fighterWeaponRangeDistance({
+        id: attacker.id,
+        ownerId: attacker.ownerId,
+        x: aPos.x,
+        z: aPos.z,
+        baseRadiusInches: rulesBaseRadius(attacker),
+        isFighter: shipModelIsFighter(attackerModel),
+      }, tPos);
       if (dist > weapon.range) {
         throw Object.assign(new Error(`Target out of range (${dist.toFixed(1)}\" > ${weapon.range}\")`), { status: 400 });
       }

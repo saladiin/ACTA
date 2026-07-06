@@ -28,6 +28,9 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Nial Fighter Flight", priority: "patrol" },
 ];
 
+const CAPITAL_BASE_RADIUS_INCHES = 1.2;
+const FIGHTER_BASE_RADIUS_INCHES = 0.5;
+
 const SAGITTARIUS_WEAPONS = [
   { name: "Missile Rack", arc: "Forward", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
   { name: "Missile Rack", arc: "Aft", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
@@ -129,6 +132,14 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS priority_level text NOT NULL DEFAULT 'raid'
     `);
     await pool.query(`
+      ALTER TABLE ship_models
+      ADD COLUMN IF NOT EXISTS base_radius_inches real NOT NULL DEFAULT ${CAPITAL_BASE_RADIUS_INCHES}
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS base_radius_inches real NOT NULL DEFAULT ${CAPITAL_BASE_RADIUS_INCHES}
+    `);
+    await pool.query(`
       ALTER TABLE games
       ADD COLUMN IF NOT EXISTS priority_level text NOT NULL DEFAULT 'raid'
     `);
@@ -147,6 +158,34 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         AND point_limit IS NOT NULL
         AND point_limit <> 500
     `);
+    await pool.query(
+      `
+        UPDATE ship_models
+        SET base_radius_inches = $1
+        WHERE base_radius_inches IS NULL OR base_radius_inches <= 0
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+    await pool.query(
+      `
+        UPDATE ship_models
+        SET base_radius_inches = $1
+        WHERE traits ILIKE '%fighter%'
+           OR ship_class ILIKE '%fighter%'
+           OR name ILIKE '%fighter flight%'
+      `,
+      [FIGHTER_BASE_RADIUS_INCHES],
+    );
+    await pool.query(
+      `
+        UPDATE game_units gu
+        SET base_radius_inches = sm.base_radius_inches
+        FROM ships s
+        JOIN ship_models sm ON sm.id = s.ship_model_id
+        WHERE gu.ship_id = s.id
+          AND (gu.base_radius_inches IS NULL OR gu.base_radius_inches <= 0 OR sm.base_radius_inches <> gu.base_radius_inches)
+      `,
+    );
 
     for (const seed of SHIP_PRIORITY_SEEDS) {
       await pool.query(
@@ -187,6 +226,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
               shield_regen_rate = 0,
               traits = $8,
               small_craft = NULL,
+              base_radius_inches = $13,
               hull_points = 1,
               weapon_range = $9,
               weapon_damage = $10,
@@ -201,13 +241,13 @@ export async function ensureActaAllocationSchema(): Promise<void> {
               hull, troops, damage, damage_threshold, hull_rating, crew,
               crew_threshold, speed, turns, turn_angle, crew_quality, shield,
               shield_max, shield_regen_rate, traits, small_craft, hull_points,
-              weapon_range, weapon_damage, description
+              base_radius_inches, weapon_range, weapon_damage, description
             )
             SELECT
               $1, $2, $3, $4, 'patrol', $5,
               $6, 0, NULL, NULL, $6, NULL,
               NULL, $7, 0, 360, 'N/A', 0,
-              0, 0, $8, NULL, 1,
+              0, 0, $8, NULL, 1, $13,
               $9, $10, $11
             WHERE NOT EXISTS (SELECT 1 FROM updated)
             RETURNING id
@@ -230,6 +270,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
           fighter.weaponDamage,
           fighter.description,
           fighter.aliases.map(alias => alias.toLowerCase()),
+          FIGHTER_BASE_RADIUS_INCHES,
         ],
       );
 

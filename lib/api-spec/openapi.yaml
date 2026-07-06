@@ -690,7 +690,7 @@ components:
 
     ShipModel:
       type: object
-      required: [id, name, filename, faction, pointCost, priorityLevel, hullPoints, speed, weaponRange, weaponDamage, hullRating]
+      required: [id, name, filename, faction, pointCost, priorityLevel, hullPoints, speed, weaponRange, weaponDamage, hullRating, baseRadiusInches]
       properties:
         id:       { type: integer }
         name:     { type: string }
@@ -702,6 +702,7 @@ components:
         speed:        { type: integer }
         weaponRange:  { type: integer }
         weaponDamage: { type: integer }
+        baseRadiusInches: { type: number, description: "Gameplay base radius in board inches. Used for contact/overlap/fighter edge range; independent of rendered model scale." }
         hullRating:   { type: integer, description: "Roll-to-hit target (≥) for attacks against this ship's class." }
         description:  { type: ["string", "null"] }
         traits:       { type: ["string", "null"], description: "Semicolon-separated trait list (e.g. 'Lumbering; Agile; Interceptors 2'). Parsed client-side." }
@@ -808,7 +809,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, baseRadiusInches, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -817,6 +818,7 @@ components:
         name:          { type: string }
         modelFilename: { type: string }
         faction:       { type: string }
+        baseRadiusInches: { type: number, description: "Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement." }
         hullPoints:    { type: integer }
         maxHullPoints: { type: integer }
         damageThreshold: { type: integer, description: "Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull." }

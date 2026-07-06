@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, timestamp, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -29,6 +29,7 @@ export const shipModelsTable = pgTable("ship_models", {
   shieldRegenRate: integer("shield_regen_rate").notNull().default(0),
   traits: text("traits"),
   smallCraft: text("small_craft"),
+  baseRadiusInches: real("base_radius_inches").notNull().default(1.2),
   // Legacy single-weapon summary (kept for backward compat with game_units)
   hullPoints: integer("hull_points").notNull().default(10),
   weaponRange: integer("weapon_range").notNull().default(4),

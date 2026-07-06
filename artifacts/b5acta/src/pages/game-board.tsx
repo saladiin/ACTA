@@ -312,6 +312,10 @@ function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "name" | "
     || isFighterSquadronModel(model?.filename ?? "");
 }
 
+function rulesBaseRadius(unit: { baseRadiusInches?: number | null }): number {
+  return unit.baseRadiusInches && unit.baseRadiusInches > 0 ? unit.baseRadiusInches : 1.2;
+}
+
 function BoardModelVisual({ filename, tint, opacity = 1 }: { filename: string; tint: string; opacity?: number }) {
   if (!isFighterSquadronModel(filename)) {
     return <ShipModel3D filename={filename} tint={tint} opacity={opacity} />;
@@ -329,7 +333,7 @@ function BoardModelVisual({ filename, tint, opacity = 1 }: { filename: string; t
 }
 
 function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapons, dragOffset, previewHeadingDelta = 0, dimmed, firingArc }: {
-  unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number };
+  unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number; baseRadiusInches?: number | null };
   isSelected: boolean;
   onClick: () => void;
   onCameraFocus: () => void;
@@ -365,6 +369,10 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
   const hasPreview = Boolean(dragOffset) || Math.abs(previewHeadingDelta) > 0.001;
   const headingRad = (unit.heading * Math.PI) / 180;
   const previewHeadingRad = ((unit.heading + previewHeadingDelta) * Math.PI) / 180;
+  const baseRadius = rulesBaseRadius(unit);
+  const ringInner = Math.max(0.05, baseRadius - 0.05);
+  const pulseInner = baseRadius + 0.1;
+  const pulseOuter = baseRadius + 0.25;
 
   return (
     <group
@@ -377,12 +385,12 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
     >
       {/* Translucent circular base at grid level */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-        <circleGeometry args={[1.2, 48]} />
+        <circleGeometry args={[baseRadius, 48]} />
         <meshStandardMaterial color={color} transparent opacity={hasPreview ? 0.07 : 0.15} depthWrite={false} />
       </mesh>
       {/* Base ring edge */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-        <ringGeometry args={[1.15, 1.2, 48]} />
+        <ringGeometry args={[ringInner, baseRadius, 48]} />
         <meshStandardMaterial color={color} transparent opacity={(isSelected ? 0.9 : 0.45) * (hasPreview ? 0.35 : 1)} emissive={color} emissiveIntensity={isSelected ? 0.6 : 0.15} />
       </mesh>
       {!hasPreview && (
@@ -393,7 +401,7 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
       {/* Selection pulse ring */}
       {isSelected && !hasPreview && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
-          <ringGeometry args={[1.3, 1.45, 48]} />
+          <ringGeometry args={[pulseInner, pulseOuter, 48]} />
           <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.8} transparent opacity={0.7} />
         </mesh>
       )}
@@ -432,11 +440,11 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
       {hasPreview && (
         <group position={[dragOffset?.x ?? 0, 0, dragOffset?.z ?? 0]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-            <circleGeometry args={[1.2, 48]} />
+            <circleGeometry args={[baseRadius, 48]} />
             <meshStandardMaterial color="#22d3ee" transparent opacity={0.2} depthWrite={false} />
           </mesh>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.035, 0]}>
-            <ringGeometry args={[1.15, 1.22, 48]} />
+            <ringGeometry args={[ringInner, baseRadius + 0.02, 48]} />
             <meshStandardMaterial color="#22d3ee" transparent opacity={0.9} emissive="#22d3ee" emissiveIntensity={0.6} />
           </mesh>
           <group rotation={[0, previewHeadingRad, 0]}>
@@ -3499,7 +3507,12 @@ export default function GameBoard() {
               ) {
                 const w = (weaponsByFilename[unit.modelFilename] as Weapon[] | undefined)
                   ?.find(x => x.id === firingWeaponPicking);
-                if (w) firingArc = { arc: w.arc, range: w.range };
+                if (w) {
+                  firingArc = {
+                    arc: w.arc,
+                    range: w.range + (isFighterUnit(unit) ? rulesBaseRadius(unit) : 0),
+                  };
+                }
               }
               return (
                 <GameUnit3D

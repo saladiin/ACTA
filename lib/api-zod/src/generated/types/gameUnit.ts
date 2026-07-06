@@ -17,6 +17,8 @@ export interface GameUnit {
   name: string;
   modelFilename: string;
   faction: string;
+  /** Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement. */
+  baseRadiusInches: number;
   hullPoints: number;
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
@@ -58,8 +60,6 @@ export interface GameUnit {
   hasFiredThisRound: boolean;
   /** Total inches travelled in the current movement activation (sum of /move step distances). Reset to 0 on /activate-unit. Used to enforce the ACTA minimum-speed rule at /end-activation. */
   inchesMovedThisActivation?: number;
-  /** Inches moved since the most recent committed turn in the current movement activation. Reset on /activate-unit and after each turn. */
-  distanceSinceLastTurnThisActivation?: number;
   /** True when this ship may fire only one weapon system this round, as the cost of a successful 'all-hands-on-deck' declaration this round. Latched on successful declaration in /special-action; cleared at round rollover. */
   oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */

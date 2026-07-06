@@ -19,6 +19,8 @@ export interface ShipModel {
   speed: number;
   weaponRange: number;
   weaponDamage: number;
+  /** Gameplay base radius in board inches. Used for contact/overlap/fighter edge range; independent of rendered model scale. */
+  baseRadiusInches: number;
   /** Roll-to-hit target (≥) for attacks against this ship's class. */
   hullRating: number;
   /** @nullable */

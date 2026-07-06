@@ -71,6 +71,7 @@ export const gameUnitsTable = pgTable("game_units", {
   name: text("name").notNull(),
   modelFilename: text("model_filename").notNull(),
   faction: text("faction").notNull(),
+  baseRadiusInches: real("base_radius_inches").notNull().default(1.2),
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
   // Printed Damage threshold from the ship sheet. When current hullPoints is
