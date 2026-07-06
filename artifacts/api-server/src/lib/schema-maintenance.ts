@@ -140,6 +140,11 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS base_radius_inches real NOT NULL DEFAULT ${CAPITAL_BASE_RADIUS_INCHES}
     `);
     await pool.query(`
+      ALTER TABLE game_units
+      ALTER COLUMN hex_q TYPE real USING hex_q::real,
+      ALTER COLUMN hex_r TYPE real USING hex_r::real
+    `);
+    await pool.query(`
       ALTER TABLE games
       ADD COLUMN IF NOT EXISTS priority_level text NOT NULL DEFAULT 'raid'
     `);

@@ -834,8 +834,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/CriticalEffect" }
           description: "Unrepaired critical effects, oldest first."
-        hexQ:          { type: integer }
-        hexR:          { type: integer }
+        hexQ:          { type: number }
+        hexR:          { type: number }
         heading:       { type: integer }
         speed:         { type: integer }
         turnAngle:     { type: integer }
@@ -901,8 +901,8 @@ components:
         shipModelId:
           type: ["integer", "null"]
           description: "Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model."
-        hexQ:    { type: integer }
-        hexR:    { type: integer }
+        hexQ:    { type: number }
+        hexR:    { type: number }
         heading: { type: integer }
         crewQuality:
           type: integer
@@ -928,8 +928,8 @@ components:
       required: [unitId, toHexQ, toHexR, newHeading]
       properties:
         unitId:     { type: integer }
-        toHexQ:     { type: integer }
-        toHexR:     { type: integer }
+        toHexQ:     { type: number }
+        toHexR:     { type: number }
         newHeading: { type: integer }
 
     FireAction:
@@ -1234,8 +1234,8 @@ components:
       type: object
       required: [toHexQ, toHexR, newHeading]
       properties:
-        toHexQ:     { type: integer }
-        toHexR:     { type: integer }
+        toHexQ:     { type: number }
+        toHexR:     { type: number }
         newHeading: { type: integer }
 
     TurnInput:

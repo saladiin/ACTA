@@ -264,6 +264,10 @@ function snapHalfInch(value: number): number {
   return Math.round(value * 2) / 2;
 }
 
+function snapBoardCoord(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 // Arc center angles match game-board.tsx (local +Z = forward when heading=0).
 // halfAngle of -1 means "no arc" (boresight = strict equality on center bearing
 // within a tiny tolerance); 2π means "all-arcs" (turret).
@@ -370,6 +374,53 @@ function findIllegalBaseOverlap(candidate: UnitFootprint, others: UnitFootprint[
     if (basesOverlap(candidate, other)) return other;
   }
   return null;
+}
+
+function clampMovementToFirstIllegalContact(
+  start: { x: number; z: number },
+  requestedEnd: { x: number; z: number },
+  moving: Pick<UnitFootprint, "id" | "isFighter" | "baseRadiusInches">,
+  blockers: UnitFootprint[],
+): { x: number; z: number; clamped: boolean; blocker: UnitFootprint | null } {
+  const vx = requestedEnd.x - start.x;
+  const vz = requestedEnd.z - start.z;
+  const a = vx * vx + vz * vz;
+  if (a <= 1e-9) return { ...requestedEnd, clamped: false, blocker: null };
+
+  let bestT = 1;
+  let bestBlocker: UnitFootprint | null = null;
+  for (const blocker of blockers) {
+    if (moving.id === blocker.id) continue;
+    if (canBasesOverlap(moving, blocker)) continue;
+
+    const minDistance = rulesBaseRadius(moving) + rulesBaseRadius(blocker);
+    const sx = start.x - blocker.x;
+    const sz = start.z - blocker.z;
+    const b = 2 * (sx * vx + sz * vz);
+    const c = sx * sx + sz * sz - minDistance * minDistance;
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) continue;
+
+    const sqrtDisc = Math.sqrt(discriminant);
+    const roots = [(-b - sqrtDisc) / (2 * a), (-b + sqrtDisc) / (2 * a)]
+      .filter(t => t >= -1e-6 && t <= 1 + 1e-6)
+      .map(t => Math.max(0, Math.min(1, t)))
+      .sort((x, y) => x - y);
+    const hitT = roots[0];
+    if (hitT === undefined) continue;
+    if (hitT < bestT) {
+      bestT = hitT;
+      bestBlocker = blocker;
+    }
+  }
+
+  if (!bestBlocker || bestT >= 1) return { ...requestedEnd, clamped: false, blocker: null };
+  return {
+    x: start.x + vx * bestT,
+    z: start.z + vz * bestT,
+    clamped: true,
+    blocker: bestBlocker,
+  };
 }
 
 function fighterWeaponRangeDistance(
@@ -1121,20 +1172,20 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   // path segment (the UI sends one per planned step); summing them gives
   // the total travelled distance enforced by /end-activation. We use
   // hex-Euclidean since hexQ/hexR are stored as world inches.
-  const stepDq = body.data.toHexQ - unit.hexQ;
-  const stepDr = body.data.toHexR - unit.hexR;
-  const stepInches = snapHalfInch(Math.hypot(stepDq, stepDr));
+  const requestedStepDq = body.data.toHexQ - unit.hexQ;
+  const requestedStepDr = body.data.toHexR - unit.hexR;
+  const requestedStepInches = snapHalfInch(Math.hypot(requestedStepDq, requestedStepDr));
   const headingDelta = headingDeltaDegrees(unit.heading, body.data.newHeading);
   const isTurn = headingDelta > 0;
 
-  if (unit.inchesMovedThisActivation + stepInches > currentSpeedCap) {
+  if (unit.inchesMovedThisActivation + requestedStepInches > currentSpeedCap) {
     res.status(400).json({
-      error: `Ship may move at most ${currentSpeedCap}" this activation (would move ${unit.inchesMovedThisActivation + stepInches}")`,
+      error: `Ship may move at most ${currentSpeedCap}" this activation (would move ${unit.inchesMovedThisActivation + requestedStepInches}")`,
     });
     return;
   }
   if (isTurn) {
-    if (stepInches > 0) {
+    if (requestedStepInches > 0) {
       res.status(400).json({ error: "Move forward and turn as separate movement steps" });
       return;
     }
@@ -1188,22 +1239,37 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
     });
   }
-  const illegalOverlap = findIllegalBaseOverlap(candidateFootprint, otherFootprints);
-  if (illegalOverlap) {
+  const clampedMove = !isTurn
+    ? clampMovementToFirstIllegalContact(
+      { x: unit.hexQ, z: unit.hexR },
+      { x: body.data.toHexQ, z: body.data.toHexR },
+      candidateFootprint,
+      otherFootprints,
+    )
+    : { x: body.data.toHexQ, z: body.data.toHexR, clamped: false, blocker: null };
+  const finalFootprint: UnitFootprint = {
+    ...candidateFootprint,
+    x: clampedMove.x,
+    z: clampedMove.z,
+  };
+  if (findIllegalBaseOverlap(finalFootprint, otherFootprints)) {
     res.status(400).json({ error: "Move would overlap another base illegally" });
     return;
   }
+  const finalHexQ = snapBoardCoord(clampedMove.x);
+  const finalHexR = snapBoardCoord(clampedMove.z);
+  const actualStepInches = snapHalfInch(Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR));
 
   const nextDistanceSinceLastTurn = isTurn
     ? 0
-    : unit.distanceSinceLastTurnThisActivation + stepInches;
+    : unit.distanceSinceLastTurnThisActivation + actualStepInches;
   const [updated] = await db.update(gameUnitsTable)
     .set({
-      hexQ: body.data.toHexQ,
-      hexR: body.data.toHexR,
+      hexQ: finalHexQ,
+      hexR: finalHexR,
       heading: body.data.newHeading,
       hasInitiatedMoveThisActivation: true,
-      inchesMovedThisActivation: unit.inchesMovedThisActivation + stepInches,
+      inchesMovedThisActivation: unit.inchesMovedThisActivation + actualStepInches,
       turnsMadeThisActivation: unit.turnsMadeThisActivation + (isTurn ? 1 : 0),
       distanceSinceLastTurnThisActivation: nextDistanceSinceLastTurn,
       // Movement consumes the All Stop latch (only ships that held station
