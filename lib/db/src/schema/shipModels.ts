@@ -8,6 +8,7 @@ export const shipModelsTable = pgTable("ship_models", {
   filename: text("filename").notNull(),
   faction: text("faction").notNull(),
   pointCost: integer("point_cost").notNull().default(100),
+  priorityLevel: text("priority_level").notNull().default("raid"),
   // ACTA core stats
   shipClass: text("ship_class"),
   hull: integer("hull"),                         // armour dice (1-6)

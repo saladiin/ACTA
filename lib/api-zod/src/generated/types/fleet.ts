@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { FleetPriorityCounts } from './fleetPriorityCounts';
 
 export interface Fleet {
   id: number;
@@ -12,5 +13,6 @@ export interface Fleet {
   name: string;
   totalPoints: number;
   shipCount: number;
+  priorityCounts: FleetPriorityCounts;
   createdAt: Date;
 }

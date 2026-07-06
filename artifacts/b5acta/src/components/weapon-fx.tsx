@@ -126,6 +126,9 @@ function TravellingProjectile({
   size = 0.16,
   arcHeight = 0,
   fadeMs = 180,
+  ribbonTrail = false,
+  ribbonLengthT = 0.1,
+  ribbonWidth = 0.16,
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
@@ -136,10 +139,23 @@ function TravellingProjectile({
   size?: number;
   arcHeight?: number;
   fadeMs?: number;
+  ribbonTrail?: boolean;
+  ribbonLengthT?: number;
+  ribbonWidth?: number;
 }) {
   const groupRef = useRef<THREE.Group>(null);
+  const ribbonRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
   const trailRef = useRef<THREE.MeshBasicMaterial>(null);
+  const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
+
+  const pointAt = (t: number) => {
+    const x = from.x + (to.x - from.x) * t;
+    const yLinear = from.y + (to.y - from.y) * t;
+    const y = yLinear + (arcHeight > 0 ? Math.sin(Math.PI * t) * arcHeight : 0);
+    const z = from.z + (to.z - from.z) * t;
+    return new THREE.Vector3(x, y, z);
+  };
 
   useFrame(() => {
     const elapsed = performance.now() - startRef.current - delayMs;
@@ -147,14 +163,12 @@ function TravellingProjectile({
     if (elapsed < 0) {
       matRef.current.opacity = 0;
       if (trailRef.current) trailRef.current.opacity = 0;
+      if (ribbonRef.current) ribbonRef.current.visible = false;
       return;
     }
     const t = Math.min(1, elapsed / travelMs);
-    const x = from.x + (to.x - from.x) * t;
-    const yLinear = from.y + (to.y - from.y) * t;
-    const y = yLinear + (arcHeight > 0 ? Math.sin(Math.PI * t) * arcHeight : 0);
-    const z = from.z + (to.z - from.z) * t;
-    groupRef.current.position.set(x, y, z);
+    const current = pointAt(t);
+    groupRef.current.position.copy(current);
     if (t < 1) {
       matRef.current.opacity = 1;
       if (trailRef.current) trailRef.current.opacity = 0.45;
@@ -163,6 +177,17 @@ function TravellingProjectile({
       const a = Math.max(0, 1 - fadeT);
       matRef.current.opacity = a;
       if (trailRef.current) trailRef.current.opacity = a * 0.45;
+    }
+    if (ribbonTrail && ribbonRef.current && trailRef.current) {
+      const tail = pointAt(Math.max(0, t - ribbonLengthT));
+      const localTail = tail.sub(current);
+      const len = localTail.length();
+      ribbonRef.current.visible = len > 0.01 && trailRef.current.opacity > 0.01;
+      if (ribbonRef.current.visible) {
+        ribbonRef.current.position.copy(localTail).multiplyScalar(0.5);
+        ribbonRef.current.quaternion.setFromUnitVectors(up, localTail.clone().normalize());
+        ribbonRef.current.scale.set(ribbonWidth, len, 1);
+      }
     }
   });
 
@@ -181,19 +206,34 @@ function TravellingProjectile({
           toneMapped={false}
         />
       </mesh>
-      {/* Soft trail blob */}
-      <mesh raycast={() => null}>
-        <sphereGeometry args={[size * 2.5, 10, 10]} />
-        <meshBasicMaterial
-          ref={trailRef}
-          color={color}
-          transparent
-          opacity={0}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
+      {ribbonTrail ? (
+        <mesh ref={ribbonRef} visible={false} raycast={() => null}>
+          <planeGeometry args={[1, 1]} />
+          <meshBasicMaterial
+            ref={trailRef}
+            color={color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      ) : (
+        <mesh raycast={() => null}>
+          <sphereGeometry args={[size * 2.5, 10, 10]} />
+          <meshBasicMaterial
+            ref={trailRef}
+            color={color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -257,9 +297,12 @@ function MissileVolleyFx({
           delayMs={i * 130}
           travelMs={1000}
           startRef={startRef}
-          size={0.22}
+          size={0.066}
           arcHeight={2.5 + (i % 2) * 1.5}
           fadeMs={300}
+          ribbonTrail
+          ribbonLengthT={0.12}
+          ribbonWidth={0.18}
         />
       ))}
     </>

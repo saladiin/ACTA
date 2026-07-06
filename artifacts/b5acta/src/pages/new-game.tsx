@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Swords, Globe2, Lock } from "lucide-react";
+import { PRIORITY_LEVELS, type PriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 export default function NewGame() {
   const [, setLocation] = useLocation();
@@ -19,29 +20,29 @@ export default function NewGame() {
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [password, setPassword] = useState("");
   const [selectedFleet, setSelectedFleet] = useState<string>("");
-  const [pointLimit, setPointLimit] = useState("500");
-  // Deployment zone depth in inches (4..30). Each player deploys within this
-  // depth from their short edge of the 48"×72" board.
+  const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>("raid");
+  const [allocationPoints, setAllocationPoints] = useState("5");
   const [deploymentDepth, setDeploymentDepth] = useState<number>(12);
-  // Crew Quality assignment policy for this engagement.
-  // "standard" = every ship locked to CQ 4 (Veteran). "custom" = deploying
-  // commanders pick CQ 1..6 per ship in the deploy screen.
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
 
   const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
 
   const canSubmit =
-    !!pointLimit &&
+    !!allocationPoints &&
+    parseInt(allocationPoints) > 0 &&
     (visibility === "public" || password.trim().length >= 1) &&
     !createGame.isPending;
 
   const handleCreate = () => {
     if (!canSubmit) return;
+    const fap = parseInt(allocationPoints);
     createGame.mutate(
       {
         data: {
-          pointLimit: parseInt(pointLimit),
+          pointLimit: fap * 100,
+          priorityLevel,
+          allocationPoints: fap,
           visibility,
           password: visibility === "private" ? password : null,
           fleetId: selectedFleet ? parseInt(selectedFleet) : null,
@@ -53,8 +54,6 @@ export default function NewGame() {
         onSuccess: (game) => {
           qc.invalidateQueries({ queryKey: getListGamesQueryKey() });
           qc.invalidateQueries({ queryKey: getGetLobbyQueryKey() });
-          // Game starts in 'open' status; the game-board renders the deployment
-          // screen for the challenger as soon as they land on it.
           setLocation(`/games/${game.id}`);
         },
       },
@@ -71,25 +70,43 @@ export default function NewGame() {
   return (
     <Layout title="Launch Engagement">
       <div className="p-6 max-w-xl mx-auto space-y-8">
-        {/* Step 1: Point limit — the only mandatory tactical field. */}
         <section>
-          {sectionHeader(1, "Point Limit")}
-          <Select value={pointLimit} onValueChange={setPointLimit}>
-            <SelectTrigger data-testid="select-point-limit" className="bg-background">
+          {sectionHeader(1, "Priority Level")}
+          <Select value={priorityLevel} onValueChange={(value) => setPriorityLevel(value as PriorityLevel)}>
+            <SelectTrigger data-testid="select-priority-level" className="bg-background">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-card border-border">
-              <SelectItem value="250">250 pts — Skirmish</SelectItem>
-              <SelectItem value="500">500 pts — Standard</SelectItem>
-              <SelectItem value="750">750 pts — Campaign</SelectItem>
-              <SelectItem value="1000">1000 pts — Grand Fleet</SelectItem>
+              {PRIORITY_LEVELS.map(level => (
+                <SelectItem key={level} value={level}>{priorityLabel(level)}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
+          <p className="mt-1 text-[11px] text-muted-foreground font-mono">
+            Ship costs are calculated relative to this scenario level.
+          </p>
         </section>
 
-        {/* Step 2: Visibility — public to lobby, or private with password. */}
         <section>
-          {sectionHeader(2, "Visibility")}
+          {sectionHeader(2, "Fleet Allocation Points")}
+          <Select value={allocationPoints} onValueChange={setAllocationPoints}>
+            <SelectTrigger data-testid="select-allocation-points" className="bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              <SelectItem value="3">3 FAP</SelectItem>
+              <SelectItem value="5">5 FAP</SelectItem>
+              <SelectItem value="7">7 FAP</SelectItem>
+              <SelectItem value="10">10 FAP</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-[11px] text-muted-foreground font-mono">
+            Standard pickup size is usually 5 FAP.
+          </p>
+        </section>
+
+        <section>
+          {sectionHeader(3, "Visibility")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -134,15 +151,13 @@ export default function NewGame() {
           )}
           {visibility === "public" && (
             <p className="mt-2 text-[11px] text-muted-foreground font-mono">
-              Listed in the public lobby — any commander may accept.
+              Listed in the public lobby; any commander may accept.
             </p>
           )}
         </section>
 
-        {/* Step 3: Deployment zone depth — how far from each player's short
-            edge ships may be placed during the deploy phase. */}
         <section>
-          {sectionHeader(3, `Deployment Zone Depth — ${deploymentDepth}"`)}
+          {sectionHeader(4, `Deployment Zone Depth - ${deploymentDepth}"`)}
           <input
             type="range"
             min={4}
@@ -160,10 +175,8 @@ export default function NewGame() {
           </div>
         </section>
 
-        {/* Step 4: Crew Quality policy — locked Veteran for tournament-style
-            play, or per-ship custom CQ during deployment. */}
         <section>
-          {sectionHeader(4, "Crew Quality")}
+          {sectionHeader(5, "Crew Quality")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -189,23 +202,22 @@ export default function NewGame() {
               }`}
             >
               <span className="text-sm font-mono uppercase tracking-wider">Custom</span>
-              <span className="text-[10px] font-mono opacity-80">Assign CQ 1–6 per ship at deploy</span>
+              <span className="text-[10px] font-mono opacity-80">Assign CQ 1-6 per ship at deploy</span>
             </button>
           </div>
         </section>
 
-        {/* Step 5: Optional prefab fleet — can also be chosen at deployment. */}
         <section>
-          {sectionHeader(5, "Prefab Fleet (optional)")}
+          {sectionHeader(6, "Prefab Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
-              <SelectValue placeholder="Choose later in the deployment screen…" />
+              <SelectValue placeholder="Choose later in the deployment screen..." />
             </SelectTrigger>
             <SelectContent className="bg-card border-border">
-              {fleets?.length === 0 && <SelectItem value="none" disabled>No fleets — create one first</SelectItem>}
+              {fleets?.length === 0 && <SelectItem value="none" disabled>No fleets; create one first</SelectItem>}
               {fleets?.map((f) => (
                 <SelectItem key={f.id} value={String(f.id)}>
-                  {f.name} ({f.shipCount} ships, {f.totalPoints} pts)
+                  {f.name} ({f.shipCount} ships)
                 </SelectItem>
               ))}
             </SelectContent>
@@ -241,3 +253,4 @@ export default function NewGame() {
     </Layout>
   );
 }
+

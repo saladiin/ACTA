@@ -7,6 +7,7 @@
  */
 import type { GameCrewQualityMode } from './gameCrewQualityMode';
 import type { GamePhase } from './gamePhase';
+import type { GamePriorityLevel } from './gamePriorityLevel';
 import type { GameStatus } from './gameStatus';
 import type { GameVisibility } from './gameVisibility';
 
@@ -47,7 +48,15 @@ export interface Game {
   endPhaseChallengerPassed?: boolean;
   /** True once the opponent has passed the current end phase. Reset at start of each end phase. */
   endPhaseOpponentPassed?: boolean;
+  /** Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility. */
   pointLimit: number;
+  /** Scenario Priority Level used for ACTA Fleet Allocation Point costs. */
+  priorityLevel: GamePriorityLevel;
+  /**
+     * Fleet Allocation Points available to each commander.
+     * @minimum 1
+     */
+  allocationPoints: number;
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;

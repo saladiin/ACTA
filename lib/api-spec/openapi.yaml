@@ -690,13 +690,14 @@ components:
 
     ShipModel:
       type: object
-      required: [id, name, filename, faction, pointCost, hullPoints, speed, weaponRange, weaponDamage, hullRating]
+      required: [id, name, filename, faction, pointCost, priorityLevel, hullPoints, speed, weaponRange, weaponDamage, hullRating]
       properties:
         id:       { type: integer }
         name:     { type: string }
         filename: { type: string }
         faction:  { type: string }
         pointCost:    { type: integer }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon] }
         hullPoints:   { type: integer }
         speed:        { type: integer }
         weaponRange:  { type: integer }
@@ -711,13 +712,23 @@ components:
 
     Fleet:
       type: object
-      required: [id, ownerId, name, totalPoints, shipCount, createdAt]
+      required: [id, ownerId, name, totalPoints, shipCount, priorityCounts, createdAt]
       properties:
         id:          { type: integer }
         ownerId:     { type: string }
         name:        { type: string }
         totalPoints: { type: integer }
         shipCount:   { type: integer }
+        priorityCounts:
+          type: object
+          required: [patrol, skirmish, raid, battle, war, armageddon]
+          properties:
+            patrol:     { type: integer }
+            skirmish:   { type: integer }
+            raid:       { type: integer }
+            battle:     { type: integer }
+            war:        { type: integer }
+            armageddon: { type: integer }
         createdAt:   { type: string, format: date-time }
 
     FleetInput:
@@ -745,7 +756,7 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, status, currentTurn, currentRound, phase, pointLimit, createdAt, updatedAt]
+      required: [id, challengerId, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
@@ -765,7 +776,9 @@ components:
         initiativeOpponentRoll:   { type: ["integer", "null"], description: "Opponent's 2d6 initiative roll for the current round." }
         endPhaseChallengerPassed: { type: boolean, description: "True once the challenger has passed the current end phase. Reset at start of each end phase." }
         endPhaseOpponentPassed:   { type: boolean, description: "True once the opponent has passed the current end phase. Reset at start of each end phase." }
-        pointLimit:   { type: integer }
+        pointLimit:   { type: integer, description: "Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility." }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon], description: "Scenario Priority Level used for ACTA Fleet Allocation Point costs." }
+        allocationPoints: { type: integer, minimum: 1, description: "Fleet Allocation Points available to each commander." }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
@@ -777,9 +790,11 @@ components:
 
     GameInput:
       type: object
-      required: [pointLimit, visibility, deploymentDepth, crewQualityMode]
+      required: [priorityLevel, allocationPoints, visibility, deploymentDepth, crewQualityMode]
       properties:
-        pointLimit: { type: integer }
+        pointLimit: { type: integer, description: "Legacy optional point field. Ignored when allocationPoints is supplied." }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon] }
+        allocationPoints: { type: integer, minimum: 1, maximum: 99 }
         visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
         fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
@@ -793,7 +808,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, shieldsCurrent, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds]
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -804,10 +819,12 @@ components:
         faction:       { type: string }
         hullPoints:    { type: integer }
         maxHullPoints: { type: integer }
+        damageThreshold: { type: integer, description: "Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull." }
         shieldsCurrent: { type: integer, description: "Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round." }
         lastDcRound:    { type: integer, description: "Last round (1-based) this unit attempted Damage Control. 0 = never." }
         crewPoints:     { type: integer, description: "Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew." }
         maxCrewPoints:  { type: integer, description: "Maximum crew complement, set at deploy from ship_model.crew." }
+        crewThreshold:  { type: integer, description: "Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback." }
         damageState:    { type: string, enum: [normal, adrift, exploding-end-of-next, destroyed], description: "Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed." }
         isCrippled:     { type: boolean, description: "Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral." }
         isSkeletonCrew: { type: boolean, description: "Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral." }
@@ -837,6 +854,10 @@ components:
           type: array
           items: { type: integer }
           description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
+        slowLoadingWeaponCooldowns:
+          type: object
+          additionalProperties: { type: integer }
+          description: "Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again."
         hitByUnitIdsThisRound:
           type: array
           items: { type: integer }
@@ -896,6 +917,7 @@ components:
           description: "Optional. When supplied, each placement's `shipId` must reference a Ship in this Fleet. When omitted, each placement must supply `shipModelId` and the server auto-creates an ephemeral fleet/ship rows for FK integrity (direct drop-in deploy)."
         placements:
           type: array
+          minItems: 1
           items:
             $ref: "#/components/schemas/ShipPlacement"
 
@@ -948,6 +970,7 @@ components:
         - targetShieldsBefore
         - targetShieldsAfter
         - attackTableRolls
+        - attackTableModifiedRolls
         - bulkheadHits
         - solidHits
         - criticalHits
@@ -977,7 +1000,7 @@ components:
       properties:
         weaponId:        { type: integer }
         targetUnitId:    { type: integer }
-        hitThreshold:    { type: integer, description: "To-hit threshold for each AD (base hullRating / Beam=4+ / crit-floors). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*)." }
+        hitThreshold:    { type: integer, description: "Raw die threshold for each AD after AP/Super AP result modifiers are folded in (base hullRating / Beam=4+ / crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*)." }
         stealthCheckTarget:
           type: integer
           nullable: true
@@ -1032,7 +1055,11 @@ components:
         attackTableRolls:
           type: array
           items: { type: integer }
-          description: "Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit."
+          description: "Raw per surviving-hit Attack Table d6 before Precise. Use attackTableModifiedRolls for classification."
+        attackTableModifiedRolls:
+          type: array
+          items: { type: integer }
+          description: "Per surviving-hit Attack Table result after modifiers such as Precise (+1, capped at 6): 1=Bulkhead, 2-5=Solid, 6=Crit."
         bulkheadHits:    { type: integer }
         solidHits:       { type: integer }
         criticalHits:    { type: integer }

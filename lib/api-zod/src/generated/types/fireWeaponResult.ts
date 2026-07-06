@@ -14,7 +14,7 @@ import type { FireWeaponResultInterceptorAttemptsItem } from './fireWeaponResult
 export interface FireWeaponResult {
   weaponId: number;
   targetUnitId: number;
-  /** To-hit threshold for each AD (base hullRating / Beam=4+ / crit-floors). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
+  /** Raw die threshold for each AD after AP/Super AP result modifiers are folded in (base hullRating / Beam=4+ / crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
   hitThreshold: number;
   /** Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth). */
   stealthCheckTarget?: number | null;
@@ -51,8 +51,10 @@ export interface FireWeaponResult {
   shieldedHits: number;
   targetShieldsBefore: number;
   targetShieldsAfter: number;
-  /** Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit. */
+  /** Raw per surviving-hit Attack Table d6 before Precise. Use attackTableModifiedRolls for classification. */
   attackTableRolls: number[];
+  /** Per surviving-hit Attack Table result after modifiers such as Precise (+1, capped at 6): 1=Bulkhead, 2-5=Solid, 6=Crit. */
+  attackTableModifiedRolls: number[];
   bulkheadHits: number;
   solidHits: number;
   criticalHits: number;

@@ -15,7 +15,7 @@ export const isDice = (p: Penalty): p is DicePenalty =>
 // Runtime flags. Each unrepaired crit contributes one or more of these to
 // the *derived* CritEffects shape consumed by fire-weapon and SA routes.
 export interface CritFlags {
-  speedReduce?: number;     // subtract from base speed (cumulative across crits)
+  speedReduce?: number;     // subtract from base speed (highest similar active crit)
   adrift?: boolean;         // ship moves as adrift (Engines 6 / Damage Table)
   noSA?: boolean;           // ship may not declare Special Actions
   loseTraits?: number;      // roll-time: how many random ship traits to drop
@@ -230,7 +230,7 @@ export function deriveCritEffects(rows: ReadonlyArray<{
     const entry = CRITICAL_TABLE.find(e => e.effectKey === row.effectKey);
     if (!entry) continue;
     const f = entry.flags;
-    if (f.speedReduce) out.speedReduce += f.speedReduce;
+    if (f.speedReduce) out.speedReduce = Math.max(out.speedReduce, f.speedReduce);
     if (f.adrift) out.adrift = true;
     if (f.noSA) out.noSA = true;
     if (f.allWeaponsAdMod) out.allWeaponsAdMod += f.allWeaponsAdMod;

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
 import { db, fleetsTable, shipsTable, shipModelsTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
+import { normalizePriorityLevel, PRIORITY_LEVELS } from "../lib/fleet-allocation";
 import {
   CreateFleetBody,
   GetFleetParams,
@@ -17,6 +18,15 @@ import {
 
 const router: IRouter = Router();
 
+function priorityCounts(models: Array<typeof shipModelsTable.$inferSelect | undefined>) {
+  const counts = Object.fromEntries(PRIORITY_LEVELS.map(level => [level, 0])) as Record<string, number>;
+  for (const model of models) {
+    const level = normalizePriorityLevel(model?.priorityLevel);
+    counts[level] = (counts[level] ?? 0) + 1;
+  }
+  return counts;
+}
+
 router.get("/fleets", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const fleets = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, userId));
@@ -31,7 +41,7 @@ router.get("/fleets", requireAuth, async (req, res): Promise<void> => {
         })
       );
       const totalPoints = models.reduce((sum, m) => sum + (m?.pointCost ?? 0), 0);
-      return { ...fleet, totalPoints, shipCount: ships.length };
+      return { ...fleet, totalPoints, shipCount: ships.length, priorityCounts: priorityCounts(models) };
     })
   );
 
@@ -46,7 +56,7 @@ router.post("/fleets", requireAuth, async (req, res): Promise<void> => {
     return;
   }
   const [fleet] = await db.insert(fleetsTable).values({ ownerId: userId, name: parsed.data.name }).returning();
-  const result = { ...fleet, totalPoints: 0, shipCount: 0 };
+  const result = { ...fleet, totalPoints: 0, shipCount: 0, priorityCounts: priorityCounts([]) };
   res.status(201).json(GetFleetResponse.parse(result));
 });
 
@@ -70,7 +80,7 @@ router.get("/fleets/:fleetId", requireAuth, async (req, res): Promise<void> => {
     })
   );
   const totalPoints = models.reduce((sum, m) => sum + (m?.pointCost ?? 0), 0);
-  res.json(GetFleetResponse.parse({ ...fleet, totalPoints, shipCount: ships.length }));
+  res.json(GetFleetResponse.parse({ ...fleet, totalPoints, shipCount: ships.length, priorityCounts: priorityCounts(models) }));
 });
 
 router.delete("/fleets/:fleetId", requireAuth, async (req, res): Promise<void> => {

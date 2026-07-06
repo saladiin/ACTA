@@ -6,10 +6,18 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { GameInputCrewQualityMode } from './gameInputCrewQualityMode';
+import type { GameInputPriorityLevel } from './gameInputPriorityLevel';
 import type { GameInputVisibility } from './gameInputVisibility';
 
 export interface GameInput {
-  pointLimit: number;
+  /** Legacy optional point field. Ignored when allocationPoints is supplied. */
+  pointLimit?: number;
+  priorityLevel: GameInputPriorityLevel;
+  /**
+     * @minimum 1
+     * @maximum 99
+     */
+  allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
   /**

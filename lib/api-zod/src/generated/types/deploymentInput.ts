@@ -13,5 +13,6 @@ export interface DeploymentInput {
      * @nullable
      */
   fleetId?: number | null;
+  /** @minItems 1 */
   placements: ShipPlacement[];
 }

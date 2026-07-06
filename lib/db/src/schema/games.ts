@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, real, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -40,6 +40,8 @@ export const gamesTable = pgTable("games", {
   endPhaseChallengerPassed: boolean("end_phase_challenger_passed").notNull().default(false),
   endPhaseOpponentPassed: boolean("end_phase_opponent_passed").notNull().default(false),
   pointLimit: integer("point_limit").notNull().default(500),
+  priorityLevel: text("priority_level").notNull().default("raid"),
+  allocationPoints: integer("allocation_points").notNull().default(5),
   // "public" — anyone in the lobby can join. "private" — must supply the
   // matching password (stored as scrypt hash in passwordHash).
   visibility: text("visibility").notNull().default("public"),
@@ -71,6 +73,10 @@ export const gameUnitsTable = pgTable("game_units", {
   faction: text("faction").notNull(),
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
+  // Printed Damage threshold from the ship sheet. When current hullPoints is
+  // at or below this value, the ship is Crippled. Older rows may carry 0 and
+  // fall back to half max hull in the route layer.
+  damageThreshold: integer("damage_threshold").notNull().default(0),
   // Current shield pool (Shields X). Refilled toward shieldMax at the end of
   // each round per shieldRegenRate. Initialized to ship_model.shieldMax at
   // deploy. Absorbs incoming hits in the damage pipeline before the Attack
@@ -96,6 +102,10 @@ export const gameUnitsTable = pgTable("game_units", {
   // crewPoints hits 0 the ship is adrift.
   crewPoints: integer("crew_points").notNull().default(0),
   maxCrewPoints: integer("max_crew_points").notNull().default(0),
+  // Printed Crew threshold from the ship sheet. When current crewPoints is at
+  // or below this value, the ship has Skeleton Crew. 0 means "use fallback" or
+  // "ship has no crew track".
+  crewThreshold: integer("crew_threshold").notNull().default(0),
   // Authoritative life-state of the ship for damage-table resolution.
   //   "normal"               — undamaged or merely scarred; default.
   //   "adrift"               — failed damage-table or out of crew; halved
@@ -104,8 +114,8 @@ export const gameUnitsTable = pgTable("game_units", {
   //                            end of the following round.
   //   "destroyed"            — gone (also mirrored by `isDestroyed`).
   damageState: text("damage_state").notNull().default("normal"),
-  hexQ: integer("hex_q").notNull().default(0),
-  hexR: integer("hex_r").notNull().default(0),
+  hexQ: real("hex_q").notNull().default(0),
+  hexR: real("hex_r").notNull().default(0),
   heading: integer("heading").notNull().default(0),
   speed: integer("speed").notNull(),
   turnAngle: integer("turn_angle").notNull().default(45),
@@ -163,7 +173,19 @@ export const gameUnitsTable = pgTable("game_units", {
   // by /end-activation to enforce the ACTA minimum-speed rule (a ship
   // must move at least ceil(effectiveMaxSpeed/2) inches each round
   // unless it declares All Stop / All Stop and Pivot, or is adrift).
-  inchesMovedThisActivation: integer("inches_moved_this_activation").notNull().default(0),
+  inchesMovedThisActivation: real("inches_moved_this_activation").notNull().default(0),
+  // Number of heading-change turns committed in the current movement
+  // activation. Reset on /activate-unit. This lets the server enforce the
+  // printed Turns value, including the Crippled one-fewer-turn penalty.
+  turnsMadeThisActivation: integer("turns_made_this_activation").notNull().default(0),
+  // Distance moved in a straight line since the most recent committed turn
+  // in the current movement activation. Reset on /activate-unit and after
+  // each turn. Used to enforce ACTA's "2 inches after turning" rule.
+  distanceSinceLastTurnThisActivation: real("distance_since_last_turn_this_activation").notNull().default(0),
+  // Last round in which the server applied automatic End Phase adrift drift.
+  // Prevents double-drift if End Phase bookkeeping is retried or a ship was
+  // already marked adrift before the current round.
+  lastAdriftDriftRound: integer("last_adrift_drift_round").notNull().default(0),
   hasFiredThisRound: boolean("has_fired_this_round").notNull().default(false),
   // "All Hands on Deck" cost: when set, this ship may only fire ONE weapon
   // system this round (per ACTA rule). Set at round rollover for any ship
@@ -175,6 +197,10 @@ export const gameUnitsTable = pgTable("game_units", {
   // the server can authoritatively enforce one-shot-per-weapon. (Per the
   // rules, each weapon can fire at one target per firing activation.)
   firedWeaponIds: jsonb("fired_weapon_ids").$type<number[]>().notNull().default([]),
+  // Slow-Loading weapon cooldowns, keyed by weapons.id. Value is the first
+  // round in which that weapon may fire again. Example: fired in round 2 →
+  // blocked in round 3 → usable again in round 4.
+  slowLoadingWeaponCooldowns: jsonb("slow_loading_weapon_cooldowns").$type<Record<string, number>>().notNull().default({}),
   // Allied attacker unit IDs that have landed at least one to-hit on THIS
   // unit during the current round. Used to apply the Stealth "fleet support"
   // -1 modifier per the sheet: if another fleet member (still on the table,

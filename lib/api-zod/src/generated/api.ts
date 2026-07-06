@@ -25,6 +25,7 @@ export const ListShipModelsResponseItem = zod.object({
   "filename": zod.string(),
   "faction": zod.string(),
   "pointCost": zod.number(),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']),
   "hullPoints": zod.number(),
   "speed": zod.number(),
   "weaponRange": zod.number(),
@@ -54,6 +55,14 @@ export const ListFleetsResponseItem = zod.object({
   "name": zod.string(),
   "totalPoints": zod.number(),
   "shipCount": zod.number(),
+  "priorityCounts": zod.object({
+  "patrol": zod.number(),
+  "skirmish": zod.number(),
+  "raid": zod.number(),
+  "battle": zod.number(),
+  "war": zod.number(),
+  "armageddon": zod.number()
+}),
   "createdAt": zod.coerce.date()
 })
 export const ListFleetsResponse = zod.array(ListFleetsResponseItem)
@@ -83,6 +92,14 @@ export const GetFleetResponse = zod.object({
   "name": zod.string(),
   "totalPoints": zod.number(),
   "shipCount": zod.number(),
+  "priorityCounts": zod.object({
+  "patrol": zod.number(),
+  "skirmish": zod.number(),
+  "raid": zod.number(),
+  "battle": zod.number(),
+  "war": zod.number(),
+  "armageddon": zod.number()
+}),
   "createdAt": zod.coerce.date()
 })
 
@@ -113,6 +130,7 @@ export const ListFleetShipsResponseItem = zod.object({
   "filename": zod.string(),
   "faction": zod.string(),
   "pointCost": zod.number(),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']),
   "hullPoints": zod.number(),
   "speed": zod.number(),
   "weaponRange": zod.number(),
@@ -162,6 +180,7 @@ export const RemoveShipFromFleetParams = zod.object({
 /**
  * @summary List games for the authenticated user (active + completed)
  */
+
 export const listGamesResponseDeploymentDepthMin = 4;
 export const listGamesResponseDeploymentDepthMax = 30;
 
@@ -186,7 +205,9 @@ export const ListGamesResponseItem = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -202,13 +223,17 @@ export const ListGamesResponse = zod.array(ListGamesResponseItem)
 /**
  * @summary Create a new game challenge (invites an opponent by Clerk user ID or username)
  */
+export const createGameBodyAllocationPointsMax = 99;
+
 export const createGameBodyDeploymentDepthMin = 4;
 export const createGameBodyDeploymentDepthMax = 30;
 
 
 
 export const CreateGameBody = zod.object({
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().optional().describe('Legacy optional point field. Ignored when allocationPoints is supplied.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']),
+  "allocationPoints": zod.number().min(1).max(createGameBodyAllocationPointsMax),
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
   "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.'),
@@ -223,6 +248,7 @@ export const CreateGameBody = zod.object({
 export const GetGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
 
 export const getGameResponseGameDeploymentDepthMin = 4;
 export const getGameResponseGameDeploymentDepthMax = 30;
@@ -251,7 +277,9 @@ export const GetGameResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -271,10 +299,12 @@ export const GetGameResponse = zod.object({
   "faction": zod.string(),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
-  "crewPoints": zod.number().optional().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
-  "maxCrewPoints": zod.number().optional().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
@@ -309,6 +339,7 @@ export const GetGameResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
@@ -344,6 +375,7 @@ export const AcceptGameBody = zod.object({
   "password": zod.string().nullish().describe('Required if the engagement is private.')
 })
 
+
 export const acceptGameResponseDeploymentDepthMin = 4;
 export const acceptGameResponseDeploymentDepthMax = 30;
 
@@ -368,7 +400,9 @@ export const AcceptGameResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -386,6 +420,7 @@ export const AcceptGameResponse = zod.object({
 export const DeclineGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
 
 export const declineGameResponseDeploymentDepthMin = 4;
 export const declineGameResponseDeploymentDepthMax = 30;
@@ -411,7 +446,9 @@ export const DeclineGameResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -438,6 +475,7 @@ export const ConcedeGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+
 export const concedeGameResponseDeploymentDepthMin = 4;
 export const concedeGameResponseDeploymentDepthMax = 30;
 
@@ -462,7 +500,9 @@ export const ConcedeGameResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(concedeGameResponseDeploymentDepthMin).max(concedeGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -485,6 +525,7 @@ export const deployFleetBodyPlacementsItemCrewQualityMax = 6;
 
 
 
+
 export const DeployFleetBody = zod.object({
   "fleetId": zod.number().nullish().describe('Optional. When supplied, each placement\'s `shipId` must reference a Ship in this Fleet. When omitted, each placement must supply `shipModelId` and the server auto-creates an ephemeral fleet\/ship rows for FK integrity (direct drop-in deploy).'),
   "placements": zod.array(zod.object({
@@ -494,8 +535,9 @@ export const DeployFleetBody = zod.object({
   "hexR": zod.number(),
   "heading": zod.number(),
   "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.')
-}))
+})).min(1)
 })
+
 
 export const deployFleetResponseDeploymentDepthMin = 4;
 export const deployFleetResponseDeploymentDepthMax = 30;
@@ -521,7 +563,9 @@ export const DeployFleetResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -585,6 +629,7 @@ export const ActivateUnitParams = zod.object({
   "unitId": zod.coerce.number()
 })
 
+
 export const activateUnitResponseDeploymentDepthMin = 4;
 export const activateUnitResponseDeploymentDepthMax = 30;
 
@@ -609,7 +654,9 @@ export const ActivateUnitResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -627,6 +674,7 @@ export const ActivateUnitResponse = zod.object({
 export const EndActivationParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
 
 export const endActivationResponseDeploymentDepthMin = 4;
 export const endActivationResponseDeploymentDepthMax = 30;
@@ -652,7 +700,9 @@ export const EndActivationResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -681,7 +731,7 @@ export const FireWeaponBody = zod.object({
 export const FireWeaponResponse = zod.object({
   "weaponId": zod.number(),
   "targetUnitId": zod.number(),
-  "hitThreshold": zod.number().describe('To-hit threshold for each AD (base hullRating \/ Beam=4+ \/ crit-floors). Stealth is NO LONGER folded into this — it\'s a separate pre-attack 1d6 check (see stealthCheck\*).'),
+  "hitThreshold": zod.number().describe('Raw die threshold for each AD after AP\/Super AP result modifiers are folded in (base hullRating \/ Beam=4+ \/ crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it\'s a separate pre-attack 1d6 check (see stealthCheck\*).'),
   "stealthCheckTarget": zod.number().nullish().describe('Defender\'s stealth value (with range\/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth).'),
   "stealthCheckRoll": zod.number().nullish().describe('Single 1d6 the attacker rolled against the defender\'s Stealth. Null when no stealth check was made.'),
   "stealthCheckPassed": zod.boolean().nullish().describe('True if stealthCheckRoll >= stealthCheckTarget (or no stealth check was needed). False means the attack misses entirely — no AD rolled, hits=0, defender pipeline skipped.'),
@@ -705,7 +755,8 @@ export const FireWeaponResponse = zod.object({
   "shieldedHits": zod.number().describe('Hits absorbed by target\'s shields.'),
   "targetShieldsBefore": zod.number(),
   "targetShieldsAfter": zod.number(),
-  "attackTableRolls": zod.array(zod.number()).describe('Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit.'),
+  "attackTableRolls": zod.array(zod.number()).describe('Raw per surviving-hit Attack Table d6 before Precise. Use attackTableModifiedRolls for classification.'),
+  "attackTableModifiedRolls": zod.array(zod.number()).describe('Per surviving-hit Attack Table result after modifiers such as Precise (+1, capped at 6): 1=Bulkhead, 2-5=Solid, 6=Crit.'),
   "bulkheadHits": zod.number(),
   "solidHits": zod.number(),
   "criticalHits": zod.number(),
@@ -774,6 +825,7 @@ export const RollInitiativeParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+
 export const rollInitiativeResponseDeploymentDepthMin = 4;
 export const rollInitiativeResponseDeploymentDepthMax = 30;
 
@@ -798,7 +850,9 @@ export const RollInitiativeResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(rollInitiativeResponseDeploymentDepthMin).max(rollInitiativeResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -820,6 +874,7 @@ export const ChooseFirstActivatorParams = zod.object({
 export const ChooseFirstActivatorBody = zod.object({
   "activatorUserId": zod.string().describe('userId (challenger or opponent) who will activate the first ship this round.')
 })
+
 
 export const chooseFirstActivatorResponseDeploymentDepthMin = 4;
 export const chooseFirstActivatorResponseDeploymentDepthMax = 30;
@@ -845,7 +900,9 @@ export const ChooseFirstActivatorResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(chooseFirstActivatorResponseDeploymentDepthMin).max(chooseFirstActivatorResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -863,6 +920,7 @@ export const ChooseFirstActivatorResponse = zod.object({
 export const PassEndPhaseParams = zod.object({
   "gameId": zod.coerce.number()
 })
+
 
 export const passEndPhaseResponseDeploymentDepthMin = 4;
 export const passEndPhaseResponseDeploymentDepthMax = 30;
@@ -888,7 +946,9 @@ export const PassEndPhaseResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(passEndPhaseResponseDeploymentDepthMin).max(passEndPhaseResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -934,10 +994,12 @@ export const DamageControlResponse = zod.object({
   "faction": zod.string(),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
-  "crewPoints": zod.number().optional().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
-  "maxCrewPoints": zod.number().optional().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
@@ -972,6 +1034,7 @@ export const DamageControlResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
@@ -1017,10 +1080,12 @@ export const ChooseSpecialActionResponse = zod.object({
   "faction": zod.string(),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
-  "crewPoints": zod.number().optional().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
-  "maxCrewPoints": zod.number().optional().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
@@ -1055,6 +1120,7 @@ export const ChooseSpecialActionResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
@@ -1100,10 +1166,12 @@ export const ChooseScoutActionResponse = zod.object({
   "faction": zod.string(),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
-  "crewPoints": zod.number().optional().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
-  "maxCrewPoints": zod.number().optional().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
@@ -1138,6 +1206,7 @@ export const ChooseScoutActionResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
@@ -1177,10 +1246,12 @@ export const MoveUnitResponse = zod.object({
   "faction": zod.string(),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
-  "crewPoints": zod.number().optional().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
-  "maxCrewPoints": zod.number().optional().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
@@ -1215,6 +1286,7 @@ export const MoveUnitResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
   "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
@@ -1228,11 +1300,14 @@ export const MoveUnitResponse = zod.object({
 /**
  * @summary Get open game challenges and active games summary
  */
+
 export const getLobbyResponsePendingChallengesItemDeploymentDepthMin = 4;
 export const getLobbyResponsePendingChallengesItemDeploymentDepthMax = 30;
 
+
 export const getLobbyResponseActiveGamesItemDeploymentDepthMin = 4;
 export const getLobbyResponseActiveGamesItemDeploymentDepthMax = 30;
+
 
 export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMin = 4;
 export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMax = 30;
@@ -1259,7 +1334,9 @@ export const GetLobbyResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -1288,7 +1365,9 @@ export const GetLobbyResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -1317,7 +1396,9 @@ export const GetLobbyResponse = zod.object({
   "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
-  "pointLimit": zod.number(),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),

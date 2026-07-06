@@ -67,7 +67,61 @@
   * {
     @apply border-border;
   }
+  html {
+    background: hsl(var(--background));
+    min-height: 100%;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+  }
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    min-height: 100%;
+    margin: 0;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #root {
+    min-height: 100dvh;
+  }
+  canvas {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@layer utilities {
+  .safe-top {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+  .safe-bottom {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+  .overscroll-none {
+    overscroll-behavior: none;
+  }
+}
+
+@layer components {
+  .game-board-shell[data-input="touch"] .game-board-sidebar button,
+  .game-board-shell[data-input="hybrid"] .game-board-sidebar button,
+  .game-board-shell[data-input="touch"] .game-board-sidebar [role="button"],
+  .game-board-shell[data-input="hybrid"] .game-board-sidebar [role="button"] {
+    min-height: 2.5rem;
+  }
+
+  .game-board-shell[data-layout="compact"] .game-board-sidebar {
+    max-height: none;
+  }
+
+  .game-board-shell[data-input="touch"] .game-board-viewport,
+  .game-board-shell[data-input="hybrid"] .game-board-viewport {
+    -webkit-touch-callout: none;
+  }
+
+  @media (orientation: landscape) and (max-height: 520px) {
+    .mobile-side-drawer-tab {
+      top: 62dvh;
+    }
   }
 }

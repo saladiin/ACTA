@@ -4,6 +4,7 @@ import { Layout } from "@/components/layout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Plus, ChevronRight, Target } from "lucide-react";
+import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
@@ -60,7 +61,9 @@ export default function GamesList() {
                 <div data-testid={`card-game-${game.id}`} className="flex items-center justify-between border border-border bg-card hover:bg-secondary/20 rounded-md px-4 py-3 cursor-pointer transition-colors">
                   <div>
                     <div className="text-sm font-semibold">{game.challengerName ?? "Unknown"} vs {game.opponentName ?? "Unknown"}</div>
-                    <div className="text-xs text-muted-foreground font-mono">Turn {game.currentTurn} &mdash; {game.pointLimit} pts</div>
+                    <div className="text-xs text-muted-foreground font-mono">
+                      Turn {game.currentTurn} - {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
+                    </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <StatusBadge status={game.status} />

@@ -8,6 +8,7 @@ import {
   parseWeaponTraits,
   stealthFloor,
   effectiveAttackDice,
+  attackRollModifier,
   damageMultiplier,
 } from "../lib/traits";
 import {
@@ -20,6 +21,12 @@ import {
   isDice,
   CANONICAL_ARCS,
 } from "../lib/critical-table";
+import {
+  calculateAllocation,
+  formatAllocationTicks,
+  normalizePriorityLevel,
+  priorityLabel,
+} from "../lib/fleet-allocation";
 import {
   CreateGameBody,
   GetGameParams,
@@ -62,6 +69,20 @@ function hexToWorld(q: number, r: number): { x: number; z: number } {
 }
 function rollD6(): number { return 1 + Math.floor(Math.random() * 6); }
 
+type SlowLoadingCooldowns = Record<string, number>;
+
+function normalizeSlowLoadingCooldowns(raw: unknown, currentRound: number): SlowLoadingCooldowns {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: SlowLoadingCooldowns = {};
+  for (const [weaponId, readyRound] of Object.entries(raw)) {
+    const round = Number(readyRound);
+    if (Number.isFinite(round) && round > currentRound) {
+      out[weaponId] = Math.trunc(round);
+    }
+  }
+  return out;
+}
+
 // ── Password hashing (scrypt) ────────────────────────────────────────────────
 // Stored as "<saltHex>:<hashHex>" so we can rotate parameters later without a
 // migration. The password itself never leaves the server; clients see only
@@ -84,6 +105,163 @@ function verifyPassword(password: string, stored: string): boolean {
 function toGameDto<T extends { passwordHash: string | null }>(row: T): Omit<T, "passwordHash"> & { hasPassword: boolean } {
   const { passwordHash, ...rest } = row;
   return { ...rest, hasPassword: passwordHash !== null };
+}
+
+function printedDamageThreshold(unit: { damageThreshold?: number | null; maxHullPoints: number }): number {
+  return unit.damageThreshold && unit.damageThreshold > 0
+    ? unit.damageThreshold
+    : Math.ceil(unit.maxHullPoints / 2);
+}
+
+function printedCrewThreshold(unit: { crewThreshold?: number | null; maxCrewPoints: number }): number {
+  if (unit.maxCrewPoints <= 0) return 0;
+  return unit.crewThreshold && unit.crewThreshold > 0
+    ? unit.crewThreshold
+    : Math.ceil(unit.maxCrewPoints / 2);
+}
+
+function isCrippledUnit(unit: {
+  hullPoints: number;
+  maxHullPoints: number;
+  damageThreshold?: number | null;
+  isDestroyed?: boolean;
+}): boolean {
+  return !unit.isDestroyed && unit.maxHullPoints > 0 && unit.hullPoints <= printedDamageThreshold(unit);
+}
+
+function isSkeletonCrewUnit(unit: {
+  crewPoints: number;
+  maxCrewPoints: number;
+  crewThreshold?: number | null;
+  isDestroyed?: boolean;
+}): boolean {
+  const threshold = printedCrewThreshold(unit);
+  return !unit.isDestroyed && threshold > 0 && unit.crewPoints <= threshold;
+}
+
+function comparableTraitName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\s*[+-]?\d+.*$/, "")
+    .trim()
+    .replace(/[\s_]+/g, "-");
+}
+
+function filterLostTraits(raw: string | null | undefined, lostTraitNames: Iterable<string>): string {
+  const lost = new Set(Array.from(lostTraitNames).map(comparableTraitName));
+  if (!raw) return "";
+  return raw.split(/[;,]/).map(t => t.trim()).filter(Boolean)
+    .filter(t => !lost.has(comparableTraitName(t)))
+    .join("; ");
+}
+
+function unitHasFiredAWeapon(unit: {
+  hasFiredThisRound?: boolean | null;
+  firedWeaponIds?: unknown;
+}): boolean {
+  return unit.hasFiredThisRound === true
+    || (Array.isArray(unit.firedWeaponIds) && unit.firedWeaponIds.length > 0);
+}
+
+function skeletonPenaltiesApply(unit: {
+  crewPoints: number;
+  maxCrewPoints: number;
+  crewThreshold?: number | null;
+  isDestroyed?: boolean;
+}, traits: { flightComputer: boolean }): boolean {
+  return isSkeletonCrewUnit(unit) && !traits.flightComputer;
+}
+
+function effectiveBaseSpeed(unit: {
+  speed: number;
+  hullPoints: number;
+  maxHullPoints: number;
+  damageThreshold?: number | null;
+  isDestroyed?: boolean;
+}, crits: { speedReduce: number }): number {
+  const crippledSpeed = isCrippledUnit(unit) ? Math.floor(unit.speed / 2) : unit.speed;
+  return Math.max(0, crippledSpeed - crits.speedReduce);
+}
+
+function movementSpeedCap(unit: {
+  speed: number;
+  hullPoints: number;
+  maxHullPoints: number;
+  damageThreshold?: number | null;
+  isDestroyed?: boolean;
+  specialAction: string | null;
+}, crits: { speedReduce: number }): number {
+  const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
+  const baseSpeed = effectiveBaseSpeed(unit, crits);
+  if (baseAction === "all-stop-pivot") return 0;
+  if (baseAction === "all-stop" || baseAction === "run-silent") return Math.floor(baseSpeed / 2);
+  if (baseAction === "all-power-engines") return Math.floor(baseSpeed * 1.5);
+  return baseSpeed;
+}
+
+function effectiveTurnProfile(unit: {
+  turns: number;
+  turnAngle: number;
+  hullPoints: number;
+  maxHullPoints: number;
+  damageThreshold?: number | null;
+  isDestroyed?: boolean;
+  specialAction: string | null;
+}, traits?: { superManeuverable?: boolean }): { maxTurns: number; turnAngle: number; turnsForbidden: boolean } {
+  const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
+  const crippled = isCrippledUnit(unit);
+  const baseTurns = traits?.superManeuverable && !crippled
+    ? 999
+    : traits?.superManeuverable && crippled
+      ? 2
+      : crippled ? Math.max(1, unit.turns - 1) : unit.turns;
+  const isComeAboutExtra = unit.specialAction === "come-about-extra-turn";
+  const isComeAboutSharp = unit.specialAction === "come-about-sharp-turn";
+  const baseTurnAngle = traits?.superManeuverable && !crippled
+    ? 360
+    : traits?.superManeuverable && crippled
+      ? 45
+      : crippled ? Math.min(45, unit.turnAngle) : unit.turnAngle;
+  const sharpBonus = isComeAboutSharp ? 45 : 0;
+  const pivotMultiplier = baseAction === "all-stop-pivot" ? 2 : 1;
+  return {
+    maxTurns: baseTurns + (isComeAboutExtra ? 1 : 0),
+    turnAngle: (baseTurnAngle + sharpBonus) * pivotMultiplier,
+    turnsForbidden: baseAction === "all-power-engines" || baseAction === "run-silent" || baseAction === "all-stop",
+  };
+}
+
+function turnDistanceRequirement(
+  unit: {
+    speed: number;
+    hullPoints: number;
+    maxHullPoints: number;
+    damageThreshold?: number | null;
+    isDestroyed?: boolean;
+    specialAction: string | null;
+  },
+  crits: { speedReduce: number },
+  traits: { agile?: boolean; superManeuverable?: boolean },
+  turnsMadeThisActivation: number,
+): number {
+  if (traits.superManeuverable) return 0;
+  const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
+  if (baseAction === "all-stop-pivot") return 0;
+  if (turnsMadeThisActivation === 0) {
+    const speed = effectiveBaseSpeed(unit, crits);
+    return traits.agile ? speed / 4 : speed / 2;
+  }
+  return traits.agile ? 1 : 2;
+}
+
+function headingDeltaDegrees(from: number, to: number): number {
+  let d = ((to - from) % 360 + 360) % 360;
+  if (d > 180) d = 360 - d;
+  return Math.abs(d);
+}
+
+function snapHalfInch(value: number): number {
+  return Math.round(value * 2) / 2;
 }
 
 // Arc center angles match game-board.tsx (local +Z = forward when heading=0).
@@ -133,6 +311,20 @@ function isInArc(
 // (nose along local +Z). KEEP IN SYNC with the FLIP_MODELS set in
 // artifacts/b5acta/src/pages/game-board.tsx.
 const FLIP_MODELS: Set<string> = new Set();
+
+function headingForwardVec(unit: { heading: number; modelFilename: string }): { x: number; z: number } {
+  const flip = FLIP_MODELS.has(unit.modelFilename);
+  const sign = flip ? -1 : 1;
+  const hRad = (unit.heading * Math.PI) / 180;
+  return { x: sign * Math.sin(hRad), z: sign * Math.cos(hRad) };
+}
+
+function shipModelIsFighter(model: {
+  shipClass?: string | null;
+  traits?: string | null;
+}): boolean {
+  return parseShipTraits(model.traits ?? "").fighter || /\bfighter\b/i.test(model.shipClass ?? "");
+}
 
 const router: IRouter = Router();
 
@@ -185,6 +377,12 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
   // to reject anything outside the two known modes rather than silently
   // letting it through as a typo (e.g. "Custom" with capital C).
   const crewQualityMode = parsed.data.crewQualityMode === "custom" ? "custom" : "standard";
+  const priorityLevel = normalizePriorityLevel(parsed.data.priorityLevel);
+  const legacyPointLimit = parsed.data.pointLimit ?? 500;
+  const allocationPoints = Math.max(
+    1,
+    Math.min(99, Math.trunc(parsed.data.allocationPoints ?? Math.max(1, Math.round(legacyPointLimit / 100)))),
+  );
 
   const [game] = await db.insert(gamesTable).values({
     challengerId: userId,
@@ -192,7 +390,9 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     challengerName: challenger?.username ?? null,
     opponentName: null,
     challengerFleetId: fleetId,
-    pointLimit: parsed.data.pointLimit,
+    pointLimit: allocationPoints * 100,
+    priorityLevel,
+    allocationPoints,
     visibility,
     passwordHash,
     deploymentDepth,
@@ -250,8 +450,8 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
       criticals: rows,
       // Slice C derived flags — surfaced to the client so badges can render
       // without re-deriving the rule.
-      isCrippled: u.maxHullPoints > 0 && u.hullPoints * 2 <= u.maxHullPoints && !u.isDestroyed,
-      isSkeletonCrew: u.maxCrewPoints > 0 && u.crewPoints * 2 <= u.maxCrewPoints && !u.isDestroyed,
+      isCrippled: isCrippledUnit(u),
+      isSkeletonCrew: isSkeletonCrewUnit(u),
     };
   });
   res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns }));
@@ -470,6 +670,10 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  if (parsed.data.placements.length === 0) {
+    res.status(400).json({ error: "You must deploy at least one ship." });
+    return;
+  }
   req.log.info({ body: parsed.data }, "deploy body parsed");
   // Whole deploy flow is wrapped in a transaction with SELECT FOR UPDATE on
   // the game row. Without the lock, a concurrent POST /surrender could delete
@@ -495,6 +699,12 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       }
 
       const isChallenger = game.challengerId === userId;
+      if (isChallenger && game.challengerDeployed) {
+        throw Object.assign(new Error("Challenger fleet is already deployed"), { status: 400 });
+      }
+      if (!isChallenger && game.opponentDeployed) {
+        throw Object.assign(new Error("Opponent fleet is already deployed"), { status: 400 });
+      }
       let fleetId: number | null = parsed.data.fleetId ?? null;
       let ships: typeof shipsTable.$inferSelect[];
 
@@ -541,6 +751,38 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         }));
       }
 
+      const placedShips = parsed.data.placements.map((placement) => {
+        const ship = ships.find(s => s.id === placement.shipId);
+        if (!ship) {
+          throw Object.assign(new Error("Every deployed placement must reference a ship in your selected fleet."), { status: 400 });
+        }
+        return ship;
+      });
+      const placedShipModelIds = [...new Set(placedShips.map(ship => ship.shipModelId))];
+      const placedModels = await tx.select().from(shipModelsTable).where(inArray(shipModelsTable.id, placedShipModelIds));
+      const placedModelById = new Map(placedModels.map(model => [model.id, model]));
+      const placedModelByShipId = new Map<number, typeof shipModelsTable.$inferSelect>();
+      for (const ship of placedShips) {
+        const model = placedModelById.get(ship.shipModelId);
+        if (!model) {
+          throw Object.assign(new Error(`Ship model ${ship.shipModelId} was not found.`), { status: 400 });
+        }
+        placedModelByShipId.set(ship.id, model);
+      }
+      const scenarioPriority = normalizePriorityLevel(game.priorityLevel);
+      const allocation = calculateAllocation(
+        placedShips.map(ship => normalizePriorityLevel(placedModelByShipId.get(ship.id)?.priorityLevel)),
+        scenarioPriority,
+        game.allocationPoints,
+      );
+      if (!allocation.legal) {
+        throw Object.assign(new Error(
+          `Fleet exceeds ${priorityLabel(scenarioPriority)} ${game.allocationPoints} FAP: ` +
+          `${formatAllocationTicks(allocation.spentTicks)} spent, ` +
+          `${formatAllocationTicks(allocation.budgetTicks)} allowed.`,
+        ), { status: 400 });
+      }
+
       // Zone validation: challenger deploys from +Z short edge, opponent from -Z.
       // hexQ/hexR are stored as world inches (see game-board.tsx handleYardsDeploy).
       // Board is 48"×72"; placements must stay inside the player's deployment zone.
@@ -565,7 +807,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       for (const placement of parsed.data.placements) {
         const ship = ships.find(s => s.id === placement.shipId);
         if (!ship) continue;
-        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        const model = placedModelByShipId.get(ship.id);
         if (!model) continue;
         const requestedCQ = placement.crewQuality ?? 4;
         const crewQuality = isStandardCQ
@@ -580,6 +822,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           faction: model.faction,
           hullPoints: model.hullPoints,
           maxHullPoints: model.hullPoints,
+          damageThreshold: model.damageThreshold ?? Math.ceil(model.hullPoints / 2),
           hexQ: placement.hexQ,
           hexR: placement.hexR,
           heading: placement.heading,
@@ -598,6 +841,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           // damage-table logic in Slice C.
           crewPoints: model.crew ?? 0,
           maxCrewPoints: model.crew ?? 0,
+          crewThreshold: model.crewThreshold ?? (model.crew ? Math.ceil(model.crew / 2) : 0),
           damageState: "normal",
           isDestroyed: false,
         });
@@ -613,6 +857,20 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       // players must roll 2d6 before anyone activates a ship. No active
       // player yet (initiative determines that).
       if (row.challengerDeployed && row.opponentDeployed) {
+        const unitCounts = await tx
+          .select({
+            ownerId: gameUnitsTable.ownerId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(gameUnitsTable)
+          .where(eq(gameUnitsTable.gameId, params.data.gameId))
+          .groupBy(gameUnitsTable.ownerId);
+        const countByOwner = new Map(unitCounts.map(x => [x.ownerId, Number(x.count)]));
+        const challengerUnits = countByOwner.get(row.challengerId) ?? 0;
+        const opponentUnits = row.opponentId ? (countByOwner.get(row.opponentId) ?? 0) : 0;
+        if (challengerUnits < 1 || opponentUnits < 1) {
+          throw Object.assign(new Error("Both commanders must have at least one ship deployed before the engagement can begin."), { status: 400 });
+        }
         [row] = await tx.update(gamesTable).set({
           status: "active",
           currentTurn: 1,
@@ -745,40 +1003,19 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     randomWeaponId: r.randomWeaponId,
     lostTraits: r.lostTraits ?? [],
   })));
+  const [moveShip] = await db.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+  if (!moveShip) { res.status(500).json({ error: "Ship record missing" }); return; }
+  const [moveModel] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, moveShip.shipModelId));
+  if (!moveModel) { res.status(500).json({ error: "Ship model missing" }); return; }
+  const moveTraits = parseShipTraits(filterLostTraits(moveModel.traits, moveCrits.lostTraitNames));
+  const currentSpeedCap = movementSpeedCap(unit, moveCrits);
+  const turnProfile = effectiveTurnProfile(unit, moveTraits);
   const isAdriftLike =
     unit.damageState === "adrift"
     || unit.damageState === "exploding-end-of-next"
     || moveCrits.adrift;
   if (isAdriftLike) {
-    if (body.data.newHeading !== unit.heading) {
-      res.status(400).json({ error: "Adrift ship cannot change heading" }); return;
-    }
-    const driftDistance = Math.floor(unit.speed / 2);
-    const dq = body.data.toHexQ - unit.hexQ;
-    const dr = body.data.toHexR - unit.hexR;
-    const moved = Math.hypot(dq, dr);
-    // Tolerance accounts for hexQ/hexR being rounded to ints (~0.7" diag).
-    if (Math.abs(moved - driftDistance) > 0.75) {
-      res.status(400).json({
-        error: `Adrift ship must drift exactly ${driftDistance}" (got ${moved.toFixed(1)}")`,
-      });
-      return;
-    }
-    const [updated] = await db.update(gameUnitsTable)
-      .set({
-        hexQ: body.data.toHexQ,
-        hexR: body.data.toHexR,
-        heading: unit.heading,
-        hasMovedThisRound: true,
-        hasInitiatedMoveThisActivation: true,
-        inchesMovedThisActivation: unit.inchesMovedThisActivation + Math.round(driftDistance),
-        // Any commander-initiated movement (including the adrift drift)
-        // breaks the All Stop latch — the ship is no longer holding station.
-        allStopReady: false,
-      })
-      .where(eq(gameUnitsTable.id, params.data.unitId))
-      .returning();
-    res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, moveCritRows) });
+    res.status(400).json({ error: "Adrift drift is resolved automatically in the End Phase" });
     return;
   }
 
@@ -788,8 +1025,47 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   // hex-Euclidean since hexQ/hexR are stored as world inches.
   const stepDq = body.data.toHexQ - unit.hexQ;
   const stepDr = body.data.toHexR - unit.hexR;
-  const stepInches = Math.round(Math.hypot(stepDq, stepDr));
+  const stepInches = snapHalfInch(Math.hypot(stepDq, stepDr));
+  const headingDelta = headingDeltaDegrees(unit.heading, body.data.newHeading);
+  const isTurn = headingDelta > 0;
 
+  if (unit.inchesMovedThisActivation + stepInches > currentSpeedCap) {
+    res.status(400).json({
+      error: `Ship may move at most ${currentSpeedCap}" this activation (would move ${unit.inchesMovedThisActivation + stepInches}")`,
+    });
+    return;
+  }
+  if (isTurn) {
+    if (stepInches > 0) {
+      res.status(400).json({ error: "Move forward and turn as separate movement steps" });
+      return;
+    }
+    if (turnProfile.turnsForbidden) {
+      res.status(400).json({ error: "Current Special Action forbids turning this round" });
+      return;
+    }
+    if (unit.turnsMadeThisActivation >= turnProfile.maxTurns) {
+      res.status(400).json({ error: `Ship may make at most ${turnProfile.maxTurns} turn${turnProfile.maxTurns === 1 ? "" : "s"} this activation` });
+      return;
+    }
+    if (headingDelta > turnProfile.turnAngle + 1e-6) {
+      res.status(400).json({ error: `Ship may turn at most ${turnProfile.turnAngle} degrees at once` });
+      return;
+    }
+    const requiredStraight = turnDistanceRequirement(unit, moveCrits, moveTraits, unit.turnsMadeThisActivation);
+    const movedStraight = unit.distanceSinceLastTurnThisActivation;
+    if (movedStraight + 1e-6 < requiredStraight) {
+      const label = unit.turnsMadeThisActivation === 0 ? "before its first turn" : "after its previous turn";
+      res.status(400).json({
+        error: `Ship must move ${requiredStraight.toFixed(requiredStraight % 1 === 0 ? 0 : 1)}" straight ${label} (moved ${movedStraight}")`,
+      });
+      return;
+    }
+  }
+
+  const nextDistanceSinceLastTurn = isTurn
+    ? 0
+    : unit.distanceSinceLastTurnThisActivation + stepInches;
   const [updated] = await db.update(gameUnitsTable)
     .set({
       hexQ: body.data.toHexQ,
@@ -797,6 +1073,8 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       heading: body.data.newHeading,
       hasInitiatedMoveThisActivation: true,
       inchesMovedThisActivation: unit.inchesMovedThisActivation + stepInches,
+      turnsMadeThisActivation: unit.turnsMadeThisActivation + (isTurn ? 1 : 0),
+      distanceSinceLastTurnThisActivation: nextDistanceSinceLastTurn,
       // Movement consumes the All Stop latch (only ships that held station
       // last round get to pivot this round).
       allStopReady: false,
@@ -825,6 +1103,9 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
       if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement" && game.phase !== "firing") {
+        throw Object.assign(new Error("Units can only activate during Movement or Firing"), { status: 400 });
+      }
       if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
       if (game.activeUnitId && game.activeUnitId !== unitId) {
         // Allow swapping the active unit ONLY if the current pick has made
@@ -864,6 +1145,73 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Unit is destroyed"), { status: 400 });
+
+      const fighterCache = new Map<number, boolean>();
+      const isFighterUnit = async (unitRow: typeof gameUnitsTable.$inferSelect): Promise<boolean> => {
+        const cached = fighterCache.get(unitRow.id);
+        if (cached !== undefined) return cached;
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unitRow.shipId));
+        if (!ship) {
+          fighterCache.set(unitRow.id, false);
+          return false;
+        }
+        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        const fighter = model ? shipModelIsFighter(model) : false;
+        fighterCache.set(unitRow.id, fighter);
+        return fighter;
+      };
+      const eligibleRows = async (): Promise<Array<typeof gameUnitsTable.$inferSelect>> => {
+        const rows = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, game.id),
+          eq(gameUnitsTable.isDestroyed, false),
+          eq(game.phase === "firing" ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound, false),
+        ));
+        const eligible: Array<typeof gameUnitsTable.$inferSelect> = [];
+        for (const row of rows) {
+          if (game.phase === "firing") {
+            if (row.hullPoints <= 0) continue;
+            if (row.maxCrewPoints > 0 && row.crewPoints <= 0) continue;
+          } else {
+            const critRows = await tx.select().from(unitCriticalEffectsTable)
+              .where(eq(unitCriticalEffectsTable.gameUnitId, row.id));
+            const state = effectiveDamageState(row.damageState, critRows);
+            if (state === "adrift" || state === "exploding-end-of-next") continue;
+          }
+          eligible.push(row);
+        }
+        return eligible;
+      };
+      const activationSegment = async (): Promise<"capital" | "fighter" | null> => {
+        const rows = await eligibleRows();
+        let hasCapital = false;
+        let hasFighter = false;
+        for (const row of rows) {
+          if (await isFighterUnit(row)) hasFighter = true;
+          else hasCapital = true;
+        }
+        if (game.phase === "movement") {
+          return hasCapital ? "capital" : hasFighter ? "fighter" : null;
+        }
+        return hasFighter ? "fighter" : hasCapital ? "capital" : null;
+      };
+
+      const segment = await activationSegment();
+      const unitIsFighter = await isFighterUnit(unit);
+      if (segment === "capital" && unitIsFighter) {
+        throw Object.assign(new Error(
+          game.phase === "movement"
+            ? "Fighter flights activate after all capital ships in the Movement Phase"
+            : "Fighter flights have already completed their Firing Phase attacks",
+        ), { status: 400 });
+      }
+      if (segment === "fighter" && !unitIsFighter) {
+        throw Object.assign(new Error(
+          game.phase === "movement"
+            ? "Capital ships have finished moving — activate fighter flights now"
+            : "Fighter flights attack before capital ships in the Firing Phase",
+        ), { status: 400 });
+      }
+
       // Each phase tracks its own per-round done-flag. A ship that finished its
       // movement activation is still eligible to be picked up again for its
       // firing activation, and vice-versa.
@@ -882,6 +1230,12 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
         }
       } else {
         if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+        const moveCritRows = await tx.select().from(unitCriticalEffectsTable)
+          .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+        const moveDamageState = effectiveDamageState(unit.damageState, moveCritRows);
+        if (moveDamageState === "adrift" || moveDamageState === "exploding-end-of-next") {
+          throw Object.assign(new Error("Adrift ships drift automatically in the End Phase"), { status: 400 });
+        }
       }
 
       // Conditional UPDATE: the optimistic activeUnitId guard is intentionally
@@ -916,6 +1270,8 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
             firedWeaponIds: [],
             hasInitiatedMoveThisActivation: false,
             inchesMovedThisActivation: 0,
+            turnsMadeThisActivation: 0,
+            distanceSinceLastTurnThisActivation: 0,
           })
           .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
       }
@@ -945,6 +1301,9 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
       if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement" && game.phase !== "firing") {
+        throw Object.assign(new Error("Ship activations only end during Movement or Firing"), { status: 400 });
+      }
       if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
       // end-activation doubles as a "pass" when the active player has no
       // active unit AND no eligible activations remain (every ship of theirs
@@ -954,20 +1313,84 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       // activation to end.
       const isFiring = game.phase === "firing";
       const endedUnitId = game.activeUnitId;
-      if (!endedUnitId) {
-        // Verify the pass is legitimate: caller really has nothing to do.
-        const phaseDone = isFiring ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound;
-        const eligibilityCheck = isFiring
+      let endedUnitForHandoff: typeof gameUnitsTable.$inferSelect | null = null;
+      if (endedUnitId) {
+        const [row] = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId),
+        ));
+        endedUnitForHandoff = row ?? null;
+      }
+      const fighterCache = new Map<number, boolean>();
+      const isFighterUnit = async (unitRow: typeof gameUnitsTable.$inferSelect): Promise<boolean> => {
+        const cached = fighterCache.get(unitRow.id);
+        if (cached !== undefined) return cached;
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unitRow.shipId));
+        if (!ship) {
+          fighterCache.set(unitRow.id, false);
+          return false;
+        }
+        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        const fighter = model ? shipModelIsFighter(model) : false;
+        fighterCache.set(unitRow.id, fighter);
+        return fighter;
+      };
+      const isMovementActivationEligible = async (unitRow: typeof gameUnitsTable.$inferSelect): Promise<boolean> => {
+        const critRows = await tx.select().from(unitCriticalEffectsTable)
+          .where(eq(unitCriticalEffectsTable.gameUnitId, unitRow.id));
+        const state = effectiveDamageState(unitRow.damageState, critRows);
+        return state !== "adrift" && state !== "exploding-end-of-next";
+      };
+      const eligibleRowsFor = async (
+        pid: string | null,
+        firing: boolean,
+        segment?: "capital" | "fighter" | null,
+      ): Promise<Array<typeof gameUnitsTable.$inferSelect>> => {
+        const phaseDone = firing ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound;
+        const eligibilityCheck = firing
           ? sql`${gameUnitsTable.hullPoints} > 0 AND (${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`
           : sql`TRUE`;
-        const myEligible = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
+        const rows = await tx.select().from(gameUnitsTable).where(and(
           eq(gameUnitsTable.gameId, game.id),
-          eq(gameUnitsTable.ownerId, userId),
           eq(gameUnitsTable.isDestroyed, false),
           eq(phaseDone, false),
           eligibilityCheck,
         ));
-        if (myEligible.length > 0) {
+        const eligible: Array<typeof gameUnitsTable.$inferSelect> = [];
+        for (const row of rows) {
+          if (pid !== null && row.ownerId !== pid) continue;
+          if (!firing && !(await isMovementActivationEligible(row))) continue;
+          if (segment) {
+            const fighter = await isFighterUnit(row);
+            if (segment === "fighter" && !fighter) continue;
+            if (segment === "capital" && fighter) continue;
+          }
+          eligible.push(row);
+        }
+        return eligible;
+      };
+      const activationSegmentFor = async (firing: boolean): Promise<"capital" | "fighter" | null> => {
+        const rows = await eligibleRowsFor(null, firing);
+        let hasCapital = false;
+        let hasFighter = false;
+        for (const row of rows) {
+          if (await isFighterUnit(row)) hasFighter = true;
+          else hasCapital = true;
+        }
+        if (firing) return hasFighter ? "fighter" : hasCapital ? "capital" : null;
+        return hasCapital ? "capital" : hasFighter ? "fighter" : null;
+      };
+      const countEligibleFor = async (
+        pid: string,
+        firing: boolean,
+        segment?: "capital" | "fighter" | null,
+      ): Promise<number> => {
+        return (await eligibleRowsFor(pid, firing, segment)).length;
+      };
+      if (!endedUnitId) {
+        // Verify the pass is legitimate: caller really has nothing to do.
+        const segment = await activationSegmentFor(isFiring);
+        const myEligible = segment ? await countEligibleFor(userId, isFiring, segment) : 0;
+        if (myEligible > 0) {
           throw Object.assign(new Error("You still have eligible activations — pick a ship"), { status: 400 });
         }
         // Pass is valid. No unit to mark as done; fall through to the
@@ -981,20 +1404,12 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         // entirely. Firing-phase end-activation is unaffected — the drift
         // is a movement-phase obligation.
         if (!isFiring) {
-          const [endedUnit] = await tx.select().from(gameUnitsTable).where(and(
-            eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId),
-          ));
+          const endedUnit = endedUnitForHandoff;
           if (endedUnit) {
             const endedCritRows = await tx.select().from(unitCriticalEffectsTable)
               .where(eq(unitCriticalEffectsTable.gameUnitId, endedUnit.id));
             const eff = effectiveDamageState(endedUnit.damageState, endedCritRows);
             const isAdriftLike = eff === "adrift" || eff === "exploding-end-of-next";
-            if (isAdriftLike && !endedUnit.hasInitiatedMoveThisActivation) {
-              throw Object.assign(
-                new Error("Adrift ship must complete its compulsory drift before ending activation"),
-                { status: 400 },
-              );
-            }
             // ACTA minimum-speed rule: a non-adrift ship must either
             // (a) declare All Stop / All Stop and Pivot, or (b) move at
             // least ceil(effectiveMaxSpeed/2) inches this activation
@@ -1007,7 +1422,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
               const allStopDeclared = baseSA === "all-stop" || baseSA === "all-stop-pivot";
               if (!allStopDeclared) {
                 // Compute effective max speed: printed speed minus the
-                // cumulative crit speedReduce from this ship's active
+                // highest active speedReduce from similar engine/reactor
                 // criticals.
                 const cap = deriveCritEffects(endedCritRows.map(r => ({
                   effectKey: r.effectKey,
@@ -1015,8 +1430,16 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                   randomWeaponId: r.randomWeaponId,
                   lostTraits: r.lostTraits ?? [],
                 })));
-                const effectiveMax = Math.max(0, endedUnit.speed - cap.speedReduce);
-                const minRequired = effectiveMax > 0 ? Math.max(1, Math.ceil(effectiveMax / 2)) : 0;
+                const [endedShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, endedUnit.shipId));
+                let endedModel: typeof shipModelsTable.$inferSelect | undefined;
+                if (endedShip) {
+                  [endedModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, endedShip.shipModelId));
+                }
+                const endedTraits = parseShipTraits(filterLostTraits(endedModel?.traits ?? "", cap.lostTraitNames));
+                const effectiveMax = effectiveBaseSpeed(endedUnit, cap);
+                const minRequired = endedTraits.superManeuverable
+                  ? 0
+                  : effectiveMax > 0 ? Math.max(1, Math.ceil(effectiveMax / 2)) : 0;
                 if (minRequired > 0 && endedUnit.inchesMovedThisActivation < minRequired) {
                   throw Object.assign(
                     new Error(
@@ -1040,7 +1463,6 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       if (!game.opponentId) throw Object.assign(new Error("Game has no opponent"), { status: 500 });
       const opponentId = game.opponentId;
       const otherPlayerId = userId === game.challengerId ? opponentId : game.challengerId;
-      const doneCol = isFiring ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound;
       // In the firing phase, derelicts (hull ≤ 0, or no surviving crew on a
       // ship that has a crew complement) are barred from activation by the
       // /activate guard. They must therefore be excluded from the "remaining"
@@ -1048,21 +1470,10 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       // during this very firing phase still has `hasFiredThisRound=false`,
       // so without this filter `remainingFor` would keep returning it
       // forever and the round could never advance.
-      const eligibilityFilter = isFiring
-        ? sql`${gameUnitsTable.hullPoints} > 0 AND (${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`
-        : sql`TRUE`;
-      const remainingFor = async (pid: string) => {
-        const rows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
-          eq(gameUnitsTable.gameId, game.id),
-          eq(gameUnitsTable.ownerId, pid),
-          eq(gameUnitsTable.isDestroyed, false),
-          eq(doneCol, false),
-          eligibilityFilter,
-        ));
-        return rows.length;
-      };
-      const otherRemaining = await remainingFor(otherPlayerId);
-      const selfRemaining = await remainingFor(userId);
+      const segment = await activationSegmentFor(isFiring);
+      const endedWasFighter = endedUnitForHandoff ? await isFighterUnit(endedUnitForHandoff) : false;
+      const otherRemaining = segment ? await countEligibleFor(otherPlayerId, isFiring, segment) : 0;
+      const selfRemaining = segment ? await countEligibleFor(userId, isFiring, segment) : 0;
 
       let nextActivePlayerId: string | undefined;
       let nextRound = game.currentRound;
@@ -1084,6 +1495,16 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         ));
         return rows.length;
       };
+      const firstEligibleByInitiative = async (
+        firing: boolean,
+        targetSegment: "capital" | "fighter",
+      ): Promise<string | undefined> => {
+        const initiativeId = game.initiativeWinnerId ?? game.challengerId;
+        const otherId = initiativeId === game.challengerId ? opponentId : game.challengerId;
+        if (await countEligibleFor(initiativeId, firing, targetSegment) > 0) return initiativeId;
+        if (await countEligibleFor(otherId, firing, targetSegment) > 0) return otherId;
+        return undefined;
+      };
 
       // Helper: transition into the end phase. Initiative winner gets the
       // first damage-control window; opponent follows after they pass.
@@ -1098,9 +1519,17 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         }).where(eq(gamesTable.id, game.id));
       };
 
-      if (otherRemaining > 0) {
+      if (segment === "fighter" && endedWasFighter && selfRemaining > 0) {
+        nextActivePlayerId = userId;
+      } else if (segment === "fighter") {
+        nextActivePlayerId = await firstEligibleByInitiative(isFiring, "fighter");
+        if (!nextActivePlayerId && otherRemaining > 0) nextActivePlayerId = otherPlayerId;
+        if (!nextActivePlayerId && selfRemaining > 0) nextActivePlayerId = userId;
+      } else if (segment === "capital" && endedWasFighter) {
+        nextActivePlayerId = await firstEligibleByInitiative(isFiring, "capital");
+      } else if (segment === "capital" && otherRemaining > 0) {
         nextActivePlayerId = otherPlayerId;
-      } else if (selfRemaining > 0) {
+      } else if (segment === "capital" && selfRemaining > 0) {
         nextActivePlayerId = userId;
       } else if (!isFiring) {
         // Movement sub-phase complete → transition to firing. Same initiative
@@ -1109,16 +1538,13 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         // start of the firing phase to the opponent. If neither side has
         // ANY firing-eligible ships, skip the firing phase entirely and
         // jump straight to end (the round still gets a repair window).
-        const initiativeId = game.initiativeWinnerId ?? game.challengerId;
-        const otherId = initiativeId === game.challengerId ? opponentId : game.challengerId;
-        const initFiring = await firingEligibleFor(initiativeId);
-        const otherFiring = await firingEligibleFor(otherId);
-        if (initFiring > 0) {
+        const firingSegment = await activationSegmentFor(true);
+        const firstFiringPlayer = firingSegment
+          ? await firstEligibleByInitiative(true, firingSegment)
+          : undefined;
+        if (firstFiringPlayer) {
           nextPhase = "firing";
-          nextActivePlayerId = initiativeId;
-        } else if (otherFiring > 0) {
-          nextPhase = "firing";
-          nextActivePlayerId = otherId;
+          nextActivePlayerId = firstFiringPlayer;
         } else {
           await enterEndPhase();
         }
@@ -1262,6 +1688,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // Weapon must belong to the attacker's ship class.
       const [attackerShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, attacker.shipId));
       if (!attackerShip) throw Object.assign(new Error("Attacker ship record missing"), { status: 500 });
+      const [attackerModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, attackerShip.shipModelId));
+      if (!attackerModel) throw Object.assign(new Error("Attacker ship model missing"), { status: 500 });
       const [weapon] = await tx.select().from(weaponsTable).where(eq(weaponsTable.id, weaponId));
       if (!weapon) throw Object.assign(new Error("Weapon not found"), { status: 404 });
       if (weapon.shipModelId !== attackerShip.shipModelId) {
@@ -1284,6 +1712,16 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }
       if (attackerCrits.forbiddenArcs.has(weapon.arc)) {
         throw Object.assign(new Error(`Weapons in the ${weapon.arc} arc are offline (critical hit)`), { status: 400 });
+      }
+      const attackerTraits = parseShipTraits(filterLostTraits(attackerModel.traits, attackerCrits.lostTraitNames));
+      if (skeletonPenaltiesApply(attacker, attackerTraits) && alreadyFired.length >= 1) {
+        throw Object.assign(new Error("Skeleton crew may fire only one weapon system this turn"), { status: 400 });
+      }
+      if (isCrippledUnit(attacker) && alreadyFired.length > 0) {
+        const priorWeapons = await tx.select().from(weaponsTable).where(inArray(weaponsTable.id, alreadyFired));
+        if (priorWeapons.some(w => w.arc === weapon.arc)) {
+          throw Object.assign(new Error(`Crippled ships may fire only one weapon per arc; ${weapon.arc} has already fired`), { status: 400 });
+        }
       }
 
       // Range check (world units = inches; the OpenAPI spec stores weapon.range
@@ -1316,12 +1754,21 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         randomWeaponId: r.randomWeaponId,
         lostTraits: r.lostTraits ?? [],
       })));
+      const targetEffectiveDamageState = effectiveDamageState(target.damageState, targetCritRows);
+      const targetCrippled = isCrippledUnit(target);
 
       // ── Trait parse ──────────────────────────────────────────────────────
       // Filter the target's ship traits by any crit-lost trait names so
       // Adaptive Armour / Stealth / Interceptors / etc. drop out when a
       // power-feedback/implosion/etc. crit nuked them.
       const wt = parseWeaponTraits(weapon.traits);
+      if (wt.slowLoading) {
+        const cooldowns = normalizeSlowLoadingCooldowns(attacker.slowLoadingWeaponCooldowns, game.currentRound);
+        const readyRound = cooldowns[String(weaponId)] ?? 0;
+        if (game.currentRound < readyRound) {
+          throw Object.assign(new Error(`Slow-Loading weapon is reloading until round ${readyRound}`), { status: 400 });
+        }
+      }
       const lostLc = new Set(Array.from(targetCrits.lostTraitNames).map(n => n.toLowerCase()));
       const filterTraits = (raw: string | null | undefined): string => {
         if (!raw) return "";
@@ -1332,10 +1779,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const targetTraits = parseShipTraits(filterTraits(targetModel.traits));
 
       // ── Effective AD count ───────────────────────────────────────────────
-      // Order: weapon AD modifiers (AP/Super AP/Weak) first, then Intensify
-      // Defensive Fire halve (min 1). Intensify is on the *attacker*, applied
-      // last so it caps even a buffed weapon. Attacker crits apply a flat
-      // negative AD modifier (Capacitors / Targeting) before halving.
+      // Order: weapon AD modifiers first, then Intensify Defensive Fire halve
+      // (min 1). AP / Super AP do not add dice; they modify each attack die's
+      // to-hit result below. Attacker crits apply a flat negative AD modifier
+      // (Capacitors / Targeting) before halving.
       const intensifyActive = baseAction === "intensify-defense";
       const weaponAd = effectiveAttackDice(weapon.attackDice, wt);
       const adAfterCrits = Math.max(1, weaponAd + attackerCrits.allWeaponsAdMod);
@@ -1348,7 +1795,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // pre-attack 1d6 check (below).
       const baseThreshold = (wt.beam || wt.miniBeam) ? 4 : targetModel.hullRating;
       const critFloor = attackerCrits.weaponsHitOn4 ? 4 : 0;
-      const hitThreshold = Math.max(baseThreshold, critFloor);
+      const attackModifier = attackRollModifier(wt);
+      const hitThreshold = Math.max(1, Math.max(baseThreshold, critFloor) - attackModifier);
 
       // ── Scout support: gather allied scout-action rows targeting defender ─
       // Counter-Stealth (successful): each successful "counter-stealth" by an
@@ -1364,9 +1812,32 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         eq(gameUnitsTable.ownerId, attacker.ownerId),
         eq(gameUnitsTable.scoutActionTargetId, target.id),
       ));
-      const counterStealthRows = alliedScoutRows.filter(s => s.scoutAction === "counter-stealth");
+      const liveScoutRows: typeof alliedScoutRows = [];
+      for (const s of alliedScoutRows) {
+        if (s.scoutAction !== "counter-stealth" && s.scoutAction !== "coord") continue;
+        if (s.isDestroyed || s.hullPoints <= 0) continue;
+        if (s.maxCrewPoints > 0 && s.crewPoints <= 0) continue;
+        const scoutCritRows = await tx.select().from(unitCriticalEffectsTable)
+          .where(eq(unitCriticalEffectsTable.gameUnitId, s.id));
+        const scoutCrits = deriveCritEffects(scoutCritRows.map(r => ({
+          effectKey: r.effectKey,
+          randomArc: r.randomArc,
+          randomWeaponId: r.randomWeaponId,
+          lostTraits: r.lostTraits ?? [],
+        })));
+        const scoutEffectiveState = effectiveDamageState(s.damageState, scoutCritRows);
+        if (scoutEffectiveState === "adrift" || scoutCrits.noSA) continue;
+        const [scoutShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, s.shipId));
+        if (!scoutShip) continue;
+        const [scoutModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, scoutShip.shipModelId));
+        if (!scoutModel) continue;
+        const scoutTraits = parseShipTraits(filterLostTraits(scoutModel.traits, scoutCrits.lostTraitNames));
+        if (!scoutTraits.scout || skeletonPenaltiesApply(s, scoutTraits)) continue;
+        liveScoutRows.push(s);
+      }
+      const counterStealthRows = liveScoutRows.filter(s => s.scoutAction === "counter-stealth");
       const scoutStealthReduction = counterStealthRows.length;
-      const availableCoordScout = alliedScoutRows.find(s =>
+      const availableCoordScout = liveScoutRows.find(s =>
         s.scoutAction === "coord" && !s.scoutCoordConsumed,
       ) ?? null;
 
@@ -1422,32 +1893,32 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         !stealthCheckPassed && (wt.slowLoading || wt.oneShot);
 
       // ── Validate Scout Coordination opt-in ───────────────────────────────
-      // Per the rules, Beam / Mini Beam / Energy Mine / Twin Linked weapons
+      // Per the rules, Beam / Energy Mine / Twin Linked weapons
       // cannot benefit from the coord re-roll. We reject the opt-in up
       // front rather than silently dropping it so the client can surface
       // the error to the player.
       const scoutCoordRequested = useScoutCoordination === true;
       const scoutCoordWeaponEligible =
-        !wt.beam && !wt.miniBeam && !wt.energyMine && !wt.twinLinked;
+        !wt.beam && !wt.energyMine && !wt.twinLinked;
       if (scoutCoordRequested) {
         if (!availableCoordScout) {
           throw Object.assign(new Error("No unspent Scout coordination token available for this target"), { status: 400 });
         }
         if (!scoutCoordWeaponEligible) {
-          throw Object.assign(new Error("Scout coordination cannot re-roll Beam, Mini Beam, Energy Mine, or Twin Linked weapons"), { status: 400 });
+          throw Object.assign(new Error("Scout coordination cannot re-roll Beam, Energy Mine, or Twin Linked weapons"), { status: 400 });
         }
       }
       const scoutCoordActive = scoutCoordRequested && availableCoordScout != null && scoutCoordWeaponEligible;
 
       // ── Roll AD → raw hits ───────────────────────────────────────────────
-      // Beam: every to-hit die showing 4+ "explodes" and rolls one additional
-      // die (also checked for hit + further explosion). Cap per-die at 100
-      // chained rolls as a runaway-loop guard.
+      // Beam: every successful to-hit die "explodes" and rolls one additional
+      // die (also checked for hit + further explosion). AP / Super AP are
+      // already folded into hitThreshold, so a modified Beam hit chains
+      // correctly. Cap per-die at 100 chained rolls as a runaway-loop guard.
       // Twin Linked: missed AD may be re-rolled once.
       // Concentrate Fire: missed AD against the locked target may be re-rolled
       // once (skipped by Beam, Energy Mine, Twin Linked per rulebook).
       // A single die may be re-rolled by at most ONE of these two effects.
-      const EXPLODE_ON = 4;
       const EXPLODE_CAP_PER_DIE = 100;
       const concentrateRerollEligible =
         concentrateActive && !wt.beam && !wt.miniBeam && !wt.twinLinked && !wt.energyMine;
@@ -1468,8 +1939,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         let hitFlag = r >= hitThreshold;
         // At most ONE re-roll per AD, in this priority: Twin Linked,
         // Concentrate Fire, Scout Coordination. Scout Coord eligibility
-        // was already validated above to exclude Beam / Mini Beam /
-        // Energy Mine / Twin Linked weapons; the priority order
+        // was already validated above to exclude Beam / Energy Mine /
+        // Twin Linked weapons; the priority order
         // effectively reduces to "use coord when twin/concentrate
         // didn't apply".
         if (!hitFlag && wt.twinLinked) {
@@ -1494,7 +1965,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         if (hitFlag) hits++;
         if (wt.beam) {
           let chain = 0;
-          while (r >= EXPLODE_ON && chain < EXPLODE_CAP_PER_DIE) {
+          while (r >= hitThreshold && chain < EXPLODE_CAP_PER_DIE) {
             r = rollD6();
             attackRolls.push(r);
             attackRollKinds.push("explosion");
@@ -1517,7 +1988,16 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // Mine. (Sheet also says "Lost if Adrift or not moved" — Adrift state
       // arrives in Slice C; this pre-condition is currently not modelled, so
       // any ship with a Dodge rating may dodge.)
-      const dodgeActive = targetTraits.dodge > 0 && !wt.accurate && !wt.energyMine;
+      const targetAction = (target.specialAction ?? "").replace(/-failed$/, "");
+      const targetHeldStation = targetAction === "all-stop" || targetAction === "all-stop-pivot";
+      const targetCanManeuver =
+        target.hasMovedThisRound
+        && !targetHeldStation
+        && targetEffectiveDamageState !== "adrift"
+        && targetEffectiveDamageState !== "exploding-end-of-next"
+        && target.hullPoints > 0
+        && (target.maxCrewPoints === 0 || target.crewPoints > 0);
+      const dodgeActive = targetTraits.dodge > 0 && !wt.accurate && !wt.energyMine && targetCanManeuver;
       if (dodgeActive) {
         for (let i = 0; i < remainingHits; i++) {
           const d = rollD6();
@@ -1546,12 +2026,13 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // wipes the Interceptors trait (power feedback / implosion / catastrophic)
       // immediately drops the pool to 0 — even if the column was non-zero from
       // an earlier attack this turn before the trait was lost.
-      const interceptorDiceBefore = Math.min(target.interceptorDiceRemaining, targetTraits.interceptors);
+      const effectiveTargetInterceptors = targetCrippled ? 0 : targetTraits.interceptors;
+      const interceptorDiceBefore = Math.min(target.interceptorDiceRemaining, effectiveTargetInterceptors);
       const interceptorThresholdBefore = target.interceptorThresholdCurrent;
       let interceptorRemaining = interceptorDiceBefore;
       let interceptorThreshold = interceptorThresholdBefore;
       const interceptorsBypassed = wt.beam || wt.miniBeam || wt.massDriver || wt.energyMine;
-      if (!interceptorsBypassed && targetTraits.interceptors > 0 && interceptorRemaining > 0 && remainingHits > 0) {
+      if (!interceptorsBypassed && effectiveTargetInterceptors > 0 && interceptorRemaining > 0 && remainingHits > 0) {
         const hitsToAttempt = remainingHits;
         for (let h = 0; h < hitsToAttempt; h++) {
           if (interceptorRemaining <= 0) break;
@@ -1585,7 +2066,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // double, etc.). Partial absorption: a hit hitting a partly-full shield
       // pool drains the pool to 0 and still gets through. Mass Driver and
       // Energy Mine bypass shields.
-      let shieldsBefore = target.shieldsCurrent;
+      let shieldsBefore = targetCrippled ? 0 : target.shieldsCurrent;
       let shieldsCurrent = shieldsBefore;
       let shieldedHits = 0;
       if (!wt.massDriver && !wt.energyMine && shieldsCurrent > 0 && remainingHits > 0) {
@@ -1607,6 +2088,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // 6 = Crit (Solid + roll on Critical Hit table — Slice B will apply
       //          structural effects; for now we just log the rolls).
       const attackTableRolls: number[] = [];
+      const attackTableModifiedRolls: number[] = [];
       const criticalRolls: number[] = [];
       // Pending crits: each gets a location/effect roll after the loop so
       // we can resolve dice penalties + persist rows in one batch.
@@ -1619,11 +2101,13 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       let totalCrewLost = 0;
       for (let i = 0; i < remainingHits; i++) {
         const d = rollD6();
+        const tableRoll = Math.min(6, d + (wt.precise ? 1 : 0));
         attackTableRolls.push(d);
-        if (d === 1) {
+        attackTableModifiedRolls.push(tableRoll);
+        if (tableRoll === 1) {
           bulkheadHits++;
           totalDamage += bulkheadFloor;
-        } else if (d <= 5) {
+        } else if (tableRoll <= 5) {
           solidHits++;
           totalDamage += 1 * mult;
           totalCrewLost += 1 * mult;
@@ -1679,7 +2163,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const currentRound = game.currentRound;
       // Track gross crit damage so we can later scale the per-crit
       // `damageApplied` to the net amount that actually reached hull
-      // (after Adaptive Armour + Blast Doors). DC refunds the *net* delta.
+      // (after Adaptive Armour + Blast Doors) for combat-log accuracy.
       const critGrossSoFar = totalDamage;  // structural-only at this point
       const damagePreCrits = damageAfterGeg;
       let critDmgGross = 0;
@@ -1781,7 +2265,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const finalCrewLost = Math.max(0, crewAfterGeg - blastDoorsCrewSaved);
 
       // ── Scale per-crit damageApplied to the NET hull damage actually
-      //    landed by each crit, so Damage-Control refunds the right amount.
+      //    landed by each crit for persisted combat-log accuracy.
       //    `damageAfterGeg` includes both structural + crit gross damage.
       //    The combined pool is then reduced by Adaptive Armour + Blast
       //    Doors; we attribute the resulting reduction proportionally so
@@ -1895,15 +2379,23 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
         nextDamageState = "adrift";
       }
+      const targetWillBeCrippled = isCrippledUnit({
+        ...target,
+        hullPoints: targetHullAfter,
+        isDestroyed: targetDestroyed,
+      });
+      const persistedShieldsCurrent = targetWillBeCrippled ? 0 : shieldsCurrent;
+      const persistedInterceptorRemaining = targetWillBeCrippled ? 0 : interceptorRemaining;
+      const persistedInterceptorThreshold = targetWillBeCrippled ? 2 : interceptorThreshold;
 
       await tx.update(gameUnitsTable).set({
         hullPoints: targetHullAfter,
         crewPoints: targetCrewAfter,
-        shieldsCurrent,
+        shieldsCurrent: persistedShieldsCurrent,
         // Persist the post-attack interceptor state so the next attack
         // this turn sees the burned dice / raised threshold.
-        interceptorDiceRemaining: interceptorRemaining,
-        interceptorThresholdCurrent: interceptorThreshold,
+        interceptorDiceRemaining: persistedInterceptorRemaining,
+        interceptorThresholdCurrent: persistedInterceptorThreshold,
         damageState: nextDamageState,
         isDestroyed: targetDestroyed,
       }).where(eq(gameUnitsTable.id, target.id));
@@ -1914,8 +2406,17 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // power was held, not loosed). All other stealth failures still
       // consume the shot — the gun went off, it just hit nothing.
       if (!stealthFailWastedSlowLoading) {
+        const nextSlowLoadingCooldowns = wt.slowLoading
+          ? {
+              ...normalizeSlowLoadingCooldowns(attacker.slowLoadingWeaponCooldowns, game.currentRound),
+              [String(weaponId)]: game.currentRound + 2,
+            }
+          : attacker.slowLoadingWeaponCooldowns;
         await tx.update(gameUnitsTable)
-          .set({ firedWeaponIds: [...alreadyFired, weaponId] })
+          .set({
+            firedWeaponIds: [...alreadyFired, weaponId],
+            slowLoadingWeaponCooldowns: nextSlowLoadingCooldowns,
+          })
           .where(eq(gameUnitsTable.id, attacker.id));
       }
 
@@ -1963,14 +2464,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           .where(eq(gamesTable.id, game.id));
       }
 
-      // Consume the Scout coordination token ONLY if it actually drove at
-      // least one re-roll on this attack. Twin Linked / Concentrate Fire
-      // take priority in the per-AD reroll chain (see the loop above),
-      // so it's possible to opt in with no dice left for coord to touch
-      // (e.g. weapon also benefits from Concentrate Fire and every miss
-      // was already re-rolled). In that case we leave the token unspent
-      // rather than silently wasting it.
-      const scoutCoordActuallyUsed = scoutCoordActive && scoutCoordRerolls > 0;
+      // The Scout coordination token is spent when assigned to this weapon
+      // system, even if the attack produces no failed AD to reroll.
+      const scoutCoordActuallyUsed = scoutCoordActive;
       if (scoutCoordActuallyUsed && availableCoordScout) {
         await tx.update(gameUnitsTable)
           .set({ scoutCoordConsumed: true })
@@ -2004,14 +2500,15 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         interceptorThreshold: interceptorAttempts.length > 0 ? interceptorThresholdBefore : 0,
         interceptorAttempts,
         interceptorDiceBefore,
-        interceptorDiceAfter: interceptorRemaining,
+        interceptorDiceAfter: persistedInterceptorRemaining,
         interceptorThresholdBefore,
-        interceptorThresholdAfter: interceptorThreshold,
+        interceptorThresholdAfter: persistedInterceptorThreshold,
         shieldedHits,
         targetShieldsBefore: shieldsBefore,
-        targetShieldsAfter: shieldsCurrent,
+        targetShieldsAfter: persistedShieldsCurrent,
         // Attack Table
         attackTableRolls,
+        attackTableModifiedRolls,
         bulkheadHits,
         solidHits,
         criticalHits,
@@ -2122,9 +2619,6 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       if (unit.hasInitiatedMoveThisActivation) throw Object.assign(new Error("Cannot declare a Special Action after movement has started"), { status: 400 });
       // Slice C: Skeleton Crew (crewPoints ≤ ½ max) and Adrift ships
       // cannot declare Special Actions.
-      if (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) {
-        throw Object.assign(new Error("Skeleton crew cannot declare Special Actions"), { status: 400 });
-      }
       if (unit.damageState === "adrift") {
         throw Object.assign(new Error("Adrift ship cannot declare Special Actions"), { status: 400 });
       }
@@ -2147,6 +2641,15 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       }
       if (saCrits.noSA) {
         throw Object.assign(new Error("Cannot declare Special Actions — Bridge / Reactor crit active"), { status: 400 });
+      }
+
+      const [unitShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+      const [unitModel] = unitShip
+        ? await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, unitShip.shipModelId))
+        : [];
+      const unitTraits = parseShipTraits(filterLostTraits(unitModel?.traits ?? "", saCrits.lostTraitNames));
+      if (skeletonPenaltiesApply(unit, unitTraits)) {
+        throw Object.assign(new Error("Skeleton crew cannot declare Special Actions"), { status: 400 });
       }
 
       // Per-action prereqs.
@@ -2248,10 +2751,10 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
 //                    rest of the round (target must have Stealth trait).
 //   coord:           CQ 8+ → one allied weapon system attacking that target
 //                    re-rolls failed AD (consumed at fire time; excludes
-//                    Beam / Mini Beam / Energy Mine / Twin Linked).
+//                    Beam / Energy Mine / Twin Linked).
 // One scout action per ship per round; cleared at round rollover alongside
-// specialAction. Independent of the activation system — any of the player's
-// scouts may declare while it's their turn to activate in firing phase.
+// specialAction. Independent of the activation system — either participant
+// may declare during the shared pre-fire window at the start of the phase.
 router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = ChooseScoutActionParams.safeParse(req.params);
@@ -2273,14 +2776,14 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
       if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
       if (game.phase !== "firing") throw Object.assign(new Error("Scout support actions are declared during the firing phase"), { status: 400 });
-      // Gate on the player having the activation token (alternating turn
-      // system) so opponents can't declare scout actions out-of-band while
-      // it's the other player's window to act.
-      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+      const isParticipant = userId === game.challengerId || userId === game.opponentId;
+      if (!isParticipant) throw Object.assign(new Error("Not a participant in this game"), { status: 403 });
+      const gameUnits = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, gameId));
+      if (gameUnits.some(unitHasFiredAWeapon)) {
+        throw Object.assign(new Error("Scout support must be declared before any weapon fires this phase"), { status: 400 });
+      }
 
-      const [scout] = await tx.select().from(gameUnitsTable).where(and(
-        eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId),
-      ));
+      const scout = gameUnits.find(u => u.id === unitId);
       if (!scout) throw Object.assign(new Error("Scout unit not found"), { status: 404 });
       if (scout.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (scout.isDestroyed) throw Object.assign(new Error("Scout is destroyed"), { status: 400 });
@@ -2291,9 +2794,6 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
       // Skeleton crew (≤½ max) loses Command/Fleet Carrier/Admiral and is
       // already barred from Special Actions — treat scout support the same
       // way (electronic warfare requires a functional crew).
-      if (scout.maxCrewPoints > 0 && scout.crewPoints * 2 <= scout.maxCrewPoints) {
-        throw Object.assign(new Error("Skeleton crew cannot declare scout support"), { status: 400 });
-      }
       // Adrift / no-SA crits block scout support too.
       const scoutCritRows = await tx.select().from(unitCriticalEffectsTable)
         .where(eq(unitCriticalEffectsTable.gameUnitId, scout.id));
@@ -2319,10 +2819,10 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
       if (!scoutShip) throw Object.assign(new Error("Scout ship record missing"), { status: 500 });
       const [scoutModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, scoutShip.shipModelId));
       if (!scoutModel) throw Object.assign(new Error("Scout model missing"), { status: 500 });
-      const lostLc = new Set(Array.from(scoutCrits.lostTraitNames).map(n => n.toLowerCase()));
-      const filteredTraits = (scoutModel.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
-        .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0])).join("; ");
-      const scoutTraits = parseShipTraits(filteredTraits);
+      const scoutTraits = parseShipTraits(filterLostTraits(scoutModel.traits, scoutCrits.lostTraitNames));
+      if (skeletonPenaltiesApply(scout, scoutTraits)) {
+        throw Object.assign(new Error("Skeleton crew cannot declare scout support"), { status: 400 });
+      }
       if (!scoutTraits.scout) {
         throw Object.assign(new Error("This ship does not have the Scout trait"), { status: 400 });
       }
@@ -2550,7 +3050,44 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
       }
 
       // Both passed → run round rollover.
-      // 1. Reset per-round flags on surviving units. All Hands on Deck's
+      // 1. Resolve automatic adrift drift once per ship for this round.
+      const driftCandidates = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, game.id),
+        eq(gameUnitsTable.isDestroyed, false),
+      ));
+      for (const u of driftCandidates) {
+        if (u.lastAdriftDriftRound === game.currentRound) continue;
+        const critRows = await tx.select().from(unitCriticalEffectsTable)
+          .where(eq(unitCriticalEffectsTable.gameUnitId, u.id));
+        const state = effectiveDamageState(u.damageState, critRows);
+        if (state !== "adrift" && state !== "exploding-end-of-next") continue;
+        const crits = deriveCritEffects(critRows.map(r => ({
+          effectKey: r.effectKey,
+          randomArc: r.randomArc,
+          randomWeaponId: r.randomWeaponId,
+          lostTraits: r.lostTraits ?? [],
+        })));
+        const driftDistance = Math.floor(effectiveBaseSpeed(u, crits) / 2);
+        const forward = headingForwardVec(u);
+        await tx.update(gameUnitsTable)
+          .set({
+            hexQ: Math.round(u.hexQ + forward.x * driftDistance),
+            hexR: Math.round(u.hexR + forward.z * driftDistance),
+            hasMovedThisRound: true,
+            hasInitiatedMoveThisActivation: false,
+            inchesMovedThisActivation: 0,
+            turnsMadeThisActivation: 0,
+            distanceSinceLastTurnThisActivation: 0,
+            allStopReady: false,
+            lastAdriftDriftRound: game.currentRound,
+          })
+          .where(and(
+            eq(gameUnitsTable.id, u.id),
+            eq(gameUnitsTable.lastAdriftDriftRound, u.lastAdriftDriftRound),
+          ));
+      }
+
+      // 2. Reset per-round flags on surviving units. All Hands on Deck's
       // one-weapon-fired restriction applies to the SAME round in which
       // it was declared, so we clear `oneWeaponThisRound` here alongside
       // every other per-round flag.
@@ -2558,6 +3095,10 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         hasMovedThisRound: false,
         hasFiredThisRound: false,
         firedWeaponIds: [],
+        hasInitiatedMoveThisActivation: false,
+        inchesMovedThisActivation: 0,
+        turnsMadeThisActivation: 0,
+        distanceSinceLastTurnThisActivation: 0,
         specialAction: null,
         specialActionTargetId: null,
         scoutAction: null,
@@ -2607,6 +3148,12 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
         if (!ship) continue;
         const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+        if (isCrippledUnit(u)) {
+          if (u.shieldsCurrent !== 0) {
+            await tx.update(gameUnitsTable).set({ shieldsCurrent: 0 }).where(eq(gameUnitsTable.id, u.id));
+          }
+          continue;
+        }
         const max = model?.shieldMax ?? 0;
         const regen = model?.shieldRegenRate ?? 0;
         if (max <= 0 || regen <= 0) continue;
@@ -2629,11 +3176,9 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
           randomWeaponId: r.randomWeaponId,
           lostTraits: r.lostTraits ?? [],
         })));
-        const lostLc = new Set(Array.from(crits.lostTraitNames).map(n => n.toLowerCase()));
-        const filteredRaw = (model?.traits ?? "").split(/[;,]/).map(t => t.trim()).filter(Boolean)
-          .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
-          .join("; ");
-        const fullPool = parseShipTraits(filteredRaw).interceptors;
+        const fullPool = isCrippledUnit(u)
+          ? 0
+          : parseShipTraits(filterLostTraits(model?.traits ?? "", crits.lostTraitNames)).interceptors;
         if (u.interceptorDiceRemaining !== fullPool || u.interceptorThresholdCurrent !== 2) {
           await tx.update(gameUnitsTable).set({
             interceptorDiceRemaining: fullPool,
@@ -2669,8 +3214,8 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
 // Attempt to repair one critical-effect row. Once per ship per round; cannot
 // target Vital Systems (location 6); cannot repair the round the crit was
 // applied; cannot repair while an Engineering crit is active (permanently
-// disables DC for the ship). Success removes the row and refunds the
-// structural damage it dealt; failure still consumes the per-round attempt.
+// disables DC for the ship). Success removes the row's special effect only;
+// Damage and Crew points lost to the critical are not restored.
 router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = DamageControlParams.safeParse(req.params);
@@ -2745,7 +3290,12 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
 
       const dcRoll = rollD6();
       // Slice C: Skeleton Crew levies an additional -2 to damage control.
-      const skeletonPenalty = (unit.maxCrewPoints > 0 && unit.crewPoints * 2 <= unit.maxCrewPoints) ? 2 : 0;
+      const [unitShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+      const [unitModel] = unitShip
+        ? await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, unitShip.shipModelId))
+        : [];
+      const unitTraits = parseShipTraits(filterLostTraits(unitModel?.traits ?? "", crits.lostTraitNames));
+      const skeletonPenalty = skeletonPenaltiesApply(unit, unitTraits) ? 2 : 0;
       const dcPenalty = crits.damageControlPenalty + skeletonPenalty;
       // All Hands on Deck (declared as a movement-phase SA): +2 to all
       // damage-control rolls this round AND removes the
@@ -2769,11 +3319,6 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
 
       if (success) {
         await tx.delete(unitCriticalEffectsTable).where(eq(unitCriticalEffectsTable.id, effect.id));
-        // Refund the structural damage (cap at maxHullPoints).
-        const restored = Math.min(unit.maxHullPoints, unit.hullPoints + (effect.damageApplied ?? 0));
-        await tx.update(gameUnitsTable)
-          .set({ hullPoints: restored, isDestroyed: false })
-          .where(eq(gameUnitsTable.id, unit.id));
       }
       const [updated] = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.id, unit.id));
       // Attach live criticals so the response satisfies the GameUnit

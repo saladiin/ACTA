@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Trash2, Plus, ChevronRight, ChevronDown, Ship, Crosshair } from "lucide-react";
 import { useForm } from "react-hook-form";
+import { PRIORITY_LEVELS, normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 function FleetDetail({ fleetId }: { fleetId: number }) {
   const qc = useQueryClient();
@@ -59,7 +60,9 @@ function FleetDetail({ fleetId }: { fleetId: number }) {
           <div key={ship.id} data-testid={`card-ship-${ship.id}`} className="flex items-center justify-between bg-secondary/30 border border-border rounded px-3 py-2">
             <div>
               <div className="text-sm font-medium">{ship.name}</div>
-              <div className="text-xs text-muted-foreground font-mono">{ship.shipModel?.faction} &mdash; {ship.shipModel?.pointCost} pts &mdash; HP: {ship.shipModel?.hullPoints}</div>
+              <div className="text-xs text-muted-foreground font-mono">
+                {ship.shipModel?.faction} - {priorityLabel(normalizePriorityLevel(ship.shipModel?.priorityLevel))} - HP: {ship.shipModel?.hullPoints}
+              </div>
             </div>
             <Button
               variant="ghost"
@@ -90,7 +93,7 @@ function FleetDetail({ fleetId }: { fleetId: number }) {
               <SelectContent className="bg-card border-border">
                 {models?.map(m => (
                   <SelectItem key={m.id} value={String(m.id)}>
-                    {m.name} ({m.faction}) &mdash; {m.pointCost} pts
+                    {m.name} ({m.faction}) - {priorityLabel(normalizePriorityLevel(m.priorityLevel))}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -174,7 +177,12 @@ export default function Fleets() {
                     <Crosshair className="w-4 h-4 text-primary" />
                     <div>
                       <div className="font-semibold text-sm tracking-wide">{fleet.name}</div>
-                      <div className="text-xs text-muted-foreground font-mono">{fleet.shipCount} ships &mdash; {fleet.totalPoints} pts</div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        {fleet.shipCount} ships - {PRIORITY_LEVELS
+                          .filter(level => (fleet.priorityCounts?.[level] ?? 0) > 0)
+                          .map(level => `${fleet.priorityCounts?.[level]} ${priorityLabel(level)}`)
+                          .join(", ") || "empty"}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

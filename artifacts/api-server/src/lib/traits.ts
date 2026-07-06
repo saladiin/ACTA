@@ -53,9 +53,11 @@ export interface ShipTraits {
   geg: number;            // X damage AND crew reduction per hit
   adaptiveArmour: boolean;// halve dmg & crew, min 1
   agile: boolean;
+  superManeuverable: boolean;
   lumbering: boolean;
   flightComputer: boolean;
   scout: boolean;
+  fighter: boolean;
 }
 
 export function parseShipTraits(s: string | null | undefined): ShipTraits {
@@ -67,18 +69,20 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     geg: numericTrait(t, ["GEG", "Gravitic Energy Grid"]),
     adaptiveArmour: hasTrait(t, ["Adaptive Armour", "Adaptive Armor"]),
     agile: hasTrait(t, ["Agile"]),
+    superManeuverable: hasTrait(t, ["Super Maneuverable", "Super Manoeuvrable"]),
     lumbering: hasTrait(t, ["Lumbering"]),
     flightComputer: hasTrait(t, ["Flight Computer"]),
     scout: hasTrait(t, ["Scout"]),
+    fighter: hasTrait(t, ["Fighter"]),
   };
 }
 
 export interface WeaponTraits {
   // To-hit modifiers
   accurate: boolean;      // ignores Dodge
+  ap: boolean;            // +1 to attack die results
+  superAp: boolean;       // +2 to attack die results
   // AD modifiers
-  ap: boolean;            // +1 AD
-  superAp: boolean;       // +2 AD
   weak: boolean;          // -1 AD
   // Per-hit behaviour
   beam: boolean;          // ignores Interceptors; hits on 4+, re-roll until miss
@@ -102,8 +106,9 @@ export function parseWeaponTraits(s: string | null | undefined): WeaponTraits {
   // Order matters: check Super AP before AP (Super AP starts with "Super").
   return {
     accurate: hasTrait(t, ["Accurate"]),
-    superAp: hasTrait(t, ["Super AP", "Super-AP"]),
-    ap: hasTrait(t, ["AP"]) && !hasTrait(t, ["Super AP", "Super-AP"]),
+    superAp: hasTrait(t, ["Super AP", "Super-AP", "Super Armor Piercing", "Super Armour Piercing"]),
+    ap: hasTrait(t, ["AP", "Armor Piercing", "Armour Piercing"])
+      && !hasTrait(t, ["Super AP", "Super-AP", "Super Armor Piercing", "Super Armour Piercing"]),
     weak: hasTrait(t, ["Weak"]),
     miniBeam: hasTrait(t, ["Mini Beam", "Mini-Beam"]),
     beam: hasTrait(t, ["Beam"]) && !hasTrait(t, ["Mini Beam", "Mini-Beam"]),
@@ -142,12 +147,17 @@ export function stealthFloor(
 
 // Effective AD count for a weapon after weapon-trait modifiers AND
 // Intensify Defensive Fire (caller passes the post-Intensify base).
+// AP / Super AP modify attack die results, not the number of dice.
 export function effectiveAttackDice(baseAd: number, wt: WeaponTraits): number {
   let ad = baseAd;
-  if (wt.superAp) ad += 2;
-  else if (wt.ap) ad += 1;
   if (wt.weak) ad -= 1;
   return Math.max(1, ad);
+}
+
+export function attackRollModifier(wt: WeaponTraits): number {
+  if (wt.superAp) return 2;
+  if (wt.ap) return 1;
+  return 0;
 }
 
 // Damage multiplier (1/2/3/4) and bulkhead-floor (0/1/1/2).

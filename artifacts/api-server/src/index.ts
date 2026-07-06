@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { reconcileModelFilenames } from "./lib/models";
+import { ensureActaAllocationSchema } from "./lib/schema-maintenance";
 
 const rawPort = process.env["PORT"];
 
@@ -17,6 +18,7 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 async function start(): Promise<void> {
+  await ensureActaAllocationSchema();
   // Self-heal any ship_models rows whose recorded file is missing on disk but
   // exists under another supported extension, BEFORE accepting traffic so the
   // first post-deploy requests never see stale filenames. The function is

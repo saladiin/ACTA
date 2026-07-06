@@ -1,0 +1,25 @@
+{
+  "name": "Babylon 5: A Call to Arms",
+  "short_name": "B5 ACTA",
+  "description": "Tactical starship combat for Babylon 5: A Call to Arms.",
+  "start_url": "/lobby",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050507",
+  "theme_color": "#050507",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

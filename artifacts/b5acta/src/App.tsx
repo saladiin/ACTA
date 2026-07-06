@@ -4,6 +4,7 @@ import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
 import { Switch, Route, useLocation, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { setExtraHeaders } from "@workspace/api-client-react";
 
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -18,6 +19,7 @@ import GameBoard from "@/pages/game-board";
 import GamesList from "@/pages/games";
 import NotFound from "@/pages/not-found";
 import { DevModeToggle } from "@/components/dev-mode-toggle";
+import { getDevUserId } from "@/lib/dev-user";
 
 // `refetchOnWindowFocus` disabled globally: while the dice-roll modal is
 // open we deliberately hold off invalidating the game query so the board
@@ -44,6 +46,10 @@ function stripBase(path: string): string {
 
 if (!clerkPubKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY in .env file");
+}
+
+if (import.meta.env.DEV) {
+  setExtraHeaders({ "x-dev-user-id": getDevUserId() });
 }
 
 const clerkLocalization = {
@@ -137,6 +143,7 @@ function HomeRedirect() {
 }
 
 function ProtectedRoute({ component: Component }: { component: any }) {
+  if (import.meta.env.DEV) return <Component />;
   const { isLoaded, isSignedIn } = useAuth();
   if (!isLoaded) return null;
   if (!isSignedIn) return <Redirect to="/sign-in" />;

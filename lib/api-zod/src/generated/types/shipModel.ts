@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { ShipModelPriorityLevel } from './shipModelPriorityLevel';
 import type { Weapon } from './weapon';
 
 export interface ShipModel {
@@ -13,6 +14,7 @@ export interface ShipModel {
   filename: string;
   faction: string;
   pointCost: number;
+  priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
   speed: number;
   weaponRange: number;

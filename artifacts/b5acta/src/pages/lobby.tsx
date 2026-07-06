@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X } from "lucide-react";
+import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
@@ -172,7 +173,9 @@ export default function Lobby() {
                       <Swords className="w-4 h-4 text-amber-400" />
                       <div>
                         <div className="text-sm font-semibold">{game.challengerName ?? "Unknown Commander"}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{game.pointLimit} pts</div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -208,7 +211,9 @@ export default function Lobby() {
                         <div className="text-sm font-semibold">
                           {game.challengerName} vs {game.opponentName}
                         </div>
-                        <div className="text-xs text-muted-foreground font-mono">Turn {game.currentTurn} &mdash; {game.pointLimit} pts</div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          Turn {game.currentTurn} - {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">

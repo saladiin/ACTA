@@ -20,12 +20,25 @@ export interface Weapon {
   traits?: string | null;
 }
 
+export type ShipModelPriorityLevel = typeof ShipModelPriorityLevel[keyof typeof ShipModelPriorityLevel];
+
+
+export const ShipModelPriorityLevel = {
+  patrol: 'patrol',
+  skirmish: 'skirmish',
+  raid: 'raid',
+  battle: 'battle',
+  war: 'war',
+  armageddon: 'armageddon',
+} as const;
+
 export interface ShipModel {
   id: number;
   name: string;
   filename: string;
   faction: string;
   pointCost: number;
+  priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
   speed: number;
   weaponRange: number;
@@ -42,12 +55,22 @@ export interface ShipModel {
   weapons?: Weapon[];
 }
 
+export type FleetPriorityCounts = {
+  patrol: number;
+  skirmish: number;
+  raid: number;
+  battle: number;
+  war: number;
+  armageddon: number;
+};
+
 export interface Fleet {
   id: number;
   ownerId: string;
   name: string;
   totalPoints: number;
   shipCount: number;
+  priorityCounts: FleetPriorityCounts;
   createdAt: string;
 }
 
@@ -90,6 +113,21 @@ export const GamePhase = {
   movement: 'movement',
   firing: 'firing',
   end: 'end',
+} as const;
+
+/**
+ * Scenario Priority Level used for ACTA Fleet Allocation Point costs.
+ */
+export type GamePriorityLevel = typeof GamePriorityLevel[keyof typeof GamePriorityLevel];
+
+
+export const GamePriorityLevel = {
+  patrol: 'patrol',
+  skirmish: 'skirmish',
+  raid: 'raid',
+  battle: 'battle',
+  war: 'war',
+  armageddon: 'armageddon',
 } as const;
 
 export type GameVisibility = typeof GameVisibility[keyof typeof GameVisibility];
@@ -148,7 +186,15 @@ export interface Game {
   endPhaseChallengerPassed?: boolean;
   /** True once the opponent has passed the current end phase. Reset at start of each end phase. */
   endPhaseOpponentPassed?: boolean;
+  /** Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility. */
   pointLimit: number;
+  /** Scenario Priority Level used for ACTA Fleet Allocation Point costs. */
+  priorityLevel: GamePriorityLevel;
+  /**
+     * Fleet Allocation Points available to each commander.
+     * @minimum 1
+     */
+  allocationPoints: number;
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
@@ -167,6 +213,18 @@ export interface Game {
   createdAt: string;
   updatedAt: string;
 }
+
+export type GameInputPriorityLevel = typeof GameInputPriorityLevel[keyof typeof GameInputPriorityLevel];
+
+
+export const GameInputPriorityLevel = {
+  patrol: 'patrol',
+  skirmish: 'skirmish',
+  raid: 'raid',
+  battle: 'battle',
+  war: 'war',
+  armageddon: 'armageddon',
+} as const;
 
 /**
  * public = anyone may join from the lobby; private = password-gated.
@@ -191,7 +249,14 @@ export const GameInputCrewQualityMode = {
 } as const;
 
 export interface GameInput {
-  pointLimit: number;
+  /** Legacy optional point field. Ignored when allocationPoints is supplied. */
+  pointLimit?: number;
+  priorityLevel: GameInputPriorityLevel;
+  /**
+     * @minimum 1
+     * @maximum 99
+     */
+  allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
   /**
@@ -234,6 +299,11 @@ export const GameUnitDamageState = {
   'exploding-end-of-next': 'exploding-end-of-next',
   destroyed: 'destroyed',
 } as const;
+
+/**
+ * Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.
+ */
+export type GameUnitSlowLoadingWeaponCooldowns = {[key: string]: number};
 
 export interface CriticalEffect {
   id: number;
@@ -278,14 +348,18 @@ export interface GameUnit {
   faction: string;
   hullPoints: number;
   maxHullPoints: number;
+  /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
+  damageThreshold: number;
   /** Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round. */
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
   lastDcRound?: number;
   /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
-  crewPoints?: number;
+  crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
-  maxCrewPoints?: number;
+  maxCrewPoints: number;
+  /** Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback. */
+  crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
   damageState?: GameUnitDamageState;
   /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
@@ -313,10 +387,14 @@ export interface GameUnit {
   hasFiredThisRound: boolean;
   /** Total inches travelled in the current movement activation (sum of /move step distances). Reset to 0 on /activate-unit. Used to enforce the ACTA minimum-speed rule at /end-activation. */
   inchesMovedThisActivation?: number;
+  /** Inches moved since the most recent committed turn in the current movement activation. Reset on /activate-unit and after each turn. */
+  distanceSinceLastTurnThisActivation?: number;
   /** True when this ship may fire only one weapon system this round, as the cost of a successful 'all-hands-on-deck' declaration this round. Latched on successful declaration in /special-action; cleared at round rollover. */
   oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /** Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again. */
+  slowLoadingWeaponCooldowns: GameUnitSlowLoadingWeaponCooldowns;
   /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
   hitByUnitIdsThisRound?: number[];
   /**
@@ -394,6 +472,7 @@ export interface DeploymentInput {
      * @nullable
      */
   fleetId?: number | null;
+  /** @minItems 1 */
   placements: ShipPlacement[];
 }
 
@@ -473,7 +552,7 @@ export interface ExplosionVictim {
 export interface FireWeaponResult {
   weaponId: number;
   targetUnitId: number;
-  /** To-hit threshold for each AD (base hullRating / Beam=4+ / crit-floors). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
+  /** Raw die threshold for each AD after AP/Super AP result modifiers are folded in (base hullRating / Beam=4+ / crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
   hitThreshold: number;
   /** Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth). */
   stealthCheckTarget?: number | null;
@@ -510,8 +589,10 @@ export interface FireWeaponResult {
   shieldedHits: number;
   targetShieldsBefore: number;
   targetShieldsAfter: number;
-  /** Per surviving-hit Attack Table d6: 1=Bulkhead, 2-5=Solid, 6=Crit. */
+  /** Raw per surviving-hit Attack Table d6 before Precise. Use attackTableModifiedRolls for classification. */
   attackTableRolls: number[];
+  /** Per surviving-hit Attack Table result after modifiers such as Precise (+1, capped at 6): 1=Bulkhead, 2-5=Solid, 6=Crit. */
+  attackTableModifiedRolls: number[];
   bulkheadHits: number;
   solidHits: number;
   criticalHits: number;
@@ -718,4 +799,3 @@ export interface UpdateProfileInput {
 export type SearchPlayersParams = {
 q: string;
 };
-
