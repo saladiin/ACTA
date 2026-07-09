@@ -1,0 +1,67 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Babylon 5 ACTA Ship Stat Tracker</title>
+  <style>
+    body {
+      font-family: 'Arial Black', sans-serif;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+    .ship-container {
+      border: 2px solid black;
+      padding: 15px;
+      margin-bottom: 20px;
+      max-width: 500px;
+    }
+    .label {
+      display: inline-block;
+      width: 150px;
+    }
+    .stat-control {
+      margin-bottom: 8px;
+    }
+    button {
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Babylon 5 ACTA Ship Stat Tracker</h1>
+  <div class="ship-container">
+    <div class="stat-control">
+      <span class="label">Ship Health:</span>
+      <span id="health-value">5</span>
+      <button onclick="adjust('health', 1)">+</button>
+      <button onclick="adjust('health', -1)">−</button>
+    </div>
+    <div class="stat-control">
+      <span class="label">Ship Speed:</span>
+      <span id="speed-value">6</span>
+      <button onclick="adjust('speed', 1)">+</button>
+      <button onclick="adjust('speed', -1)">−</button>
+    </div>
+    <div class="stat-control">
+      <span class="label">Crew Count:</span>
+      <span id="crew-value">30</span>
+      <button onclick="adjust('crew', 1)">+</button>
+      <button onclick="adjust('crew', -1)">−</button>
+    </div>
+  </div>
+
+  <script>
+    function adjust(stat, delta) {
+      const el = document.getElementById(stat + '-value');
+      let current = parseInt(el.textContent);
+      current = Math.max(0, current + delta);
+      el.textContent = current;
+    }
+  </script>
+</body>
+</html>
