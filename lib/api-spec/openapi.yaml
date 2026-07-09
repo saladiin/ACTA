@@ -1,0 +1,1325 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Babylon 5 A Call to Arms - Async Online Wargame API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: fleets
+    description: Fleet and ship management
+  - name: games
+    description: Game management
+  - name: turns
+    description: Turn and action management
+  - name: lobby
+    description: Lobby and matchmaking
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # --- Ship models ---
+  /ship-models:
+    get:
+      operationId: listShipModels
+      tags: [fleets]
+      summary: List all available ship models (uploaded OBJ files)
+      responses:
+        "200":
+          description: List of ship models
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShipModel"
+
+  # --- Fleets (player's named collections of ships) ---
+  /fleets:
+    get:
+      operationId: listFleets
+      tags: [fleets]
+      summary: List fleets for the authenticated user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Fleet"
+    post:
+      operationId: createFleet
+      tags: [fleets]
+      summary: Create a new fleet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FleetInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fleet"
+
+  /fleets/{fleetId}:
+    get:
+      operationId: getFleet
+      tags: [fleets]
+      summary: Get a fleet by ID
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fleet"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteFleet
+      tags: [fleets]
+      summary: Delete a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /fleets/{fleetId}/ships:
+    get:
+      operationId: listFleetShips
+      tags: [fleets]
+      summary: List ships in a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ship"
+    post:
+      operationId: addShipToFleet
+      tags: [fleets]
+      summary: Add a ship to a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShipInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ship"
+
+  /fleets/{fleetId}/ships/{shipId}:
+    delete:
+      operationId: removeShipFromFleet
+      tags: [fleets]
+      summary: Remove a ship from a fleet
+      parameters:
+        - name: fleetId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: shipId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # --- Games ---
+  /games:
+    get:
+      operationId: listGames
+      tags: [games]
+      summary: List games for the authenticated user (active + completed)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Game"
+    post:
+      operationId: createGame
+      tags: [games]
+      summary: Create a new game challenge (invites an opponent by Clerk user ID or username)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GameInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  /games/{gameId}:
+    get:
+      operationId: getGame
+      tags: [games]
+      summary: Get full game state including board and ships
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameDetail"
+        "404":
+          description: Not found
+
+  /games/{gameId}/accept:
+    post:
+      operationId: acceptGame
+      tags: [games]
+      summary: Accept a game challenge (opponent accepts)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptGameInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "403":
+          description: Forbidden (e.g. wrong password on a private engagement)
+
+  /games/{gameId}/decline:
+    post:
+      operationId: declineGame
+      tags: [games]
+      summary: Decline a game challenge
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  /games/{gameId}/surrender:
+    post:
+      operationId: surrenderGame
+      tags: [games]
+      summary: Surrender an active game (concede). Deletes the game record entirely (and its units, turns, crit-effect rows) so it disappears from both Active Operations and Recent Engagements. Only callable by the challenger or the opponent while status is 'deploying' or 'active'.
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Surrendered and deleted.
+
+  /games/{gameId}/concede:
+    post:
+      operationId: concedeGame
+      tags: [games]
+      summary: Concede an active or deploying game early. Distinct from /surrender — concession is available at any time (no all-ships-disabled prerequisite) and PRESERVES the game record, marking it status='completed' with winnerId set to the other player so it appears in Recent Engagements as a normal loss. Only callable by the challenger or the opponent.
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conceded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  /games/{gameId}/deploy:
+    post:
+      operationId: deployFleet
+      tags: [games]
+      summary: Place your fleet on the board at the start of a game
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeploymentInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+
+  # --- Turns ---
+  /games/{gameId}/turns:
+    get:
+      operationId: listTurns
+      tags: [turns]
+      summary: Get move history for a game
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Turn"
+    post:
+      operationId: submitTurn
+      tags: [turns]
+      summary: Submit a turn (move ships, fire weapons)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnInput"
+      responses:
+        "201":
+          description: Turn submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Turn"
+        "400":
+          description: Bad request
+
+  /games/{gameId}/units/{unitId}/activate:
+    post:
+      operationId: activateUnit
+      tags: [turns]
+      summary: Pick up a ship for its single activation this round
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Activation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: Invalid activation }
+
+  /games/{gameId}/end-activation:
+    post:
+      operationId: endActivation
+      tags: [turns]
+      summary: Finish the current ship's activation and hand off (or advance round)
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Activation ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: No active unit }
+
+  /games/{gameId}/units/{unitId}/fire-weapon:
+    post:
+      operationId: fireWeapon
+      tags: [turns]
+      summary: Fire a single weapon from the active ship at a chosen target. Server rolls dice and applies damage.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FireWeaponInput"
+      responses:
+        "200":
+          description: Weapon resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FireWeaponResult"
+        "400": { description: "Invalid target (out of arc, out of range, etc.)" }
+        "409": { description: "Activation conflict" }
+
+  /games/{gameId}/roll-initiative:
+    post:
+      operationId: rollInitiative
+      tags: [turns]
+      summary: Roll 2d6 for initiative during the Initiative phase. Each player calls once per round; ties re-roll automatically.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Roll recorded (and phase advanced if both players have now rolled and didn't tie).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Not in initiative phase, not a participant, or already rolled this round." }
+
+  /games/{gameId}/ai/step:
+    post:
+      operationId: runAiStep
+      tags: [turns]
+      summary: Run one debug AI step for an AI opponent game. Initial implementation only rolls AI initiative when applicable.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: AI step completed or no-op diagnostic recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Game is not active, not an AI game, or AI has no legal step." }
+        "403": { description: "Only the human participant can run the debug AI step." }
+
+  /games/{gameId}/choose-first-activator:
+    post:
+      operationId: chooseFirstActivator
+      tags: [turns]
+      summary: After initiative is decided, the winner chooses which player activates first this round. Transitions phase to movement.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChooseFirstActivatorInput"
+      responses:
+        "200":
+          description: First activator chosen and phase advanced to movement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Not in initiative phase, initiative not yet decided, or activatorUserId invalid." }
+        "403": { description: "Only the initiative winner may make this call." }
+
+  /games/{gameId}/pass-end-phase:
+    post:
+      operationId: passEndPhase
+      tags: [turns]
+      summary: Pass the End Phase (no more damage-control attempts this round). When both players pass, the round advances.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Pass recorded (and round advanced if both players have now passed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Not in end phase, not a participant, or already passed." }
+
+  /games/{gameId}/units/{unitId}/damage-control:
+    post:
+      operationId: damageControl
+      tags: [turns]
+      summary: Attempt to repair one critical effect during the End Phase (once per round per ship).
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DamageControlInput"
+      responses:
+        "200":
+          description: Damage control resolved (success or failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DamageControlResult"
+        "400": { description: "Already attempted, target effect not repairable, or no such effect" }
+        "409": { description: "Activation conflict" }
+
+  /games/{gameId}/units/{unitId}/special-action:
+    post:
+      operationId: chooseSpecialAction
+      tags: [turns]
+      summary: Declare a Special Action for the activated ship this round (one per round per ship).
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpecialActionInput"
+      responses:
+        "200":
+          description: Action resolved (success or CQ failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpecialActionResult"
+        "400": { description: "Invalid action, prerequisites not met, or already used this round" }
+        "409": { description: "Activation conflict" }
+
+  /games/{gameId}/units/{unitId}/scout-action:
+    post:
+      operationId: chooseScoutAction
+      tags: [turns]
+      summary: "Declare a Scout-trait support action (counter-stealth or coord) targeting an enemy ship this round."
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoutActionInput"
+      responses:
+        "200":
+          description: Scout action resolved (CQ success or failure)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoutActionResult"
+        "400": { description: "Ship lacks Scout trait, target out of 36\" range, target lacks Stealth (counter-stealth), or scout already used a support action this round." }
+        "409": { description: "Phase / activation conflict" }
+
+  /games/{gameId}/units/{unitId}/move:
+    post:
+      operationId: moveUnit
+      tags: [turns]
+      summary: Apply an immediate, single-ship movement (real-time, does not end the turn)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: unitId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveUnitInput"
+      responses:
+        "200":
+          description: Unit updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameUnit"
+        "400":
+          description: Invalid move
+
+  # --- Lobby / Matchmaking ---
+  /lobby:
+    get:
+      operationId: getLobby
+      tags: [lobby]
+      summary: Get open game challenges and active games summary
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LobbyState"
+
+  /players/search:
+    get:
+      operationId: searchPlayers
+      tags: [lobby]
+      summary: Search for players by username to challenge
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlayerProfile"
+
+  /players/me:
+    get:
+      operationId: getMyProfile
+      tags: [lobby]
+      summary: Get the authenticated user's profile and stats
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerProfile"
+    patch:
+      operationId: updateMyProfile
+      tags: [lobby]
+      summary: Update the authenticated user's public callsign (display name)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerProfile"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    Weapon:
+      type: object
+      required: [id, shipModelId, name, arc, range, attackDice]
+      properties:
+        id:          { type: integer }
+        shipModelId: { type: integer }
+        name:        { type: string }
+        arc:         { type: string }
+        range:       { type: integer }
+        attackDice:  { type: integer }
+        traits:      { type: ["string", "null"] }
+
+    ShipModel:
+      type: object
+      required: [id, name, filename, faction, pointCost, priorityLevel, hullPoints, speed, weaponRange, weaponDamage, hullRating, baseRadiusInches]
+      properties:
+        id:       { type: integer }
+        name:     { type: string }
+        filename: { type: string }
+        faction:  { type: string }
+        pointCost:    { type: integer }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
+        hullPoints:   { type: integer }
+        speed:        { type: integer }
+        weaponRange:  { type: integer }
+        weaponDamage: { type: integer }
+        baseRadiusInches: { type: number, description: "Gameplay base radius in board inches. Used for contact/overlap/fighter edge range; independent of rendered model scale." }
+        hullRating:   { type: integer, description: "Roll-to-hit target (≥) for attacks against this ship's class." }
+        description:  { type: ["string", "null"] }
+        traits:       { type: ["string", "null"], description: "Semicolon-separated trait list (e.g. 'Lumbering; Agile; Interceptors 2'). Parsed client-side." }
+        weapons:
+          type: array
+          items:
+            $ref: "#/components/schemas/Weapon"
+
+    Fleet:
+      type: object
+      required: [id, ownerId, name, totalPoints, shipCount, priorityCounts, createdAt]
+      properties:
+        id:          { type: integer }
+        ownerId:     { type: string }
+        name:        { type: string }
+        totalPoints: { type: integer }
+        shipCount:   { type: integer }
+        priorityCounts:
+          type: object
+          required: [patrol, skirmish, raid, battle, war, armageddon, ancient]
+          properties:
+            patrol:     { type: integer }
+            skirmish:   { type: integer }
+            raid:       { type: integer }
+            battle:     { type: integer }
+            war:        { type: integer }
+            armageddon: { type: integer }
+            ancient: { type: integer }
+        createdAt:   { type: string, format: date-time }
+
+    FleetInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+
+    Ship:
+      type: object
+      required: [id, fleetId, shipModelId, name, shipModel]
+      properties:
+        id:          { type: integer }
+        fleetId:     { type: integer }
+        shipModelId: { type: integer }
+        name:        { type: string }
+        shipModel:   { $ref: "#/components/schemas/ShipModel" }
+
+    ShipInput:
+      type: object
+      required: [shipModelId, name]
+      properties:
+        shipModelId: { type: integer }
+        name:        { type: string, minLength: 1 }
+
+    Game:
+      type: object
+      required: [id, challengerId, opponentKind, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, createdAt, updatedAt]
+      properties:
+        id:           { type: integer }
+        challengerId: { type: string }
+        opponentId:   { type: ["string", "null"] }
+        opponentKind: { type: string, enum: [human, ai], description: "human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation." }
+        challengerName: { type: ["string", "null"] }
+        opponentName:   { type: ["string", "null"] }
+        status:       { type: string, enum: [open, pending, deploying, active, completed, declined] }
+        winnerId:     { type: ["string", "null"] }
+        currentTurn:  { type: integer }
+        currentRound: { type: integer }
+        activePlayerId:  { type: ["string", "null"] }
+        activeUnitId:    { type: ["integer", "null"] }
+        lastActivatorId: { type: ["string", "null"] }
+        phase:           { type: string, enum: [initiative, movement, firing, end] }
+        initiativeWinnerId: { type: ["string", "null"] }
+        initiativeChallengerRoll: { type: ["integer", "null"], description: "Challenger's 2d6 initiative roll for the current round (null if not yet rolled or already consumed)." }
+        initiativeOpponentRoll:   { type: ["integer", "null"], description: "Opponent's 2d6 initiative roll for the current round." }
+        endPhaseChallengerPassed: { type: boolean, description: "True once the challenger has passed the current end phase. Reset at start of each end phase." }
+        endPhaseOpponentPassed:   { type: boolean, description: "True once the opponent has passed the current end phase. Reset at start of each end phase." }
+        pointLimit:   { type: integer, description: "Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility." }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient], description: "Scenario Priority Level used for ACTA Fleet Allocation Point costs." }
+        allocationPoints: { type: integer, minimum: 1, description: "Fleet Allocation Points available to each commander." }
+        visibility:   { type: string, enum: [public, private] }
+        hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
+        deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
+        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy." }
+        aiProfile: { type: ["string", "null"], description: "AI strategy profile selected for this game. Null for human games." }
+        aiState: { type: object, additionalProperties: true, description: "Latest AI setup/action diagnostic state. Empty for human games." }
+        challengerDeployed: { type: boolean, description: "True once the challenger has committed a fleet via POST /games/{id}/deploy. When both sides are true, status auto-transitions to 'active'." }
+        opponentDeployed:   { type: boolean, description: "True once the opponent has committed a fleet via POST /games/{id}/deploy." }
+        createdAt:    { type: string, format: date-time }
+        updatedAt:    { type: string, format: date-time }
+
+    GameInput:
+      type: object
+      required: [priorityLevel, allocationPoints, visibility, deploymentDepth, crewQualityMode]
+      properties:
+        pointLimit: { type: integer, description: "Legacy optional point field. Ignored when allocationPoints is supplied." }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
+        allocationPoints: { type: integer, minimum: 1, maximum: 99 }
+        visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
+        opponentKind: { type: string, enum: [human, ai], default: human, description: "Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation." }
+        password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
+        fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
+        deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge." }
+        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship." }
+
+    AcceptGameInput:
+      type: object
+      properties:
+        password: { type: ["string", "null"], description: "Required if the engagement is private." }
+
+    GameUnit:
+      type: object
+      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, baseRadiusInches, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
+      properties:
+        id:            { type: integer }
+        gameId:        { type: integer }
+        ownerId:       { type: string }
+        shipId:        { type: integer }
+        name:          { type: string }
+        modelFilename: { type: string }
+        faction:       { type: string }
+        baseRadiusInches: { type: number, description: "Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement." }
+        hullPoints:    { type: integer }
+        maxHullPoints: { type: integer }
+        damageThreshold: { type: integer, description: "Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull." }
+        shieldsCurrent: { type: integer, description: "Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round." }
+        lastDcRound:    { type: integer, description: "Last round (1-based) this unit attempted Damage Control. 0 = never." }
+        crewPoints:     { type: integer, description: "Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew." }
+        maxCrewPoints:  { type: integer, description: "Maximum crew complement, set at deploy from ship_model.crew." }
+        crewThreshold:  { type: integer, description: "Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback." }
+        damageState:    { type: string, enum: [normal, adrift, exploding-end-of-next, destroyed], description: "Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed." }
+        isCrippled:     { type: boolean, description: "Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral." }
+        isSkeletonCrew: { type: boolean, description: "Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral." }
+        criticals:
+          type: array
+          items: { $ref: "#/components/schemas/CriticalEffect" }
+          description: "Unrepaired critical effects, oldest first."
+        hexQ:          { type: number }
+        hexR:          { type: number }
+        heading:       { type: integer }
+        speed:         { type: integer }
+        turnAngle:     { type: integer }
+        turns:         { type: integer }
+        weaponRange:   { type: integer }
+        weaponDamage:  { type: integer }
+        crewQuality:   { type: integer, minimum: 1, maximum: 7, description: "Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient." }
+        isDestroyed:   { type: boolean }
+        hasMovedThisRound: { type: boolean }
+        hasFiredThisRound: { type: boolean }
+        inchesMovedThisActivation:
+          type: integer
+          description: "Total inches travelled in the current movement activation (sum of /move step distances). Reset to 0 on /activate-unit. Used to enforce the ACTA minimum-speed rule at /end-activation."
+        oneWeaponThisRound:
+          type: boolean
+          description: "True when this ship may fire only one weapon system this round, as the cost of a successful 'all-hands-on-deck' declaration this round. Latched on successful declaration in /special-action; cleared at round rollover."
+        firedWeaponIds:
+          type: array
+          items: { type: integer }
+          description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
+        slowLoadingWeaponCooldowns:
+          type: object
+          additionalProperties: { type: integer }
+          description: "Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again."
+        hitByUnitIdsThisRound:
+          type: array
+          items: { type: integer }
+          description: "Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover."
+        specialAction:
+          type: ["string", "null"]
+          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship's damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound)."
+        specialActionTargetId:
+          type: ["integer", "null"]
+          description: "Nominated target unit id for 'concentrate-fire'; null otherwise."
+        allStopReady:
+          type: boolean
+          description: "True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring 'all-stop-pivot' next round; cleared on /move or successful 'all-stop-pivot' declaration."
+        scoutAction:
+          type: ["string", "null"]
+          description: "Scout support action this Scout-trait ship declared this round. Values: 'counter-stealth', 'counter-stealth-failed', 'coord', 'coord-failed'. Null if no scout action used this round. Cleared at round rollover."
+        scoutActionTargetId:
+          type: ["integer", "null"]
+          description: "Enemy unit id this Scout's support action is targeting. Null when no scout action declared."
+        scoutCoordConsumed:
+          type: boolean
+          description: "True once an allied weapon has spent this Scout's successful 'coord' re-roll bonus on a single weapon system this round. Cleared at round rollover."
+
+    GameDetail:
+      type: object
+      required: [game, units, turns]
+      properties:
+        game:  { $ref: "#/components/schemas/Game" }
+        units: { type: array, items: { $ref: "#/components/schemas/GameUnit" } }
+        turns: { type: array, items: { $ref: "#/components/schemas/Turn" } }
+
+    ShipPlacement:
+      type: object
+      required: [hexQ, hexR, heading]
+      properties:
+        shipId:
+          type: ["integer", "null"]
+          description: "Required when DeploymentInput.fleetId is set — references the Ship row in that fleet. Omit for direct-drop deploys; supply shipModelId instead."
+        shipModelId:
+          type: ["integer", "null"]
+          description: "Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model."
+        hexQ:    { type: number }
+        hexR:    { type: number }
+        heading: { type: integer }
+        crewQuality:
+          type: integer
+          minimum: 1
+          maximum: 7
+          description: "Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless."
+
+    DeploymentInput:
+      type: object
+      required: [placements]
+      properties:
+        fleetId:
+          type: ["integer", "null"]
+          description: "Optional. When supplied, each placement's `shipId` must reference a Ship in this Fleet. When omitted, each placement must supply `shipModelId` and the server auto-creates an ephemeral fleet/ship rows for FK integrity (direct drop-in deploy)."
+        placements:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ShipPlacement"
+
+    MoveAction:
+      type: object
+      required: [unitId, toHexQ, toHexR, newHeading]
+      properties:
+        unitId:     { type: integer }
+        toHexQ:     { type: number }
+        toHexR:     { type: number }
+        newHeading: { type: integer }
+
+    FireAction:
+      type: object
+      required: [attackerUnitId, targetUnitId]
+      properties:
+        attackerUnitId: { type: integer }
+        targetUnitId:   { type: integer }
+
+    FireWeaponInput:
+      type: object
+      required: [weaponId, targetUnitId]
+      properties:
+        weaponId:     { type: integer }
+        targetUnitId: { type: integer }
+        useScoutCoordination:
+          type: boolean
+          description: "Opt-in: consume an unspent allied Scout 'coord' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam / Mini Beam / Energy Mine / Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false."
+
+    FireWeaponResult:
+      type: object
+      required:
+        - weaponId
+        - targetUnitId
+        - hitThreshold
+        - attackRolls
+        - attackRollKinds
+        - hits
+        - dodgeRolls
+        - dodgesSuccessful
+        - interceptedHits
+        - interceptorRolls
+        - interceptorThreshold
+        - interceptorAttempts
+        - interceptorDiceBefore
+        - interceptorDiceAfter
+        - interceptorThresholdBefore
+        - interceptorThresholdAfter
+        - shieldedHits
+        - targetShieldsBefore
+        - targetShieldsAfter
+        - attackTableRolls
+        - attackTableModifiedRolls
+        - bulkheadHits
+        - solidHits
+        - criticalHits
+        - gegReduction
+        - adaptiveHalved
+        - blastDoorsDamageSaved
+        - blastDoorsCrewSaved
+        - blastDoorsDamageRolls
+        - blastDoorsCrewRolls
+        - criticalsApplied
+        - damageRolls
+        - totalDamage
+        - crewLost
+        - criticalRolls
+        - beamExplosions
+        - twinRerolls
+        - concentrateRerolls
+        - scoutStealthReduction
+        - fleetSupportStealthReduction
+        - stealthCheckNat6Auto
+        - stealthFailWastedSlowLoading
+        - scoutCoordApplied
+        - scoutCoordRerolls
+        - targetHullBefore
+        - targetHullAfter
+        - targetDestroyed
+      properties:
+        weaponId:        { type: integer }
+        targetUnitId:    { type: integer }
+        hitThreshold:    { type: integer, description: "Raw die threshold for each AD after AP/Super AP result modifiers are folded in (base hullRating / Beam=4+ / crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*)." }
+        stealthCheckTarget:
+          type: integer
+          nullable: true
+          description: "Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth)."
+        stealthCheckRoll:
+          type: integer
+          nullable: true
+          description: "Single 1d6 the attacker rolled against the defender's Stealth. Null when no stealth check was made."
+        stealthCheckPassed:
+          type: boolean
+          nullable: true
+          description: "True if stealthCheckRoll >= stealthCheckTarget (or no stealth check was needed). False means the attack misses entirely — no AD rolled, hits=0, defender pipeline skipped."
+        attackRolls:
+          type: array
+          items: { type: integer }
+          description: "All d6 results rolled for AD (including beam-explosions and re-rolls)."
+        attackRollKinds:
+          type: array
+          items:
+            type: string
+            enum: [normal, explosion, twin-reroll, concentrate-reroll, scout-coord-reroll]
+          description: "Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight."
+        hits:            { type: integer, description: "Raw hits scored before defender pipeline (Dodge/Interceptors/Shields)." }
+        dodgeRolls:
+          type: array
+          items: { type: integer }
+          description: "Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible."
+        dodgesSuccessful: { type: integer }
+        interceptedHits: { type: integer, description: "Total hits cancelled by target's Interceptors across all per-hit attempts this shot." }
+        interceptorRolls:
+          type: array
+          items: { type: integer }
+          description: "FLATTENED back-compat list of every Interceptor d6 rolled this shot (across all per-hit attempts). Prefer `interceptorAttempts` for per-hit grouping with the threshold that applied to each attempt. Empty when no interceptor check was made (no Interceptors, weapon bypasses, no surviving hits, or pool was already empty)."
+        interceptorThreshold: { type: integer, description: "Back-compat: threshold at the START of this shot (== interceptorThresholdBefore). 0 when no interceptor check was made. Per-attempt thresholds may differ as the pool degrades — see interceptorAttempts." }
+        interceptorAttempts:
+          type: array
+          description: "One entry per incoming hit that the defender attempted to intercept (in order). Each entry shows the dice rolled, the threshold that applied to that attempt, and whether the hit was cancelled. Per the sheet: dice rolling 1 are permanently lost for the turn and the threshold ramps 2+ → 3+ → 4+ → 5+ → 6+; the final remaining die always intercepts only on 6+."
+          items:
+            type: object
+            required: [rolls, threshold, success]
+            properties:
+              rolls:     { type: array, items: { type: integer }, description: "d6 results for every remaining die rolled this attempt." }
+              threshold: { type: integer, description: "Minimum d6 needed for any die to cancel the hit this attempt." }
+              success:   { type: boolean, description: "True if ≥1 die met threshold (hit cancelled)." }
+        interceptorDiceBefore:      { type: integer, description: "Defender's remaining Interceptor dice at the start of this shot." }
+        interceptorDiceAfter:       { type: integer, description: "Remaining Interceptor dice after this shot (persists for the rest of the turn; refreshes at end of round)." }
+        interceptorThresholdBefore: { type: integer, description: "Defender's Interceptor threshold (need-roll) at the start of this shot." }
+        interceptorThresholdAfter:  { type: integer, description: "Interceptor threshold after this shot." }
+        shieldedHits:    { type: integer, description: "Hits absorbed by target's shields." }
+        targetShieldsBefore: { type: integer }
+        targetShieldsAfter:  { type: integer }
+        attackTableRolls:
+          type: array
+          items: { type: integer }
+          description: "Raw per surviving-hit Attack Table d6 before Precise. Use attackTableModifiedRolls for classification."
+        attackTableModifiedRolls:
+          type: array
+          items: { type: integer }
+          description: "Per surviving-hit Attack Table result after modifiers such as Precise (+1, capped at 6): 1=Bulkhead, 2-5=Solid, 6=Crit."
+        bulkheadHits:    { type: integer }
+        solidHits:       { type: integer }
+        criticalHits:    { type: integer }
+        gegReduction:    { type: integer, description: "Damage AND crew reduction from target's GEG (per-hit X, summed)." }
+        adaptiveHalved:  { type: boolean, description: "True if damage/crew were halved by Adaptive Armour." }
+        blastDoorsDamageSaved: { type: integer }
+        blastDoorsCrewSaved:   { type: integer }
+        blastDoorsDamageRolls:
+          type: array
+          items: { type: integer }
+        blastDoorsCrewRolls:
+          type: array
+          items: { type: integer }
+        damageRolls:
+          type: array
+          items: { type: integer }
+          description: "Back-compat mirror of attackTableRolls (Slice A)."
+        totalDamage:     { type: integer, description: "Final damage applied to hullPoints AFTER GEG/Adaptive/Blast Doors." }
+        crewLost:        { type: integer, description: "Final crew lost (not yet persisted; Slice C will track crewPoints)." }
+        criticalRolls:
+          type: array
+          items: { type: integer }
+          description: "Cosmetic per-crit d6 rolls (back-compat). Use `criticalsApplied` for structured details."
+        criticalsApplied:
+          type: array
+          items: { $ref: "#/components/schemas/CriticalEffect" }
+          description: "Newly applied critical-effect rows produced by this attack."
+        beamExplosions:  { type: integer }
+        twinRerolls:     { type: integer }
+        concentrateRerolls: { type: integer }
+        scoutStealthReduction: { type: integer, description: "How much the defender's Stealth rating was reduced by active 'counter-stealth' tokens this round (one per successful Scout counter-stealth)." }
+        fleetSupportStealthReduction: { type: integer, description: "Additional -1 (0 or 1) applied to the defender's Stealth this attack because another allied fleet ship — still alive and not adrift — has already successfully hit this target earlier in the round." }
+        stealthCheckNat6Auto: { type: boolean, description: "True when the stealth check passed solely because the attacker rolled a natural 6 (which always succeeds per the sheet, even if the threshold exceeds 6)." }
+        stealthFailWastedSlowLoading: { type: boolean, description: "True when the stealth check failed AND the weapon has Slow-Loading or One-Shot — per the sheet, the shot does not count as fired and may be loosed again later." }
+        scoutCoordApplied: { type: boolean, description: "True if a Scout 'coord' re-roll token was consumed by this shot." }
+        scoutCoordRerolls: { type: integer, description: "Count of failed AD re-rolled because of the Scout coordination bonus this shot." }
+        targetHullBefore: { type: integer }
+        targetHullAfter:  { type: integer }
+        targetCrewBefore: { type: integer }
+        targetCrewAfter:  { type: integer }
+        targetDestroyed: { type: boolean }
+        damageTable:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/DamageTableResult"
+          description: "Populated when this attack brought target hull to 0 from 'normal' state. Null otherwise."
+        winnerId:
+          type: ["string", "null"]
+          description: "Set to the surviving player's userId when this attack ended the game; null otherwise."
+        explosionVictims:
+          type: array
+          items: { $ref: "#/components/schemas/ExplosionVictim" }
+          description: "Units caught in an immediate-explosion damage-table result (≥18). Empty otherwise."
+
+    DamageTableResult:
+      type: object
+      required: [overkill, roll, total, outcome]
+      properties:
+        overkill: { type: integer, description: "abs(hullPoints - finalDamage), added to the d6." }
+        roll:     { type: integer, description: "1d6 base." }
+        total:    { type: integer, description: "roll + overkill." }
+        outcome:  { type: string, enum: [adrift, destroyed, exploding-end-of-next, explodes-now], description: "1-6 adrift, 7-11 destroyed, 12-17 delayed explode, 18+ explodes now." }
+
+    ExplosionVictim:
+      type: object
+      required: [unitId, hitsTaken, finalDamage, finalCrewLost, hullAfter, destroyed]
+      properties:
+        unitId:        { type: integer }
+        hitsTaken:     { type: integer, description: "min(15, floor(maxDamage/2)) AD landed on this victim." }
+        finalDamage:   { type: integer }
+        finalCrewLost: { type: integer }
+        hullAfter:     { type: integer }
+        destroyed:     { type: boolean }
+
+    CriticalEffect:
+      type: object
+      required: [id, gameUnitId, effectKey, location, name, damageApplied, crewApplied, lostTraits, appliedRound, repairable]
+      properties:
+        id:             { type: integer }
+        gameUnitId:     { type: integer }
+        effectKey:      { type: string, description: "Stable key from the critical-hit table (e.g. 'engines-thrusters')." }
+        location:       { type: integer, description: "1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital." }
+        locationRoll:   { type: integer, description: "Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET /games (the DB doesn't store the raw rolls)." }
+        effectRoll:     { type: integer, description: "Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits." }
+        name:           { type: string }
+        damageApplied:  { type: integer, description: "Hull damage applied when this row was created (reversed on DC success)." }
+        crewApplied:    { type: integer, description: "Crew damage applied when this row was created (Slice C-only counter; logged for UI)." }
+        randomArc:      { type: ["string", "null"], description: "Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control)." }
+        randomWeaponId: { type: ["integer", "null"], description: "Specific weapon rolled for Weapons-Offline." }
+        lostTraits:
+          type: array
+          items: { type: string }
+          description: "Ship traits dropped when this row was created (e.g. ['Stealth', 'Interceptors'])."
+        appliedRound:   { type: integer }
+        repairable:     { type: boolean, description: "False for Vital Systems (location 6) per the sheet." }
+
+    ChooseFirstActivatorInput:
+      type: object
+      required: [activatorUserId]
+      properties:
+        activatorUserId: { type: string, description: "userId (challenger or opponent) who will activate the first ship this round." }
+
+    DamageControlInput:
+      type: object
+      required: [effectId]
+      properties:
+        effectId: { type: integer, description: "id of the unit_critical_effects row to repair." }
+
+    DamageControlResult:
+      type: object
+      required: [success, dcRoll, dcTotal, dcThreshold, dcPenalty, dcBonus, effectId, unit]
+      properties:
+        success:    { type: boolean }
+        dcRoll:     { type: integer, description: "1d6 result." }
+        dcTotal:    { type: integer, description: "dcRoll + crewQuality - dcPenalty + dcBonus." }
+        dcThreshold: { type: integer, description: "Target total (always 9)." }
+        dcPenalty:  { type: integer, description: "Sum of damage-control penalties (e.g. Multiple Fires adds 1, Skeleton Crew adds 2)." }
+        dcBonus:    { type: integer, description: "Sum of damage-control bonuses (All Hands on Deck adds 2)." }
+        effectId:   { type: integer }
+        unit:       { $ref: "#/components/schemas/GameUnit" }
+
+    SpecialActionInput:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck]
+        targetUnitId:
+          type: ["integer", "null"]
+          description: "Required for 'concentrate-fire' — the nominated enemy unit id."
+
+    SpecialActionResult:
+      type: object
+      required: [action, success, requiresCq, unit]
+      properties:
+        action:       { type: string }
+        success:      { type: boolean, description: "True if action took effect. False = CQ check failed; the failure is still recorded so always-on restrictions (e.g. run-silent's no-fire/no-turn) apply." }
+        requiresCq:   { type: boolean }
+        cqRequired:   { type: ["integer", "null"], description: "Target total (1d6 + crewQuality must equal or exceed this)." }
+        cqRoll:       { type: ["integer", "null"], description: "1d6 result." }
+        cqTotal:      { type: ["integer", "null"], description: "cqRoll + ship's crewQuality." }
+        unit:         { $ref: "#/components/schemas/GameUnit" }
+
+    ScoutActionInput:
+      type: object
+      required: [action, targetUnitId]
+      properties:
+        action:
+          type: string
+          enum: [counter-stealth, coord]
+          description: "counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons)."
+        targetUnitId:
+          type: integer
+          description: "Enemy unit id to support against. Must be within 36\" of the Scout."
+
+    ScoutActionResult:
+      type: object
+      required: [action, targetUnitId, success, cqRoll, cqTotal, cqRequired, unit]
+      properties:
+        action:       { type: string, enum: [counter-stealth, coord] }
+        targetUnitId: { type: integer }
+        success:      { type: boolean, description: "True if the 1d6 + crewQuality CQ check met cqRequired." }
+        cqRoll:       { type: integer, description: "1d6 result." }
+        cqTotal:      { type: integer, description: "cqRoll + scout's crewQuality." }
+        cqRequired:   { type: integer, description: "Always 8 per the sheet." }
+        unit:         { $ref: "#/components/schemas/GameUnit" }
+
+    MoveUnitInput:
+      type: object
+      required: [toHexQ, toHexR, newHeading]
+      properties:
+        toHexQ:     { type: number }
+        toHexR:     { type: number }
+        newHeading: { type: integer }
+
+    TurnInput:
+      type: object
+      required: [moves, attacks]
+      properties:
+        moves:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveAction"
+        attacks:
+          type: array
+          items:
+            $ref: "#/components/schemas/FireAction"
+
+    Turn:
+      type: object
+      required: [id, gameId, playerId, turnNumber, moves, attacks, resolvedAt]
+      properties:
+        id:          { type: integer }
+        gameId:      { type: integer }
+        playerId:    { type: string }
+        turnNumber:  { type: integer }
+        moves:       { type: object }
+        attacks:     { type: object }
+        resolvedAt:  { type: ["string", "null"], format: date-time }
+
+    LobbyState:
+      type: object
+      required: [pendingChallenges, activeGames, recentlyCompleted]
+      properties:
+        pendingChallenges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+        activeGames:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+        recentlyCompleted:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+
+    PlayerProfile:
+      type: object
+      required: [clerkUserId, username, wins, losses, gamesPlayed]
+      properties:
+        clerkUserId: { type: string }
+        username:    { type: string }
+        wins:        { type: integer }
+        losses:      { type: integer }
+        gamesPlayed: { type: integer }
+        avatarUrl:   { type: ["string", "null"] }
+
+    UpdateProfileInput:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 24
+          pattern: "^[A-Za-z0-9 _-]+$"
+          description: Public callsign shown to other commanders. Never derived from email.
