@@ -5891,6 +5891,43 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
 // after multiple weapons). One target per weapon per activation; the server
 // enforces "this weapon has not fired yet this activation" via
 // gameUnits.firedWeaponIds (reset on activate + on round transition).
+const SPLIT_FIRE_SENTINEL_BASE = 900_000_000;
+
+type SplitFireRequest = {
+  index: 0 | 1;
+  total: 2;
+  attackDice: number;
+};
+
+function splitFirePendingSentinel(weaponId: number, allocatedAttackDice: number): number {
+  return -(SPLIT_FIRE_SENTINEL_BASE + weaponId * 1000 + allocatedAttackDice);
+}
+
+function readSplitFirePending(value: number): { weaponId: number; allocatedAttackDice: number } | null {
+  if (value >= 0) return null;
+  const encoded = Math.abs(value) - SPLIT_FIRE_SENTINEL_BASE;
+  if (encoded <= 0) return null;
+  const weaponId = Math.floor(encoded / 1000);
+  const allocatedAttackDice = encoded % 1000;
+  if (weaponId <= 0 || allocatedAttackDice <= 0) return null;
+  return { weaponId, allocatedAttackDice };
+}
+
+function parseSplitFireRequest(raw: unknown): SplitFireRequest | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const index = value.index;
+  const total = value.total;
+  const attackDice = value.attackDice;
+  if ((index !== 0 && index !== 1) || total !== 2 || typeof attackDice !== "number") {
+    throw Object.assign(new Error("Invalid split fire payload"), { status: 400 });
+  }
+  if (!Number.isInteger(attackDice) || attackDice <= 0) {
+    throw Object.assign(new Error("Split fire attack dice must be a positive integer"), { status: 400 });
+  }
+  return { index, total, attackDice };
+}
+
 router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = FireWeaponParams.safeParse(req.params);
@@ -5901,6 +5938,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
   const { weaponId, targetUnitId, useScoutCoordination } = body.data;
 
   try {
+    const splitFire = parseSplitFireRequest((req.body as { splitFire?: unknown })?.splitFire);
     const result = await db.transaction(async (tx) => {
       const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
       if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
@@ -5928,8 +5966,23 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }
       // Server-authoritative one-shot-per-weapon-per-activation guard.
       const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
+      const pendingSplitEntries = alreadyFired
+        .map(readSplitFirePending)
+        .filter((entry): entry is { weaponId: number; allocatedAttackDice: number } => entry !== null);
+      const pendingSplitForWeapon = pendingSplitEntries.find(entry => entry.weaponId === weaponId) ?? null;
+      const completingPendingSplit = splitFire?.index === 1 && pendingSplitForWeapon !== null;
+      const completedFiredWeaponIds = alreadyFired.filter(id => id > 0);
+      const firedWeaponSystemCount = completedFiredWeaponIds.length + pendingSplitEntries.length;
       if (alreadyFired.includes(weaponId)) {
         throw Object.assign(new Error("Weapon has already fired this activation"), { status: 400 });
+      }
+      if (pendingSplitEntries.length > 0) {
+        if (!splitFire || splitFire.index !== 1 || !pendingSplitForWeapon) {
+          throw Object.assign(new Error("Finish the pending split fire allocation before firing another weapon"), { status: 400 });
+        }
+      }
+      if (splitFire?.index === 1 && !pendingSplitForWeapon) {
+        throw Object.assign(new Error("No pending split fire allocation found for this weapon"), { status: 400 });
       }
 
       // ── Special Action gating ──────────────────────────────────────────────
@@ -5944,13 +5997,13 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // Close Blast Doors & All Stop and Pivot: only 1 weapon system per turn.
       // Failed CQ shouldn't apply here (these are automatic actions), but the
       // strip handles them uniformly anyway.
-      if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot") && alreadyFired.length >= 1) {
+      if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot") && firedWeaponSystemCount >= 1 && !completingPendingSplit) {
         throw Object.assign(new Error(`${baseAction === "blast-doors" ? "Close Blast Doors" : "All Stop and Pivot"} limits firing to 1 weapon system`), { status: 400 });
       }
       // All Hands on Deck (cost): only 1 weapon system may fire this
       // round. Latched on successful declaration in /special-action;
       // cleared at round rollover.
-      if (attacker.oneWeaponThisRound && alreadyFired.length >= 1) {
+      if (attacker.oneWeaponThisRound && firedWeaponSystemCount >= 1 && !completingPendingSplit) {
         throw Object.assign(new Error("All Hands on Deck limits firing to 1 weapon system this round"), { status: 400 });
       }
       // Concentrate All Fire-power: only the nominated target may be attacked.
@@ -5997,11 +6050,11 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         throw Object.assign(new Error(`Weapons in the ${weapon.arc} arc are offline (critical hit)`), { status: 400 });
       }
       const attackerTraits = parseShipTraits(filterLostTraits(attackerModel.traits, attackerCrits.lostTraitNames));
-      if (skeletonPenaltiesApply(attacker, attackerTraits) && alreadyFired.length >= 1) {
+      if (skeletonPenaltiesApply(attacker, attackerTraits) && firedWeaponSystemCount >= 1 && !completingPendingSplit) {
         throw Object.assign(new Error("Skeleton crew may fire only one weapon system this turn"), { status: 400 });
       }
-      if (isCrippledUnit(attacker) && alreadyFired.length > 0) {
-        const priorWeapons = await tx.select().from(weaponsTable).where(inArray(weaponsTable.id, alreadyFired));
+      if (isCrippledUnit(attacker) && completedFiredWeaponIds.length > 0 && !completingPendingSplit) {
+        const priorWeapons = await tx.select().from(weaponsTable).where(inArray(weaponsTable.id, completedFiredWeaponIds));
         if (priorWeapons.some(w => w.arc === weapon.arc)) {
           throw Object.assign(new Error(`Crippled ships may fire only one weapon per arc; ${weapon.arc} has already fired`), { status: 400 });
         }
@@ -6097,6 +6150,23 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // Adaptive Armour / Stealth / Interceptors / etc. drop out when a
       // power-feedback/implosion/etc. crit nuked them.
       const wt = parseWeaponTraits(weapon.traits);
+      if (splitFire) {
+        if (useScoutCoordination) {
+          throw Object.assign(new Error("Scout Coordination cannot be used with split fire"), { status: 400 });
+        }
+        if (wt.beam || wt.miniBeam) {
+          throw Object.assign(new Error("Beam and Mini-Beam weapons cannot split fire in this rules adaptation"), { status: 400 });
+        }
+        if (wt.energyMine) {
+          throw Object.assign(new Error("Energy Mine weapons cannot split fire"), { status: 400 });
+        }
+        if (wt.oneShot) {
+          throw Object.assign(new Error("One-Shot weapons cannot split fire"), { status: 400 });
+        }
+        if (wt.slowLoading) {
+          throw Object.assign(new Error("Slow-Loading weapons cannot split fire"), { status: 400 });
+        }
+      }
       if (wt.slowLoading) {
         const cooldowns = normalizeSlowLoadingCooldowns(attacker.slowLoadingWeaponCooldowns, game.currentRound);
         const readyRound = cooldowns[String(weaponId)] ?? 0;
@@ -6121,7 +6191,27 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const intensifyActive = baseAction === "intensify-defense";
       const weaponAd = effectiveAttackDice(weapon.attackDice, wt);
       const adAfterCrits = Math.max(1, weaponAd + attackerCrits.allWeaponsAdMod);
-      const finalAttackDice = intensifyActive ? Math.max(1, Math.floor(adAfterCrits / 2)) : adAfterCrits;
+      const maximumAttackDice = intensifyActive ? Math.max(1, Math.floor(adAfterCrits / 2)) : adAfterCrits;
+      if (splitFire) {
+        if (maximumAttackDice < 2) {
+          throw Object.assign(new Error("Split fire requires at least 2 effective AD"), { status: 400 });
+        }
+        if (splitFire.index === 0) {
+          if (pendingSplitForWeapon) {
+            throw Object.assign(new Error("This weapon already has a pending split fire allocation"), { status: 400 });
+          }
+          if (splitFire.attackDice >= maximumAttackDice) {
+            throw Object.assign(new Error("First split fire allocation must leave at least 1 AD for the second target"), { status: 400 });
+          }
+        } else {
+          const previousDice = pendingSplitForWeapon?.allocatedAttackDice ?? 0;
+          const remainingDice = maximumAttackDice - previousDice;
+          if (remainingDice <= 0 || splitFire.attackDice !== remainingDice) {
+            throw Object.assign(new Error(`Second split fire allocation must use the remaining ${Math.max(0, remainingDice)} AD`), { status: 400 });
+          }
+        }
+      }
+      const finalAttackDice = splitFire ? splitFire.attackDice : maximumAttackDice;
 
       // ── To-hit threshold ─────────────────────────────────────────────────
       // Beam family hits on 4+. Otherwise the target class's hullRating.
@@ -6814,9 +6904,17 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
               [String(weaponId)]: game.currentRound + 2,
             }
           : attacker.slowLoadingWeaponCooldowns;
+        const pendingSentinel = pendingSplitForWeapon
+          ? splitFirePendingSentinel(pendingSplitForWeapon.weaponId, pendingSplitForWeapon.allocatedAttackDice)
+          : null;
+        const nextFiredWeaponIds = splitFire?.index === 0
+          ? [...alreadyFired, splitFirePendingSentinel(weaponId, splitFire.attackDice)]
+          : splitFire?.index === 1
+            ? [...alreadyFired.filter(id => id !== pendingSentinel), weaponId]
+            : [...alreadyFired, weaponId];
         await tx.update(gameUnitsTable)
           .set({
-            firedWeaponIds: [...alreadyFired, weaponId],
+            firedWeaponIds: nextFiredWeaponIds,
             slowLoadingWeaponCooldowns: nextSlowLoadingCooldowns,
           })
           .where(eq(gameUnitsTable.id, attacker.id));

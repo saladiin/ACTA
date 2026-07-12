@@ -1805,6 +1805,27 @@ type DiceModalState = {
   critIndex?: number;
 };
 
+type SplitFirePlan = {
+  weapon: Weapon;
+  attackerUnitId: number;
+  firstTargetId?: number;
+  firstTargetName?: string;
+  firstDice: number;
+  totalDice: number;
+};
+
+type SplitFireResultModalState = {
+  weapon: Weapon;
+  attackerUnitId: number;
+  allocations: Array<{
+    targetId: number;
+    targetName: string;
+    attackDice: number;
+    result: FireWeaponResult;
+  }>;
+  confirmingClose?: boolean;
+};
+
 type SelfRepairModalPhase = "ready" | "rolling" | "shown" | "error";
 type SelfRepairModalState = {
   unitId: number;
@@ -1880,6 +1901,27 @@ function cleanApiErrorMessage(err: unknown, fallback = "Action failed"): string 
 
 // Heading → unit world-space forward vector (accounting for FLIP_MODELS which
 // render their visual nose along local -Z).
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function effectiveUiAttackDice(weapon: Weapon): number {
+  const traits = weapon.traits ?? "";
+  const weakPenalty = /\bweak\b/i.test(traits) ? 1 : 0;
+  return Math.max(1, weapon.attackDice - weakPenalty);
+}
+
+function splitFireBlockedReason(weapon: Weapon, useScoutCoordination: boolean): string | null {
+  const traits = weapon.traits ?? "";
+  if (effectiveUiAttackDice(weapon) < 2) return "Split fire requires at least 2 effective AD";
+  if (useScoutCoordination) return "Scout Coordination cannot be used with split fire";
+  if (/\bmini[-\s]?beam\b/i.test(traits) || /\bbeam\b/i.test(traits)) return "Beam weapons cannot split fire";
+  if (/\benergy[-\s]?mine\b/i.test(traits)) return "Energy Mine weapons cannot split fire";
+  if (/\bone[-\s]?shot\b/i.test(traits)) return "One-Shot weapons cannot split fire";
+  if (/\bslow[-\s]?loading\b/i.test(traits)) return "Slow-Loading weapons cannot split fire";
+  return null;
+}
+
 function headingForwardVec(unit: { heading: number; modelFilename: string }): { x: number; z: number } {
   const flip = FLIP_MODELS.has(unit.modelFilename);
   const sign = flip ? -1 : 1;
@@ -3509,6 +3551,9 @@ export default function GameBoard() {
   // The weapon (id) the player has selected and is about to assign to a target.
   // While set, clicking an enemy ship resolves into a fire-weapon call.
   const [firingWeaponPicking, setFiringWeaponPicking] = useState<number | null>(null);
+  const [splitFirePlan, setSplitFirePlan] = useState<SplitFirePlan | null>(null);
+  const [splitFireCommitting, setSplitFireCommitting] = useState(false);
+  const [splitFireResultModal, setSplitFireResultModal] = useState<SplitFireResultModalState | null>(null);
   // Optimistic fired-weapon ids, scoped to a specific (unitId, phase) so a
   // late /fire-weapon onSuccess from a previous activation can't pollute the
   // next ship's button state. Merged with the server's authoritative
@@ -3734,6 +3779,95 @@ export default function GameBoard() {
       },
     );
   }, [fireWeapon, gameId]);
+
+  const commitSplitFire = useCallback(async (plan: SplitFirePlan, secondTarget: GameUnit) => {
+    if (firingInFlightRef.current || splitFireCommitting) return;
+    if (plan.firstTargetId == null || !plan.firstTargetName) return;
+    if (plan.firstTargetId === secondTarget.id) {
+      setActivationFeedback("Split fire requires two different targets.");
+      return;
+    }
+
+    const firedWeaponId = plan.weapon.id;
+    const firingUnitId = plan.attackerUnitId;
+    const firstDice = clampNumber(plan.firstDice, 1, plan.totalDice - 1);
+    const secondDice = plan.totalDice - firstDice;
+
+    firingInFlightRef.current = true;
+    setSplitFireCommitting(true);
+    setPendingFired(prev => {
+      if (prev && prev.unitId !== firingUnitId) {
+        return { unitId: firingUnitId, ids: new Set([firedWeaponId]) };
+      }
+      const next = new Set(prev?.ids ?? []);
+      next.add(firedWeaponId);
+      return { unitId: firingUnitId, ids: next };
+    });
+
+    try {
+      const firstResult = await customFetch<FireWeaponResult>(
+        `/api/games/${gameId}/units/${firingUnitId}/fire-weapon`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            weaponId: firedWeaponId,
+            targetUnitId: plan.firstTargetId,
+            splitFire: { index: 0, total: 2, attackDice: firstDice },
+          }),
+        },
+      );
+      const secondResult = await customFetch<FireWeaponResult>(
+        `/api/games/${gameId}/units/${firingUnitId}/fire-weapon`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            weaponId: firedWeaponId,
+            targetUnitId: secondTarget.id,
+            splitFire: { index: 1, total: 2, attackDice: secondDice },
+          }),
+        },
+      );
+
+      setUseCoordOnNext(false);
+      setFiringWeaponPicking(null);
+      setSplitFirePlan(null);
+      setSplitFireResultModal({
+        weapon: plan.weapon,
+        attackerUnitId: firingUnitId,
+        allocations: [
+          {
+            targetId: plan.firstTargetId,
+            targetName: plan.firstTargetName,
+            attackDice: firstDice,
+            result: firstResult,
+          },
+          {
+            targetId: secondTarget.id,
+            targetName: secondTarget.name,
+            attackDice: secondDice,
+            result: secondResult,
+          },
+        ],
+      });
+      setActivationFeedback(`Split fire resolved: ${firstDice}AD into ${plan.firstTargetName}, ${secondDice}AD into ${secondTarget.name}.`);
+    } catch (err) {
+      const message = cleanApiErrorMessage(err, "Split fire failed");
+      setActivationFeedback(message);
+      setPendingFired(prev => {
+        if (!prev || prev.unitId !== firingUnitId) return prev;
+        const next = new Set(prev.ids);
+        next.delete(firedWeaponId);
+        return next.size === 0 ? null : { unitId: firingUnitId, ids: next };
+      });
+    } finally {
+      firingInFlightRef.current = false;
+      setSplitFireCommitting(false);
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    }
+  }, [gameId, qc, splitFireCommitting]);
+
   useEffect(() => {
     setMovePlan(null);
     setMovementGesture(null);
@@ -4667,6 +4801,10 @@ export default function GameBoard() {
   useEffect(() => {
     commitDriftRef.current = false;
   }, [activeUnitId]);
+  useEffect(() => {
+    setFiringWeaponPicking(null);
+    setSplitFirePlan(null);
+  }, [activeUnitId, currentPhase]);
 
   const handleUnitFocus = useCallback((unitId: number) => {
     const unit = units.find(u => u.id === unitId);
@@ -4757,7 +4895,30 @@ export default function GameBoard() {
       game?.status === "active" &&
       isMyActivation &&
       currentPhase === "firing" &&
+      splitFirePlan !== null &&
+      hasActiveUnit &&
+      unit.ownerId !== myUserId
+    ) {
+      if (splitFireCommitting || firingInFlightRef.current) return;
+      if (splitFirePlan.firstTargetId == null) {
+        setSplitFirePlan(plan => plan ? {
+          ...plan,
+          firstTargetId: unit.id,
+          firstTargetName: unit.name,
+        } : plan);
+        setActivationFeedback(`Split fire: ${unit.name} selected as target one. Pick target two.`);
+        return;
+      }
+      void commitSplitFire(splitFirePlan, unit);
+      return;
+    }
+
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "firing" &&
       firingWeaponPicking === null &&
+      splitFirePlan === null &&
       hasActiveUnit &&
       unit.ownerId !== myUserId
     ) {
@@ -4822,6 +4983,7 @@ export default function GameBoard() {
       if (!attacker || !weapon) return;
       const firingUnitId = attacker.id;
       setFiringWeaponPicking(null);
+      setSplitFirePlan(null);
       // Stage the target selection only. The weapon is not marked fired and
       // no server mutation runs until the player presses Roll to Hit.
       setDiceModal({
@@ -6913,6 +7075,64 @@ export default function GameBoard() {
                     {weapons.length === 0 && (
                       <p className="text-xs text-muted-foreground font-mono italic">No weapons.</p>
                     )}
+                    {splitFirePlan && splitFirePlan.attackerUnitId === attacker.id && (
+                      <div
+                        className="rounded border border-sky-400/60 bg-sky-500/10 px-2 py-1.5 font-mono text-[10px] text-sky-100"
+                        data-testid="split-fire-plan"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold uppercase tracking-wider">Split Fire</span>
+                          <button
+                            type="button"
+                            onClick={() => setSplitFirePlan(null)}
+                            disabled={splitFireCommitting}
+                            className="rounded border border-slate-500 bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-200 disabled:opacity-40"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <div className="mt-1">
+                          {splitFirePlan.weapon.name || splitFirePlan.weapon.arc} - {splitFirePlan.totalDice}AD total
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span>Target one AD</span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setSplitFirePlan(plan => plan ? {
+                                ...plan,
+                                firstDice: clampNumber(plan.firstDice - 1, 1, plan.totalDice - 1),
+                              } : plan)}
+                              disabled={splitFireCommitting || splitFirePlan.firstDice <= 1}
+                              className="h-6 w-6 rounded border border-sky-400/60 bg-black/50 disabled:opacity-40"
+                            >
+                              -
+                            </button>
+                            <span className="min-w-8 text-center text-xs font-bold tabular-nums">
+                              {splitFirePlan.firstDice}/{splitFirePlan.totalDice - splitFirePlan.firstDice}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSplitFirePlan(plan => plan ? {
+                                ...plan,
+                                firstDice: clampNumber(plan.firstDice + 1, 1, plan.totalDice - 1),
+                              } : plan)}
+                              disabled={splitFireCommitting || splitFirePlan.firstDice >= splitFirePlan.totalDice - 1}
+                              className="h-6 w-6 rounded border border-sky-400/60 bg-black/50 disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-1 uppercase tracking-wider text-sky-200/80">
+                          {splitFireCommitting
+                            ? "Resolving split fire..."
+                            : splitFirePlan.firstTargetName
+                              ? `Target one: ${splitFirePlan.firstTargetName}. Pick target two.`
+                              : "Pick target one."}
+                        </div>
+                      </div>
+                    )}
                     {weapons.map(w => {
                       const fired = firedSet.has(w.id);
                       const skeletonBlocked = skeletonFiringLimited && !fired && firedSet.size > 0;
@@ -6923,13 +7143,20 @@ export default function GameBoard() {
                       const slowLoadingReadyRound = Number(attacker.slowLoadingWeaponCooldowns?.[String(w.id)] ?? 0);
                       const slowLoadingCooling = slowLoading && game.currentRound < slowLoadingReadyRound;
                       const picking = firingWeaponPicking === w.id;
+                      const splitActive = splitFirePlan?.attackerUnitId === attacker.id && splitFirePlan.weapon.id === w.id;
+                      const splitTotalDice = effectiveUiAttackDice(w);
+                      const splitFireReason = splitFireBlockedReason(w, useCoordOnNext);
                       const unavailable = fired || slowLoadingCooling || skeletonBlocked || crippledArcBlocked;
                       return (
+                        <div key={w.id} className="grid grid-cols-[1fr_auto] gap-1">
                         <button
                           key={w.id}
                           data-testid={`weapon-${w.id}`}
-                          disabled={unavailable || fireWeapon.isPending}
-                          onClick={() => setFiringWeaponPicking(picking ? null : w.id)}
+                          disabled={unavailable || fireWeapon.isPending || splitFireCommitting}
+                          onClick={() => {
+                            setSplitFirePlan(null);
+                            setFiringWeaponPicking(picking ? null : w.id);
+                          }}
                           className={`w-full text-left rounded border px-2 py-1.5 font-mono text-xs transition-colors ${
                             unavailable
                               ? "border-red-500/30 bg-red-500/5 text-red-300/60 line-through cursor-not-allowed"
@@ -6966,6 +7193,31 @@ export default function GameBoard() {
                             </div>
                           )}
                         </button>
+                        <button
+                          type="button"
+                          data-testid={`split-fire-${w.id}`}
+                          title={splitFireReason ?? "Split this weapon across two targets"}
+                          disabled={unavailable || splitFireReason !== null || fireWeapon.isPending || splitFireCommitting}
+                          onClick={() => {
+                            const firstDice = clampNumber(Math.floor(splitTotalDice / 2), 1, splitTotalDice - 1);
+                            setFiringWeaponPicking(null);
+                            setSplitFirePlan(splitActive ? null : {
+                              weapon: w,
+                              attackerUnitId: attacker.id,
+                              firstDice,
+                              totalDice: splitTotalDice,
+                            });
+                            if (!splitActive) setActivationFeedback("Split fire: pick target one.");
+                          }}
+                          className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                            splitActive
+                              ? "border-sky-300/90 bg-sky-300/20 text-sky-100"
+                              : "border-sky-500/40 bg-sky-500/5 text-sky-300 hover:bg-sky-500/10"
+                          }`}
+                        >
+                          Split
+                        </button>
+                        </div>
                       );
                     })}
                     {/* Scout Coordination opt-in. Server validates token /
@@ -7478,6 +7730,16 @@ export default function GameBoard() {
           }}
         />
       )}
+      {splitFireResultModal && (
+        <SplitFireResultModal
+          modal={splitFireResultModal}
+          setModal={setSplitFireResultModal}
+          onClose={() => {
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            setSplitFireResultModal(null);
+          }}
+        />
+      )}
       {selfRepairModal && (
         <SelfRepairDiceModal
           modal={selfRepairModal}
@@ -7532,6 +7794,125 @@ function DiceFace({
     <span className={`inline-flex items-center justify-center w-9 h-9 rounded border bg-black/60 font-mono text-lg font-bold tabular-nums ${toneClass}`}>
       {display}
     </span>
+  );
+}
+
+function SplitFireResultModal({
+  modal,
+  setModal,
+  onClose,
+}: {
+  modal: SplitFireResultModalState;
+  setModal: React.Dispatch<React.SetStateAction<SplitFireResultModalState | null>>;
+  onClose: () => void;
+}) {
+  const requestClose = () => {
+    setModal(m => m ? { ...m, confirmingClose: true } : m);
+  };
+  const cancelClose = () => setModal(m => m ? { ...m, confirmingClose: false } : m);
+  const confirmClose = () => onClose();
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4" role="dialog" aria-modal="true">
+      <div className="relative w-full max-w-lg rounded border border-sky-400/50 bg-slate-950/95 p-4 shadow-2xl shadow-sky-950/40">
+        <button
+          type="button"
+          onClick={requestClose}
+          className="absolute right-3 top-3 rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-mono text-xs text-slate-200 hover:bg-slate-800"
+          aria-label="Close split fire result"
+        >
+          X
+        </button>
+        <div className="pr-8">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-sky-300/80 font-mono">Split Fire</div>
+          <div className="mt-1 text-lg font-bold text-sky-100 font-mono">
+            {modal.weapon.name || modal.weapon.arc}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-2">
+          {modal.allocations.map((allocation, index) => {
+            const result = allocation.result as FireWeaponResult & {
+              hits?: number;
+              totalDamage?: number;
+              crewLost?: number;
+              criticalHits?: number;
+              targetHullBefore?: number;
+              targetHullAfter?: number;
+              targetCrewBefore?: number;
+              targetCrewAfter?: number;
+              targetDestroyed?: boolean;
+            };
+            return (
+              <div
+                key={`${allocation.targetId}-${index}`}
+                className="rounded border border-slate-600 bg-black/35 px-3 py-2 font-mono"
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-bold text-sky-100">{allocation.targetName}</span>
+                  <span className="text-sky-300">{allocation.attackDice}AD</span>
+                </div>
+                <div className="mt-2 grid grid-cols-4 gap-1 text-center text-[10px] uppercase tracking-wider">
+                  <div className="rounded border border-slate-700 bg-slate-900/70 px-1 py-1">
+                    <div className="text-slate-400">Hits</div>
+                    <div className="text-sm font-bold text-amber-200">{result.hits ?? 0}</div>
+                  </div>
+                  <div className="rounded border border-slate-700 bg-slate-900/70 px-1 py-1">
+                    <div className="text-slate-400">Damage</div>
+                    <div className="text-sm font-bold text-red-200">{result.totalDamage ?? 0}</div>
+                  </div>
+                  <div className="rounded border border-slate-700 bg-slate-900/70 px-1 py-1">
+                    <div className="text-slate-400">Crew</div>
+                    <div className="text-sm font-bold text-orange-200">{result.crewLost ?? 0}</div>
+                  </div>
+                  <div className="rounded border border-slate-700 bg-slate-900/70 px-1 py-1">
+                    <div className="text-slate-400">Crits</div>
+                    <div className="text-sm font-bold text-sky-200">{result.criticalHits ?? 0}</div>
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] text-slate-300">
+                  Hull {result.targetHullBefore ?? "?"}{" -> "}{result.targetHullAfter ?? "?"}
+                  {" "}· Crew {result.targetCrewBefore ?? "?"}{" -> "}{result.targetCrewAfter ?? "?"}
+                  {result.targetDestroyed ? <span className="text-red-300"> · Destroyed</span> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button
+            type="button"
+            onClick={requestClose}
+            className="bg-sky-300 text-black hover:bg-sky-200 font-mono text-xs uppercase tracking-widest"
+          >
+            Close
+          </Button>
+        </div>
+        {modal.confirmingClose && (
+          <div className="absolute inset-0 flex items-center justify-center rounded bg-black/70 p-4">
+            <div className="w-full max-w-sm rounded border border-amber-400/60 bg-slate-950 p-3 text-center shadow-xl">
+              <div className="font-mono text-sm font-bold text-amber-200">Close split fire results?</div>
+              <div className="mt-3 flex justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={cancelClose}
+                  className="border-slate-500 bg-slate-950 text-slate-100 hover:bg-slate-800 font-mono text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={confirmClose}
+                  className="bg-amber-300 text-black hover:bg-amber-200 font-mono text-xs"
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
