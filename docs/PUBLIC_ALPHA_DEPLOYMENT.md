@@ -11,6 +11,7 @@ Use Render for the first broader test:
 - Clerk handles user auth.
 - The deployment branch is `public-alpha`, not the day-to-day development branch.
 - The Render build runs `pnpm --filter @workspace/db run push-force` so a newly provisioned Postgres instance receives the Drizzle schema before the API starts serving traffic.
+- API startup seeds the base ACTA roster from the checked-in ship CSV, then applies bespoke maintenance rows; this keeps fresh Render databases from missing ships such as Nova and Omega.
 
 Approximate monthly floor:
 

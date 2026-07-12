@@ -1,4 +1,6 @@
 import { pool } from "@workspace/db";
+import fs from "node:fs";
+import path from "node:path";
 import { SHIP_AI_PROFILE_SEEDS } from "./ai-opponent";
 import { logger } from "./logger";
 
@@ -48,6 +50,34 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
 
 const CAPITAL_BASE_RADIUS_INCHES = 0.8;
 const FIGHTER_BASE_RADIUS_INCHES = CAPITAL_BASE_RADIUS_INCHES;
+
+const SHIP_PRIORITY_BY_NAME = new Map(
+  SHIP_PRIORITY_SEEDS.map(seed => [seed.name.toLowerCase(), seed.priority]),
+);
+
+const POINT_COST_BY_PRIORITY: Record<string, number> = {
+  patrol: 25,
+  skirmish: 150,
+  raid: 200,
+  battle: 225,
+  war: 400,
+  armageddon: 600,
+  ancient: 600,
+};
+
+const CSV_MODEL_FILENAMES: Record<string, string> = {
+  "shadow cruiser (ancient)": "battlecrab.glb",
+  "hyperion cruiser": "hyperion.glb",
+  "sharlin war cruiser": "sharlin.glb",
+  "olympus corvette": "olympus.glb",
+  tinashi: "tinashi.glb",
+  "oracle cruiser": "oracle.glb",
+  "omega destroyer": "omega.glb",
+  "nova dreadnought": "nova.glb",
+  "g'quan cruiser": "gquan.glb",
+  "white star": "whitestar.glb",
+  avioki: "avioki.glb",
+};
 
 const SAGITTARIUS_WEAPONS = [
   { name: "Missile Rack", arc: "Forward", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
@@ -427,6 +457,269 @@ const FIGHTER_FLIGHTS = [
   },
 ];
 
+type CsvShipSeed = {
+  faction: string;
+  name: string;
+  shipClass: string;
+  hull: number;
+  troops: number;
+  damage: number | null;
+  damageThreshold: number | null;
+  crew: number | null;
+  crewThreshold: number | null;
+  speed: number;
+  turns: number;
+  turnAngle: number;
+  crewQuality: string;
+  shield: number;
+  shieldMax: number;
+  shieldRegenRate: number;
+  traits: string;
+  smallCraft: string | null;
+};
+
+type CsvWeaponSeed = {
+  shipName: string;
+  name: string;
+  arc: string;
+  range: number;
+  attackDice: number;
+  traits: string;
+};
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "\"") {
+      if (quoted && line[i + 1] === "\"") {
+        current += "\"";
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (ch === "," && !quoted) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function intCell(value: string | undefined, fallback = 0): number {
+  const parsed = Number.parseInt((value ?? "").trim(), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function nullableIntCell(value: string | undefined): number | null {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed || trimmed.toUpperCase() === "N/A") return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveActaShipCsv(): string | null {
+  const candidates = [
+    path.resolve(process.cwd(), "attached_assets", "acta_ships_12APR26_1779321905109.csv"),
+    path.resolve(process.cwd(), "..", "..", "attached_assets", "acta_ships_12APR26_1779321905109.csv"),
+    path.resolve(process.cwd(), "..", "attached_assets", "acta_ships_12APR26_1779321905109.csv"),
+  ];
+  return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+}
+
+function readActaShipCsv(): { ships: CsvShipSeed[]; weaponsByShip: Map<string, CsvWeaponSeed[]> } | null {
+  const csvPath = resolveActaShipCsv();
+  if (!csvPath) return null;
+
+  const ships: CsvShipSeed[] = [];
+  const weaponsByShip = new Map<string, CsvWeaponSeed[]>();
+  let section: "ships" | "weapons" | null = null;
+
+  const lines = fs.readFileSync(csvPath, "utf8").split(/\r?\n/g);
+  for (const line of lines) {
+    const cells = parseCsvLine(line);
+    const first = cells[0]?.trim();
+    const second = cells[1]?.trim();
+
+    if (!first && !second) continue;
+    if (first === "SHIP STATS" || first === "WEAPONS") continue;
+    if (first === "Faction" && second === "Name") {
+      section = "ships";
+      continue;
+    }
+    if (first === "Faction" && second === "Ship Name") {
+      section = "weapons";
+      continue;
+    }
+
+    if (section === "ships" && first && second) {
+      ships.push({
+        faction: first,
+        name: second,
+        shipClass: cells[2] ?? "",
+        hull: intCell(cells[3], 4),
+        troops: intCell(cells[4], 0),
+        damage: nullableIntCell(cells[5]),
+        damageThreshold: nullableIntCell(cells[6]),
+        crew: nullableIntCell(cells[7]),
+        crewThreshold: nullableIntCell(cells[8]),
+        speed: intCell(cells[9], 0),
+        turns: intCell(cells[10], 0),
+        turnAngle: intCell(cells[11], 45),
+        crewQuality: cells[12] || "Regular",
+        shield: intCell(cells[13], 0),
+        shieldMax: intCell(cells[14], 0),
+        shieldRegenRate: intCell(cells[15], 0),
+        traits: cells[16] ?? "",
+        smallCraft: cells[17] || null,
+      });
+      continue;
+    }
+
+    if (section === "weapons" && second) {
+      const weapon: CsvWeaponSeed = {
+        shipName: second,
+        name: cells[3] || "Weapon",
+        arc: cells[4] || "Forward",
+        range: intCell(cells[5], 0),
+        attackDice: intCell(cells[6], 0),
+        traits: cells[7] ?? "",
+      };
+      const key = weapon.shipName.toLowerCase();
+      weaponsByShip.set(key, [...(weaponsByShip.get(key) ?? []), weapon]);
+    }
+  }
+
+  return { ships, weaponsByShip };
+}
+
+async function seedActaCsvShips(): Promise<void> {
+  const csv = readActaShipCsv();
+  if (!csv) {
+    logger.warn("ACTA ship CSV not found; skipping base ship seed");
+    return;
+  }
+
+  for (const ship of csv.ships) {
+    const key = ship.name.toLowerCase();
+    const priority = SHIP_PRIORITY_BY_NAME.get(key) ?? "raid";
+    const pointCost = POINT_COST_BY_PRIORITY[priority] ?? 100;
+    const filename = CSV_MODEL_FILENAMES[key] ?? `${key.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.glb`;
+    const primaryWeapon = csv.weaponsByShip.get(key)?.[0];
+    const shipResult = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = $1,
+            filename = $2,
+            faction = $3,
+            point_cost = $4,
+            priority_level = $5,
+            ship_class = $6,
+            hull = $7,
+            troops = $8,
+            damage = $9,
+            damage_threshold = $10,
+            hull_rating = $7,
+            crew = $11,
+            crew_threshold = $12,
+            speed = $13,
+            turns = $14,
+            turn_angle = $15,
+            crew_quality = $16,
+            shield = $17,
+            shield_max = $18,
+            shield_regen_rate = $19,
+            traits = $20,
+            small_craft = $21,
+            base_radius_inches = $22,
+            hull_points = COALESCE($9, 1),
+            weapon_range = $23,
+            weapon_damage = $24,
+            description = $25
+          WHERE lower(name) = lower($1)
+             OR lower(filename) = lower($2)
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10, $7, $11,
+            $12, $13, $14, $15, $16, $17,
+            $18, $19, $20, $21, COALESCE($9, 1),
+            $22, $23, $24, $25
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [
+        ship.name,
+        filename,
+        ship.faction,
+        pointCost,
+        priority,
+        ship.shipClass,
+        ship.hull,
+        ship.troops,
+        ship.damage,
+        ship.damageThreshold,
+        ship.crew,
+        ship.crewThreshold,
+        ship.speed,
+        ship.turns,
+        ship.turnAngle,
+        ship.crewQuality,
+        ship.shield,
+        ship.shieldMax,
+        ship.shieldRegenRate,
+        ship.traits,
+        ship.smallCraft,
+        CAPITAL_BASE_RADIUS_INCHES,
+        primaryWeapon?.range ?? 0,
+        primaryWeapon?.attackDice ?? 0,
+        `${ship.faction} ${ship.name} from the checked-in ACTA ship reference sheet`,
+      ],
+    );
+
+    const shipId = shipResult.rows[0]?.id;
+    if (!shipId) continue;
+
+    const weapons = csv.weaponsByShip.get(key) ?? [];
+    if (weapons.length === 0) continue;
+    await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [shipId]);
+    for (const weapon of weapons) {
+      await pool.query(
+        `
+          INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `,
+        [shipId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
+      );
+    }
+  }
+}
+
 export async function ensureActaAllocationSchema(): Promise<void> {
   try {
     await pool.query(`
@@ -577,6 +870,8 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       `,
       [CAPITAL_BASE_RADIUS_INCHES],
     );
+
+    await seedActaCsvShips();
 
     for (const seed of SHIP_PRIORITY_SEEDS) {
       await pool.query(
