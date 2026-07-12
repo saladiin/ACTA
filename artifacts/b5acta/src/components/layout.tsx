@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, Settings, Sparkles } from "lucide-react";
+import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useInputProfile } from "@/hooks/use-input-profile";
 import { clearTemporaryUsername, temporaryUsernameAuthEnabled } from "@/lib/temporary-user";
@@ -87,6 +87,14 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
           <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
             <Sparkles className="w-4 h-4" />
             <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
+          </Link>
+          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/credits" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+            <ScrollText className="w-4 h-4" />
+            <span className="text-sm font-medium tracking-wide uppercase">Credits</span>
+          </Link>
+          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/faq" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+            <CircleHelp className="w-4 h-4" />
+            <span className="text-sm font-medium tracking-wide uppercase">FAQ</span>
           </Link>
           <Link onClick={() => mobileChrome && setNavOpen(false)} href="/settings" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
             <Settings className="w-4 h-4" />

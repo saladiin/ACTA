@@ -721,7 +721,6 @@ async function seedActaCsvShips(): Promise<void> {
             weapon_damage = $24,
             description = $25
           WHERE lower(name) = lower($1)
-             OR lower(filename) = lower($2)
           RETURNING id
         ),
         inserted AS (
@@ -798,6 +797,48 @@ async function seedActaCsvShips(): Promise<void> {
     { source: csv.source, seededShips, seededWeapons },
     "Seeded ACTA base ship roster",
   );
+}
+
+async function removeStaleHyperionBaseRows(): Promise<void> {
+  const result = await pool.query<{ deleted_count: number }>(
+    `
+      WITH canonical AS (
+        SELECT id
+        FROM ship_models
+        WHERE lower(name) = lower('Hyperion Heavy Cruiser')
+        ORDER BY id
+        LIMIT 1
+      ),
+      stale AS (
+        SELECT id
+        FROM ship_models
+        WHERE lower(name) = lower('Hyperion Cruiser')
+          AND EXISTS (SELECT 1 FROM canonical)
+      ),
+      reassigned_ships AS (
+        UPDATE ships
+        SET ship_model_id = (SELECT id FROM canonical)
+        WHERE ship_model_id IN (SELECT id FROM stale)
+        RETURNING id
+      ),
+      deleted_weapons AS (
+        DELETE FROM weapons
+        WHERE ship_model_id IN (SELECT id FROM stale)
+        RETURNING id
+      ),
+      deleted_models AS (
+        DELETE FROM ship_models
+        WHERE id IN (SELECT id FROM stale)
+        RETURNING id
+      )
+      SELECT count(*)::int AS deleted_count FROM deleted_models
+    `,
+  );
+
+  const deletedCount = result.rows[0]?.deleted_count ?? 0;
+  if (deletedCount > 0) {
+    logger.info({ deletedCount }, "Removed stale duplicate Hyperion Cruiser ship-model rows");
+  }
 }
 
 export async function ensureActaAllocationSchema(): Promise<void> {
@@ -913,6 +954,40 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS game_special_action_audit_logs_game_created_idx
       ON game_special_action_audit_logs (game_id, created_at, id)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bug_reports (
+        id serial PRIMARY KEY,
+        game_id integer NOT NULL,
+        reporter_player_id text NOT NULL,
+        round integer NOT NULL,
+        phase text NOT NULL,
+        active_player_id text,
+        active_unit_id integer,
+        message text NOT NULL,
+        rescue_requested boolean NOT NULL DEFAULT false,
+        rescue_applied boolean NOT NULL DEFAULT false,
+        snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS bug_reports_game_created_idx
+      ON bug_reports (game_id, created_at, id)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_chat_messages (
+        id serial PRIMARY KEY,
+        game_id integer NOT NULL,
+        sender_player_id text NOT NULL,
+        sender_name text,
+        message text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS game_chat_messages_game_created_idx
+      ON game_chat_messages (game_id, created_at, id)
     `);
     await pool.query(`
       UPDATE games
@@ -1073,6 +1148,8 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         }
       }
     }
+
+    await removeStaleHyperionBaseRows();
 
     for (const fighter of FIGHTER_FLIGHTS) {
       const fighterResult = await pool.query<{ id: number }>(

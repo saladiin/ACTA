@@ -18,6 +18,8 @@ import NewGame from "@/pages/new-game";
 import GameBoard from "@/pages/game-board";
 import GamesList from "@/pages/games";
 import Settings from "@/pages/settings";
+import Credits from "@/pages/credits";
+import Faq from "@/pages/faq";
 import VfxShowcase from "@/pages/vfx-showcase";
 import NotFound from "@/pages/not-found";
 import { DevModeToggle } from "@/components/dev-mode-toggle";
@@ -200,6 +202,8 @@ function ClerkProviderWithRoutes() {
             <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
             <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
             <Route path="/vfx-showcase"><ProtectedRoute component={VfxShowcase} /></Route>
+            <Route path="/credits"><ProtectedRoute component={Credits} /></Route>
+            <Route path="/faq"><ProtectedRoute component={Faq} /></Route>
             <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
             <Route component={NotFound} />
           </Switch>

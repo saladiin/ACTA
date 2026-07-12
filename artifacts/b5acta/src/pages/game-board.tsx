@@ -59,7 +59,16 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,7 +79,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag, PanelRightClose, PanelRightOpen, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Check, X, Cpu, AlertTriangle } from "lucide-react";
+import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag, PanelRightClose, PanelRightOpen, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Check, X, Cpu, AlertTriangle, MessageCircle, Send, ChevronDown, ChevronUp } from "lucide-react";
 
 // Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
 // names are historical). Render coordinates are 1:1 with storage, so this
@@ -124,6 +133,30 @@ type AiDiagnostics = {
     code?: string;
     at?: string;
   };
+};
+
+type BugRescueNotice = {
+  id: number;
+  at?: string;
+  reporterPlayerId: string;
+  reporterName?: string | null;
+  round?: number;
+  phase?: string;
+  activePlayerId?: string | null;
+  activeUnitId?: number | null;
+  activeUnitName?: string | null;
+  message?: string;
+  rescueRequested?: boolean;
+  rescueApplied?: boolean;
+};
+
+type GameChatMessage = {
+  id: number;
+  gameId: number;
+  senderPlayerId: string;
+  senderName?: string | null;
+  message: string;
+  createdAt: string;
 };
 
 type AiWeaponFxReplay = {
@@ -184,6 +217,35 @@ type AntiFighterUiState = {
     destroyedUnitIds: number[];
   };
 };
+
+function formatChatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function readBugRescueNotice(raw: unknown): BugRescueNotice | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const state = raw as Record<string, unknown>;
+  const value = state.lastBugRescue;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const notice = value as Record<string, unknown>;
+  if (typeof notice.id !== "number" || typeof notice.reporterPlayerId !== "string") return null;
+  return {
+    id: notice.id,
+    at: typeof notice.at === "string" ? notice.at : undefined,
+    reporterPlayerId: notice.reporterPlayerId,
+    reporterName: typeof notice.reporterName === "string" ? notice.reporterName : null,
+    round: typeof notice.round === "number" ? notice.round : undefined,
+    phase: typeof notice.phase === "string" ? notice.phase : undefined,
+    activePlayerId: typeof notice.activePlayerId === "string" ? notice.activePlayerId : null,
+    activeUnitId: typeof notice.activeUnitId === "number" ? notice.activeUnitId : null,
+    activeUnitName: typeof notice.activeUnitName === "string" ? notice.activeUnitName : null,
+    message: typeof notice.message === "string" ? notice.message : undefined,
+    rescueRequested: typeof notice.rescueRequested === "boolean" ? notice.rescueRequested : undefined,
+    rescueApplied: typeof notice.rescueApplied === "boolean" ? notice.rescueApplied : undefined,
+  };
+}
 
 function readAntiFighterUiState(raw: unknown): AntiFighterUiState | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -3665,6 +3727,16 @@ export default function GameBoard() {
   const [passAllFiringPending, setPassAllFiringPending] = useState(false);
   const [passAllFiringConfirmOpen, setPassAllFiringConfirmOpen] = useState(false);
   const [endActivationConfirmOpen, setEndActivationConfirmOpen] = useState(false);
+  const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [bugReportMessage, setBugReportMessage] = useState("");
+  const [bugReportBlocking, setBugReportBlocking] = useState(false);
+  const [bugReportPending, setBugReportPending] = useState(false);
+  const [bugReportError, setBugReportError] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [chatMessage, setChatMessage] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   // Dice-roll modal payload. The reveal is staged behind explicit player
   // confirmations: pending (waiting for server) → attack-ready (press to
   // roll attack) → attack-rolling (shuffle anim) → attack-shown → if hits,
@@ -3675,6 +3747,7 @@ export default function GameBoard() {
   const [aiWeaponFxReplay, setAiWeaponFxReplay] = useState<AiWeaponFxReplay | null>(null);
   const lastSeenAiWeaponFxKeyRef = useRef<string | null>(null);
   const antiFighterState = useMemo(() => readAntiFighterUiState(game?.aiState), [game?.aiState]);
+  const bugRescueNotice = useMemo(() => readBugRescueNotice(game?.aiState), [game?.aiState]);
   const isMyAntiFighterAllocation =
     game?.status === "active" &&
     game.phase === "movement" &&
@@ -4199,6 +4272,24 @@ export default function GameBoard() {
     setTapPlacementShip(null);
   }, [yardsFleetId, yardsFleetShips, makeStagedUnit, myUserId]);
   const isOpponent = game?.opponentId === myUserId;
+  const canUseGameChat = Boolean(game && game.opponentKind !== "ai" && (isChallenger || isOpponent));
+  const gameChatQueryKey = useMemo(() => ["gameChat", gameId] as const, [gameId]);
+  const { data: chatData } = useQuery({
+    queryKey: gameChatQueryKey,
+    enabled: canUseGameChat,
+    refetchInterval: chatOpen ? 3000 : 6000,
+    queryFn: () => customFetch<{ messages: GameChatMessage[] }>(`/api/games/${gameId}/chat`),
+  });
+  const chatMessages = chatData?.messages ?? [];
+  const latestChatMessage = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null;
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages.length, chatOpen]);
+
   // New activation model: it's "my turn" if the server says I'm the
   // active player for the round's next ship activation.
   const isMyActivation = game?.status === "active" && game.activePlayerId === myUserId;
@@ -5290,6 +5381,61 @@ export default function GameBoard() {
     }
   }, [antiFighterState, currentPhase, gameId, isMyActivation, mergeActiveUnitIntoGame, passAllFiringPending, qc]);
 
+  const handleSubmitBugReport = useCallback(async () => {
+    const message = bugReportMessage.trim();
+    if (message.length < 4 || bugReportPending) return;
+    setBugReportPending(true);
+    setBugReportError(null);
+    try {
+      const response = await customFetch<{ rescueApplied?: boolean }>(`/api/games/${gameId}/bug-report`, {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          rescueRequested: bugReportBlocking,
+        }),
+      });
+      setBugReportOpen(false);
+      setBugReportMessage("");
+      setBugReportBlocking(false);
+      setActivationFeedback(response.rescueApplied ? "Bug report submitted. Current step was forced forward." : "Bug report submitted.");
+      if (response.rescueApplied) {
+        mergeActiveUnitIntoGame(null);
+        setSelectedUnit(null);
+        setMovePlan(null);
+        setMoveTarget(null);
+        setAttackTarget(null);
+        setFiringWeaponPicking(null);
+        setDiceModal(null);
+        setOptimisticActiveUnitId(null);
+      }
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    } catch (err) {
+      setBugReportError(cleanApiErrorMessage(err, "Bug report failed"));
+    } finally {
+      setBugReportPending(false);
+    }
+  }, [bugReportBlocking, bugReportMessage, bugReportPending, gameId, mergeActiveUnitIntoGame, qc]);
+
+  const handleSendChat = useCallback(async () => {
+    const message = chatMessage.trim();
+    if (!message || chatSending || !canUseGameChat) return;
+    setChatSending(true);
+    setChatError(null);
+    try {
+      await customFetch(`/api/games/${gameId}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      });
+      setChatMessage("");
+      setChatOpen(true);
+      await qc.invalidateQueries({ queryKey: gameChatQueryKey });
+    } catch (err) {
+      setChatError(cleanApiErrorMessage(err, "Chat send failed"));
+    } finally {
+      setChatSending(false);
+    }
+  }, [canUseGameChat, chatMessage, chatSending, gameChatQueryKey, gameId, qc]);
+
   const handleSubmitTurn = () => {
     submitTurn.mutate(
       { gameId, data: { moves: turnMoves, attacks: turnAttacks } },
@@ -6112,6 +6258,107 @@ export default function GameBoard() {
             runError={autoAiError ?? (runAiStep.isError ? ((runAiStep.error as Error).message || "AI step failed") : null)}
           />
 
+          {canUseGameChat && (
+            <div className="border-b border-border" data-testid="game-chat-panel">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-secondary/30"
+                onClick={() => setChatOpen(open => !open)}
+                aria-expanded={chatOpen}
+                data-testid="button-toggle-game-chat"
+              >
+                <MessageCircle className="h-4 w-4 text-primary" />
+                <span className="flex-1 text-xs font-mono font-bold uppercase tracking-widest text-primary">
+                  Opponent Chat
+                </span>
+                {chatMessages.length > 0 && (
+                  <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-mono">
+                    {chatMessages.length}
+                  </Badge>
+                )}
+                {chatOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+              </button>
+              {!chatOpen && latestChatMessage && (
+                <div className="px-4 pb-3 text-[10px] font-mono text-muted-foreground truncate" data-testid="game-chat-collapsed-preview">
+                  {(latestChatMessage.senderPlayerId === myUserId ? "You" : latestChatMessage.senderName ?? "Opponent")}: {latestChatMessage.message}
+                </div>
+              )}
+              {chatOpen && (
+                <div className="px-3 pb-3 space-y-2">
+                  <div
+                    ref={chatScrollRef}
+                    className="max-h-48 overflow-y-auto rounded border border-border bg-background/70 p-2 space-y-1.5"
+                    data-testid="game-chat-messages"
+                  >
+                    {chatMessages.length === 0 ? (
+                      <p className="py-4 text-center text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                        No messages yet
+                      </p>
+                    ) : (
+                      chatMessages.map(message => {
+                        const mine = message.senderPlayerId === myUserId;
+                        return (
+                          <div
+                            key={message.id}
+                            className={`rounded border px-2 py-1.5 text-xs font-mono ${
+                              mine
+                                ? "ml-5 border-primary/35 bg-primary/10 text-primary"
+                                : "mr-5 border-border bg-card text-foreground"
+                            }`}
+                            data-testid={`game-chat-message-${message.id}`}
+                          >
+                            <div className="mb-0.5 flex items-center justify-between gap-2 text-[9px] uppercase tracking-wider opacity-70">
+                              <span className="truncate">{mine ? "You" : message.senderName ?? "Opponent"}</span>
+                              <span className="shrink-0">{formatChatTime(message.createdAt)}</span>
+                            </div>
+                            <div className="whitespace-pre-wrap break-words leading-relaxed">{message.message}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                  <form
+                    className="space-y-2"
+                    onSubmit={event => {
+                      event.preventDefault();
+                      handleSendChat();
+                    }}
+                  >
+                    <Textarea
+                      data-testid="textarea-game-chat"
+                      value={chatMessage}
+                      onChange={event => setChatMessage(event.target.value)}
+                      maxLength={500}
+                      rows={2}
+                      placeholder="Message opponent..."
+                      className="min-h-14 resize-none font-mono text-xs"
+                    />
+                    <div className="flex items-center gap-2">
+                      <span className="flex-1 text-[10px] font-mono text-muted-foreground">
+                        {chatMessage.length}/500
+                      </span>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="h-8 gap-1.5 px-3 text-[10px] font-bold uppercase tracking-widest"
+                        disabled={chatSending || chatMessage.trim().length === 0}
+                        data-testid="button-send-game-chat"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        {chatSending ? "Sending" : "Send"}
+                      </Button>
+                    </div>
+                    {chatError && (
+                      <p className="text-[10px] font-mono text-red-400" data-testid="text-game-chat-error">
+                        {chatError}
+                      </p>
+                    )}
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
           {game.status === "deploying" && myDeploymentLocked && (
             <div className="p-4 border-b border-border space-y-2" data-testid="panel-awaiting-opponent">
               <p className="text-xs font-mono text-green-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -6574,6 +6821,27 @@ export default function GameBoard() {
           )}
 
 
+          {game.status === "active" && bugRescueNotice && bugRescueNotice.reporterPlayerId !== myUserId && (
+            <div className="p-4 border-b border-red-500/30 bg-red-950/20 space-y-1.5" data-testid="bug-rescue-notice">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-300" />
+                <p className="text-xs font-mono uppercase tracking-wider text-red-200">
+                  Step rescue used
+                </p>
+              </div>
+              <p className="text-[11px] font-mono leading-relaxed text-red-100/85">
+                {(bugRescueNotice.reporterName ?? "Opponent")} reported a blocker
+                {bugRescueNotice.activeUnitName ? ` on ${bugRescueNotice.activeUnitName}` : ""}
+                {bugRescueNotice.rescueApplied ? " and forced the current step forward." : "."}
+              </p>
+              {bugRescueNotice.message && (
+                <p className="text-[10px] font-mono leading-relaxed text-red-100/65">
+                  {bugRescueNotice.message}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Selected unit info */}
           {selectedUnitData && (
             <div data-testid="selected-unit-panel" className="p-4 border-b border-border">
@@ -6909,6 +7177,21 @@ export default function GameBoard() {
                   {passAllFiringPending ? "Passing All..." : "Pass All Firing"}
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid="button-open-bug-rescue"
+                className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold border-red-500/35 text-red-200 hover:bg-red-500/10"
+                onClick={() => {
+                  setBugReportError(null);
+                  setBugReportBlocking(false);
+                  setBugReportOpen(true);
+                }}
+                disabled={bugReportPending}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Report Bug / Step Rescue
+              </Button>
               {minMoveGate.blocked && (
                 <p
                   data-testid="text-min-move-gate"
@@ -7814,6 +8097,72 @@ export default function GameBoard() {
       </div>
 
       {/* ── DICE ROLL MODAL ── */}
+      <Dialog open={bugReportOpen} onOpenChange={(open) => {
+        if (!bugReportPending) {
+          setBugReportOpen(open);
+          if (!open) setBugReportError(null);
+        }
+      }}>
+        <DialogContent className="border-red-500/30 bg-background/95">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-lg uppercase tracking-[0.18em] text-red-200">
+              Report Blocker
+            </DialogTitle>
+            <DialogDescription className="font-mono text-xs leading-relaxed">
+              Send a short alpha bug report. If this step is blocking the game, you can force the current movement or firing step forward.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea
+              data-testid="textarea-bug-report"
+              value={bugReportMessage}
+              onChange={(event) => setBugReportMessage(event.target.value)}
+              maxLength={800}
+              rows={5}
+              placeholder="What happened? Example: Oracle cannot finish movement although a legal space appears available."
+              className="font-mono text-xs"
+            />
+            <label className="flex items-start gap-2 rounded border border-red-500/25 bg-red-950/20 p-3 text-xs font-mono leading-relaxed text-red-100/85">
+              <input
+                data-testid="checkbox-bug-rescue"
+                type="checkbox"
+                className="mt-0.5"
+                checked={bugReportBlocking}
+                onChange={(event) => setBugReportBlocking(event.target.checked)}
+              />
+              <span>
+                This bug is blocking the current step. Force this activation forward and notify my opponent.
+              </span>
+            </label>
+            {bugReportError && (
+              <p className="text-[11px] font-mono text-red-300" data-testid="text-bug-report-error">
+                {bugReportError}
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:space-x-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBugReportOpen(false)}
+              disabled={bugReportPending}
+              data-testid="button-cancel-bug-report"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant={bugReportBlocking ? "destructive" : "default"}
+              onClick={handleSubmitBugReport}
+              disabled={bugReportPending || bugReportMessage.trim().length < 4}
+              data-testid="button-submit-bug-report"
+            >
+              {bugReportPending ? "Submitting..." : bugReportBlocking ? "Submit and Force Step" : "Submit Report"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog
         open={endActivationConfirmOpen}
         onOpenChange={(open) => {

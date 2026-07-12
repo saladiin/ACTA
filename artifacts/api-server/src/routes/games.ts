@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
-import { eq, and, or, isNull, sql, inArray } from "drizzle-orm";
+import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import {
   parseShipTraits,
@@ -68,6 +68,31 @@ import {
   DeployFleetResponse,
   ListTurnsResponse,
 } from "@workspace/api-zod";
+
+function parseReportBugBody(raw: unknown): { success: true; data: { message: string; rescueRequested: boolean } } | { success: false; error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { success: false, error: "Bug report body must be an object" };
+  }
+  const body = raw as Record<string, unknown>;
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  if (message.length < 4) return { success: false, error: "Bug report must be at least 4 characters" };
+  if (message.length > 800) return { success: false, error: "Bug report must be 800 characters or less" };
+  if (body.rescueRequested !== undefined && typeof body.rescueRequested !== "boolean") {
+    return { success: false, error: "rescueRequested must be a boolean" };
+  }
+  return { success: true, data: { message, rescueRequested: body.rescueRequested === true } };
+}
+
+function parseGameChatBody(raw: unknown): { success: true; data: { message: string } } | { success: false; error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { success: false, error: "Chat message body must be an object" };
+  }
+  const body = raw as Record<string, unknown>;
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  if (message.length < 1) return { success: false, error: "Message cannot be empty" };
+  if (message.length > 500) return { success: false, error: "Message must be 500 characters or less" };
+  return { success: true, data: { message } };
+}
 
 // ── Combat helpers ───────────────────────────────────────────────────────────
 // World units = inches (see game-board.tsx: "1 world unit = 1 inch").
@@ -4027,6 +4052,199 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     };
   });
   res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns }));
+});
+
+router.get("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  try {
+    const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+    if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+    const canChat = game.opponentKind !== "ai" && (game.challengerId === userId || game.opponentId === userId);
+    if (!canChat) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+    const latest = await db
+      .select()
+      .from(gameChatMessagesTable)
+      .where(eq(gameChatMessagesTable.gameId, game.id))
+      .orderBy(desc(gameChatMessagesTable.createdAt), desc(gameChatMessagesTable.id))
+      .limit(50);
+    res.json({ messages: latest.reverse() });
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  const body = parseGameChatBody(req.body ?? {});
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  if (!body.success) {
+    res.status(400).json({ error: body.error });
+    return;
+  }
+
+  try {
+    const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+    if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+    const canChat = game.opponentKind !== "ai" && (game.challengerId === userId || game.opponentId === userId);
+    if (!canChat) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+    const senderName =
+      userId === game.challengerId ? game.challengerName :
+      userId === game.opponentId ? game.opponentName :
+      null;
+    const [message] = await db.insert(gameChatMessagesTable).values({
+      gameId: game.id,
+      senderPlayerId: userId,
+      senderName,
+      message: body.data.message,
+    }).returning();
+    res.status(201).json({ message });
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/bug-report", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  const body = parseReportBugBody(req.body ?? {});
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  if (!body.success) {
+    res.status(400).json({ error: body.error });
+    return;
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const canReport =
+        game.challengerId === userId ||
+        game.opponentId === userId ||
+        isDevAiCommander(game, userId);
+      if (!canReport) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const units = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
+      const activeUnit = game.activeUnitId ? units.find(u => u.id === game.activeUnitId) ?? null : null;
+      const rescuePhase = game.phase === "movement" || game.phase === "firing";
+      const reporterCanRescue =
+        game.activePlayerId === userId ||
+        (game.opponentKind === "ai" && game.activePlayerId === AI_OPPONENT_ID && game.challengerId === userId);
+      const rescueApplied = Boolean(body.data.rescueRequested && game.status === "active" && rescuePhase && reporterCanRescue);
+      const reportSnapshot = {
+        game: {
+          id: game.id,
+          status: game.status,
+          round: game.currentRound,
+          turn: game.currentTurn,
+          phase: game.phase,
+          activePlayerId: game.activePlayerId,
+          activeUnitId: game.activeUnitId,
+          initiativeWinnerId: game.initiativeWinnerId,
+          challengerId: game.challengerId,
+          opponentId: game.opponentId,
+          opponentKind: game.opponentKind,
+        },
+        activeUnit: activeUnit ? unitAuditState(activeUnit) : null,
+        units: units.map(unitAuditState),
+      };
+
+      const [report] = await tx.insert(bugReportsTable).values({
+        gameId: game.id,
+        reporterPlayerId: userId,
+        round: game.currentRound,
+        phase: game.phase,
+        activePlayerId: game.activePlayerId,
+        activeUnitId: game.activeUnitId,
+        message: body.data.message,
+        rescueRequested: body.data.rescueRequested,
+        rescueApplied,
+        snapshot: reportSnapshot,
+      }).returning();
+
+      const baseAiState = game.aiState && typeof game.aiState === "object" && !Array.isArray(game.aiState)
+        ? game.aiState as Record<string, unknown>
+        : {};
+      const reporterName =
+        userId === game.challengerId ? game.challengerName :
+        userId === game.opponentId ? game.opponentName :
+        userId === AI_OPPONENT_ID ? AI_OPPONENT_NAME :
+        "A player";
+      const notification = {
+        id: report.id,
+        at: nowIso(),
+        reporterPlayerId: userId,
+        reporterName,
+        round: game.currentRound,
+        phase: game.phase,
+        activePlayerId: game.activePlayerId,
+        activeUnitId: game.activeUnitId,
+        activeUnitName: activeUnit?.name ?? null,
+        message: body.data.message,
+        rescueRequested: body.data.rescueRequested,
+        rescueApplied,
+      };
+      const nextAiState = {
+        ...baseAiState,
+        lastBugRescue: notification,
+        bugReports: [
+          notification,
+          ...(Array.isArray(baseAiState.bugReports) ? baseAiState.bugReports : []),
+        ].slice(0, 5),
+      };
+
+      if (rescueApplied) {
+        const rescueActorId = game.activePlayerId ?? userId;
+        const otherPlayerId =
+          rescueActorId === game.challengerId
+            ? game.opponentId
+            : game.challengerId;
+        if (game.activeUnitId) {
+          await tx.update(gameUnitsTable)
+            .set(game.phase === "firing" ? { hasFiredThisRound: true } : { hasMovedThisRound: true })
+            .where(and(eq(gameUnitsTable.id, game.activeUnitId), eq(gameUnitsTable.gameId, game.id)));
+        }
+        const [updated] = await tx.update(gamesTable).set({
+          activeUnitId: null,
+          activePlayerId: otherPlayerId ?? null,
+          lastActivatorId: rescueActorId,
+          aiState: nextAiState,
+        }).where(eq(gamesTable.id, game.id)).returning();
+        return { game: updated, report, rescueApplied };
+      }
+
+      const [updated] = await tx.update(gamesTable).set({
+        aiState: nextAiState,
+      }).where(eq(gamesTable.id, game.id)).returning();
+      return { game: updated, report, rescueApplied };
+    });
+
+    res.json({
+      game: toGameDto(result.game),
+      report: result.report,
+      rescueApplied: result.rescueApplied,
+    });
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
 });
 
 router.get("/games/:gameId/attack-audit-log", requireAuth, async (req, res): Promise<void> => {

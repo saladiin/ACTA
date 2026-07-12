@@ -276,6 +276,30 @@ export const gameSpecialActionAuditLogsTable = pgTable("game_special_action_audi
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const bugReportsTable = pgTable("bug_reports", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  reporterPlayerId: text("reporter_player_id").notNull(),
+  round: integer("round").notNull(),
+  phase: text("phase").notNull(),
+  activePlayerId: text("active_player_id"),
+  activeUnitId: integer("active_unit_id"),
+  message: text("message").notNull(),
+  rescueRequested: boolean("rescue_requested").notNull().default(false),
+  rescueApplied: boolean("rescue_applied").notNull().default(false),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const gameChatMessagesTable = pgTable("game_chat_messages", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  senderPlayerId: text("sender_player_id").notNull(),
+  senderName: text("sender_name"),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const insertGameSchema = createInsertSchema(gamesTable).omit({ id: true, status: true, winnerId: true, currentTurn: true, challengerDeployed: true, opponentDeployed: true, createdAt: true, updatedAt: true });
 export type InsertGame = z.infer<typeof insertGameSchema>;
 export type Game = typeof gamesTable.$inferSelect;
@@ -291,3 +315,5 @@ export type Turn = typeof turnsTable.$inferSelect;
 export type GameAttackAuditLog = typeof gameAttackAuditLogsTable.$inferSelect;
 export type GameMovementAuditLog = typeof gameMovementAuditLogsTable.$inferSelect;
 export type GameSpecialActionAuditLog = typeof gameSpecialActionAuditLogsTable.$inferSelect;
+export type BugReport = typeof bugReportsTable.$inferSelect;
+export type GameChatMessage = typeof gameChatMessagesTable.$inferSelect;

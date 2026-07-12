@@ -27,6 +27,14 @@ function priorityCounts(models: Array<typeof shipModelsTable.$inferSelect | unde
   return counts;
 }
 
+function hasUniqueTrait(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return raw
+    .split(/[;,]/)
+    .map((trait) => trait.trim().toLowerCase().replace(/[\s_]+/g, "-"))
+    .some((trait) => trait === "unique");
+}
+
 router.get("/fleets", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const fleets = await db.select().from(fleetsTable).where(eq(fleetsTable.ownerId, userId));
@@ -143,6 +151,13 @@ router.post("/fleets/:fleetId/ships", requireAuth, async (req, res): Promise<voi
   if (!model) {
     res.status(404).json({ error: "Ship model not found" });
     return;
+  }
+  if (hasUniqueTrait(model.traits)) {
+    const existingShips = await db.select().from(shipsTable).where(eq(shipsTable.fleetId, params.data.fleetId));
+    if (existingShips.some(ship => ship.shipModelId === model.id)) {
+      res.status(400).json({ error: `${model.name} is Unique and is already in this fleet` });
+      return;
+    }
   }
   const [ship] = await db.insert(shipsTable).values({ fleetId: params.data.fleetId, shipModelId: parsed.data.shipModelId, name: parsed.data.name }).returning();
   res.status(201).json({ ...ship, shipModel: model });
