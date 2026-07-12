@@ -6,6 +6,7 @@ export const gamesTable = pgTable("games", {
   id: serial("id").primaryKey(),
   challengerId: text("challenger_id").notNull(),
   opponentId: text("opponent_id"),
+  opponentKind: text("opponent_kind").notNull().default("human"),
   challengerName: text("challenger_name"),
   opponentName: text("opponent_name"),
   status: text("status").notNull().default("pending"),
@@ -55,6 +56,8 @@ export const gamesTable = pgTable("games", {
   // hides the per-ship picker. "custom" → each ship's CQ is chosen during
   // deploy (1=Rookie … 6=Special Ops); the value is stored on each gameUnit.
   crewQualityMode: text("crew_quality_mode").notNull().default("standard"),
+  aiProfile: text("ai_profile"),
+  aiState: jsonb("ai_state").$type<Record<string, unknown>>().notNull().default({}),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
   challengerDeployed: boolean("challenger_deployed").notNull().default(false),
@@ -71,7 +74,7 @@ export const gameUnitsTable = pgTable("game_units", {
   name: text("name").notNull(),
   modelFilename: text("model_filename").notNull(),
   faction: text("faction").notNull(),
-  baseRadiusInches: real("base_radius_inches").notNull().default(1.2),
+  baseRadiusInches: real("base_radius_inches").notNull().default(0.8),
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
   // Printed Damage threshold from the ship sheet. When current hullPoints is
@@ -96,6 +99,10 @@ export const gameUnitsTable = pgTable("game_units", {
   // Last round in which this unit attempted Damage Control (Slice B). Used
   // to enforce the once-per-end-phase-per-unit cap. 0 means never.
   lastDcRound: integer("last_dc_round").notNull().default(0),
+  // Last round in which this unit resolved a Self Repair trait roll. This is
+  // separate from Damage Control: Self Repair restores hull points, while DC
+  // removes critical-effect rows.
+  lastSelfRepairRound: integer("last_self_repair_round").notNull().default(0),
   // Crew aboard the ship. Reduced by attack-table crew rolls, certain
   // critical effects, and boarding actions. When ≤ ½ maxCrewPoints the
   // ship is treated as "Skeleton Crew" (no SA, only 1 weapon system fires,
@@ -221,6 +228,54 @@ export const turnsTable = pgTable("turns", {
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 });
 
+export const gameAttackAuditLogsTable = pgTable("game_attack_audit_logs", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  round: integer("round").notNull(),
+  phase: text("phase").notNull(),
+  actorKind: text("actor_kind").notNull().default("player"),
+  actorPlayerId: text("actor_player_id"),
+  attackerUnitId: integer("attacker_unit_id").notNull(),
+  targetUnitId: integer("target_unit_id").notNull(),
+  weaponId: integer("weapon_id").notNull(),
+  summary: text("summary").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const gameMovementAuditLogsTable = pgTable("game_movement_audit_logs", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  round: integer("round").notNull(),
+  phase: text("phase").notNull(),
+  actorKind: text("actor_kind").notNull().default("player"),
+  actorPlayerId: text("actor_player_id"),
+  unitId: integer("unit_id").notNull(),
+  movementKind: text("movement_kind").notNull().default("move"),
+  summary: text("summary").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const gameSpecialActionAuditLogsTable = pgTable("game_special_action_audit_logs", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  round: integer("round").notNull(),
+  phase: text("phase").notNull(),
+  actorKind: text("actor_kind").notNull().default("player"),
+  actorPlayerId: text("actor_player_id"),
+  unitId: integer("unit_id").notNull(),
+  action: text("action").notNull(),
+  success: boolean("success").notNull(),
+  cqRequired: integer("cq_required"),
+  cqRoll: integer("cq_roll"),
+  cqTotal: integer("cq_total"),
+  targetUnitId: integer("target_unit_id"),
+  summary: text("summary").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const insertGameSchema = createInsertSchema(gamesTable).omit({ id: true, status: true, winnerId: true, currentTurn: true, challengerDeployed: true, opponentDeployed: true, createdAt: true, updatedAt: true });
 export type InsertGame = z.infer<typeof insertGameSchema>;
 export type Game = typeof gamesTable.$inferSelect;
@@ -232,3 +287,7 @@ export type GameUnit = typeof gameUnitsTable.$inferSelect;
 export const insertTurnSchema = createInsertSchema(turnsTable).omit({ id: true, resolvedAt: true });
 export type InsertTurn = z.infer<typeof insertTurnSchema>;
 export type Turn = typeof turnsTable.$inferSelect;
+
+export type GameAttackAuditLog = typeof gameAttackAuditLogsTable.$inferSelect;
+export type GameMovementAuditLog = typeof gameMovementAuditLogsTable.$inferSelect;
+export type GameSpecialActionAuditLog = typeof gameSpecialActionAuditLogsTable.$inferSelect;

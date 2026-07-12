@@ -1,12 +1,16 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
+import { useUser } from "@clerk/react";
 import {
+  setExtraHeaders,
+  useAcceptGame,
   useGetLobby,
   useGetMyProfile,
   useUpdateMyProfile,
   getGetMyProfileQueryKey,
   getGetLobbyQueryKey,
+  getListGamesQueryKey,
 } from "@workspace/api-client-react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
@@ -14,9 +18,12 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X } from "lucide-react";
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
+import { setDevUserId, useDevUserId } from "@/lib/dev-user";
+import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
+    open: "border-amber-500/50 text-amber-400 bg-amber-500/10",
     pending: "border-amber-500/50 text-amber-400 bg-amber-500/10",
     deploying: "border-blue-500/50 text-blue-400 bg-blue-500/10",
     active: "border-green-500/50 text-green-400 bg-green-500/10",
@@ -33,8 +40,17 @@ function StatusBadge({ status }: { status: string }) {
 export default function Lobby() {
   const { data: lobby, isLoading } = useGetLobby();
   const { data: profile } = useGetMyProfile();
+  const { user } = useUser();
+  const devUserId = useDevUserId();
+  const temporaryUsername = useTemporaryUsername();
+  void temporaryUsername;
+  const [, setLocation] = useLocation();
   const qc = useQueryClient();
   const updateProfile = useUpdateMyProfile();
+  const acceptGame = useAcceptGame();
+  const myUserId = temporaryUsernameAuthEnabled
+    ? getTemporaryUserId() ?? ""
+    : import.meta.env.DEV ? devUserId : (user?.id ?? "");
 
   const [editing, setEditing] = useState(false);
   const [callsign, setCallsign] = useState("");
@@ -73,6 +89,30 @@ export default function Lobby() {
       },
     );
   };
+
+  const acceptFromLobby = (gameId: number, options?: { switchToDevUserId?: string; password?: string }) => {
+    if (options?.switchToDevUserId && import.meta.env.DEV) {
+      setExtraHeaders({ "x-dev-user-id": options.switchToDevUserId });
+      setDevUserId(options.switchToDevUserId);
+    }
+
+    acceptGame.mutate(
+      {
+        gameId,
+        data: options?.password ? { password: options.password } : {},
+      },
+      {
+        onSuccess: (game) => {
+          qc.invalidateQueries({ queryKey: getGetLobbyQueryKey() });
+          qc.invalidateQueries({ queryKey: getListGamesQueryKey() });
+          setLocation(`/games/${game.id}`);
+        },
+      },
+    );
+  };
+
+  const otherDevUserId = devUserId === "test-user-1" ? "test-user-2" : "test-user-1";
+  const otherDevLabel = otherDevUserId === "test-user-1" ? "P1" : "P2";
 
   return (
     <Layout title="Command Lobby">
@@ -150,10 +190,10 @@ export default function Lobby() {
           </div>
         )}
 
-        {/* Pending challenges */}
+        {/* Open / pending challenges */}
         <section>
           <h2 className="flex items-center gap-2 text-xs font-mono tracking-[0.3em] uppercase text-muted-foreground mb-3">
-            <Clock className="w-3.5 h-3.5 text-amber-400" /> Incoming Challenges
+            <Clock className="w-3.5 h-3.5 text-amber-400" /> Open Challenges
           </h2>
           {isLoading ? (
             <div className="space-y-2">
@@ -162,30 +202,68 @@ export default function Lobby() {
             </div>
           ) : lobby?.pendingChallenges?.length === 0 ? (
             <div className="border border-dashed border-border rounded-md py-8 text-center text-muted-foreground text-sm">
-              No pending challenges
+              No open challenges
             </div>
           ) : (
             <div className="space-y-2">
-              {lobby?.pendingChallenges?.map(game => (
-                <Link key={game.id} href={`/games/${game.id}`}>
-                  <div data-testid={`card-challenge-${game.id}`} className="flex items-center justify-between border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 rounded-md px-4 py-3 cursor-pointer transition-colors">
+              {lobby?.pendingChallenges?.map(game => {
+                const isChallenger = game.challengerId === myUserId;
+                const canJoinFromLobby = game.status === "open" && !game.hasPassword && !isChallenger;
+                const canDevJoinOwnOpenChallenge = import.meta.env.DEV && game.status === "open" && !game.hasPassword && isChallenger;
+                const joinLabel = canDevJoinOwnOpenChallenge ? `Join as ${otherDevLabel}` : game.hasPassword ? "Enter Password" : "Join";
+                return (
+                  <div
+                    key={game.id}
+                    data-testid={`card-challenge-${game.id}`}
+                    className="flex items-center justify-between gap-3 border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 rounded-md px-4 py-3 cursor-pointer transition-colors"
+                    onClick={() => setLocation(`/games/${game.id}`)}
+                  >
                     <div className="flex items-center gap-3">
                       <Swords className="w-4 h-4 text-amber-400" />
                       <div>
                         <div className="text-sm font-semibold">{game.challengerName ?? "Unknown Commander"}</div>
                         <div className="text-xs text-muted-foreground font-mono">
                           {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
+                          {isChallenger && game.status === "open" ? " - awaiting opponent" : ""}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <StatusBadge status={game.status} />
+                      {(canJoinFromLobby || canDevJoinOwnOpenChallenge || game.hasPassword) && (
+                        <Button
+                          size="sm"
+                          variant={game.hasPassword ? "outline" : "default"}
+                          className="h-8 px-3 text-[10px] uppercase tracking-widest"
+                          disabled={acceptGame.isPending}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (game.hasPassword) {
+                              setLocation(`/games/${game.id}`);
+                              return;
+                            }
+                            acceptFromLobby(
+                              game.id,
+                              canDevJoinOwnOpenChallenge ? { switchToDevUserId: otherDevUserId } : undefined,
+                            );
+                          }}
+                          data-testid={`button-join-challenge-${game.id}`}
+                        >
+                          {joinLabel}
+                        </Button>
+                      )}
                       <ChevronRight className="w-4 h-4 text-muted-foreground" />
                     </div>
                   </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
+          )}
+          {acceptGame.isError && (
+            <p className="mt-2 text-[11px] text-red-400 font-mono" data-testid="text-lobby-accept-error">
+              {(acceptGame.error as Error).message}
+            </p>
           )}
         </section>
 

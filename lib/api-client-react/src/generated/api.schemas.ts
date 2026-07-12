@@ -30,6 +30,7 @@ export const ShipModelPriorityLevel = {
   battle: 'battle',
   war: 'war',
   armageddon: 'armageddon',
+  ancient: 'ancient',
 } as const;
 
 export interface ShipModel {
@@ -64,6 +65,7 @@ export type FleetPriorityCounts = {
   battle: number;
   war: number;
   armageddon: number;
+  ancient: number;
 };
 
 export interface Fleet {
@@ -94,6 +96,17 @@ export interface ShipInput {
   /** @minLength 1 */
   name: string;
 }
+
+/**
+ * human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.
+ */
+export type GameOpponentKind = typeof GameOpponentKind[keyof typeof GameOpponentKind];
+
+
+export const GameOpponentKind = {
+  human: 'human',
+  ai: 'ai',
+} as const;
 
 export type GameStatus = typeof GameStatus[keyof typeof GameStatus];
 
@@ -130,6 +143,7 @@ export const GamePriorityLevel = {
   battle: 'battle',
   war: 'war',
   armageddon: 'armageddon',
+  ancient: 'ancient',
 } as const;
 
 export type GameVisibility = typeof GameVisibility[keyof typeof GameVisibility];
@@ -141,7 +155,7 @@ export const GameVisibility = {
 } as const;
 
 /**
- * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.
+ * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.
  */
 export type GameCrewQualityMode = typeof GameCrewQualityMode[keyof typeof GameCrewQualityMode];
 
@@ -151,11 +165,18 @@ export const GameCrewQualityMode = {
   custom: 'custom',
 } as const;
 
+/**
+ * Latest AI setup/action diagnostic state. Empty for human games.
+ */
+export type GameAiState = { [key: string]: unknown };
+
 export interface Game {
   id: number;
   challengerId: string;
   /** @nullable */
   opponentId?: string | null;
+  /** human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation. */
+  opponentKind: GameOpponentKind;
   /** @nullable */
   challengerName?: string | null;
   /** @nullable */
@@ -206,8 +227,15 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
-  /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy. */
+  /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
+  /**
+     * AI strategy profile selected for this game. Null for human games.
+     * @nullable
+     */
+  aiProfile?: string | null;
+  /** Latest AI setup/action diagnostic state. Empty for human games. */
+  aiState?: GameAiState;
   /** True once the challenger has committed a fleet via POST /games/{id}/deploy. When both sides are true, status auto-transitions to 'active'. */
   challengerDeployed?: boolean;
   /** True once the opponent has committed a fleet via POST /games/{id}/deploy. */
@@ -226,6 +254,7 @@ export const GameInputPriorityLevel = {
   battle: 'battle',
   war: 'war',
   armageddon: 'armageddon',
+  ancient: 'ancient',
 } as const;
 
 /**
@@ -240,7 +269,18 @@ export const GameInputVisibility = {
 } as const;
 
 /**
- * standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship.
+ * Choose human for lobby matchmaking. The ai lane is contract-ready but returns 501 until the automation worker is enabled.
+ */
+export type GameInputOpponentKind = typeof GameInputOpponentKind[keyof typeof GameInputOpponentKind];
+
+
+export const GameInputOpponentKind = {
+  human: 'human',
+  ai: 'ai',
+} as const;
+
+/**
+ * standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.
  */
 export type GameInputCrewQualityMode = typeof GameInputCrewQualityMode[keyof typeof GameInputCrewQualityMode];
 
@@ -261,6 +301,8 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
+  /** Choose human for lobby matchmaking. The ai lane is contract-ready but returns 501 until the automation worker is enabled. */
+  opponentKind?: GameInputOpponentKind;
   /**
      * Required when visibility=private. Stored hashed; required again on accept.
      * @nullable
@@ -277,7 +319,7 @@ export interface GameInput {
      * @maximum 30
      */
   deploymentDepth: number;
-  /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship. */
+  /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship. */
   crewQualityMode: GameInputCrewQualityMode;
 }
 
@@ -358,6 +400,8 @@ export interface GameUnit {
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
   lastDcRound?: number;
+  /** Last round (1-based) this unit resolved Self Repair. 0 = never. */
+  lastSelfRepairRound?: number;
   /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
@@ -381,9 +425,9 @@ export interface GameUnit {
   weaponRange: number;
   weaponDamage: number;
   /**
-     * Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.
+     * Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.
      * @minimum 1
-     * @maximum 6
+     * @maximum 7
      */
   crewQuality: number;
   isDestroyed: boolean;
@@ -461,9 +505,9 @@ export interface ShipPlacement {
   hexR: number;
   heading: number;
   /**
-     * Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
+     * Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
      * @minimum 1
-     * @maximum 6
+     * @maximum 7
      */
   crewQuality?: number;
 }
@@ -801,4 +845,3 @@ export interface UpdateProfileInput {
 export type SearchPlayersParams = {
 q: string;
 };
-

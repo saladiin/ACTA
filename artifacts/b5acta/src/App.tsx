@@ -17,9 +17,12 @@ import Fleets from "@/pages/fleets";
 import NewGame from "@/pages/new-game";
 import GameBoard from "@/pages/game-board";
 import GamesList from "@/pages/games";
+import Settings from "@/pages/settings";
+import VfxShowcase from "@/pages/vfx-showcase";
 import NotFound from "@/pages/not-found";
 import { DevModeToggle } from "@/components/dev-mode-toggle";
 import { getDevUserId } from "@/lib/dev-user";
+import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
 
 // `refetchOnWindowFocus` disabled globally: while the dice-roll modal is
 // open we deliberately hold off invalidating the game query so the board
@@ -35,7 +38,8 @@ const clerkPubKey = publishableKeyFromHost(
   import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
 );
 
-const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const configuredClerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const clerkProxyUrl = clerkPubKey.startsWith("pk_test_") || temporaryUsernameAuthEnabled ? undefined : configuredClerkProxyUrl;
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function stripBase(path: string): string {
@@ -48,7 +52,10 @@ if (!clerkPubKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY in .env file");
 }
 
-if (import.meta.env.DEV) {
+if (temporaryUsernameAuthEnabled) {
+  const tempUserId = getTemporaryUserId();
+  setExtraHeaders(tempUserId ? { "x-dev-user-id": tempUserId } : null);
+} else if (import.meta.env.DEV) {
   setExtraHeaders({ "x-dev-user-id": getDevUserId() });
 }
 
@@ -143,11 +150,26 @@ function HomeRedirect() {
 }
 
 function ProtectedRoute({ component: Component }: { component: any }) {
+  const temporaryUsername = useTemporaryUsername();
+  if (temporaryUsernameAuthEnabled) {
+    return temporaryUsername ? <Component /> : <Redirect to="/sign-in" />;
+  }
   if (import.meta.env.DEV) return <Component />;
   const { isLoaded, isSignedIn } = useAuth();
   if (!isLoaded) return null;
   if (!isSignedIn) return <Redirect to="/sign-in" />;
   return <Component />;
+}
+
+function TemporaryUsernameHeaders() {
+  const temporaryUsername = useTemporaryUsername();
+  useEffect(() => {
+    if (!temporaryUsernameAuthEnabled) return;
+    const tempUserId = getTemporaryUserId();
+    setExtraHeaders(tempUserId ? { "x-dev-user-id": tempUserId } : null);
+    queryClient.clear();
+  }, [temporaryUsername]);
+  return null;
 }
 
 function ClerkProviderWithRoutes() {
@@ -167,6 +189,7 @@ function ClerkProviderWithRoutes() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <ClerkQueryClientCacheInvalidator />
+          <TemporaryUsernameHeaders />
           <Switch>
             <Route path="/" component={HomeRedirect} />
             <Route path="/sign-in/*?" component={SignInPage} />
@@ -176,6 +199,8 @@ function ClerkProviderWithRoutes() {
             <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
             <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
             <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
+            <Route path="/vfx-showcase"><ProtectedRoute component={VfxShowcase} /></Route>
+            <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
             <Route component={NotFound} />
           </Switch>
           <Toaster />

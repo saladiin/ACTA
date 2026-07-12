@@ -20,12 +20,12 @@ function numericTrait(traits: string[], names: string[]): number {
       const key = norm(name);
       if (n === key) return 0;
       if (n.startsWith(key + "-") || n.startsWith(key + " ")) {
-        const tail = raw.slice(name.length).trim().replace(/^[+]/, "");
+        const tail = raw.slice(name.length).trim().replace(/^[+:]/, "").trim();
         const m = tail.match(/^-?\d+/);
         if (m) return parseInt(m[0], 10);
       }
       if (n.startsWith(key)) {
-        const tail = raw.slice(name.length).trim().replace(/^[+]/, "");
+        const tail = raw.slice(name.length).trim().replace(/^[+:]/, "").trim();
         const m = tail.match(/^-?\d+/);
         if (m) return parseInt(m[0], 10);
       }
@@ -52,12 +52,19 @@ export interface ShipTraits {
   dodge: number;          // +X (defender rolls per hit, ≥X = miss)
   geg: number;            // X damage AND crew reduction per hit
   adaptiveArmour: boolean;// halve dmg & crew, min 1
+  ancient: boolean;
+  redundantSystems: boolean;
+  stealthPenetration: boolean;
+  selfRepairDice: number;  // Self Repair Xd6; 0 when absent
   agile: boolean;
   superManeuverable: boolean;
   lumbering: boolean;
   flightComputer: boolean;
   scout: boolean;
   fighter: boolean;
+  dogfight: number;
+  antiFighter: number;
+  advancedAntiFighter: number;
 }
 
 export function parseShipTraits(s: string | null | undefined): ShipTraits {
@@ -68,12 +75,19 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     dodge: numericTrait(t, ["Dodge"]),
     geg: numericTrait(t, ["GEG", "Gravitic Energy Grid"]),
     adaptiveArmour: hasTrait(t, ["Adaptive Armour", "Adaptive Armor"]),
+    ancient: hasTrait(t, ["Ancient"]),
+    redundantSystems: hasTrait(t, ["Redundant Systems"]),
+    stealthPenetration: hasTrait(t, ["Stealth Penetration"]),
+    selfRepairDice: numericTrait(t, ["Self Repair", "Self-Repair", "Self Repair:", "Self-repair"]),
     agile: hasTrait(t, ["Agile"]),
     superManeuverable: hasTrait(t, ["Super Maneuverable", "Super Manoeuvrable"]),
     lumbering: hasTrait(t, ["Lumbering"]),
     flightComputer: hasTrait(t, ["Flight Computer"]),
     scout: hasTrait(t, ["Scout"]),
     fighter: hasTrait(t, ["Fighter"]),
+    dogfight: numericTrait(t, ["Dogfight", "Dog Fight"]),
+    antiFighter: numericTrait(t, ["Anti-Fighter", "Anti Fighter"]),
+    advancedAntiFighter: numericTrait(t, ["Advanced Anti-Fighter", "Advanced Anti Fighter"]),
   };
 }
 
@@ -115,9 +129,9 @@ export function parseWeaponTraits(s: string | null | undefined): WeaponTraits {
     twinLinked: hasTrait(t, ["Twin Linked", "Twin-Linked"]),
     energyMine: hasTrait(t, ["Energy Mine", "Energy-Mine"]),
     massDriver: hasTrait(t, ["Mass Driver", "Mass-Driver"]),
-    doubleDamage: hasTrait(t, ["Double Damage", "Double-Damage"]),
-    tripleDamage: hasTrait(t, ["Triple Damage", "Triple-Damage"]),
-    quadDamage: hasTrait(t, ["Quad Damage", "Quad-Damage"]),
+    doubleDamage: hasTrait(t, ["Double Damage", "Double-Damage", "X2 Damage", "x2 Damage"]),
+    tripleDamage: hasTrait(t, ["Triple Damage", "Triple-Damage", "X3 Damage", "x3 Damage"]),
+    quadDamage: hasTrait(t, ["Quad Damage", "Quad-Damage", "X4 Damage", "x4 Damage"]),
     precise: hasTrait(t, ["Precise"]),
     slowLoading: hasTrait(t, ["Slow Loading", "Slow-Loading"]),
     oneShot: hasTrait(t, ["One-shot", "One Shot", "Oneshot"]),

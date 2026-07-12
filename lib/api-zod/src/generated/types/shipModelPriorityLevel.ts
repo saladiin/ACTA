@@ -16,4 +16,5 @@ export const ShipModelPriorityLevel = {
   battle: 'battle',
   war: 'war',
   armageddon: 'armageddon',
+  ancient: 'ancient',
 } as const;

@@ -11,29 +11,52 @@ import type { Weapon } from "@workspace/api-client-react";
 // raycasting so they never intercept ship clicks.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type WeaponClass = "beam" | "tracer" | "missile";
+export type WeaponClass = "beam" | "tracer" | "missile" | "energy-mine";
 
 const FACTION_BEAM_COLOR: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
   "Minbari Federation": "#22ff66",
   "Shadows": "#b85cff",
 };
+const SHADOW_SLICER_COLOR = "#b85cff";
 const DEFAULT_BEAM_COLOR = "#ff2a2a";
-const TRACER_COLOR = "#ffa040";
+const TRACER_COLOR = "#76bb40";
+const TRACER_IMPACT_COLOR = "#96d35f";
+const TRACER_TUNING = {
+  speed: 1,
+  size: 0.3,
+  fade: 2.9,
+  intensity: 1,
+  count: 7,
+};
 const MISSILE_BODY_COLOR = "#ffd089";
 const MISSILE_IMPACT_COLOR = "#ff7733";
+const ENERGY_MINE_TUNING = {
+  color: "#f5f5f4",
+  secondaryColor: "#6e6ce4",
+  speed: 0.9,
+  size: 1.1,
+  fade: 1,
+  intensity: 1,
+  arc: 2.5,
+  thickness: 1,
+};
 
 // Match ACTA-style traits on the `traits` text field. Missiles are detected
 // by name because the "Missile" trait isn't reliably present in the dataset.
 export function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): WeaponClass {
   const traits = (weapon.traits ?? "").toLowerCase();
   const name = (weapon.name ?? "").toLowerCase();
+  if (name.includes("energy mine") || /\benergy[- ]?mine\b/.test(traits)) return "energy-mine";
   if (name.includes("missile")) return "missile";
+  if (name.includes("molecular slicer")) return "beam";
+  if (name.includes("laser")) return "beam";
   if (/\bmini[- ]?beam\b/.test(traits) || /\bbeam\b/.test(traits)) return "beam";
   return "tracer";
 }
 
-export function beamColorFor(faction: string): string {
+export function beamColorFor(faction: string, weapon?: Pick<Weapon, "name">): string {
+  if ((weapon?.name ?? "").toLowerCase().includes("molecular slicer")) return SHADOW_SLICER_COLOR;
   return FACTION_BEAM_COLOR[faction] ?? DEFAULT_BEAM_COLOR;
 }
 
@@ -126,6 +149,7 @@ function TravellingProjectile({
   size = 0.16,
   arcHeight = 0,
   fadeMs = 180,
+  intensity = 1,
   ribbonTrail = false,
   ribbonLengthT = 0.1,
   ribbonWidth = 0.16,
@@ -139,6 +163,7 @@ function TravellingProjectile({
   size?: number;
   arcHeight?: number;
   fadeMs?: number;
+  intensity?: number;
   ribbonTrail?: boolean;
   ribbonLengthT?: number;
   ribbonWidth?: number;
@@ -170,13 +195,13 @@ function TravellingProjectile({
     const current = pointAt(t);
     groupRef.current.position.copy(current);
     if (t < 1) {
-      matRef.current.opacity = 1;
-      if (trailRef.current) trailRef.current.opacity = 0.45;
+      matRef.current.opacity = intensity;
+      if (trailRef.current) trailRef.current.opacity = 0.45 * intensity;
     } else {
       const fadeT = (elapsed - travelMs) / fadeMs;
       const a = Math.max(0, 1 - fadeT);
-      matRef.current.opacity = a;
-      if (trailRef.current) trailRef.current.opacity = a * 0.45;
+      matRef.current.opacity = a * intensity;
+      if (trailRef.current) trailRef.current.opacity = a * 0.45 * intensity;
     }
     if (ribbonTrail && ribbonRef.current && trailRef.current) {
       const tail = pointAt(Math.max(0, t - ribbonLengthT));
@@ -252,7 +277,10 @@ function TracerSalvoFx({
 }) {
   const startRef = useRef<number>(performance.now());
   // Cap count so very high-AD weapons (e.g. 14D Heavy Pulse) don't spawn a wall.
-  const n = Math.max(1, Math.min(count, 8));
+  const n = Math.max(1, Math.min(count, TRACER_TUNING.count));
+  const travelMs = 340 / TRACER_TUNING.speed;
+  const fadeMs = 180 * TRACER_TUNING.fade;
+  const projectileSize = 0.16 * TRACER_TUNING.size;
   return (
     <>
       {Array.from({ length: n }).map((_, i) => (
@@ -262,9 +290,11 @@ function TracerSalvoFx({
           to={to}
           color={color}
           delayMs={i * 65}
-          travelMs={340}
+          travelMs={travelMs}
           startRef={startRef}
-          size={0.16}
+          size={projectileSize}
+          fadeMs={fadeMs}
+          intensity={TRACER_TUNING.intensity}
         />
       ))}
     </>
@@ -310,6 +340,121 @@ function MissileVolleyFx({
 }
 
 // ── Impact flash at the target ─────────────────────────────────────────────
+// Energy Mine: one matter-cannon style projectile followed by a violet area ring.
+function EnergyMineFx({
+  from,
+  to,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+}) {
+  const startRef = useRef<number>(performance.now());
+  const travelMs = 620 / ENERGY_MINE_TUNING.speed;
+  return (
+    <>
+      <TravellingProjectile
+        from={from}
+        to={to}
+        color={ENERGY_MINE_TUNING.color}
+        delayMs={0}
+        travelMs={travelMs}
+        startRef={startRef}
+        size={0.16 * ENERGY_MINE_TUNING.size}
+        arcHeight={0}
+        fadeMs={260 * ENERGY_MINE_TUNING.fade}
+        intensity={ENERGY_MINE_TUNING.intensity}
+        ribbonTrail
+        ribbonLengthT={0.14}
+        ribbonWidth={0.2 * ENERGY_MINE_TUNING.size}
+      />
+      <EnergyMineDetonationRing
+        position={to}
+        delayMs={travelMs}
+        color={ENERGY_MINE_TUNING.secondaryColor}
+        coreColor={ENERGY_MINE_TUNING.color}
+        size={ENERGY_MINE_TUNING.size}
+        thickness={ENERGY_MINE_TUNING.thickness}
+        intensity={ENERGY_MINE_TUNING.intensity}
+      />
+    </>
+  );
+}
+
+function EnergyMineDetonationRing({
+  position,
+  delayMs,
+  color,
+  coreColor,
+  size,
+  thickness,
+  intensity,
+}: {
+  position: THREE.Vector3;
+  delayMs: number;
+  color: string;
+  coreColor: string;
+  size: number;
+  thickness: number;
+  intensity: number;
+}) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const ringMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const startRef = useRef<number>(performance.now());
+
+  useFrame(() => {
+    const elapsed = performance.now() - startRef.current - delayMs;
+    if (elapsed < 0) {
+      if (ringMatRef.current) ringMatRef.current.opacity = 0;
+      if (coreMatRef.current) coreMatRef.current.opacity = 0;
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
+    const t = Math.min(1, elapsed / 1150);
+    const ringScale = (0.6 + t * 5.0) * size;
+    const coreScale = (0.35 + Math.sin(t * Math.PI) * 0.4) * size;
+    const ringAlpha = Math.max(0, 1 - t) * 0.85 * intensity;
+    const coreAlpha = Math.sin(t * Math.PI) * 0.55 * intensity;
+    if (ringRef.current) ringRef.current.scale.setScalar(ringScale);
+    if (coreRef.current) coreRef.current.scale.setScalar(coreScale);
+    if (ringMatRef.current) ringMatRef.current.opacity = ringAlpha;
+    if (coreMatRef.current) coreMatRef.current.opacity = coreAlpha;
+    if (lightRef.current) lightRef.current.intensity = (ringAlpha + coreAlpha) * 4.5;
+  });
+
+  return (
+    <group position={[position.x, 0.45, position.z]}>
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
+        <torusGeometry args={[0.55, 0.02 * thickness, 8, 96]} />
+        <meshBasicMaterial
+          ref={ringMatRef}
+          color={color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh ref={coreRef} raycast={() => null}>
+        <sphereGeometry args={[1, 16, 16]} />
+        <meshBasicMaterial
+          ref={coreMatRef}
+          color={coreColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color={color} distance={9} decay={2} intensity={0} />
+    </group>
+  );
+}
+
 function ImpactFlash({
   position,
   color,
@@ -386,7 +531,7 @@ export function WeaponFx({
   const kind = classifyWeapon(weapon);
 
   if (kind === "beam") {
-    const color = beamColorFor(attackerFaction);
+    const color = beamColorFor(attackerFaction, weapon);
     return (
       <>
         <BeamFx from={from} to={to} color={color} />
@@ -421,6 +566,10 @@ export function WeaponFx({
     );
   }
 
+  if (kind === "energy-mine") {
+    return <EnergyMineFx from={from} to={to} />;
+  }
+
   // Tracer (cannons / mass drivers / ion / pulse).
   return (
     <>
@@ -429,7 +578,7 @@ export function WeaponFx({
         <ImpactFlash
           key={i}
           position={to}
-          color={TRACER_COLOR}
+          color={TRACER_IMPACT_COLOR}
           delayMs={380 + i * 70}
           size={0.5}
         />

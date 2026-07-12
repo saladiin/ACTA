@@ -5,7 +5,9 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { GameAiState } from './gameAiState';
 import type { GameCrewQualityMode } from './gameCrewQualityMode';
+import type { GameOpponentKind } from './gameOpponentKind';
 import type { GamePhase } from './gamePhase';
 import type { GamePriorityLevel } from './gamePriorityLevel';
 import type { GameStatus } from './gameStatus';
@@ -16,6 +18,8 @@ export interface Game {
   challengerId: string;
   /** @nullable */
   opponentId?: string | null;
+  /** human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation. */
+  opponentKind: GameOpponentKind;
   /** @nullable */
   challengerName?: string | null;
   /** @nullable */
@@ -66,8 +70,15 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
-  /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy. */
+  /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
+  /**
+     * AI strategy profile selected for this game. Null for human games.
+     * @nullable
+     */
+  aiProfile?: string | null;
+  /** Latest AI setup/action diagnostic state. Empty for human games. */
+  aiState?: GameAiState;
   /** True once the challenger has committed a fleet via POST /games/{id}/deploy. When both sides are true, status auto-transitions to 'active'. */
   challengerDeployed?: boolean;
   /** True once the opponent has committed a fleet via POST /games/{id}/deploy. */

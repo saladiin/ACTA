@@ -2,18 +2,25 @@ import { getAuth } from "@clerk/express";
 import { clerkClient } from "@clerk/express";
 import type { Request, Response, NextFunction } from "express";
 
-// DEV-ONLY player-switch override. When NOT running in production, an
-// `x-dev-user-id` request header lets a single tester act as either commander
-// (e.g. test-user-1 / test-user-2) so they can set up and play both sides of a
-// game without two real Clerk accounts. This is the mechanism the b5acta dev
-// toggle drives. It is hard-gated on NODE_ENV: the published deployment runs
-// with NODE_ENV=production (see artifact.toml), so the header is ALWAYS ignored
-// there and can never be used to impersonate a real user.
-function getDevOverrideUserId(req: Request): string | null {
-  if (process.env.NODE_ENV === "production") return null;
+function temporaryUsernameAuthEnabled(): boolean {
+  return process.env.B5_USERNAME_AUTH === "true" || process.env.B5_TEMP_USERNAME_AUTH === "true";
+}
+
+function isTemporaryUserId(id: string): boolean {
+  return id.startsWith("temp-user:");
+}
+
+// DEV player-switch override, plus an explicitly-enabled temporary callsign
+// mode for local/TailScale testing without Clerk email/password auth.
+function getHeaderOverrideUserId(req: Request): { userId: string; skipAllowlist: boolean } | null {
   const header = req.header("x-dev-user-id");
   const id = header?.trim();
-  return id ? id : null;
+  if (!id) return null;
+  if (process.env.NODE_ENV !== "production") return { userId: id, skipAllowlist: false };
+  if (temporaryUsernameAuthEnabled() && isTemporaryUserId(id)) {
+    return { userId: id, skipAllowlist: true };
+  }
+  return null;
 }
 
 const accessCache = new Map<string, boolean>();
@@ -56,15 +63,20 @@ async function isAllowedRemoteUser(userId: string): Promise<boolean> {
 }
 
 export const requireAuth = (req: Request, res: Response, next: NextFunction): void => {
-  const devUserId = getDevOverrideUserId(req);
-  if (devUserId) {
-    void isAllowedRemoteUser(devUserId)
+  const headerOverride = getHeaderOverrideUserId(req);
+  if (headerOverride) {
+    if (headerOverride.skipAllowlist) {
+      (req as any).userId = headerOverride.userId;
+      next();
+      return;
+    }
+    void isAllowedRemoteUser(headerOverride.userId)
       .then((ok) => {
         if (!ok) {
           res.status(403).json({ title: "Forbidden", detail: "This account is not on the game access list." });
           return;
         }
-        (req as any).userId = devUserId;
+        (req as any).userId = headerOverride.userId;
         next();
       })
       .catch(next);

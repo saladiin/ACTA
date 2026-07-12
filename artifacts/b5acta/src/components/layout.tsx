@@ -1,12 +1,14 @@
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, Shield, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { LogOut, LayoutDashboard, Crosshair, List, Shield, PanelLeftClose, PanelLeftOpen, Settings, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useInputProfile } from "@/hooks/use-input-profile";
+import { clearTemporaryUsername, temporaryUsernameAuthEnabled } from "@/lib/temporary-user";
 
 export function Layout({ children, title }: { children: ReactNode; title?: string }) {
   const { signOut } = useClerk();
+  const [, setLocation] = useLocation();
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const inputProfile = useInputProfile();
   const mobileChrome = inputProfile.layout === "compact" || inputProfile.input === "touch";
@@ -78,12 +80,27 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
             <Crosshair className="w-4 h-4" />
             <span className="text-sm font-medium tracking-wide uppercase">Active Ops</span>
           </Link>
+          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+            <Sparkles className="w-4 h-4" />
+            <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
+          </Link>
+          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/settings" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+            <Settings className="w-4 h-4" />
+            <span className="text-sm font-medium tracking-wide uppercase">Settings</span>
+          </Link>
         </nav>
         <div className={`p-4 border-t border-border mt-auto ${mobileChrome ? "block safe-bottom" : "hidden md:block"}`}>
           <Button 
             variant="ghost" 
             className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 uppercase tracking-widest text-xs"
-            onClick={() => signOut({ redirectUrl: basePath || "/" })}
+            onClick={() => {
+              if (temporaryUsernameAuthEnabled) {
+                clearTemporaryUsername();
+                setLocation("/sign-in", { replace: true });
+                return;
+              }
+              signOut({ redirectUrl: basePath || "/" });
+            }}
           >
             <LogOut className="w-4 h-4" />
             Disengage

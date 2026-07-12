@@ -1746,6 +1746,76 @@ export const useRollInitiative = <TError = ErrorType<void>,
       return useMutation(getRollInitiativeMutationOptions(options));
     }
 
+export const getRunAiStepUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/ai/step`
+}
+
+/**
+ * @summary Run one debug AI step for an AI opponent game. Initial implementation only rolls AI initiative when applicable.
+ */
+export const runAiStep = async (gameId: number, options?: RequestInit): Promise<Game> => {
+
+  return customFetch<Game>(getRunAiStepUrl(gameId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRunAiStepMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAiStep>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runAiStep>>, TError,{gameId: number}, TContext> => {
+
+const mutationKey = ['runAiStep'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runAiStep>>, {gameId: number}> = (props) => {
+          const {gameId} = props ?? {};
+
+          return  runAiStep(gameId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunAiStepMutationResult = NonNullable<Awaited<ReturnType<typeof runAiStep>>>
+
+    export type RunAiStepMutationError = ErrorType<void>
+
+    /**
+ * @summary Run one debug AI step for an AI opponent game. Initial implementation only rolls AI initiative when applicable.
+ */
+export const useRunAiStep = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAiStep>>, TError,{gameId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runAiStep>>,
+        TError,
+        {gameId: number},
+        TContext
+      > => {
+      return useMutation(getRunAiStepMutationOptions(options));
+    }
+
 export const getChooseFirstActivatorUrl = (gameId: number,) => {
 
 

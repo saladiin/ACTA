@@ -70,7 +70,13 @@ export function clerkProxyMiddleware(): RequestHandler {
       path.replace(new RegExp(`^${CLERK_PROXY_PATH}`), ""),
     on: {
       proxyReq: (proxyReq, req) => {
-        const protocol = req.headers["x-forwarded-proto"] || "https";
+        const forwardedProto = req.headers["x-forwarded-proto"];
+        const protocol =
+          (Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto)
+            ?.split(",")[0]
+            ?.trim() ||
+          req.protocol ||
+          "https";
         const host = getClerkProxyHost(req) || "";
         const proxyUrl = `${protocol}://${host}${CLERK_PROXY_PATH}`;
 

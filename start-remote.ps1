@@ -36,6 +36,8 @@ $env:NODE_ENV = "production"
 $env:BASE_PATH = "/"
 $env:PORT = "$Port"
 $env:B5_SERVE_WEB = "true"
+$env:B5_USERNAME_AUTH = "true"
+$env:VITE_B5_USERNAME_AUTH = "true"
 $env:VITE_CLERK_PROXY_URL = "/api/__clerk"
 if ($AllowedUsers.Trim() -ne "") { $env:B5_ALLOWED_USERS = $AllowedUsers.Trim() }
 if ($AllowedOrigins.Trim() -ne "") { $env:B5_ALLOWED_ORIGINS = $AllowedOrigins.Trim() }
@@ -67,7 +69,7 @@ try {
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-Command",
-    "`$env:PATH='$($env:PATH)'; `$env:NODE_ENV='production'; `$env:PORT='$Port'; `$env:DATABASE_URL='$($env:DATABASE_URL)'; `$env:CLERK_SECRET_KEY='$($env:CLERK_SECRET_KEY)'; `$env:CLERK_PUBLISHABLE_KEY='$($env:CLERK_PUBLISHABLE_KEY)'; `$env:B5_SERVE_WEB='true'; `$env:B5_ALLOWED_USERS='$($env:B5_ALLOWED_USERS)'; `$env:B5_ALLOWED_ORIGINS='$($env:B5_ALLOWED_ORIGINS)'; cd '$root'; pnpm --filter @workspace/api-server run start *> '$apiLog'"
+    "`$env:PATH='$($env:PATH)'; `$env:NODE_ENV='production'; `$env:PORT='$Port'; `$env:DATABASE_URL='$($env:DATABASE_URL)'; `$env:CLERK_SECRET_KEY='$($env:CLERK_SECRET_KEY)'; `$env:CLERK_PUBLISHABLE_KEY='$($env:CLERK_PUBLISHABLE_KEY)'; `$env:B5_SERVE_WEB='true'; `$env:B5_USERNAME_AUTH='true'; `$env:B5_ALLOWED_USERS='$($env:B5_ALLOWED_USERS)'; `$env:B5_ALLOWED_ORIGINS='$($env:B5_ALLOWED_ORIGINS)'; cd '$root'; pnpm --filter @workspace/api-server run start *> '$apiLog'"
   )
 }
 finally {

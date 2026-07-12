@@ -25,7 +25,7 @@ export const ListShipModelsResponseItem = zod.object({
   "filename": zod.string(),
   "faction": zod.string(),
   "pointCost": zod.number(),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "hullPoints": zod.number(),
   "speed": zod.number(),
   "weaponRange": zod.number(),
@@ -62,7 +62,8 @@ export const ListFleetsResponseItem = zod.object({
   "raid": zod.number(),
   "battle": zod.number(),
   "war": zod.number(),
-  "armageddon": zod.number()
+  "armageddon": zod.number(),
+  "ancient": zod.number()
 }),
   "createdAt": zod.coerce.date()
 })
@@ -99,7 +100,8 @@ export const GetFleetResponse = zod.object({
   "raid": zod.number(),
   "battle": zod.number(),
   "war": zod.number(),
-  "armageddon": zod.number()
+  "armageddon": zod.number(),
+  "ancient": zod.number()
 }),
   "createdAt": zod.coerce.date()
 })
@@ -131,7 +133,7 @@ export const ListFleetShipsResponseItem = zod.object({
   "filename": zod.string(),
   "faction": zod.string(),
   "pointCost": zod.number(),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "hullPoints": zod.number(),
   "speed": zod.number(),
   "weaponRange": zod.number(),
@@ -192,6 +194,7 @@ export const ListGamesResponseItem = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -208,12 +211,14 @@ export const ListGamesResponseItem = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -227,6 +232,7 @@ export const ListGamesResponse = zod.array(ListGamesResponseItem)
  */
 export const createGameBodyAllocationPointsMax = 99;
 
+export const createGameBodyOpponentKindDefault = `human`;
 export const createGameBodyDeploymentDepthMin = 4;
 export const createGameBodyDeploymentDepthMax = 30;
 
@@ -234,13 +240,14 @@ export const createGameBodyDeploymentDepthMax = 30;
 
 export const CreateGameBody = zod.object({
   "pointLimit": zod.number().optional().describe('Legacy optional point field. Ignored when allocationPoints is supplied.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "allocationPoints": zod.number().min(1).max(createGameBodyAllocationPointsMax),
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
+  "opponentKind": zod.enum(['human', 'ai']).default(createGameBodyOpponentKindDefault).describe('Choose human for lobby matchmaking. The ai lane is contract-ready but returns 501 until the automation worker is enabled.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
   "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.'),
   "deploymentDepth": zod.number().min(createGameBodyDeploymentDepthMin).max(createGameBodyDeploymentDepthMax).describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).describe('standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship.')
+  "crewQualityMode": zod.enum(['standard', 'custom']).describe('standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.')
 })
 
 
@@ -255,7 +262,7 @@ export const GetGameParams = zod.object({
 export const getGameResponseGameDeploymentDepthMin = 4;
 export const getGameResponseGameDeploymentDepthMax = 30;
 
-export const getGameResponseUnitsItemCrewQualityMax = 6;
+export const getGameResponseUnitsItemCrewQualityMax = 7;
 
 
 
@@ -264,6 +271,7 @@ export const GetGameResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -280,12 +288,14 @@ export const GetGameResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -305,6 +315,7 @@ export const GetGameResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
@@ -335,7 +346,7 @@ export const GetGameResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "crewQuality": zod.number().min(1).max(getGameResponseUnitsItemCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "crewQuality": zod.number().min(1).max(getGameResponseUnitsItemCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -388,6 +399,7 @@ export const AcceptGameResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -404,12 +416,14 @@ export const AcceptGameResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -434,6 +448,7 @@ export const DeclineGameResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -450,12 +465,14 @@ export const DeclineGameResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -488,6 +505,7 @@ export const ConcedeGameResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -504,12 +522,14 @@ export const ConcedeGameResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(concedeGameResponseDeploymentDepthMin).max(concedeGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -524,7 +544,7 @@ export const DeployFleetParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
-export const deployFleetBodyPlacementsItemCrewQualityMax = 6;
+export const deployFleetBodyPlacementsItemCrewQualityMax = 7;
 
 
 
@@ -537,7 +557,7 @@ export const DeployFleetBody = zod.object({
   "hexQ": zod.number(),
   "hexR": zod.number(),
   "heading": zod.number(),
-  "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.')
+  "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.')
 })).min(1)
 })
 
@@ -551,6 +571,7 @@ export const DeployFleetResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -567,12 +588,14 @@ export const DeployFleetResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -642,6 +665,7 @@ export const ActivateUnitResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -658,12 +682,14 @@ export const ActivateUnitResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -688,6 +714,7 @@ export const EndActivationResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -704,12 +731,14 @@ export const EndActivationResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -838,6 +867,7 @@ export const RollInitiativeResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -854,12 +884,63 @@ export const RollInitiativeResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(rollInitiativeResponseDeploymentDepthMin).max(rollInitiativeResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Run one debug AI step for an AI opponent game. Initial implementation only rolls AI initiative when applicable.
+ */
+export const RunAiStepParams = zod.object({
+  "gameId": zod.coerce.number()
+})
+
+
+export const runAiStepResponseDeploymentDepthMin = 4;
+export const runAiStepResponseDeploymentDepthMax = 30;
+
+
+
+export const RunAiStepResponse = zod.object({
+  "id": zod.number(),
+  "challengerId": zod.string(),
+  "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
+  "challengerName": zod.string().nullish(),
+  "opponentName": zod.string().nullish(),
+  "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
+  "winnerId": zod.string().nullish(),
+  "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['initiative', 'movement', 'firing', 'end']),
+  "initiativeWinnerId": zod.string().nullish(),
+  "initiativeChallengerRoll": zod.number().nullish().describe('Challenger\'s 2d6 initiative roll for the current round (null if not yet rolled or already consumed).'),
+  "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
+  "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
+  "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "deploymentDepth": zod.number().min(runAiStepResponseDeploymentDepthMin).max(runAiStepResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -888,6 +969,7 @@ export const ChooseFirstActivatorResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -904,12 +986,14 @@ export const ChooseFirstActivatorResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(chooseFirstActivatorResponseDeploymentDepthMin).max(chooseFirstActivatorResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -934,6 +1018,7 @@ export const PassEndPhaseResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -950,12 +1035,14 @@ export const PassEndPhaseResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(passEndPhaseResponseDeploymentDepthMin).max(passEndPhaseResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -975,7 +1062,7 @@ export const DamageControlBody = zod.object({
   "effectId": zod.number().describe('id of the unit_critical_effects row to repair.')
 })
 
-export const damageControlResponseUnitCrewQualityMax = 6;
+export const damageControlResponseUnitCrewQualityMax = 7;
 
 
 
@@ -1001,6 +1088,7 @@ export const DamageControlResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
@@ -1031,7 +1119,7 @@ export const DamageControlResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "crewQuality": zod.number().min(1).max(damageControlResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "crewQuality": zod.number().min(1).max(damageControlResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -1063,7 +1151,7 @@ export const ChooseSpecialActionBody = zod.object({
   "targetUnitId": zod.number().nullish().describe('Required for \'concentrate-fire\' — the nominated enemy unit id.')
 })
 
-export const chooseSpecialActionResponseUnitCrewQualityMax = 6;
+export const chooseSpecialActionResponseUnitCrewQualityMax = 7;
 
 
 
@@ -1088,6 +1176,7 @@ export const ChooseSpecialActionResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
@@ -1118,7 +1207,7 @@ export const ChooseSpecialActionResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "crewQuality": zod.number().min(1).max(chooseSpecialActionResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "crewQuality": zod.number().min(1).max(chooseSpecialActionResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -1150,7 +1239,7 @@ export const ChooseScoutActionBody = zod.object({
   "targetUnitId": zod.number().describe('Enemy unit id to support against. Must be within 36\" of the Scout.')
 })
 
-export const chooseScoutActionResponseUnitCrewQualityMax = 6;
+export const chooseScoutActionResponseUnitCrewQualityMax = 7;
 
 
 
@@ -1175,6 +1264,7 @@ export const ChooseScoutActionResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
@@ -1205,7 +1295,7 @@ export const ChooseScoutActionResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "crewQuality": zod.number().min(1).max(chooseScoutActionResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "crewQuality": zod.number().min(1).max(chooseScoutActionResponseUnitCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -1238,7 +1328,7 @@ export const MoveUnitBody = zod.object({
   "newHeading": zod.number()
 })
 
-export const moveUnitResponseCrewQualityMax = 6;
+export const moveUnitResponseCrewQualityMax = 7;
 
 
 
@@ -1286,7 +1376,7 @@ export const MoveUnitResponse = zod.object({
   "turns": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
-  "crewQuality": zod.number().min(1).max(moveUnitResponseCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.'),
+  "crewQuality": zod.number().min(1).max(moveUnitResponseCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
   "isDestroyed": zod.boolean(),
   "hasMovedThisRound": zod.boolean(),
   "hasFiredThisRound": zod.boolean(),
@@ -1326,6 +1416,7 @@ export const GetLobbyResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -1342,12 +1433,14 @@ export const GetLobbyResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -1357,6 +1450,7 @@ export const GetLobbyResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -1373,12 +1467,14 @@ export const GetLobbyResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -1388,6 +1484,7 @@ export const GetLobbyResponse = zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
   "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
@@ -1404,12 +1501,14 @@ export const GetLobbyResponse = zod.object({
   "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
   "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
-  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
-  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
   "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
   "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
   "createdAt": zod.coerce.date(),
@@ -1471,5 +1570,3 @@ export const UpdateMyProfileResponse = zod.object({
   "gamesPlayed": zod.number(),
   "avatarUrl": zod.string().nullish()
 })
-
-

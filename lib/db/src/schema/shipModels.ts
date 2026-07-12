@@ -9,6 +9,7 @@ export const shipModelsTable = pgTable("ship_models", {
   faction: text("faction").notNull(),
   pointCost: integer("point_cost").notNull().default(100),
   priorityLevel: text("priority_level").notNull().default("raid"),
+  aiProfile: text("ai_profile").notNull().default("brawler"),
   // ACTA core stats
   shipClass: text("ship_class"),
   hull: integer("hull"),                         // armour dice (1-6)
@@ -29,7 +30,7 @@ export const shipModelsTable = pgTable("ship_models", {
   shieldRegenRate: integer("shield_regen_rate").notNull().default(0),
   traits: text("traits"),
   smallCraft: text("small_craft"),
-  baseRadiusInches: real("base_radius_inches").notNull().default(1.2),
+  baseRadiusInches: real("base_radius_inches").notNull().default(0.8),
   // Legacy single-weapon summary (kept for backward compat with game_units)
   hullPoints: integer("hull_points").notNull().default(10),
   weaponRange: integer("weapon_range").notNull().default(4),

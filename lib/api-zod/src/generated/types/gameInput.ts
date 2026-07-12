@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { GameInputCrewQualityMode } from './gameInputCrewQualityMode';
+import type { GameInputOpponentKind } from './gameInputOpponentKind';
 import type { GameInputPriorityLevel } from './gameInputPriorityLevel';
 import type { GameInputVisibility } from './gameInputVisibility';
 
@@ -20,6 +21,8 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
+  /** Choose human for lobby matchmaking. The ai lane is contract-ready but returns 501 until the automation worker is enabled. */
+  opponentKind?: GameInputOpponentKind;
   /**
      * Required when visibility=private. Stored hashed; required again on accept.
      * @nullable
@@ -36,6 +39,6 @@ export interface GameInput {
      * @maximum 30
      */
   deploymentDepth: number;
-  /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship. */
+  /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship. */
   crewQualityMode: GameInputCrewQualityMode;
 }

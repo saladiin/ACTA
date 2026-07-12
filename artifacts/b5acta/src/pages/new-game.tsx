@@ -11,13 +11,14 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Swords, Globe2, Lock } from "lucide-react";
+import { Swords, Globe2, Lock, UserRound, Cpu } from "lucide-react";
 import { PRIORITY_LEVELS, type PriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 export default function NewGame() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
   const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [opponentKind, setOpponentKind] = useState<"human" | "ai">("human");
   const [password, setPassword] = useState("");
   const [selectedFleet, setSelectedFleet] = useState<string>("");
   const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>("raid");
@@ -44,6 +45,7 @@ export default function NewGame() {
           priorityLevel,
           allocationPoints: fap,
           visibility,
+          opponentKind,
           password: visibility === "private" ? password : null,
           fleetId: selectedFleet ? parseInt(selectedFleet) : null,
           deploymentDepth,
@@ -157,7 +159,42 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(4, `Deployment Zone Depth - ${deploymentDepth}"`)}
+          {sectionHeader(4, "Opponent")}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              data-testid="button-opponent-human"
+              onClick={() => setOpponentKind("human")}
+              className={`flex items-center gap-2 px-4 py-3 rounded-md border text-sm font-mono uppercase tracking-wider transition-colors ${
+                opponentKind === "human"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <UserRound className="w-4 h-4" /> Human
+            </button>
+            <button
+              type="button"
+              data-testid="button-opponent-ai"
+              onClick={() => setOpponentKind("ai")}
+              className={`flex items-center gap-2 px-4 py-3 rounded-md border text-sm font-mono uppercase tracking-wider transition-colors ${
+                opponentKind === "ai"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              <Cpu className="w-4 h-4" /> AI
+            </button>
+          </div>
+          {opponentKind === "ai" && (
+            <p className="mt-2 text-[11px] text-amber-400 font-mono">
+              AI fleet auto-deploys and can be stepped from the game board.
+            </p>
+          )}
+        </section>
+
+        <section>
+          {sectionHeader(5, `Deployment Zone Depth - ${deploymentDepth}"`)}
           <input
             type="range"
             min={4}
@@ -176,7 +213,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(5, "Crew Quality")}
+          {sectionHeader(6, "Crew Quality")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -202,13 +239,13 @@ export default function NewGame() {
               }`}
             >
               <span className="text-sm font-mono uppercase tracking-wider">Custom</span>
-              <span className="text-[10px] font-mono opacity-80">Assign CQ 1-6 per ship at deploy</span>
+              <span className="text-[10px] font-mono opacity-80">Assign CQ 1-7 per ship at deploy</span>
             </button>
           </div>
         </section>
 
         <section>
-          {sectionHeader(6, "Prefab Fleet (optional)")}
+          {sectionHeader(7, "Prefab Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
               <SelectValue placeholder="Choose later in the deployment screen..." />
@@ -253,4 +290,3 @@ export default function NewGame() {
     </Layout>
   );
 }
-

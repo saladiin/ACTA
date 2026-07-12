@@ -459,6 +459,23 @@ paths:
                 $ref: "#/components/schemas/Game"
         "400": { description: "Not in initiative phase, not a participant, or already rolled this round." }
 
+  /games/{gameId}/ai/step:
+    post:
+      operationId: runAiStep
+      tags: [turns]
+      summary: Run one debug AI step for an AI opponent game. Initial implementation only rolls AI initiative when applicable.
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: AI step completed or no-op diagnostic recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "400": { description: "Game is not active, not an AI game, or AI has no legal step." }
+        "403": { description: "Only the human participant can run the debug AI step." }
+
   /games/{gameId}/choose-first-activator:
     post:
       operationId: chooseFirstActivator
@@ -697,7 +714,7 @@ components:
         filename: { type: string }
         faction:  { type: string }
         pointCost:    { type: integer }
-        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon] }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
         hullPoints:   { type: integer }
         speed:        { type: integer }
         weaponRange:  { type: integer }
@@ -722,7 +739,7 @@ components:
         shipCount:   { type: integer }
         priorityCounts:
           type: object
-          required: [patrol, skirmish, raid, battle, war, armageddon]
+          required: [patrol, skirmish, raid, battle, war, armageddon, ancient]
           properties:
             patrol:     { type: integer }
             skirmish:   { type: integer }
@@ -730,6 +747,7 @@ components:
             battle:     { type: integer }
             war:        { type: integer }
             armageddon: { type: integer }
+            ancient: { type: integer }
         createdAt:   { type: string, format: date-time }
 
     FleetInput:
@@ -757,11 +775,12 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, createdAt, updatedAt]
+      required: [id, challengerId, opponentKind, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
         opponentId:   { type: ["string", "null"] }
+        opponentKind: { type: string, enum: [human, ai], description: "human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation." }
         challengerName: { type: ["string", "null"] }
         opponentName:   { type: ["string", "null"] }
         status:       { type: string, enum: [open, pending, deploying, active, completed, declined] }
@@ -778,12 +797,14 @@ components:
         endPhaseChallengerPassed: { type: boolean, description: "True once the challenger has passed the current end phase. Reset at start of each end phase." }
         endPhaseOpponentPassed:   { type: boolean, description: "True once the opponent has passed the current end phase. Reset at start of each end phase." }
         pointLimit:   { type: integer, description: "Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility." }
-        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon], description: "Scenario Priority Level used for ACTA Fleet Allocation Point costs." }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient], description: "Scenario Priority Level used for ACTA Fleet Allocation Point costs." }
         allocationPoints: { type: integer, minimum: 1, description: "Fleet Allocation Points available to each commander." }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
-        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy." }
+        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy." }
+        aiProfile: { type: ["string", "null"], description: "AI strategy profile selected for this game. Null for human games." }
+        aiState: { type: object, additionalProperties: true, description: "Latest AI setup/action diagnostic state. Empty for human games." }
         challengerDeployed: { type: boolean, description: "True once the challenger has committed a fleet via POST /games/{id}/deploy. When both sides are true, status auto-transitions to 'active'." }
         opponentDeployed:   { type: boolean, description: "True once the opponent has committed a fleet via POST /games/{id}/deploy." }
         createdAt:    { type: string, format: date-time }
@@ -794,13 +815,14 @@ components:
       required: [priorityLevel, allocationPoints, visibility, deploymentDepth, crewQualityMode]
       properties:
         pointLimit: { type: integer, description: "Legacy optional point field. Ignored when allocationPoints is supplied." }
-        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon] }
+        priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
         allocationPoints: { type: integer, minimum: 1, maximum: 99 }
         visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
+        opponentKind: { type: string, enum: [human, ai], default: human, description: "Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation." }
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
         fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge." }
-        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship." }
+        crewQualityMode: { type: string, enum: [standard, custom], description: "standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship." }
 
     AcceptGameInput:
       type: object
@@ -842,7 +864,7 @@ components:
         turns:         { type: integer }
         weaponRange:   { type: integer }
         weaponDamage:  { type: integer }
-        crewQuality:   { type: integer, minimum: 1, maximum: 6, description: "Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops." }
+        crewQuality:   { type: integer, minimum: 1, maximum: 7, description: "Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient." }
         isDestroyed:   { type: boolean }
         hasMovedThisRound: { type: boolean }
         hasFiredThisRound: { type: boolean }
@@ -907,8 +929,8 @@ components:
         crewQuality:
           type: integer
           minimum: 1
-          maximum: 6
-          description: "Crew Quality 1..6. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless."
+          maximum: 7
+          description: "Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless."
 
     DeploymentInput:
       type: object

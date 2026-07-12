@@ -13,4 +13,5 @@ export type FleetPriorityCounts = {
   battle: number;
   war: number;
   armageddon: number;
+  ancient: number;
 };

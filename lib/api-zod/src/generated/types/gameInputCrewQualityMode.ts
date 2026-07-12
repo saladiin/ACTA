@@ -7,7 +7,7 @@
  */
 
 /**
- * standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..6 per ship.
+ * standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.
  */
 export type GameInputCrewQualityMode = typeof GameInputCrewQualityMode[keyof typeof GameInputCrewQualityMode];
 

@@ -3,6 +3,7 @@ import { eq, or, and, ne } from "drizzle-orm";
 import { db, gamesTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import { GetLobbyResponse } from "@workspace/api-zod";
+import { AI_OPPONENT_ID } from "../lib/ai-opponent";
 
 // Mirror of artifacts/api-server/src/routes/games.ts:toGameDto — strips the
 // server-only passwordHash field and surfaces a boolean hasPassword so the
@@ -15,18 +16,28 @@ function toGameDto<T extends { passwordHash: string | null }>(row: T): Omit<T, "
 
 const router: IRouter = Router();
 
+function isDevBuiltinCommander(userId: string): boolean {
+  return process.env.NODE_ENV !== "production" && (userId === "test-user-1" || userId === "test-user-2");
+}
+
 router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
 
   const myGames = await db
     .select()
     .from(gamesTable)
-    .where(or(eq(gamesTable.challengerId, userId), eq(gamesTable.opponentId, userId)))
+    .where(or(
+      eq(gamesTable.challengerId, userId),
+      eq(gamesTable.opponentId, userId),
+      ...(isDevBuiltinCommander(userId)
+        ? [and(eq(gamesTable.opponentId, AI_OPPONENT_ID), ne(gamesTable.challengerId, userId))]
+        : []),
+    ))
     .orderBy(gamesTable.updatedAt);
 
-  // Open challenges issued by other commanders that anyone (including this
-  // user) may pick up. Surfacing these in pendingChallenges lets the existing
-  // accept UI handle them without a new section.
+  // Open challenges from other commanders are directly joinable. The current
+  // user's own open challenges are also returned below so DEV testers can
+  // switch commander and claim them from the lobby without visiting the board.
   const openChallenges = await db
     .select()
     .from(gamesTable)
@@ -34,7 +45,7 @@ router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
     .orderBy(gamesTable.updatedAt);
 
   const pendingChallenges = [
-    ...myGames.filter(g => g.status === "pending"),
+    ...myGames.filter(g => g.status === "pending" || g.status === "open"),
     ...openChallenges,
   ].map(toGameDto);
   const activeGames = myGames

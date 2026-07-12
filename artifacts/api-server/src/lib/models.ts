@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "node:url";
-import { db, shipModelsTable } from "@workspace/db";
+import { db, gameUnitsTable, shipModelsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
 
@@ -49,16 +49,20 @@ const MODEL_EXTS = [".glb", ".gltf", ".obj"] as const;
  */
 export async function reconcileModelFilenames(): Promise<void> {
   try {
+    const replacementFor = (current: string): string | undefined => {
+      if (!current) return undefined;
+      if (fs.existsSync(path.join(MODELS_DIR, path.basename(current)))) return undefined;
+
+      const base = path.basename(current, path.extname(current));
+      return MODEL_EXTS.map((ext) => `${base}${ext}`).find((name) =>
+        fs.existsSync(path.join(MODELS_DIR, name)),
+      );
+    };
+
     const models = await db.select().from(shipModelsTable);
     for (const model of models) {
       const current = model.filename;
-      if (!current) continue;
-      if (fs.existsSync(path.join(MODELS_DIR, path.basename(current)))) continue;
-
-      const base = path.basename(current, path.extname(current));
-      const replacement = MODEL_EXTS.map((ext) => `${base}${ext}`).find((name) =>
-        fs.existsSync(path.join(MODELS_DIR, name)),
-      );
+      const replacement = replacementFor(current);
       if (!replacement || replacement === current) continue;
 
       await db
@@ -68,6 +72,22 @@ export async function reconcileModelFilenames(): Promise<void> {
       logger.info(
         { shipModelId: model.id, from: current, to: replacement },
         "Repaired stale ship model filename",
+      );
+    }
+
+    const units = await db.select().from(gameUnitsTable);
+    for (const unit of units) {
+      const current = unit.modelFilename;
+      const replacement = replacementFor(current);
+      if (!replacement || replacement === current) continue;
+
+      await db
+        .update(gameUnitsTable)
+        .set({ modelFilename: replacement })
+        .where(eq(gameUnitsTable.id, unit.id));
+      logger.info(
+        { gameUnitId: unit.id, gameId: unit.gameId, from: current, to: replacement },
+        "Repaired stale game unit model filename",
       );
     }
   } catch (err) {

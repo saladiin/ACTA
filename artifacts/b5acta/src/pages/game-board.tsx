@@ -21,6 +21,7 @@ import {
   useFireWeapon,
   useDamageControl,
   useRollInitiative,
+  useRunAiStep,
   useChooseFirstActivator,
   usePassEndPhase,
   useSurrenderGame,
@@ -33,12 +34,15 @@ import {
   getGetGameQueryKey,
   getListTurnsQueryKey,
   getListFleetShipsQueryKey,
+  customFetch,
 } from "@workspace/api-client-react";
-import type { ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
+import type { GameDetail, GameUnit, ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { Layout } from "@/components/layout";
 import { useDevUserId } from "@/lib/dev-user";
+import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
 import { useInputProfile } from "@/hooks/use-input-profile";
+import { useUiArcColorScheme, useUiAttackPhasePulseOpacity, useUiAttackPhasePulseStrength, useUiBoardOpacity, useUiControlMode, useUiShipHullNames, useUiShipMeshTints, type UiArcColorScheme, type UiControlMode } from "@/hooks/use-ui-settings";
 import {
   ALLOCATION_TICKS_PER_FAP,
   PRIORITY_LEVELS,
@@ -56,7 +60,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag, PanelRightClose, PanelRightOpen, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Check, X } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag, PanelRightClose, PanelRightOpen, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Check, X, Cpu, AlertTriangle } from "lucide-react";
 
 // Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
 // names are historical). Render coordinates are 1:1 with storage, so this
@@ -71,17 +85,309 @@ const BOARD_W = 48;
 const BOARD_D = 72;
 const UNIT_FOCUS_CAMERA_DISTANCE = 18; // Tune this to change double-tap zoom level.
 const UNIT_FOCUS_TARGET_HEIGHT = 1.4;
+const BOARD_FOCUS_CAMERA_DISTANCE = 30;
+const BOARD_FOCUS_TARGET_HEIGHT = 0.25;
 const UNIT_FOCUS_LERP = 10;
 const CAMERA_DRAG_PAN_SPEED = 2.35;
 const CAMERA_KEYBOARD_PAN_SPEED = 38;
 const CAMERA_DAMPING_FACTOR = 0.04;
-const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 - 0.05;
-const CAMERA_MIN_Y = 1.5;
-const CAMERA_MIN_TARGET_Y = 0;
-const TOUCH_ORBIT_PUCK_ROTATE_SPEED = 2.4;
-const TOUCH_ORBIT_PUCK_TILT_SPEED = 1.4;
+const CAMERA_MAX_POLAR_ANGLE = Math.PI - 0.08;
+const TOP_DOWN_POLAR_ANGLE = 0.012;
+const TOP_DOWN_CAMERA_DISTANCE = 64;
+const CAMERA_PAN_MARGIN = 8;
+const CAMERA_MIN_DISTANCE = 8;
+const CAMERA_MAX_DISTANCE = 72;
+const CAMERA_LONG_PRESS_ORBIT_MS = 320;
 const TABLET_FORWARD_STEP = 0.5;
 const TABLET_TURN_STEP_DEG = 5;
+const AI_OPPONENT_ID = "ai:acta-skirmish-v0";
+const AI_AUTO_STEP_LIMIT = 12;
+
+type AiDiagnostics = {
+  status?: string;
+  lastStep?: string;
+  lastActionAt?: string;
+  message?: string;
+  lastInitiativeTieRoll?: number;
+  lastInitiativeTieRound?: number;
+  decisionLog?: Array<{
+    at?: string;
+    step?: string;
+    phase?: string;
+    unitId?: number;
+    unitName?: string;
+    summary?: string;
+    details?: Record<string, unknown>;
+  }>;
+  lastError?: {
+    message?: string;
+    code?: string;
+    at?: string;
+  };
+};
+
+type AiWeaponFxReplay = {
+  key: string;
+  attackerUnitId: number;
+  targetUnitId: number;
+  weaponId: number;
+  hits: number;
+};
+
+type AntiFighterUiTarget = {
+  targetUnitId: number;
+  targetName: string;
+  distance: number;
+  hull: number;
+};
+
+type AntiFighterUiAttacker = {
+  attackerUnitId: number;
+  attackerName: string;
+  ownerId: string;
+  trait: "Anti-Fighter" | "Advanced Anti-Fighter";
+  dice: number;
+  bonus: number;
+  eligibleTargets: AntiFighterUiTarget[];
+};
+
+type AntiFighterUiRoll = {
+  attackerId: number;
+  attackerName: string;
+  targetId: number;
+  targetName: string;
+  die: number;
+  bonus: number;
+  total: number;
+  targetHull: number;
+  destroyed: boolean;
+};
+
+type AntiFighterUiState = {
+  kind: "anti-fighter-allocation";
+  round: number;
+  currentPlayerId: string;
+  pendingPlayerIds: string[];
+  completedPlayerIds: string[];
+  attackers: AntiFighterUiAttacker[];
+  lastResult?: {
+    playerId: string;
+    attacks: Array<{
+      attackerId: number;
+      attackerName: string;
+      trait: string;
+      dice: number;
+      bonus: number;
+      rolls: AntiFighterUiRoll[];
+      destroyedTargetIds: number[];
+    }>;
+    destroyedUnitIds: number[];
+  };
+};
+
+function readAntiFighterUiState(raw: unknown): AntiFighterUiState | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const state = raw as Record<string, unknown>;
+  const value = state.antiFighter;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const af = value as Partial<AntiFighterUiState>;
+  if (af.kind !== "anti-fighter-allocation") return null;
+  if (typeof af.round !== "number" || typeof af.currentPlayerId !== "string") return null;
+  if (!Array.isArray(af.attackers)) return null;
+  return af as AntiFighterUiState;
+}
+
+function readAntiFighterLastResult(raw: unknown): AntiFighterUiState["lastResult"] | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const state = raw as Record<string, unknown>;
+  const direct = state.lastAntiFighter;
+  if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+    return direct as AntiFighterUiState["lastResult"];
+  }
+  const pending = readAntiFighterUiState(raw);
+  return pending?.lastResult ?? null;
+}
+
+function readAiDiagnostics(raw: unknown): AiDiagnostics {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const state = raw as Record<string, unknown>;
+  const error = state.lastError && typeof state.lastError === "object" && !Array.isArray(state.lastError)
+    ? state.lastError as Record<string, unknown>
+    : null;
+  const decisionLog = Array.isArray(state.decisionLog)
+    ? state.decisionLog
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
+        .map(entry => ({
+          at: typeof entry.at === "string" ? entry.at : undefined,
+          step: typeof entry.step === "string" ? entry.step : undefined,
+          phase: typeof entry.phase === "string" ? entry.phase : undefined,
+          unitId: typeof entry.unitId === "number" ? entry.unitId : undefined,
+          unitName: typeof entry.unitName === "string" ? entry.unitName : undefined,
+          summary: typeof entry.summary === "string" ? entry.summary : undefined,
+          details: entry.details && typeof entry.details === "object" && !Array.isArray(entry.details)
+            ? entry.details as Record<string, unknown>
+            : undefined,
+        }))
+    : undefined;
+  return {
+    status: typeof state.status === "string" ? state.status : undefined,
+    lastStep: typeof state.lastStep === "string" ? state.lastStep : undefined,
+    lastActionAt: typeof state.lastActionAt === "string" ? state.lastActionAt : undefined,
+    message: typeof state.message === "string" ? state.message : undefined,
+    lastInitiativeTieRoll: typeof state.lastInitiativeTieRoll === "number" ? state.lastInitiativeTieRoll : undefined,
+    lastInitiativeTieRound: typeof state.lastInitiativeTieRound === "number" ? state.lastInitiativeTieRound : undefined,
+    decisionLog,
+    lastError: error ? {
+      message: typeof error.message === "string" ? error.message : undefined,
+      code: typeof error.code === "string" ? error.code : undefined,
+      at: typeof error.at === "string" ? error.at : undefined,
+    } : undefined,
+  };
+}
+
+function aiProgressSignature(game: GameDetail["game"]): string {
+  const state = readAiDiagnostics(game.aiState);
+  return [
+    game.status,
+    game.phase,
+    game.activePlayerId ?? "",
+    game.activeUnitId ?? "",
+    game.currentRound,
+    game.currentTurn,
+    game.initiativeChallengerRoll ?? "",
+    game.initiativeOpponentRoll ?? "",
+    game.initiativeWinnerId ?? "",
+    state.status ?? "",
+    state.lastStep ?? "",
+    state.lastActionAt ?? "",
+  ].join("|");
+}
+
+function shouldStopAiAutoRun(game: GameDetail["game"], myUserId: string): boolean {
+  if (game.status !== "active") return true;
+  if (game.activePlayerId && game.activePlayerId !== AI_OPPONENT_ID) return true;
+  if (game.phase === "initiative") {
+    if (game.initiativeOpponentRoll != null && game.initiativeChallengerRoll == null) return true;
+    if (game.initiativeWinnerId && game.initiativeWinnerId !== AI_OPPONENT_ID) return true;
+  }
+  if (game.phase === "end" && game.activePlayerId === myUserId) return true;
+  return false;
+}
+
+function AiDiagnosticsPanel({
+  game,
+  onRunStep,
+  onRunUntilHuman,
+  isRunning,
+  isAutoRunning,
+  runError,
+}: {
+  game: GameDetail["game"];
+  onRunStep: () => void;
+  onRunUntilHuman: () => void;
+  isRunning: boolean;
+  isAutoRunning: boolean;
+  runError: string | null;
+}) {
+  if (game.opponentKind !== "ai") return null;
+  const state = readAiDiagnostics(game.aiState);
+  const hasError = state.status === "error" || Boolean(state.lastError?.message);
+  const latestDecision = state.decisionLog && state.decisionLog.length > 0
+    ? state.decisionLog[state.decisionLog.length - 1]
+    : null;
+  const decisionDetails = latestDecision?.details;
+  const clamped = decisionDetails?.clamped && typeof decisionDetails.clamped === "object" && !Array.isArray(decisionDetails.clamped)
+    ? decisionDetails.clamped as Record<string, unknown>
+    : null;
+  const chosen = decisionDetails?.chosen && typeof decisionDetails.chosen === "object" && !Array.isArray(decisionDetails.chosen)
+    ? decisionDetails.chosen as Record<string, unknown>
+    : null;
+  const topCandidates = Array.isArray(decisionDetails?.topCandidates)
+    ? decisionDetails.topCandidates.slice(0, 3).filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    : [];
+  return (
+    <div
+      className={`border-b px-4 py-3 font-mono text-xs ${
+        hasError
+          ? "border-red-500/30 bg-red-500/10 text-red-200"
+          : "border-cyan-500/25 bg-cyan-500/10 text-cyan-100"
+      }`}
+      data-testid="panel-ai-diagnostics"
+    >
+      <div className="mb-1 flex items-center justify-between gap-2 uppercase tracking-widest">
+        <span className="flex items-center gap-1.5">
+          {hasError ? <AlertTriangle className="h-3.5 w-3.5" /> : <Cpu className="h-3.5 w-3.5" />}
+          AI
+        </span>
+        <span>{state.status ?? "idle"}</span>
+      </div>
+      <div className="space-y-0.5 text-[10px] text-muted-foreground">
+        {state.lastStep && <p>Step: {state.lastStep}</p>}
+        {state.message && <p>{state.message}</p>}
+        {state.lastError?.message && (
+          <p className="text-red-300">Error: {state.lastError.message}</p>
+        )}
+        {latestDecision?.summary && (
+          <div className="mt-1 rounded border border-cyan-500/20 bg-black/25 px-2 py-1" data-testid="ai-latest-decision">
+            <p className="text-cyan-100">Decision: {latestDecision.summary}</p>
+            {decisionDetails && (
+              <p>
+                {typeof decisionDetails.chosenAction === "string" && <>Action: {decisionDetails.chosenAction}</>}
+                {typeof decisionDetails.minMove === "number" && <> · Min: {decisionDetails.minMove}"</>}
+                {clamped && typeof clamped.moved === "number" && <> · Moved: {clamped.moved}"</>}
+              </p>
+            )}
+            {chosen && (
+              <p>
+                {typeof chosen.weaponName === "string" && <>Weapon: {chosen.weaponName}</>}
+                {typeof chosen.targetName === "string" && <> · Target: {chosen.targetName}</>}
+                {typeof chosen.score === "number" && <> · Score: {chosen.score}</>}
+              </p>
+            )}
+            {topCandidates.length > 0 && (
+              <div className="mt-1 space-y-0.5">
+                {topCandidates.map((candidate, index) => (
+                  <p key={`${candidate.weaponId ?? index}-${candidate.targetId ?? index}`}>
+                    #{index + 1} {typeof candidate.weaponName === "string" ? candidate.weaponName : "weapon"}
+                    {" -> "}
+                    {typeof candidate.targetName === "string" ? candidate.targetName : "target"}
+                    {typeof candidate.score === "number" ? ` (${candidate.score})` : ""}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {runError && <p className="text-red-300">Run failed: {runError}</p>}
+        {state.lastActionAt && <p>{new Date(state.lastActionAt).toLocaleString()}</p>}
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 border-cyan-500/35 text-[10px] uppercase tracking-widest text-cyan-100 hover:bg-cyan-500/10"
+          onClick={onRunStep}
+          disabled={isRunning || isAutoRunning}
+          data-testid="button-run-ai-step"
+        >
+          <Cpu className="h-3.5 w-3.5" />
+          {isRunning && !isAutoRunning ? "Running..." : "Step"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 border-cyan-500/35 text-[10px] uppercase tracking-widest text-cyan-100 hover:bg-cyan-500/10"
+          onClick={onRunUntilHuman}
+          disabled={isRunning || isAutoRunning}
+          data-testid="button-run-ai-until-human"
+        >
+          <Cpu className="h-3.5 w-3.5" />
+          {isAutoRunning ? "Auto..." : "Auto"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 // Deep-space backdrop: an equirectangular (2:1) panorama mapped onto the scene
 // background. We set it as `scene.background` only — NOT `scene.environment` —
@@ -104,21 +410,124 @@ function Skybox({ url }: { url: string }) {
   return null;
 }
 
-function SpaceGrid() {
+function SpaceGrid({ boardOpacity = 100 }: { boardOpacity?: number }) {
+  const planeOpacity = Math.max(0, Math.min(100, boardOpacity)) / 100;
   return (
     <>
-      {/* Semi-opaque board floor: dims the bright nebula skybox under the
-          playing field (~80%) so the grid and ships read clearly against the
-          busy backdrop. Sits just below the grid lines. */}
+      {/* Opaque from above, invisible from below so underside camera views still
+          see the scene without the board plane blocking them. */}
       <mesh position={[0, -0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={0}>
         <planeGeometry args={[BOARD_W, BOARD_D]} />
-        <meshBasicMaterial color="#020303" transparent opacity={0.8} depthWrite={false} />
+        <meshBasicMaterial color="#020303" side={THREE.FrontSide} transparent={planeOpacity < 1} opacity={planeOpacity} depthWrite={planeOpacity >= 1} />
       </mesh>
       {/* Fine 1" grid */}
       <gridHelper args={[72, 72, "#0d1a0d", "#0a140a"]} position={[0, -0.01, 0]} />
       {/* Bold 6" grid overlay */}
       <gridHelper args={[72, 12, "#172617", "#172617"]} position={[0, -0.005, 0]} />
     </>
+  );
+}
+
+function AttackPhaseBoardPulse({
+  active,
+  opacity,
+  strength,
+}: {
+  active: boolean;
+  opacity: number;
+  strength: number;
+}) {
+  const materialRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const opacityScale = Math.max(0, Math.min(100, opacity)) / 100;
+  const strengthScale = Math.max(0, Math.min(100, strength)) / 100;
+
+  useFrame(({ clock }) => {
+    const mat = materialRef.current;
+    if (!mat) return;
+    const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 2.2);
+    mat.opacity = active ? opacityScale * (0.38 + pulse * 0.62) : 0;
+    mat.emissiveIntensity = active ? strengthScale * (0.35 + pulse * 1.15) : 0;
+  });
+
+  if (!active || (opacityScale <= 0 && strengthScale <= 0)) return null;
+
+  return (
+    <mesh position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
+      <planeGeometry args={[BOARD_W, BOARD_D]} />
+      <meshStandardMaterial
+        ref={materialRef}
+        color="#3a0508"
+        emissive="#ff1f2d"
+        emissiveIntensity={strengthScale}
+        transparent
+        opacity={opacityScale}
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        side={THREE.FrontSide}
+      />
+    </mesh>
+  );
+}
+
+type ConcentrateFireLineUnit = Pick<GameUnit, "id" | "hexQ" | "hexR" | "isDestroyed" | "specialAction" | "specialActionTargetId" | "baseRadiusInches">;
+
+function ConcentrateFireTargetLines({ units }: { units: ConcentrateFireLineUnit[] }) {
+  const links = useMemo(() => {
+    const unitById = new Map(units.map(unit => [unit.id, unit]));
+    return units.flatMap(attacker => {
+      if (attacker.isDestroyed || attacker.specialAction !== "concentrate-fire" || attacker.specialActionTargetId == null) return [];
+      const target = unitById.get(attacker.specialActionTargetId);
+      if (!target || target.isDestroyed) return [];
+
+      const from = new THREE.Vector3(attacker.hexQ, 0.16, attacker.hexR);
+      const to = new THREE.Vector3(target.hexQ, 0.16, target.hexR);
+      const delta = to.clone().sub(from);
+      const distance = delta.length();
+      if (distance < 0.001) return [];
+
+      const direction = delta.clone().normalize();
+      const attackerRadius = rulesBaseRadius(attacker);
+      const targetRadius = rulesBaseRadius(target);
+      const edgeGap = distance - attackerRadius - targetRadius;
+      const start = edgeGap > 0.2
+        ? from.clone().add(direction.clone().multiplyScalar(attackerRadius + 0.08))
+        : from;
+      const end = edgeGap > 0.2
+        ? to.clone().add(direction.clone().multiplyScalar(-(targetRadius + 0.08)))
+        : to;
+      const mid = start.clone().lerp(end, 0.5);
+
+      return [{
+        key: `${attacker.id}-${target.id}`,
+        attackerPoints: [start, mid] as [THREE.Vector3, THREE.Vector3],
+        targetPoints: [mid, end] as [THREE.Vector3, THREE.Vector3],
+      }];
+    });
+  }, [units]);
+
+  if (links.length === 0) return null;
+
+  return (
+    <group renderOrder={4}>
+      {links.map(link => (
+        <React.Fragment key={link.key}>
+          <Line
+            points={link.attackerPoints}
+            color="#38bdf8"
+            lineWidth={1.35}
+            transparent
+            opacity={0.88}
+          />
+          <Line
+            points={link.targetPoints}
+            color="#fb923c"
+            lineWidth={1.35}
+            transparent
+            opacity={0.88}
+          />
+        </React.Fragment>
+      ))}
+    </group>
   );
 }
 
@@ -177,7 +586,7 @@ function shipScale(object: THREE.Object3D, targetInches = 2): number {
 }
 
 // OBJ: geometry-only load (no MTL — we apply tint via MeshStandardMaterial)
-function ObjModel({ url, tint, opacity = 1 }: { url: string; tint: string; opacity?: number }) {
+function ObjModel({ url, tint, opacity = 1, meshTintsEnabled = true }: { url: string; tint: string; opacity?: number; meshTintsEnabled?: boolean }) {
   const obj = useLoader(OBJLoader, url) as THREE.Group;
   const { cloned, s } = useMemo(() => {
     const c = obj.clone(true);
@@ -186,6 +595,13 @@ function ObjModel({ url, tint, opacity = 1 }: { url: string; tint: string; opaci
       // material may be a single material or an array — normalise to array
       const mats: any[] = Array.isArray(child.material) ? child.material : [child.material];
       const tinted = mats.map((m: any) => {
+        if (!meshTintsEnabled) {
+          if (!m) return new THREE.MeshStandardMaterial({ color: "#d1d5db", metalness: 0.3, roughness: 0.6, transparent: opacity < 1, opacity });
+          const clonedMat = m.clone();
+          clonedMat.transparent = opacity < 1;
+          clonedMat.opacity = opacity;
+          return clonedMat;
+        }
         if (!m) return new THREE.MeshStandardMaterial({ color: tint, metalness: 0.3, roughness: 0.6, transparent: opacity < 1, opacity });
         if (m.map) {
           const clonedMat = m.clone();
@@ -200,7 +616,7 @@ function ObjModel({ url, tint, opacity = 1 }: { url: string; tint: string; opaci
       child.material = Array.isArray(child.material) ? tinted : tinted[0];
     });
     return { cloned: c, s: shipScale(c) };
-  }, [obj, tint, opacity]);
+  }, [obj, tint, opacity, meshTintsEnabled]);
   return <primitive object={cloned} scale={[s, s, s]} />;
 }
 
@@ -210,11 +626,23 @@ function ObjModel({ url, tint, opacity = 1 }: { url: string; tint: string; opaci
 // arc-math fallbacks below remain available for any one-off legacy upload, but
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
-const VISUAL_ROTATE_180_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb"]);
+const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
+const VISUAL_ROTATE_180_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb", "battlecrab.glb", DEAD_BATTLECRAB_MODEL_FILENAME, "primus.glb", "whitestar.glb", "avenger.glb"]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "olympus.glb": 0.5,
   "omega.glb": 1.15,
   "nova.glb": 1.15,
+  "vorchan.glb": 0.5,
+  "covran.glb": 0.5,
+  "whitestar.glb": 0.5,
+  "oracle.glb": 0.5,
+  "sagittarius.glb": 0.5,
+  "gquan.glb": 1.5,
+  "primus.glb": 1.5,
+  "sharlin.glb": 1.5,
+  "avioki.glb": 1.5,
+  "battlecrab.glb": 1.5,
+  [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
   "aurora.glb": 0.165,
   "thunderbolt.glb": 0.165,
   "nial.glb": 0.165,
@@ -230,21 +658,39 @@ function modelScaleMultiplier(filename: string): number {
   return MODEL_SCALE_MULTIPLIERS[filename.toLowerCase()] ?? 1;
 }
 
-function GlbModel({ url, tint, filename, opacity = 1 }: { url: string; tint: string; filename: string; opacity?: number }) {
+function isBattlecrabModel(filename: string): boolean {
+  return filename.toLowerCase() === "battlecrab.glb";
+}
+
+function visualModelFilenameForUnit(unit: { modelFilename: string; isDestroyed: boolean }): string {
+  if (unit.isDestroyed && isBattlecrabModel(unit.modelFilename)) {
+    return DEAD_BATTLECRAB_MODEL_FILENAME;
+  }
+  return unit.modelFilename;
+}
+
+function GlbModel({ url, tint, filename, opacity = 1, meshTintsEnabled = true }: { url: string; tint: string; filename: string; opacity?: number; meshTintsEnabled?: boolean }) {
   const { scene } = useGLTF(url);
   const cloned = useMemo(() => {
     const c = scene.clone(true);
     c.traverse((child: any) => {
       if (child.isMesh) {
-        child.material = child.material.clone();
-        child.material.emissive = new THREE.Color(tint);
-        child.material.emissiveIntensity = 0.18;
-        child.material.transparent = opacity < 1;
-        child.material.opacity = opacity;
+        const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+        const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+          const clonedMaterial = material?.clone ? material.clone() : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+          if (meshTintsEnabled && "emissive" in clonedMaterial) {
+            (clonedMaterial as THREE.MeshStandardMaterial).emissive = new THREE.Color(tint);
+            (clonedMaterial as THREE.MeshStandardMaterial).emissiveIntensity = 0.18;
+          }
+          clonedMaterial.transparent = opacity < 1;
+          clonedMaterial.opacity = opacity;
+          return clonedMaterial;
+        });
+        child.material = Array.isArray(child.material) ? materials : materials[0];
       }
     });
     return c;
-  }, [scene, tint, opacity]);
+  }, [scene, tint, opacity, meshTintsEnabled]);
   const s = useMemo(() => shipScale(cloned) * modelScaleMultiplier(filename), [cloned, filename]);
   const flip = FLIP_MODELS.has(filename);
   const visualFlip = flip || VISUAL_ROTATE_180_MODELS.has(filename.toLowerCase());
@@ -291,49 +737,221 @@ function useModelExists(url: string): boolean | null {
   return exists;
 }
 
-function ShipModel3D({ filename, tint, opacity = 1 }: { filename: string; tint: string; opacity?: number }) {
+function ShipModel3D({ filename, tint, opacity = 1, meshTintsEnabled = true }: { filename: string; tint: string; opacity?: number; meshTintsEnabled?: boolean }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const url = `${basePath}/api/models/${filename}`;
   const isGlb = filename.toLowerCase().endsWith(".glb") || filename.toLowerCase().endsWith(".gltf");
   const exists = useModelExists(url);
   // null = check in-flight; false = file missing — both show fallback box
-  if (!exists) return <ShipModelFallback color={tint} opacity={opacity} />;
-  if (isGlb) return <GlbModel url={url} tint={tint} filename={filename} opacity={opacity} />;
-  return <ObjModel url={url} tint={tint} opacity={opacity} />;
+  if (!exists) return <ShipModelFallback color={meshTintsEnabled ? tint : "#d1d5db"} opacity={opacity} />;
+  if (isGlb) return <GlbModel url={url} tint={tint} filename={filename} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />;
+  return <ObjModel url={url} tint={tint} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />;
+}
+
+function CameraFacingText({ children, ...props }: React.ComponentProps<typeof Text>) {
+  const ref = useRef<any>(null);
+  const { camera } = useThree();
+  const parentWorldQuat = useMemo(() => new THREE.Quaternion(), []);
+
+  useFrame(() => {
+    const text = ref.current;
+    if (!text) return;
+    const parent = text.parent as THREE.Object3D | null;
+    if (parent) {
+      parent.getWorldQuaternion(parentWorldQuat);
+      text.quaternion.copy(parentWorldQuat.invert().multiply(camera.quaternion));
+    } else {
+      text.quaternion.copy(camera.quaternion);
+    }
+  });
+
+  return (
+    <Text ref={ref} {...props}>
+      {children}
+    </Text>
+  );
+}
+
+function CameraFacingGroup({ children, ...props }: React.ComponentProps<"group">) {
+  const ref = useRef<THREE.Group>(null);
+  const { camera } = useThree();
+  const parentWorldQuat = useMemo(() => new THREE.Quaternion(), []);
+
+  useFrame(() => {
+    const group = ref.current;
+    if (!group) return;
+    const parent = group.parent as THREE.Object3D | null;
+    if (parent) {
+      parent.getWorldQuaternion(parentWorldQuat);
+      group.quaternion.copy(parentWorldQuat.invert().multiply(camera.quaternion));
+    } else {
+      group.quaternion.copy(camera.quaternion);
+    }
+  });
+
+  return <group ref={ref} {...props}>{children}</group>;
 }
 
 function isFighterSquadronModel(filename: string): boolean {
   return FIGHTER_SQUADRON_MODELS.has(filename.toLowerCase());
 }
 
-function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "name" | "traits"> | undefined): boolean {
-  return /\bfighter\b/i.test(model?.traits ?? "")
-    || /\bfighter\b/i.test(model?.name ?? "")
+function hasExplicitFighterTrait(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return raw
+    .split(/[;,]/)
+    .map(t => t.trim().toLowerCase().replace(/[\s_]+/g, "-"))
+    .some(t => t === "fighter");
+}
+
+function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "traits"> | undefined): boolean {
+  return hasExplicitFighterTrait(model?.traits)
     || isFighterSquadronModel(model?.filename ?? "");
 }
 
-function rulesBaseRadius(unit: { baseRadiusInches?: number | null }): number {
-  return unit.baseRadiusInches && unit.baseRadiusInches > 0 ? unit.baseRadiusInches : 1.2;
+function isShadowCodedDamageVessel(unit: { faction?: string | null; name?: string | null; modelFilename?: string | null }): boolean {
+  const text = [unit.faction, unit.name, unit.modelFilename]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /\bshadows?\b/.test(text)
+    || text.includes("shadow")
+    || text.includes("battlecrab");
 }
 
-function BoardModelVisual({ filename, tint, opacity = 1 }: { filename: string; tint: string; opacity?: number }) {
+const STANDARD_BASE_RADIUS_INCHES = 0.8;
+
+function rulesBaseRadius(_unit?: { baseRadiusInches?: number | null }): number {
+  return STANDARD_BASE_RADIUS_INCHES;
+}
+
+const BASE_CONTACT_EPSILON = 0.05;
+
+function uiBasesCanOverlap(
+  moving: { isFighter?: boolean },
+  other: { isFighter?: boolean },
+): boolean {
+  return !!moving.isFighter !== !!other.isFighter;
+}
+
+function uiBasesInContact(
+  a: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+  b: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+): boolean {
+  return Math.hypot(a.hexQ - b.hexQ, a.hexR - b.hexR)
+    <= rulesBaseRadius(a) + rulesBaseRadius(b) + BASE_CONTACT_EPSILON;
+}
+
+function finalForwardPositionOverlapsBase(
+  moving: { id: number; hexQ: number; hexR: number; isFighter?: boolean; baseRadiusInches?: number | null },
+  others: Array<{ id: number; hexQ: number; hexR: number; isDestroyed: boolean; isFighter?: boolean; baseRadiusInches?: number | null }>,
+  direction: { x: number; z: number },
+  distance: number,
+): boolean {
+  const x = moving.hexQ + direction.x * distance;
+  const z = moving.hexR + direction.z * distance;
+  const movingRadius = rulesBaseRadius(moving);
+
+  for (const other of others) {
+    if (other.id === moving.id || other.isDestroyed) continue;
+    if (uiBasesCanOverlap(moving, other)) continue;
+    const minDistance = Math.max(0, movingRadius + rulesBaseRadius(other) - BASE_CONTACT_EPSILON);
+    if (Math.hypot(x - other.hexQ, z - other.hexR) < minDistance) return true;
+  }
+  return false;
+}
+
+function clampForwardDistanceToLegalRestingSpot(
+  moving: { id: number; hexQ: number; hexR: number; isFighter?: boolean; baseRadiusInches?: number | null },
+  others: Array<{ id: number; hexQ: number; hexR: number; isDestroyed: boolean; isFighter?: boolean; baseRadiusInches?: number | null }>,
+  direction: { x: number; z: number },
+  requestedDistance: number,
+  maxDistance: number,
+  preference: "nearest" | "forward" = "nearest",
+): number {
+  const requested = Math.max(0, Math.min(maxDistance, snapMovementDistance(requestedDistance)));
+  const maxLegal = Math.max(0, snapMovementDistance(maxDistance));
+  if (!finalForwardPositionOverlapsBase(moving, others, direction, requested)) return requested;
+
+  const candidates = new Set<number>([0, maxLegal]);
+  const startX = moving.hexQ;
+  const startZ = moving.hexR;
+  const movingRadius = rulesBaseRadius(moving);
+
+  for (const other of others) {
+    if (other.id === moving.id || other.isDestroyed) continue;
+    if (uiBasesCanOverlap(moving, other)) continue;
+
+    const minDistance = Math.max(0, movingRadius + rulesBaseRadius(other) - BASE_CONTACT_EPSILON);
+    const sx = startX - other.hexQ;
+    const sz = startZ - other.hexR;
+    const c = sx * sx + sz * sz - minDistance * minDistance;
+    const b = 2 * (sx * direction.x + sz * direction.z);
+    const discriminant = b * b - 4 * c;
+    if (discriminant < 0) continue;
+    const sqrtDisc = Math.sqrt(discriminant);
+    const entryDistance = (-b - sqrtDisc) / 2;
+    const exitDistance = (-b + sqrtDisc) / 2;
+
+    if (exitDistance < 0 || entryDistance > maxLegal) continue;
+    const before = Math.max(0, Math.floor(Math.max(0, entryDistance) / TABLET_FORWARD_STEP) * TABLET_FORWARD_STEP);
+    const after = Math.min(maxLegal, Math.ceil(Math.max(0, exitDistance) / TABLET_FORWARD_STEP) * TABLET_FORWARD_STEP);
+    candidates.add(snapMovementDistance(before));
+    candidates.add(snapMovementDistance(after));
+  }
+
+  const legalCandidates = [...candidates]
+    .map(d => Math.max(0, Math.min(maxLegal, snapMovementDistance(d))))
+    .filter(d => !finalForwardPositionOverlapsBase(moving, others, direction, d));
+
+  if (legalCandidates.length === 0) return 0;
+  if (preference === "forward") {
+    const forwardCandidate = legalCandidates
+      .filter(d => d >= requested - 1e-6)
+      .sort((a, b) => a - b)[0];
+    if (forwardCandidate !== undefined) return forwardCandidate;
+  }
+  legalCandidates.sort((a, b) => Math.abs(a - requested) - Math.abs(b - requested) || b - a);
+  return legalCandidates[0];
+}
+
+function BoardModelVisual({ filename, tint, opacity = 1, meshTintsEnabled = true }: { filename: string; tint: string; opacity?: number; meshTintsEnabled?: boolean }) {
   if (!isFighterSquadronModel(filename)) {
-    return <ShipModel3D filename={filename} tint={tint} opacity={opacity} />;
+    return <ShipModel3D filename={filename} tint={tint} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />;
   }
 
   return (
     <group>
       {FIGHTER_SQUADRON_OFFSETS.map((offset, index) => (
         <group key={`${filename}-${index}`} position={[offset.x, 0, offset.z]} rotation={[0, offset.yaw, 0]}>
-          <ShipModel3D filename={filename} tint={tint} opacity={opacity} />
+          <ShipModel3D filename={filename} tint={tint} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />
         </group>
       ))}
     </group>
   );
 }
 
-function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapons, dragOffset, previewHeadingDelta = 0, dimmed, firingArc }: {
-  unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number; baseRadiusInches?: number | null };
+function UnitHealthBar({ hpPct, faceCamera = false }: { hpPct: number; faceCamera?: boolean }) {
+  const content = (
+    <>
+      <mesh>
+        <planeGeometry args={[2, 0.18]} />
+        <meshBasicMaterial color="#1f2937" transparent opacity={0.9} />
+      </mesh>
+      <mesh position={[-1 * (1 - hpPct), 0, 0.001]} scale={[hpPct, 1, 1]}>
+        <planeGeometry args={[2, 0.15]} />
+        <meshBasicMaterial color={hpPct > 0.5 ? "#22c55e" : hpPct > 0.25 ? "#f59e0b" : "#ef4444"} />
+      </mesh>
+    </>
+  );
+
+  return faceCamera
+    ? <CameraFacingGroup position={[0, 3.2, 0]}>{content}</CameraFacingGroup>
+    : <group position={[0, 3.2, 0]}>{content}</group>;
+}
+
+function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapons, dragOffset, previewHeadingDelta = 0, phaseViable, firingArc, arcColorScheme = "classic", healthBarFacesCamera = false, shipMeshTintsEnabled = true, shipHullNamesEnabled = true, isFighter = false }: {
+  unit: { id: number; hexQ: number; hexR: number; heading: number; name: string; modelFilename: string; ownerId: string; hullPoints: number; maxHullPoints: number; isDestroyed: boolean; faction: string; speed: number; turnAngle: number; damageState?: string | null; baseRadiusInches?: number | null };
   isSelected: boolean;
   onClick: () => void;
   onCameraFocus: () => void;
@@ -341,7 +959,12 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
   weapons: Pick<Weapon, "arc">[];
   dragOffset?: { x: number; z: number } | null;
   previewHeadingDelta?: number;
-  dimmed?: boolean;
+  phaseViable?: boolean;
+  arcColorScheme?: UiArcColorScheme;
+  healthBarFacesCamera?: boolean;
+  shipMeshTintsEnabled?: boolean;
+  shipHullNamesEnabled?: boolean;
+  isFighter?: boolean;
   // When set, draws a translucent "weapon coverage" sector at full range for
   // the currently-selected firing weapon so the player can see eligible
   // targets. Only rendered for the active firing ship.
@@ -349,30 +972,49 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
-  // mine = green, enemy = red; selected mine = blue, selected enemy = yellow.
-  // Dimmed = activated already this round.
-  const color = unit.isDestroyed
-    ? "#4b5563"
-    : dimmed
-      ? (isMine ? "#7dd3fc" : "#facc15")
-      : isSelected
-        ? (isMine ? "#3b82f6" : "#eab308")
-        : (isMine ? "#22c55e" : "#ef4444");
+  const arcSide = isMine ? "friendly" : "enemy";
+  const sideColor = isMine ? "#34eb52" : "#ff0004";
+  const destroyedGrey = "#7f8794";
+  const haloColor = unit.isDestroyed ? destroyedGrey : phaseViable ? sideColor : "#ffffff";
+  const selectionColor = unit.isDestroyed ? "#8a93a1" : "#f59e0b";
+  const modelTint = unit.isDestroyed ? "#6b7280" : sideColor;
+  const baseColor = "#000000";
+  const baseEdgeColor = unit.isDestroyed ? "#6b7280" : "#94a3b8";
   const hpPct = unit.maxHullPoints > 0 ? Math.max(0, Math.min(1, unit.hullPoints / unit.maxHullPoints)) : 0;
-  const fireLevel = unit.isDestroyed || unit.hullPoints <= 0
+  const nonNormalDamageState = Boolean(unit.damageState && unit.damageState !== "normal");
+  const fireLevel = unit.isDestroyed || unit.hullPoints <= 0 || unit.damageState === "exploding-end-of-next"
     ? 1
     : hpPct <= 0.25
       ? 0.72
-      : hpPct <= 0.5
+      : nonNormalDamageState
+        ? 0.5
+        : hpPct <= 0.5
         ? 0.36
         : 0;
   const hasPreview = Boolean(dragOffset) || Math.abs(previewHeadingDelta) > 0.001;
+  const useShadowDamageVfx = !isFighter && isShadowCodedDamageVessel(unit);
+  const visualModelFilename = visualModelFilenameForUnit(unit);
   const headingRad = (unit.heading * Math.PI) / 180;
   const previewHeadingRad = ((unit.heading + previewHeadingDelta) * Math.PI) / 180;
   const baseRadius = rulesBaseRadius(unit);
   const ringInner = Math.max(0.05, baseRadius - 0.05);
-  const pulseInner = baseRadius + 0.1;
-  const pulseOuter = baseRadius + 0.25;
+  const haloRingInner = baseRadius + 0.05;
+  const haloRingOuter = baseRadius + 0.14;
+  const pulseInner = baseRadius + 0.18;
+  const pulseOuter = baseRadius + 0.28;
+  const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const pulseHalo = Boolean(phaseViable && !unit.isDestroyed);
+
+  useFrame(({ clock }) => {
+    const mat = haloMaterialRef.current;
+    if (!mat) return;
+    if (!pulseHalo) {
+      mat.emissiveIntensity = unit.isDestroyed ? 0.1 : 0.48;
+      return;
+    }
+    const flashOn = (clock.getElapsedTime() % 1) < 0.2;
+    mat.emissiveIntensity = flashOn ? 1.35 : 0.28;
+  });
 
   return (
     <group
@@ -383,32 +1025,45 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
         onCameraFocus();
       }}
     >
-      {/* Translucent circular base at grid level */}
+      {!hasPreview && (
+        <group rotation={[0, headingRad, 0]}>
+          <BaseOrientationDisplay
+            flip={FLIP_MODELS.has(unit.modelFilename)}
+            baseRadius={baseRadius}
+            opacityScale={isSelected ? 1 : 0.82}
+            muted={unit.isDestroyed}
+            arcColorScheme={arcColorScheme}
+            arcSide={arcSide}
+          />
+        </group>
+      )}
+      {/* Opaque collision/overlap base, drawn above the orientation arcs. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <circleGeometry args={[baseRadius, 48]} />
-        <meshStandardMaterial color={color} transparent opacity={hasPreview ? 0.07 : 0.15} depthWrite={false} />
+        <meshStandardMaterial color={baseColor} transparent={hasPreview} opacity={hasPreview ? 0.28 : 1} depthWrite={!hasPreview} />
       </mesh>
       {/* Base ring edge */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
         <ringGeometry args={[ringInner, baseRadius, 48]} />
-        <meshStandardMaterial color={color} transparent opacity={(isSelected ? 0.9 : 0.45) * (hasPreview ? 0.35 : 1)} emissive={color} emissiveIntensity={isSelected ? 0.6 : 0.15} />
+        <meshStandardMaterial color={baseEdgeColor} transparent opacity={(isSelected ? 0.72 : 0.42) * (hasPreview ? 0.35 : 1)} emissive={baseEdgeColor} emissiveIntensity={isSelected ? 0.25 : 0.08} />
       </mesh>
       {!hasPreview && (
-        <group rotation={[0, headingRad, 0]}>
-          <BaseOrientationDisplay flip={FLIP_MODELS.has(unit.modelFilename)} opacityScale={isSelected ? 1 : 0.82} />
-        </group>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]}>
+          <ringGeometry args={[haloRingInner, haloRingOuter, 48]} />
+          <meshStandardMaterial ref={haloMaterialRef} color={haloColor} transparent opacity={unit.isDestroyed ? 0.34 : 0.82} emissive={haloColor} emissiveIntensity={unit.isDestroyed ? 0.1 : 0.48} depthWrite={false} />
+        </mesh>
       )}
       {/* Selection pulse ring */}
       {isSelected && !hasPreview && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[pulseInner, pulseOuter, 48]} />
-          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.8} transparent opacity={0.7} />
+          <meshStandardMaterial color={selectionColor} emissive={selectionColor} emissiveIntensity={unit.isDestroyed ? 0.25 : 0.8} transparent opacity={unit.isDestroyed ? 0.46 : 0.7} />
         </mesh>
       )}
       {/* Weapon arcs — rotate with heading */}
       {isSelected && weapons.length > 0 && !hasPreview && (
         <group rotation={[0, headingRad, 0]}>
-          <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
+          <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} baseRadius={baseRadius} muted={unit.isDestroyed} arcColorScheme={arcColorScheme} arcSide={arcSide} />
         </group>
       )}
       {/* Firing coverage — long-range arc showing eligible-target area */}
@@ -418,18 +1073,24 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
             arc={firingArc.arc}
             range={firingArc.range}
             flip={FLIP_MODELS.has(unit.modelFilename)}
+            arcColorScheme={arcColorScheme}
+            arcSide={arcSide}
           />
         </group>
       )}
       {/* Ship model floating 2" above the base, rotated to heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
-        <ModelErrorBoundary color={color}>
-          <Suspense fallback={<ShipModelFallback color={color} />}>
-            <BoardModelVisual filename={unit.modelFilename} tint={color} opacity={hasPreview ? 0.28 : 1} />
+        <ModelErrorBoundary color={modelTint}>
+          <Suspense fallback={<ShipModelFallback color={modelTint} />}>
+            <BoardModelVisual filename={visualModelFilename} tint={modelTint} opacity={hasPreview ? 0.28 : 1} meshTintsEnabled={shipMeshTintsEnabled} />
           </Suspense>
         </ModelErrorBoundary>
-        {!hasPreview && fireLevel > 0 && <ShipDamageFire level={fireLevel} destroyed={unit.isDestroyed} />}
-        {!hasPreview && (unit.isDestroyed || fireLevel >= 0.7) && (
+        {!hasPreview && fireLevel > 0 && (
+          useShadowDamageVfx
+            ? <ShadowDamageParticleSpray level={fireLevel} destroyed={unit.isDestroyed} />
+            : <ShipDamageFire level={fireLevel} destroyed={unit.isDestroyed} />
+        )}
+        {!useShadowDamageVfx && !hasPreview && (unit.isDestroyed || fireLevel >= 0.7) && (
           <DestroyedSmoke
             intensity={unit.isDestroyed ? 1 : 0.45}
             puffCount={unit.isDestroyed ? 12 : 5}
@@ -439,6 +1100,16 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
       </group>
       {hasPreview && (
         <group position={[dragOffset?.x ?? 0, 0, dragOffset?.z ?? 0]}>
+          <group rotation={[0, previewHeadingRad, 0]}>
+            <BaseOrientationDisplay
+              flip={FLIP_MODELS.has(unit.modelFilename)}
+              baseRadius={baseRadius}
+              opacityScale={0.75}
+              muted={unit.isDestroyed}
+              arcColorScheme={arcColorScheme}
+              arcSide={arcSide}
+            />
+          </group>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
             <circleGeometry args={[baseRadius, 48]} />
             <meshStandardMaterial color="#22d3ee" transparent opacity={0.2} depthWrite={false} />
@@ -447,12 +1118,9 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
             <ringGeometry args={[ringInner, baseRadius + 0.02, 48]} />
             <meshStandardMaterial color="#22d3ee" transparent opacity={0.9} emissive="#22d3ee" emissiveIntensity={0.6} />
           </mesh>
-          <group rotation={[0, previewHeadingRad, 0]}>
-            <BaseOrientationDisplay flip={FLIP_MODELS.has(unit.modelFilename)} opacityScale={0.75} />
-          </group>
           {isSelected && weapons.length > 0 && (
             <group rotation={[0, previewHeadingRad, 0]}>
-              <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
+              <WeaponArcDisplay weapons={weapons} flip={FLIP_MODELS.has(unit.modelFilename)} baseRadius={baseRadius} muted={unit.isDestroyed} arcColorScheme={arcColorScheme} arcSide={arcSide} />
             </group>
           )}
           {firingArc && (
@@ -461,37 +1129,32 @@ function GameUnit3D({ unit, isSelected, onClick, onCameraFocus, myUserId, weapon
                 arc={firingArc.arc}
                 range={firingArc.range}
                 flip={FLIP_MODELS.has(unit.modelFilename)}
+                arcColorScheme={arcColorScheme}
+                arcSide={arcSide}
               />
             </group>
           )}
           <group position={[0, 2, 0]} rotation={[0, previewHeadingRad, 0]}>
             <ModelErrorBoundary color="#22d3ee">
               <Suspense fallback={<ShipModelFallback color="#22d3ee" opacity={0.66} />}>
-                <BoardModelVisual filename={unit.modelFilename} tint="#22d3ee" opacity={0.66} />
+                <BoardModelVisual filename={visualModelFilename} tint="#22d3ee" opacity={0.66} />
               </Suspense>
             </ModelErrorBoundary>
           </group>
-          <Text position={[0, 3.35, 0]} fontSize={0.34} color="#67e8f9" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
+          <CameraFacingText position={[0, 3.35, 0]} fontSize={0.34} color="#67e8f9" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
             PREVIEW
-          </Text>
+          </CameraFacingText>
         </group>
       )}
       {!hasPreview && (
         <>
           {/* HP bar above ship */}
-          <group position={[0, 3.2, 0]}>
-            <mesh>
-              <planeGeometry args={[2, 0.18]} />
-              <meshBasicMaterial color="#1f2937" transparent opacity={0.9} />
-            </mesh>
-            <mesh position={[-1 * (1 - hpPct), 0, 0.001]} scale={[hpPct, 1, 1]}>
-              <planeGeometry args={[2, 0.15]} />
-              <meshBasicMaterial color={hpPct > 0.5 ? "#22c55e" : hpPct > 0.25 ? "#f59e0b" : "#ef4444"} />
-            </mesh>
-          </group>
-          <Text position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
-            {unit.name.slice(0, 14)}
-          </Text>
+          <UnitHealthBar hpPct={hpPct} faceCamera={healthBarFacesCamera} />
+          {shipHullNamesEnabled && (
+            <CameraFacingText position={[0, 3.7, 0]} fontSize={0.4} color="white" anchorX="center" anchorY="middle" outlineWidth={0.04} outlineColor="black">
+              {unit.name.slice(0, 14)}
+            </CameraFacingText>
+          )}
         </>
       )}
     </group>
@@ -572,25 +1235,165 @@ function DestroyedSmoke({
   );
 }
 
-// Test damage flames for battered and destroyed ships. These are small
-// additive puffs anchored near the hull so they read as status, not scenery.
-const FLAME_PUFF_COUNT = 6;
-const FLAME_LIFETIME = 0.62;
+// Showcase hull-fire tuning, anchored to the ship hull for damage states.
+const HULL_FIRE_TUNING = {
+  color: "#ff7a18",
+  secondaryColor: "#ffd166",
+  speed: 1.1,
+  size: 0.3,
+  fade: 1,
+  intensity: 0.8,
+  spread: 0.45,
+  count: 16,
+  arc: 0.15,
+  thickness: 0.9,
+};
+
+const SHADOW_DAMAGE_SPRAY_TUNING = {
+  color: "#000000",
+  secondaryColor: "#000000",
+  speed: 0.95,
+  size: 0.25,
+  fade: 1.3,
+  intensity: 3,
+  spread: 0.2,
+  count: 58,
+  arc: 6,
+  thickness: 4,
+  randomness: 1.1,
+  ribbonEffect: 0,
+};
+
+type ShadowDamageParticle = {
+  yaw: number;
+  distance: number;
+  height: number;
+  rise: number;
+  speed: number;
+  phase: number;
+  size: number;
+  wobble: number;
+};
+
+function shadowDamageParticlePosition(particle: ShadowDamageParticle, local: number, level: number, destroyed: boolean): THREE.Vector3 {
+  const eased = 1 - Math.pow(1 - local, 1.7);
+  const sideWobble = Math.sin(local * Math.PI * 2 + particle.phase * Math.PI * 2) * particle.wobble * Math.sin(local * Math.PI);
+  const yaw = particle.yaw + sideWobble;
+  const radius = particle.distance * eased * (0.88 + level * 0.16 + (destroyed ? 0.08 : 0));
+  return new THREE.Vector3(
+    Math.sin(yaw) * radius,
+    0.28 + Math.sin(local * Math.PI) * particle.height + local * particle.rise,
+    Math.cos(yaw) * radius,
+  );
+}
+
+function shadowDamagePhaseAlpha(local: number, fade = 1): number {
+  if (local < 0.1) return local / 0.1;
+  const fadeStart = THREE.MathUtils.clamp(0.72 - (fade - 1) * 0.12, 0.45, 0.86);
+  if (local < fadeStart) return 1;
+  return THREE.MathUtils.clamp(1 - (local - fadeStart) / (1 - fadeStart), 0, 1);
+}
+
+function ShadowDamageParticleSpray({ level, destroyed }: { level: number; destroyed: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const fireLevel = Math.max(0, Math.min(1, level));
+  const particles = useMemo<ShadowDamageParticle[]>(() => {
+    const count = SHADOW_DAMAGE_SPRAY_TUNING.count;
+    const fanAngle = Math.max(0.15, Math.min(Math.PI * 1.92, SHADOW_DAMAGE_SPRAY_TUNING.arc));
+    const randomness = Math.max(0, Math.min(1.5, SHADOW_DAMAGE_SPRAY_TUNING.randomness));
+    return Array.from({ length: count }, (_, i) => {
+      const slot = count <= 1 ? 0.5 : i / (count - 1);
+      const band = i % 5;
+      const jitter = Math.sin(i * 12.9898) * randomness * 0.18;
+      return {
+        yaw: (slot - 0.5) * fanAngle + jitter,
+        distance: (5.4 + (i % 9) * 0.36) * SHADOW_DAMAGE_SPRAY_TUNING.spread,
+        height: (0.8 + band * 0.24 + Math.abs(Math.sin(i * 2.31)) * 0.36) * SHADOW_DAMAGE_SPRAY_TUNING.size * (0.85 + fanAngle * 0.12),
+        rise: (0.15 + (i % 4) * 0.1) * SHADOW_DAMAGE_SPRAY_TUNING.spread,
+        speed: 0.5 + (i % 7) * 0.055,
+        phase: (i * 0.071) % 1,
+        size: (0.105 + (i % 4) * 0.018) * SHADOW_DAMAGE_SPRAY_TUNING.size,
+        wobble: randomness * (0.015 + (i % 4) * 0.012),
+      };
+    });
+  }, []);
+
+  useFrame(({ clock }) => {
+    const g = groupRef.current;
+    if (!g) return;
+    const t = clock.getElapsedTime();
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i]!;
+      const particleGroup = g.children[i] as THREE.Group | undefined;
+      if (!particleGroup) continue;
+      const local = (t * SHADOW_DAMAGE_SPRAY_TUNING.speed * p.speed + p.phase) % 1;
+      particleGroup.position.copy(shadowDamageParticlePosition(p, local, fireLevel, destroyed));
+      particleGroup.rotation.set(t * 0.8 * p.speed, t * 1.3 * p.speed + i, 0);
+      const scale = p.size * (0.82 + Math.sin(local * Math.PI) * 0.55) * (0.9 + fireLevel * 0.1);
+      particleGroup.scale.setScalar(scale);
+      const opacity = THREE.MathUtils.clamp(
+        Math.sin(local * Math.PI) * SHADOW_DAMAGE_SPRAY_TUNING.intensity * shadowDamagePhaseAlpha(local, SHADOW_DAMAGE_SPRAY_TUNING.fade) * (0.85 + fireLevel * 0.15),
+        0,
+        1,
+      );
+      const outline = particleGroup.children[0] as THREE.Mesh | undefined;
+      const core = particleGroup.children[1] as THREE.Mesh | undefined;
+      if (outline) {
+        const mat = outline.material as THREE.MeshBasicMaterial;
+        mat.opacity = opacity * 0.82;
+      }
+      if (core) {
+        const mat = core.material as THREE.MeshBasicMaterial;
+        mat.opacity = opacity;
+      }
+    }
+  });
+
+  return (
+    <group ref={groupRef} position={[0, destroyed ? 0.04 : 0.12, 0]}>
+      {particles.map((_, i) => (
+        <group key={i} raycast={() => null}>
+          <mesh renderOrder={12}>
+            <sphereGeometry args={[1.25, 12, 12]} />
+            <meshBasicMaterial
+              color={SHADOW_DAMAGE_SPRAY_TUNING.secondaryColor}
+              transparent
+              opacity={0}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh scale={0.72} renderOrder={13}>
+            <sphereGeometry args={[1, 10, 10]} />
+            <meshBasicMaterial
+              color={SHADOW_DAMAGE_SPRAY_TUNING.color}
+              transparent
+              opacity={0}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
 function ShipDamageFire({ level, destroyed }: { level: number; destroyed: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const fireLevel = Math.max(0, Math.min(1, level));
   const flames = useMemo(() => {
-    return Array.from({ length: FLAME_PUFF_COUNT }, (_, i) => {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = (0.08 + Math.random() * (destroyed ? 0.34 : 0.22)) * 0.5;
+    return Array.from({ length: HULL_FIRE_TUNING.count }, (_, i) => {
+      const angle = i * 2.399 + Math.random() * 0.18;
+      const radius = (0.13 + (i % 5) * 0.08) * HULL_FIRE_TUNING.spread * (destroyed ? 1.15 : 0.82);
       return {
-        x: Math.cos(angle) * radius,
-        z: Math.sin(angle) * radius,
-        phase: (i / FLAME_PUFF_COUNT) * FLAME_LIFETIME + Math.random() * 0.16,
-        height: 0.18 + Math.random() * 0.28,
-        width: 0.08 + Math.random() * 0.07,
-        color: i % 3 === 0 ? "#fff2a8" : i % 3 === 1 ? "#ff9f1c" : "#ef4444",
+        angle,
+        radius,
+        speed: (0.48 + (i % 4) * 0.12) * HULL_FIRE_TUNING.speed,
+        phase: i * 0.19 + Math.random() * 0.08,
+        size: (0.18 + (i % 3) * 0.08) * HULL_FIRE_TUNING.size * (destroyed ? 1.12 : 0.88),
+        color: i % 3 === 0 ? HULL_FIRE_TUNING.secondaryColor : HULL_FIRE_TUNING.color,
       };
     });
   }, [destroyed]);
@@ -603,23 +1406,20 @@ function ShipDamageFire({ level, destroyed }: { level: number; destroyed: boolea
       const f = flames[i]!;
       const child = g.children[i] as THREE.Mesh | undefined;
       if (!child) continue;
-      const local = ((t + f.phase) % FLAME_LIFETIME) / FLAME_LIFETIME;
-      const pulse = Math.sin((t * 18) + i) * 0.18;
-      const rise = local * f.height * (0.8 + fireLevel * 0.6);
+      const local = (t * f.speed + f.phase) % 1;
+      const radius = f.radius * (1 + local * (0.35 + HULL_FIRE_TUNING.arc));
       child.position.set(
-        f.x + Math.sin(t * 9 + i) * 0.025 * fireLevel,
-        rise,
-        f.z + Math.cos(t * 10 + i) * 0.025 * fireLevel,
+        Math.cos(f.angle) * radius + Math.sin(t * 9 + i) * 0.025 * fireLevel,
+        0.08 + local * 1.7 * HULL_FIRE_TUNING.spread * (0.8 + fireLevel * 0.45),
+        Math.sin(f.angle) * radius + Math.cos(t * 10 + i) * 0.025 * fireLevel,
       );
-      const width = f.width * (0.75 + fireLevel * 0.9) * (1 + pulse);
-      const height = f.height * (1.4 + fireLevel * 1.6) * (1 - local * 0.28);
-      child.scale.set(width * 0.5, Math.max(0.02, height), width * 0.5);
+      child.scale.setScalar(f.size * (1.4 - local * 0.45) * (0.7 + fireLevel * 0.55));
       const mat = child.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(0, (1 - local) * (0.45 + fireLevel * 0.5));
+      mat.opacity = Math.max(0, 0.9 * (1 - local / HULL_FIRE_TUNING.fade) * HULL_FIRE_TUNING.intensity * (0.4 + fireLevel * 0.75));
     }
     if (lightRef.current) {
-      lightRef.current.intensity = (0.45 + Math.sin(t * 16) * 0.18) * fireLevel;
-      lightRef.current.distance = 2.2 + fireLevel * 2.8;
+      lightRef.current.intensity = (1.2 + Math.sin(t * 16) * 0.25) * HULL_FIRE_TUNING.intensity * fireLevel;
+      lightRef.current.distance = 3 + fireLevel * 3;
     }
   });
 
@@ -627,7 +1427,7 @@ function ShipDamageFire({ level, destroyed }: { level: number; destroyed: boolea
     <group ref={groupRef} position={[0, destroyed ? 0.05 : 0.15, 0]}>
       {flames.map((f, i) => (
         <mesh key={i} raycast={() => null} renderOrder={11}>
-          <coneGeometry args={[1, 1, 6, 1, true]} />
+          <sphereGeometry args={[1, 10, 10]} />
           <meshBasicMaterial
             color={f.color}
             transparent
@@ -638,7 +1438,7 @@ function ShipDamageFire({ level, destroyed }: { level: number; destroyed: boolea
           />
         </mesh>
       ))}
-      <pointLight ref={lightRef} color="#ff9f1c" distance={3} decay={2} intensity={0} />
+      <pointLight ref={lightRef} color={HULL_FIRE_TUNING.color} distance={3} decay={2} intensity={0} />
     </group>
   );
 }
@@ -653,15 +1453,15 @@ function ShipDamageFire({ level, destroyed }: { level: number; destroyed: boolea
 //   Aft       = shape -Y direction = 270° (-π/2)
 //   Starboard = shape -X direction = 180° (π)
 const ARC_DEFS: Record<string, { centerAngle: number; halfAngle: number; color: string; opacity: number; radius?: number }> = {
-  "Forward":           { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 4,  color: "#f59e0b", opacity: 0.30 },
-  "Port":              { centerAngle: 0,             halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
-  "Starboard":         { centerAngle: Math.PI,       halfAngle: Math.PI / 4,  color: "#06b6d4", opacity: 0.24 },
-  "Aft":               { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4,  color: "#ef4444", opacity: 0.22 },
-  "Boresight Forward": { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 24, color: "#fef08a", opacity: 0.85, radius: 1.65 },
-  "Boresight Aft":     { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 24, color: "#fb923c", opacity: 0.75, radius: 1.65 },
+  "Forward":           { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 4,  color: "#ffb000", opacity: 0.40 },
+  "Port":              { centerAngle: 0,             halfAngle: Math.PI / 4,  color: "rgba(0, 255, 222, 1)", opacity: 0.34 },
+  "Starboard":         { centerAngle: Math.PI,       halfAngle: Math.PI / 4,  color: "rgba(0, 255, 222, 1)", opacity: 0.34 },
+  "Aft":               { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4,  color: "#ff2f4f", opacity: 0.34 },
+  "Boresight Forward": { centerAngle: Math.PI / 2,  halfAngle: Math.PI / 24, color: "#fff75a", opacity: 0.95, radius: 1.65 },
+  "Boresight Aft":     { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 24, color: "#ff7a1a", opacity: 0.90, radius: 1.65 },
   // Turrets fire in any direction → full 360° sector. centerAngle is arbitrary
   // since halfAngle = π covers the entire circle.
-  "Turret":            { centerAngle: Math.PI / 2,  halfAngle: Math.PI,      color: "#a78bfa", opacity: 0.22 },
+  "Turret":            { centerAngle: Math.PI / 2,  halfAngle: Math.PI,      color: "#b86cff", opacity: 0.32 },
 };
 
 // Label positions in the heading-group's local XZ space (local +Z = world forward)
@@ -682,6 +1482,32 @@ const BASE_ORIENTATION_ARCS = [
   "Boresight Forward",
   "Boresight Aft",
 ];
+
+const SIDE_ARC_COLORS: Record<"friendly" | "enemy", Record<string, string>> = {
+  friendly: {
+    "Forward": "#34eb52",
+    "Port": "#00d46a",
+    "Starboard": "#00f090",
+    "Aft": "#0f9f4a",
+    "Boresight Forward": "#b7ff7a",
+    "Boresight Aft": "#70e000",
+    "Turret": "#7dffb2",
+  },
+  enemy: {
+    "Forward": "#ff0004",
+    "Port": "#ff4f57",
+    "Starboard": "#ff2a35",
+    "Aft": "#a90012",
+    "Boresight Forward": "#ffb0a8",
+    "Boresight Aft": "#ff7a45",
+    "Turret": "#ff6b9d",
+  },
+};
+
+function arcDisplayColor(arc: string, scheme: UiArcColorScheme, side: "friendly" | "enemy" | null): string {
+  if (scheme === "side" && side) return SIDE_ARC_COLORS[side][arc] ?? ARC_DEFS[arc]?.color ?? "#ffffff";
+  return ARC_DEFS[arc]?.color ?? "#ffffff";
+}
 
 function ArcSector({ centerAngle, halfAngle, radius, color, opacity, planeY = 0.028 }: {
   centerAngle: number;
@@ -713,7 +1539,27 @@ function ArcSector({ centerAngle, halfAngle, radius, color, opacity, planeY = 0.
 // range (in world inches) so the player can see where its eligible targets lie.
 // Uses the same ARC_DEFS angles as the base arcs so the visual and server's
 // `isInArc` adjudication line up; flip handling matches WeaponArcDisplay.
-function BaseOrientationDisplay({ flip = false, opacityScale = 1 }: { flip?: boolean; opacityScale?: number }) {
+const ARC_DISPLAY_BASE_RADIUS_INCHES = 1.2;
+
+function arcDisplayRadius(arc: string, _baseRadius: number): number {
+  return ARC_DISPLAY_BASE_RADIUS_INCHES + (arc.startsWith("Boresight") ? 0.62 : 0.34);
+}
+
+function BaseOrientationDisplay({
+  flip = false,
+  opacityScale = 1,
+  baseRadius = 1.2,
+  muted = false,
+  arcColorScheme = "classic",
+  arcSide = null,
+}: {
+  flip?: boolean;
+  opacityScale?: number;
+  baseRadius?: number;
+  muted?: boolean;
+  arcColorScheme?: UiArcColorScheme;
+  arcSide?: "friendly" | "enemy" | null;
+}) {
   return (
     <>
       {BASE_ORIENTATION_ARCS.map(arc => {
@@ -721,15 +1567,17 @@ function BaseOrientationDisplay({ flip = false, opacityScale = 1 }: { flip?: boo
         if (!def) return null;
         const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
         const isBoresight = arc.startsWith("Boresight");
+        const mutedOpacity = isBoresight ? 0.24 : 0.34;
+        const color = arcDisplayColor(arc, arcColorScheme, arcSide);
         return (
           <ArcSector
             key={arc}
             centerAngle={centerAngle}
             halfAngle={def.halfAngle}
-            radius={def.radius ?? 1.2}
-            color={def.color}
-            opacity={def.opacity * (isBoresight ? 0.36 : 0.42) * opacityScale}
-            planeY={0.023}
+            radius={arcDisplayRadius(arc, baseRadius)}
+            color={muted ? "#737b88" : color}
+            opacity={(muted ? mutedOpacity : def.opacity * (isBoresight ? 0.52 : 0.62)) * opacityScale}
+            planeY={0.012}
           />
         );
       })}
@@ -737,8 +1585,21 @@ function BaseOrientationDisplay({ flip = false, opacityScale = 1 }: { flip?: boo
   );
 }
 
-function RangeArcOverlay({ arc, range, flip }: { arc: string; range: number; flip: boolean }) {
+function RangeArcOverlay({
+  arc,
+  range,
+  flip,
+  arcColorScheme = "classic",
+  arcSide = null,
+}: {
+  arc: string;
+  range: number;
+  flip: boolean;
+  arcColorScheme?: UiArcColorScheme;
+  arcSide?: "friendly" | "enemy" | null;
+}) {
   const def = ARC_DEFS[arc];
+  const color = arcDisplayColor(arc, arcColorScheme, arcSide);
   const geo = useMemo(() => {
     if (!def) return null;
     const segments = def.halfAngle < 0.3 ? 16 : 64;
@@ -775,7 +1636,7 @@ function RangeArcOverlay({ arc, range, flip }: { arc: string; range: number; fli
       {/* Translucent fill */}
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.018, 0]} geometry={geo}>
         <meshBasicMaterial
-          color={def.color}
+          color={color}
           transparent
           opacity={0.10}
           depthWrite={false}
@@ -783,7 +1644,7 @@ function RangeArcOverlay({ arc, range, flip }: { arc: string; range: number; fli
         />
       </mesh>
       {/* Outline along the arc + radial edges so the boundary reads clearly */}
-      <Line points={edgePoints} color={def.color} lineWidth={1.5} transparent opacity={0.85} position={[0, 0.05, 0]} />
+      <Line points={edgePoints} color={color} lineWidth={2} transparent opacity={0.95} position={[0, 0.05, 0]} />
     </>
   );
 }
@@ -794,22 +1655,47 @@ function RangeArcOverlay({ arc, range, flip }: { arc: string; range: number; fli
 // Rotating by +π handles both axial arcs (Forward/Aft/Boresight) AND lateral
 // arcs (Port/Starboard) correctly, where the older "negate axial-only" trick
 // silently mirrored port/starboard onto the wrong side of the hull.
-function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "arc">[]; flip?: boolean }) {
+function arcLabelPosition(arc: string, baseRadius: number, pos: [number, number, number]): [number, number, number] {
+  const radial = Math.hypot(pos[0], pos[2]);
+  if (radial < 0.001) return pos;
+  const targetRadius = ARC_DISPLAY_BASE_RADIUS_INCHES + (arc.startsWith("Boresight") ? 0.72 : 0.42);
+  const scale = targetRadius / radial;
+  return [pos[0] * scale, pos[1], pos[2] * scale];
+}
+
+function WeaponArcDisplay({
+  weapons,
+  flip = false,
+  baseRadius = 1.2,
+  muted = false,
+  arcColorScheme = "classic",
+  arcSide = null,
+}: {
+  weapons: Pick<Weapon, "arc">[];
+  flip?: boolean;
+  baseRadius?: number;
+  muted?: boolean;
+  arcColorScheme?: UiArcColorScheme;
+  arcSide?: "friendly" | "enemy" | null;
+}) {
   const uniqueArcs = useMemo(() => [...new Set(weapons.map(w => w.arc))], [weapons]);
+  const weaponArcColor = muted ? "#8a93a1" : null;
   return (
     <>
       {uniqueArcs.map(arc => {
         const def = ARC_DEFS[arc];
         if (!def) return null;
         const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
+        const color = arcDisplayColor(arc, arcColorScheme, arcSide);
         return (
           <ArcSector
             key={arc}
             centerAngle={centerAngle}
             halfAngle={def.halfAngle}
-            radius={def.radius ?? 1.2}
-            color={def.color}
-            opacity={def.opacity}
+            radius={arcDisplayRadius(arc, baseRadius)}
+            color={weaponArcColor ?? color}
+            opacity={muted ? 0.26 : def.opacity}
+            planeY={0.014}
           />
         );
       })}
@@ -817,22 +1703,24 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
         const lbl = ARC_LABELS[arc];
         const def = ARC_DEFS[arc];
         if (!lbl || !def) return null;
+        const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+        const scaledPos = arcLabelPosition(arc, baseRadius, lbl.pos);
         const pos: [number, number, number] = flip
-          ? [-lbl.pos[0], lbl.pos[1], -lbl.pos[2]]
-          : lbl.pos;
+          ? [-scaledPos[0], scaledPos[1], -scaledPos[2]]
+          : scaledPos;
         return (
-          <Text
+          <CameraFacingText
             key={`lbl-${arc}`}
             position={pos}
             fontSize={0.17}
-            color={def.color}
+            color={muted ? "#a7afbc" : color}
             anchorX="center"
             anchorY="middle"
-            outlineWidth={0.03}
+            outlineWidth={0.04}
             outlineColor="black"
           >
             {lbl.label}
-          </Text>
+          </CameraFacingText>
         );
       })}
       {/* Turret: inner circle on the base + centred label */}
@@ -840,23 +1728,23 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
         <>
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.026, 0]}>
             <ringGeometry args={[0.46, 0.54, 48]} />
-            <meshBasicMaterial color="#a855f7" transparent opacity={0.75} depthWrite={false} side={THREE.DoubleSide} />
+            <meshBasicMaterial color={muted ? "#8a93a1" : arcDisplayColor("Turret", arcColorScheme, arcSide)} transparent opacity={muted ? 0.34 : 0.75} depthWrite={false} side={THREE.DoubleSide} />
           </mesh>
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
             <circleGeometry args={[0.46, 48]} />
-            <meshBasicMaterial color="#a855f7" transparent opacity={0.18} depthWrite={false} side={THREE.DoubleSide} />
+            <meshBasicMaterial color={muted ? "#8a93a1" : arcDisplayColor("Turret", arcColorScheme, arcSide)} transparent opacity={muted ? 0.10 : 0.18} depthWrite={false} side={THREE.DoubleSide} />
           </mesh>
-          <Text
+          <CameraFacingText
             position={[0, 0.09, 0]}
             fontSize={0.17}
-            color="#a855f7"
+            color={muted ? "#a7afbc" : arcDisplayColor("Turret", arcColorScheme, arcSide)}
             anchorX="center"
             anchorY="middle"
             outlineWidth={0.03}
             outlineColor="black"
           >
             TUR
-          </Text>
+          </CameraFacingText>
         </>
       )}
     </>
@@ -864,9 +1752,11 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
 }
 
 // ── Movement planning (forward / turn previews, keyboard + mouse-drag) ───────
-// turn.deltaDeg is signed: positive = clockwise (R), negative = counter-clockwise (Shift+R).
+// turn.deltaDeg is signed in the UI's visual convention: negative = left/port,
+// positive = right/starboard. Commit code translates this through flipped meshes.
 // forward.distance is in inches (world units), 0..remaining-speed, controlled by mouse drag.
 // Dice-modal staging. The reveal is gated behind explicit confirm buttons:
+//   target-picked  → weapon + target selected, but no server action committed
 //   pending        → server roll in flight (no result yet)
 //   attack-ready   → result cached; press "Roll to Hit" to reveal attack dice
 //   attack-rolling → attack dice shuffle animation (~700ms)
@@ -878,6 +1768,7 @@ function WeaponArcDisplay({ weapons, flip = false }: { weapons: Pick<Weapon, "ar
 // `confirmingClose` overlays a Yes/Cancel prompt so the player can't dismiss
 // the modal by accident and lose track of what just happened.
 type DiceModalPhase =
+  | "target-picked"
   | "pending"
   | "attack-ready"
   | "attack-rolling"
@@ -902,6 +1793,7 @@ type DiceModalState = {
   targetName: string;
   targetId: number;
   attackDice: number;
+  useScoutCoordination?: boolean;
   phase: DiceModalPhase;
   result?: FireWeaponResult;
   error?: string;
@@ -909,6 +1801,31 @@ type DiceModalState = {
   // Index into result.criticalsApplied for the per-crit reveal walk. Only
   // meaningful in phases crit-ready / crit-rolling / crit-shown.
   critIndex?: number;
+};
+
+type SelfRepairModalPhase = "ready" | "rolling" | "shown" | "error";
+type SelfRepairModalState = {
+  unitId: number;
+  unitName: string;
+  dice: number;
+  phase: SelfRepairModalPhase;
+  rolls?: number[];
+  total?: number;
+  repaired?: number;
+  hullBefore?: number;
+  hullAfter?: number;
+  error?: string;
+  confirmingClose?: boolean;
+};
+
+type SelfRepairResult = {
+  dice: number;
+  rolls: number[];
+  total: number;
+  repaired: number;
+  hullBefore: number;
+  hullAfter: number;
+  unit: GameUnit;
 };
 
 type MovePlan =
@@ -921,6 +1838,44 @@ type MovementGesture =
   | { kind: "turn"; direction: "left" | "right" | "free" }
   | null;
 
+type MovementLedger = { distance: number; turns: number; distSinceLastTurn: number };
+type RuntimeMovementUnit = GameUnit & {
+  turnsMadeThisActivation?: number;
+  distanceSinceLastTurnThisActivation?: number;
+};
+const EMPTY_MOVEMENT_LEDGER: MovementLedger = { distance: 0, turns: 0, distSinceLastTurn: 0 };
+const TABLET_MOVEMENT_CONTROLLER_POSITION_KEY = "b5acta.ui.tabletMovementControllerPosition";
+
+function cleanApiErrorMessage(err: unknown, fallback = "Action failed"): string {
+  const anyErr = err as any;
+  const body = anyErr?.response?.data ?? anyErr?.data;
+  if (body && typeof body === "object") {
+    const bodyMessage = typeof body.error === "string"
+      ? body.error
+      : typeof body.message === "string"
+        ? body.message
+        : "";
+    if (bodyMessage.trim()) return bodyMessage.trim();
+  }
+
+  const raw = err instanceof Error ? err.message : String(err ?? fallback);
+  let cleaned = raw.replace(/^HTTP\s+\d+\s+[^:]+:\s*/i, "").trim();
+  if (cleaned.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(cleaned);
+      const parsedMessage = typeof parsed?.error === "string"
+        ? parsed.error
+        : typeof parsed?.message === "string"
+          ? parsed.message
+          : "";
+      if (parsedMessage.trim()) cleaned = parsedMessage.trim();
+    } catch {
+      // Leave the non-JSON text alone.
+    }
+  }
+  return cleaned.replace(/^Error:\s*/i, "").trim() || fallback;
+}
+
 // Heading → unit world-space forward vector (accounting for FLIP_MODELS which
 // render their visual nose along local -Z).
 function headingForwardVec(unit: { heading: number; modelFilename: string }): { x: number; z: number } {
@@ -930,8 +1885,28 @@ function headingForwardVec(unit: { heading: number; modelFilename: string }): { 
   return { x: sign * Math.sin(hRad), z: sign * Math.cos(hRad) };
 }
 
-function effectiveUiSpeed(unit: { speed: number; isCrippled?: boolean }): number {
-  return unit.isCrippled ? Math.floor(unit.speed / 2) : unit.speed;
+function visualTurnDeltaToHeadingDelta(modelFilename: string, deltaDeg: number): number {
+  return FLIP_MODELS.has(modelFilename) ? deltaDeg : -deltaDeg;
+}
+
+const CRIT_SPEED_REDUCE_BY_KEY: Record<string, number> = {
+  "engines-power-relays": 1,
+  "engines-thrusters": 2,
+  "engines-fuel": 4,
+  "reactor-capacitors": 2,
+};
+
+function criticalSpeedReduction(unit: { criticals?: Array<{ effectKey: string }> }): number {
+  let reduce = 0;
+  for (const crit of unit.criticals ?? []) {
+    reduce = Math.max(reduce, CRIT_SPEED_REDUCE_BY_KEY[crit.effectKey] ?? 0);
+  }
+  return reduce;
+}
+
+function effectiveUiSpeed(unit: { speed: number; isCrippled?: boolean; criticals?: Array<{ effectKey: string }> }): number {
+  const crippledSpeed = unit.isCrippled ? Math.floor(unit.speed / 2) : unit.speed;
+  return Math.max(0, crippledSpeed - criticalSpeedReduction(unit));
 }
 
 function effectiveUiTurns(unit: { turns?: number | null; isCrippled?: boolean }): number {
@@ -949,6 +1924,11 @@ function parseUiMovementTraits(raw: string | null | undefined): { agile: boolean
     agile: /\bagile\b/i.test(text),
     superManeuverable: /\bsuper[-\s]?maneuverable\b/i.test(text) || /\bsuper[-\s]?manoeuvrable\b/i.test(text),
   };
+}
+
+function parseUiSelfRepairDice(raw: string | null | undefined): number {
+  const match = (raw ?? "").match(/\bself[-\s]?repair\b\s*:?\s*(\d+)/i);
+  return match ? Math.max(0, Number(match[1]) || 0) : 0;
 }
 
 function turnDistanceNeeded(speed: number, turnsMade: number, traits: { agile: boolean; superManeuverable: boolean }): number {
@@ -1046,7 +2026,7 @@ function ForwardPreview({ distance, maxDistance, minRequired, committedBefore, m
             <coneGeometry args={[0.28, 0.55, 14]} />
             <meshBasicMaterial color={arrowColor} transparent opacity={0.95} />
           </mesh>
-          <Text
+          <CameraFacingText
             position={[0.55, 0.1, 1.2 + distance / 2]}
             fontSize={0.34}
             color={arrowTextColor}
@@ -1054,7 +2034,7 @@ function ForwardPreview({ distance, maxDistance, minRequired, committedBefore, m
             anchorY="middle"
             outlineWidth={0.04}
             outlineColor="black"
-          >{`${distance.toFixed(1)}"${minExempt || meetsMin ? "" : ` / min ${minRequired.toFixed(1)}"`}`}</Text>
+          >{`${distance.toFixed(1)}"${minExempt || meetsMin ? "" : ` / min ${minRequired.toFixed(1)}"`}`}</CameraFacingText>
         </>
       )}
     </group>
@@ -1068,7 +2048,7 @@ function TurnArcPreview({ deltaDeg }: { deltaDeg: number }) {
   // Forward = shape angle π/2. Positive delta (CW from above) sweeps toward starboard
   // (decreasing shape angle); negative delta sweeps toward port (increasing shape angle).
   const start = Math.PI / 2;
-  const end = deltaDeg > 0 ? start - angleRad : start + angleRad;
+  const end = deltaDeg > 0 ? start + angleRad : start - angleRad;
   const midAngle = (start + end) / 2;
   const labelR = 2.6;
   const labelX = Math.cos(midAngle) * labelR;
@@ -1083,7 +2063,7 @@ function TurnArcPreview({ deltaDeg }: { deltaDeg: number }) {
         color="#22d3ee"
         opacity={0.35}
       />
-      <Text
+      <CameraFacingText
         position={[labelX, 0.12, labelZ]}
         fontSize={0.36}
         color="#67e8f9"
@@ -1091,7 +2071,7 @@ function TurnArcPreview({ deltaDeg }: { deltaDeg: number }) {
         anchorY="middle"
         outlineWidth={0.04}
         outlineColor="black"
-      >{`${deltaDeg > 0 ? "+" : "−"}${absDeg}°`}</Text>
+      >{`${deltaDeg > 0 ? "+" : "-"}${absDeg} deg`}</CameraFacingText>
     </group>
   );
 }
@@ -1194,7 +2174,7 @@ function MovementRadialMenu({
             depthWrite={false}
           />
         </mesh>
-        <Text
+        <CameraFacingText
           position={[0, 0.16, 0]}
           fontSize={0.34}
           color={textColor}
@@ -1204,7 +2184,7 @@ function MovementRadialMenu({
           outlineColor="black"
         >
           {label}
-        </Text>
+        </CameraFacingText>
       </group>
     );
   };
@@ -1266,6 +2246,10 @@ function TabletMovementController({
   onFreeTurn,
   onCancel,
   onConfirm,
+  canEndActivation,
+  endActivationLabel,
+  endActivationTitle,
+  onEndActivation,
 }: {
   plan: MovePlan;
   canForward: boolean;
@@ -1283,9 +2267,49 @@ function TabletMovementController({
   onFreeTurn: () => void;
   onCancel: () => void;
   onConfirm: () => void;
+  canEndActivation: boolean;
+  endActivationLabel: string;
+  endActivationTitle?: string;
+  onEndActivation: () => void;
 }) {
   const repeatRef = useRef<number | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  const controllerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.localStorage.getItem(TABLET_MOVEMENT_CONTROLLER_POSITION_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { left?: unknown; top?: unknown };
+      return typeof parsed.left === "number" && typeof parsed.top === "number"
+        ? { left: parsed.left, top: parsed.top }
+        : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const clampControllerPosition = useCallback((next: { left: number; top: number }) => {
+    const rect = controllerRef.current?.getBoundingClientRect();
+    const width = rect?.width ?? 190;
+    const height = rect?.height ?? 310;
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const margin = 10;
+    return {
+      left: Math.max(margin, Math.min(Math.max(margin, viewportWidth - width - margin), next.left)),
+      top: Math.max(margin, Math.min(Math.max(margin, viewportHeight - height - margin), next.top)),
+    };
+  }, []);
+
+  const persistControllerPosition = useCallback((next: { left: number; top: number }) => {
+    try {
+      window.localStorage.setItem(TABLET_MOVEMENT_CONTROLLER_POSITION_KEY, JSON.stringify(next));
+    } catch {
+      // Local storage may be unavailable in private browsing; dragging still works for this session.
+    }
+  }, []);
 
   const stopRepeat = useCallback(() => {
     if (repeatRef.current !== null) window.clearInterval(repeatRef.current);
@@ -1295,6 +2319,38 @@ function TabletMovementController({
   }, []);
 
   useEffect(() => stopRepeat, [stopRepeat]);
+
+  useEffect(() => {
+    const rect = controllerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition(prev => {
+      const initial = prev ?? {
+        left: window.innerWidth - rect.width - 20,
+        top: window.innerHeight - rect.height - 20,
+      };
+      const clamped = clampControllerPosition(initial);
+      if (prev && Math.abs(prev.left - clamped.left) < 0.5 && Math.abs(prev.top - clamped.top) < 0.5) return prev;
+      persistControllerPosition(clamped);
+      return clamped;
+    });
+  }, [clampControllerPosition, persistControllerPosition]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setPosition(prev => {
+        if (!prev) return prev;
+        const clamped = clampControllerPosition(prev);
+        persistControllerPosition(clamped);
+        return clamped;
+      });
+    };
+    window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onResize);
+    };
+  }, [clampControllerPosition, persistControllerPosition]);
 
   const RepeatButton = ({
     label,
@@ -1343,12 +2399,73 @@ function TabletMovementController({
       ? `${plan.deltaDeg > 0 ? "+" : ""}${plan.deltaDeg}° / ${angleCap}°`
       : `0" / ${remainingMove.toFixed(1)}`;
 
+  const onDragHandlePointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    stopRepeat();
+    const rect = controllerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragRef.current = {
+      pointerId: e.pointerId,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+    };
+    controllerRef.current?.setPointerCapture(e.pointerId);
+  }, [stopRepeat]);
+
+  const onControllerPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    const next = clampControllerPosition({
+      left: e.clientX - drag.offsetX,
+      top: e.clientY - drag.offsetY,
+    });
+    setPosition(next);
+  }, [clampControllerPosition]);
+
+  const finishControllerDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    dragRef.current = null;
+    setPosition(prev => {
+      if (!prev) return prev;
+      const clamped = clampControllerPosition(prev);
+      persistControllerPosition(clamped);
+      return clamped;
+    });
+    try {
+      controllerRef.current?.releasePointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture may already be released by the browser.
+    }
+  }, [clampControllerPosition, persistControllerPosition]);
+
   return (
     <div
-      className="pointer-events-auto absolute bottom-5 right-5 z-30 flex flex-col items-center gap-2 rounded border border-cyan-300/40 bg-black/72 p-3 shadow-2xl shadow-cyan-950/60 backdrop-blur-md"
+      ref={controllerRef}
+      className="pointer-events-auto fixed z-40 flex touch-none select-none flex-col items-center gap-2 rounded border border-cyan-300/40 bg-black/72 p-3 shadow-2xl shadow-cyan-950/60 backdrop-blur-md"
+      style={position ? { left: position.left, top: position.top } : { right: "max(1.25rem, env(safe-area-inset-right))", bottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
       data-testid="tablet-movement-controller"
       onPointerDown={(e) => e.stopPropagation()}
+      onPointerMove={onControllerPointerMove}
+      onPointerUp={finishControllerDrag}
+      onPointerCancel={finishControllerDrag}
     >
+      <button
+        type="button"
+        aria-label="Move movement controller"
+        title="Drag controller"
+        className="flex h-7 w-full touch-none items-center justify-center gap-2 rounded border border-cyan-300/25 bg-cyan-300/10 font-mono text-[9px] uppercase tracking-[0.22em] text-cyan-100/75"
+        onPointerDown={onDragHandlePointerDown}
+        data-testid="handle-tablet-movement-controller-drag"
+      >
+        <Move className="h-3.5 w-3.5" />
+        Drag
+      </button>
       <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-100/90">{previewText}</div>
       <div className="max-w-44 text-center font-mono text-[9px] uppercase leading-snug tracking-wider text-cyan-100/70">
         {turnHint}
@@ -1440,77 +2557,23 @@ function TabletMovementController({
           <Check className="h-5 w-5" />
         </button>
       </div>
+      <button
+        type="button"
+        aria-label={endActivationLabel}
+        title={endActivationTitle ?? endActivationLabel}
+        disabled={!canEndActivation}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (canEndActivation) onEndActivation();
+        }}
+        className="mt-1 flex h-8 w-full items-center justify-center gap-1.5 rounded border border-cyan-300/55 bg-cyan-300/10 px-2 font-mono text-[9px] font-bold uppercase tracking-[0.2em] text-cyan-100 shadow-[0_0_14px_rgba(34,211,238,0.22)] transition-colors hover:bg-cyan-300/20 disabled:border-slate-600/60 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:shadow-none"
+        data-testid="button-tablet-end-activation"
+      >
+        <CheckCircle className="h-3.5 w-3.5" />
+        {endActivationLabel}
+      </button>
     </div>
-  );
-}
-
-function CameraOrbitPuck({
-  disabled,
-  onChange,
-}: {
-  disabled?: boolean;
-  onChange: (input: ManualOrbitInput) => void;
-}) {
-  const puckRef = useRef<HTMLButtonElement | null>(null);
-  const [active, setActive] = useState(false);
-
-  const updateFromPointer = useCallback((clientX: number, clientY: number) => {
-    const el = puckRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const max = Math.max(1, rect.width * 0.36);
-    const x = THREE.MathUtils.clamp((clientX - cx) / max, -1, 1);
-    const y = THREE.MathUtils.clamp((clientY - cy) / max, -1, 1);
-    onChange({ x, y });
-  }, [onChange]);
-
-  const stop = useCallback(() => {
-    setActive(false);
-    onChange({ x: 0, y: 0 });
-  }, [onChange]);
-
-  return (
-    <button
-      ref={puckRef}
-      type="button"
-      aria-label="Orbit camera"
-      disabled={disabled}
-      onPointerDown={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (disabled) return;
-        setActive(true);
-        e.currentTarget.setPointerCapture(e.pointerId);
-        updateFromPointer(e.clientX, e.clientY);
-      }}
-      onPointerMove={(e) => {
-        if (!active || disabled) return;
-        e.preventDefault();
-        e.stopPropagation();
-        updateFromPointer(e.clientX, e.clientY);
-      }}
-      onPointerUp={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
-        stop();
-      }}
-      onPointerCancel={stop}
-      className={`pointer-events-auto absolute bottom-5 left-5 z-30 flex h-28 w-28 items-center justify-center rounded-full border bg-black/70 shadow-2xl backdrop-blur-md transition-colors ${
-        active
-          ? "border-amber-300/80 text-amber-100 shadow-amber-950/60"
-          : "border-cyan-300/45 text-cyan-100 shadow-cyan-950/60"
-      } disabled:border-slate-600/60 disabled:text-slate-500 disabled:shadow-none`}
-      data-testid="camera-orbit-puck"
-    >
-      <span className="absolute inset-3 rounded-full border border-current/25" />
-      <span className="absolute h-px w-20 bg-current/20" />
-      <span className="absolute h-20 w-px bg-current/20" />
-      <RotateCcw className="h-9 w-9" />
-      <span className="sr-only">Drag to orbit camera</span>
-    </button>
   );
 }
 
@@ -1531,12 +2594,12 @@ interface StagedUnitData {
   z: number;
   heading: number; // degrees, 0 = +Z axis, clockwise
   locked: boolean;
-  // Crew Quality 1..6. Always 4 in "standard" games; chosen per ship in
+  // Crew Quality 1..7. Always 4 in "standard" games; chosen per ship in
   // "custom" games via the expandable card in the staged-units list.
   crewQuality: number;
 }
 
-// Crew Quality labels (1=Rookie … 6=Special Ops). Kept here next to the staged
+// Crew Quality labels (1=Rookie … 7=Ancient). Kept here next to the staged
 // unit type so the deploy UI and any future combat overlays render the same
 // names without hardcoding strings throughout the file.
 const CREW_QUALITY_LABELS: Record<number, string> = {
@@ -1546,6 +2609,7 @@ const CREW_QUALITY_LABELS: Record<number, string> = {
   4: "Veteran",
   5: "Elite",
   6: "Special Ops",
+  7: "Ancient",
 };
 
 type FleetTemplateShip = {
@@ -1562,32 +2626,26 @@ type FleetTemplate = {
   ships: FleetTemplateShip[];
 };
 
-const RAID_TEST_FLEET_TEMPLATES: FleetTemplate[] = [
+const TEST_FLEET_TEMPLATES: FleetTemplate[] = [
   {
-    id: "ea-raid-line",
-    name: "EA Raid Line",
-    faction: "Earth Alliance",
+    id: "minbari-sharlin-test",
+    name: "Minbari Sharlin Test",
+    faction: "Minbari Federation",
     scenarioPriority: "raid",
-    allocationPoints: 5,
+    allocationPoints: 4,
     ships: [
-      { modelName: "Omega Class Destroyer" },
-      { modelName: "Hyperion Heavy Cruiser" },
-      { modelName: "Nova Dreadnought" },
-      { modelName: "Oracle Scout Cruiser" },
-      { modelName: "Olympus Corvette" },
+      { modelName: "Sharlin War Cruiser" },
     ],
   },
   {
-    id: "ea-raid-missile-screen",
-    name: "EA Missile Screen",
+    id: "ea-hyperion-nova-test",
+    name: "EA Hyperion/Nova Test",
     faction: "Earth Alliance",
     scenarioPriority: "raid",
-    allocationPoints: 5,
+    allocationPoints: 3,
     ships: [
-      { modelName: "Omega Class Destroyer" },
-      { modelName: "Hyperion Heavy Cruiser" },
-      { modelName: "Olympus Corvette", count: 2 },
-      { modelName: "Sagittarius Missile Cruiser", count: 2 },
+      { modelName: "Hyperion Heavy Cruiser", count: 2 },
+      { modelName: "Nova Dreadnought" },
     ],
   },
 ];
@@ -1599,6 +2657,7 @@ const PRIORITY_HUD_STYLE: Record<PriorityLevel, { fill: string; text: string; la
   battle: { fill: "bg-orange-500", text: "text-orange-200", label: "BTL" },
   war: { fill: "bg-violet-400", text: "text-violet-200", label: "WAR" },
   armageddon: { fill: "bg-yellow-100", text: "text-yellow-100", label: "ARM" },
+  ancient: { fill: "bg-fuchsia-300", text: "text-fuchsia-200", label: "ANC" },
 };
 
 function formatAllocationRemainder(ticks: number, scenarioPriority: PriorityLevel): string {
@@ -1721,12 +2780,15 @@ function DeploymentAllocationHud({
 }
 
 function StagedUnit3D({
-  unit, isSelected, onClick, onPointerDown,
+  unit, isSelected, onClick, onPointerDown, arcColorScheme = "classic", shipMeshTintsEnabled = true, shipHullNamesEnabled = true,
 }: {
   unit: StagedUnitData;
   isSelected: boolean;
   onClick: (e: any) => void;
   onPointerDown?: (e: any) => void;
+  arcColorScheme?: UiArcColorScheme;
+  shipMeshTintsEnabled?: boolean;
+  shipHullNamesEnabled?: boolean;
 }) {
   const baseColor = unit.locked ? "#22c55e" : "#f59e0b";
   const ringOpacity = isSelected ? 0.8 : unit.locked ? 0.55 : 0.45;
@@ -1752,22 +2814,23 @@ function StagedUnit3D({
       </mesh>
       {/* Weapon arcs — rendered in heading-rotated group so they turn with the ship */}
       <group rotation={[0, headingRad, 0]}>
-        <BaseOrientationDisplay flip={FLIP_MODELS.has(unit.modelFilename)} opacityScale={isSelected ? 1 : 0.78} />
+        <BaseOrientationDisplay flip={FLIP_MODELS.has(unit.modelFilename)} opacityScale={isSelected ? 1 : 0.78} arcColorScheme={arcColorScheme} arcSide="friendly" />
       </group>
       {isSelected && unit.weapons.length > 0 && (
         <group rotation={[0, headingRad, 0]}>
-          <WeaponArcDisplay weapons={unit.weapons} flip={FLIP_MODELS.has(unit.modelFilename)} />
+          <WeaponArcDisplay weapons={unit.weapons} flip={FLIP_MODELS.has(unit.modelFilename)} arcColorScheme={arcColorScheme} arcSide="friendly" />
         </group>
       )}
       {/* Ship model, rotated to match heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <ModelErrorBoundary color={baseColor}>
           <Suspense fallback={<ShipModelFallback color={baseColor} />}>
-            <BoardModelVisual filename={unit.modelFilename} tint={baseColor} />
+            <BoardModelVisual filename={unit.modelFilename} tint={baseColor} meshTintsEnabled={shipMeshTintsEnabled} />
           </Suspense>
         </ModelErrorBoundary>
       </group>
-      <Text
+      {shipHullNamesEnabled && (
+      <CameraFacingText
         position={[0, 3.9, 0]}
         fontSize={0.38}
         color={unit.locked ? "#86efac" : "white"}
@@ -1777,10 +2840,11 @@ function StagedUnit3D({
         outlineColor="black"
       >
         {unit.locked ? `🔒 ${unit.name.slice(0, 11)}` : unit.name.slice(0, 14)}
-      </Text>
+      </CameraFacingText>
+      )}
       {/* Heading degrees label when selected and unlocked */}
       {isSelected && !unit.locked && (
-        <Text
+        <CameraFacingText
           position={[0, 3.4, 0]}
           fontSize={0.28}
           color="#94a3b8"
@@ -1788,7 +2852,7 @@ function StagedUnit3D({
           anchorY="middle"
         >
           {`${Math.round(unit.heading)}°  R / ⇧R`}
-        </Text>
+        </CameraFacingText>
       )}
     </group>
   );
@@ -1805,32 +2869,76 @@ type CameraFocusRequest = {
   seq: number;
   x: number;
   z: number;
-};
-
-type ManualOrbitInput = {
-  x: number;
-  y: number;
+  distance?: number;
+  targetHeight?: number;
 };
 
 function BoardCameraControls({
   disabled,
   focusRequest,
-  manualOrbit,
+  topDownLocked,
+  controlMode = "mode-a",
 }: {
   disabled?: boolean;
   focusRequest?: CameraFocusRequest | null;
-  manualOrbit?: ManualOrbitInput;
+  topDownLocked?: boolean;
+  controlMode?: UiControlMode;
 }) {
   const controlsRef = useRef<any>(null);
   const { camera, gl } = useThree();
   const keysRef = useRef(new Set<string>());
   const focusRef = useRef<{ camera: THREE.Vector3; target: THREE.Vector3 } | null>(null);
-  const clampCameraToBoardPlane = useCallback(() => {
+  const effectiveTopDownLocked = topDownLocked || controlMode === "mode-f";
+  const modeBPointerRef = useRef<{
+    pointers: Map<number, { x: number; y: number; startX: number; startY: number; startedAt: number }>;
+    gesture: "pending" | "orbit" | "pan" | "pinch" | null;
+    side: "left" | "right" | null;
+    lastPinchDistance: number;
+    claimed: boolean;
+  }>({
+    pointers: new Map(),
+    gesture: null,
+    side: null,
+    lastPinchDistance: 0,
+    claimed: false,
+  });
+  const clampCameraTargetToBoardBounds = useCallback(() => {
     const controls = controlsRef.current;
-    if (controls) {
-      controls.target.y = Math.max(CAMERA_MIN_TARGET_Y, controls.target.y);
-    }
-    camera.position.y = Math.max(CAMERA_MIN_Y, camera.position.y);
+    if (!controls) return false;
+
+    const minX = -BOARD_W / 2 - CAMERA_PAN_MARGIN;
+    const maxX = BOARD_W / 2 + CAMERA_PAN_MARGIN;
+    const minZ = -BOARD_D / 2 - CAMERA_PAN_MARGIN;
+    const maxZ = BOARD_D / 2 + CAMERA_PAN_MARGIN;
+    const nextX = THREE.MathUtils.clamp(controls.target.x, minX, maxX);
+    const nextZ = THREE.MathUtils.clamp(controls.target.z, minZ, maxZ);
+    const dx = nextX - controls.target.x;
+    const dz = nextZ - controls.target.z;
+    if (Math.abs(dx) < 0.0001 && Math.abs(dz) < 0.0001) return false;
+
+    controls.target.x = nextX;
+    controls.target.z = nextZ;
+    camera.position.x += dx;
+    camera.position.z += dz;
+    return true;
+  }, [camera]);
+
+  const enforceTopDownCamera = useCallback((preferredDistance?: number): void => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const target = controls.target as THREE.Vector3;
+    const currentDistance = camera.position.distanceTo(target);
+    const requestedDistance = preferredDistance ?? currentDistance;
+    const distance = THREE.MathUtils.clamp(
+      requestedDistance || TOP_DOWN_CAMERA_DISTANCE,
+      CAMERA_MIN_DISTANCE,
+      CAMERA_MAX_DISTANCE,
+    );
+    target.y = BOARD_FOCUS_TARGET_HEIGHT;
+    const offset = new THREE.Vector3().setFromSpherical(
+      new THREE.Spherical(distance, TOP_DOWN_POLAR_ANGLE, 0),
+    );
+    camera.position.copy(target).add(offset);
   }, [camera]);
 
   useEffect(() => {
@@ -1873,24 +2981,225 @@ function BoardCameraControls({
   }, [gl]);
 
   useEffect(() => {
+    const canvas = gl.domElement;
+    const usesCustomTouch = controlMode === "mode-b" || controlMode === "mode-d";
+    if (!usesCustomTouch) {
+      modeBPointerRef.current.pointers.clear();
+      modeBPointerRef.current.gesture = null;
+      modeBPointerRef.current.claimed = false;
+      return;
+    }
+
+    const stopForCameraGesture = (event: PointerEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    const pointerDistance = () => {
+      const values = [...modeBPointerRef.current.pointers.values()];
+      if (values.length < 2) return 0;
+      return Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
+    };
+
+    const applyOrbit = (dx: number, dy: number) => {
+      const controls = controlsRef.current;
+      if (!controls || effectiveTopDownLocked) return;
+      const target = controls.target as THREE.Vector3;
+      const offset = camera.position.clone().sub(target);
+      const spherical = new THREE.Spherical().setFromVector3(offset);
+      spherical.theta -= dx * 0.006;
+      spherical.phi = THREE.MathUtils.clamp(
+        spherical.phi - dy * 0.006,
+        0.08,
+        CAMERA_MAX_POLAR_ANGLE,
+      );
+      offset.setFromSpherical(spherical);
+      camera.position.copy(target).add(offset);
+      controls.update();
+    };
+
+    const applyPan = (dx: number, dy: number) => {
+      const controls = controlsRef.current;
+      if (!controls) return;
+      const target = controls.target as THREE.Vector3;
+      const rect = canvas.getBoundingClientRect();
+      const distance = camera.position.distanceTo(target);
+      const perspectiveCamera = camera as THREE.PerspectiveCamera;
+      const fov = typeof perspectiveCamera.fov === "number" ? perspectiveCamera.fov : 50;
+      const worldPerPixel = (2 * distance * Math.tan(THREE.MathUtils.degToRad(fov / 2))) / Math.max(1, rect.height);
+
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      if (forward.lengthSq() < 0.0001) forward.set(0, 0, -1);
+      forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+      const move = right.multiplyScalar(-dx * worldPerPixel).add(forward.multiplyScalar(dy * worldPerPixel));
+
+      target.add(move);
+      camera.position.add(move);
+      clampCameraTargetToBoardBounds();
+      controls.update();
+    };
+
+    const applyPinchZoom = (nextDistance: number) => {
+      const controls = controlsRef.current;
+      if (!controls) return;
+      const state = modeBPointerRef.current;
+      if (state.lastPinchDistance <= 0 || nextDistance <= 0) {
+        state.lastPinchDistance = nextDistance;
+        return;
+      }
+      const target = controls.target as THREE.Vector3;
+      const offset = camera.position.clone().sub(target);
+      const currentDistance = offset.length();
+      if (currentDistance <= 0.001) return;
+      const scaledDistance = THREE.MathUtils.clamp(
+        currentDistance * (state.lastPinchDistance / nextDistance),
+        CAMERA_MIN_DISTANCE,
+        CAMERA_MAX_DISTANCE,
+      );
+      offset.setLength(scaledDistance);
+      camera.position.copy(target).add(offset);
+      state.lastPinchDistance = nextDistance;
+      controls.update();
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" || disabled) return;
+      const rect = canvas.getBoundingClientRect();
+      const state = modeBPointerRef.current;
+      state.pointers.set(event.pointerId, {
+        x: event.clientX,
+        y: event.clientY,
+        startX: event.clientX,
+        startY: event.clientY,
+        startedAt: performance.now(),
+      });
+      if (state.pointers.size === 1) {
+        state.gesture = "pending";
+        state.side = event.clientX < rect.left + rect.width / 2 ? "left" : "right";
+        state.claimed = false;
+      } else if (state.pointers.size >= 2) {
+        state.gesture = "pinch";
+        state.side = null;
+        state.claimed = true;
+        state.lastPinchDistance = pointerDistance();
+        stopForCameraGesture(event);
+      }
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" || disabled) return;
+      const state = modeBPointerRef.current;
+      const pointer = state.pointers.get(event.pointerId);
+      if (!pointer) return;
+
+      const dx = event.clientX - pointer.x;
+      const dy = event.clientY - pointer.y;
+      pointer.x = event.clientX;
+      pointer.y = event.clientY;
+
+      if (state.pointers.size >= 2) {
+        state.gesture = "pinch";
+        state.claimed = true;
+        stopForCameraGesture(event);
+        applyPinchZoom(pointerDistance());
+        return;
+      }
+
+      if (state.gesture === "pending") {
+        const totalDx = event.clientX - pointer.startX;
+        const totalDy = event.clientY - pointer.startY;
+        if (totalDx * totalDx + totalDy * totalDy < 36) return;
+        if (controlMode === "mode-b") {
+          state.gesture = state.side === "left" ? "orbit" : "pan";
+        } else {
+          state.gesture = performance.now() - pointer.startedAt >= CAMERA_LONG_PRESS_ORBIT_MS ? "orbit" : "pan";
+        }
+        state.claimed = true;
+      }
+
+      if (state.gesture === "orbit" || state.gesture === "pan") {
+        stopForCameraGesture(event);
+        if (state.gesture === "orbit") applyOrbit(dx, dy);
+        else applyPan(dx, dy);
+      }
+    };
+
+    const finishPointer = (event: PointerEvent) => {
+      if (event.pointerType !== "touch") return;
+      const state = modeBPointerRef.current;
+      const shouldStop = state.claimed;
+      state.pointers.delete(event.pointerId);
+      if (state.pointers.size === 0) {
+        state.gesture = null;
+        state.side = null;
+        state.lastPinchDistance = 0;
+        state.claimed = false;
+      } else if (state.pointers.size === 1) {
+        const remaining = [...state.pointers.values()][0];
+        state.gesture = "pending";
+        state.side = remaining.x < canvas.getBoundingClientRect().left + canvas.getBoundingClientRect().width / 2 ? "left" : "right";
+        state.lastPinchDistance = 0;
+        state.claimed = false;
+      }
+      if (shouldStop) stopForCameraGesture(event);
+    };
+
+    canvas.addEventListener("pointerdown", onPointerDown, { capture: true });
+    canvas.addEventListener("pointermove", onPointerMove, { capture: true });
+    canvas.addEventListener("pointerup", finishPointer, { capture: true });
+    canvas.addEventListener("pointercancel", finishPointer, { capture: true });
+    return () => {
+      canvas.removeEventListener("pointerdown", onPointerDown, { capture: true });
+      canvas.removeEventListener("pointermove", onPointerMove, { capture: true });
+      canvas.removeEventListener("pointerup", finishPointer, { capture: true });
+      canvas.removeEventListener("pointercancel", finishPointer, { capture: true });
+      modeBPointerRef.current.pointers.clear();
+      modeBPointerRef.current.gesture = null;
+      modeBPointerRef.current.claimed = false;
+    };
+  }, [camera, clampCameraTargetToBoardBounds, controlMode, disabled, effectiveTopDownLocked, gl]);
+
+  useEffect(() => {
     if (!focusRequest) return;
     const controls = controlsRef.current;
     if (!controls) return;
 
-    const target = new THREE.Vector3(focusRequest.x, UNIT_FOCUS_TARGET_HEIGHT, focusRequest.z);
+    const target = new THREE.Vector3(
+      focusRequest.x,
+      focusRequest.targetHeight ?? UNIT_FOCUS_TARGET_HEIGHT,
+      focusRequest.z,
+    );
     const currentTarget = controls.target.clone();
-    const viewDir = camera.position.clone().sub(currentTarget);
-    if (viewDir.lengthSq() < 0.0001) viewDir.set(0, 0.55, 0.85);
-    viewDir.normalize();
-
-    const nextCamera = target.clone().add(viewDir.multiplyScalar(UNIT_FOCUS_CAMERA_DISTANCE));
-    nextCamera.y = Math.max(CAMERA_MIN_Y, nextCamera.y);
+    let nextCamera: THREE.Vector3;
+    if (effectiveTopDownLocked) {
+      const distance = focusRequest.distance ?? TOP_DOWN_CAMERA_DISTANCE;
+      const offset = new THREE.Vector3().setFromSpherical(
+        new THREE.Spherical(distance, TOP_DOWN_POLAR_ANGLE, 0),
+      );
+      nextCamera = target.clone().add(offset);
+    } else {
+      const viewDir = camera.position.clone().sub(currentTarget);
+      if (viewDir.lengthSq() < 0.0001) viewDir.set(0, 0.55, 0.85);
+      viewDir.normalize();
+      nextCamera = target.clone().add(viewDir.multiplyScalar(focusRequest.distance ?? UNIT_FOCUS_CAMERA_DISTANCE));
+    }
 
     focusRef.current = {
       target,
       camera: nextCamera,
     };
-  }, [camera, focusRequest]);
+  }, [camera, effectiveTopDownLocked, focusRequest]);
+
+  useEffect(() => {
+    if (!effectiveTopDownLocked) return;
+    enforceTopDownCamera(TOP_DOWN_CAMERA_DISTANCE);
+    clampCameraTargetToBoardBounds();
+    controlsRef.current?.update();
+  }, [clampCameraTargetToBoardBounds, effectiveTopDownLocked, enforceTopDownCamera]);
 
   useFrame((_, delta) => {
     const focus = focusRef.current;
@@ -1899,7 +3208,7 @@ function BoardCameraControls({
       const t = 1 - Math.exp(-UNIT_FOCUS_LERP * delta);
       camera.position.lerp(focus.camera, t);
       controls.target.lerp(focus.target, t);
-      clampCameraToBoardPlane();
+      clampCameraTargetToBoardBounds();
       controls.update();
       if (
         camera.position.distanceToSquared(focus.camera) < 0.0025 &&
@@ -1907,7 +3216,7 @@ function BoardCameraControls({
       ) {
         camera.position.copy(focus.camera);
         controls.target.copy(focus.target);
-        clampCameraToBoardPlane();
+        clampCameraTargetToBoardBounds();
         controls.update();
         focusRef.current = null;
       }
@@ -1915,25 +3224,11 @@ function BoardCameraControls({
     }
 
     if (!controls) return;
-    clampCameraToBoardPlane();
     controls.update();
+    if (clampCameraTargetToBoardBounds()) controls.update();
 
-    if (
-      !disabled &&
-      manualOrbit &&
-      (Math.abs(manualOrbit.x) > 0.001 || Math.abs(manualOrbit.y) > 0.001)
-    ) {
-      const offset = camera.position.clone().sub(controls.target);
-      const spherical = new THREE.Spherical().setFromVector3(offset);
-      spherical.theta -= manualOrbit.x * TOUCH_ORBIT_PUCK_ROTATE_SPEED * delta;
-      spherical.phi = THREE.MathUtils.clamp(
-        spherical.phi + manualOrbit.y * TOUCH_ORBIT_PUCK_TILT_SPEED * delta,
-        0.08,
-        CAMERA_MAX_POLAR_ANGLE,
-      );
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      clampCameraToBoardPlane();
+    if (effectiveTopDownLocked) {
+      enforceTopDownCamera();
       controls.update();
       return;
     }
@@ -1957,13 +3252,12 @@ function BoardCameraControls({
 
     move.normalize().multiplyScalar(delta * CAMERA_KEYBOARD_PAN_SPEED);
     const nextTarget = controls.target.clone().add(move);
-    nextTarget.x = THREE.MathUtils.clamp(nextTarget.x, -BOARD_W / 2, BOARD_W / 2);
-    nextTarget.z = THREE.MathUtils.clamp(nextTarget.z, -BOARD_D / 2, BOARD_D / 2);
+    nextTarget.x = THREE.MathUtils.clamp(nextTarget.x, -BOARD_W / 2 - CAMERA_PAN_MARGIN, BOARD_W / 2 + CAMERA_PAN_MARGIN);
+    nextTarget.z = THREE.MathUtils.clamp(nextTarget.z, -BOARD_D / 2 - CAMERA_PAN_MARGIN, BOARD_D / 2 + CAMERA_PAN_MARGIN);
 
     const applied = nextTarget.sub(controls.target);
     controls.target.add(applied);
     camera.position.add(applied);
-    clampCameraToBoardPlane();
     controls.update();
   });
 
@@ -1972,22 +3266,30 @@ function BoardCameraControls({
       ref={controlsRef}
       enablePan={!disabled}
       enableZoom={!disabled}
-      enableRotate={!disabled}
+      enableRotate={!disabled && !effectiveTopDownLocked}
       enableDamping
       dampingFactor={CAMERA_DAMPING_FACTOR}
       panSpeed={CAMERA_DRAG_PAN_SPEED}
-      minPolarAngle={0.08}
-      maxPolarAngle={CAMERA_MAX_POLAR_ANGLE}
-      minDistance={8}
-      maxDistance={90}
+      minPolarAngle={effectiveTopDownLocked ? TOP_DOWN_POLAR_ANGLE : 0.08}
+      maxPolarAngle={effectiveTopDownLocked ? TOP_DOWN_POLAR_ANGLE : CAMERA_MAX_POLAR_ANGLE}
+      minDistance={CAMERA_MIN_DISTANCE}
+      maxDistance={CAMERA_MAX_DISTANCE}
       mouseButtons={{
         LEFT: THREE.MOUSE.PAN,
         MIDDLE: THREE.MOUSE.PAN,
         RIGHT: THREE.MOUSE.ROTATE,
       }}
       touches={{
-        ONE: THREE.TOUCH.PAN,
-        TWO: THREE.TOUCH.DOLLY_PAN,
+        ONE: controlMode === "mode-b" || controlMode === "mode-d"
+          ? undefined as unknown as number
+          : controlMode === "mode-a"
+            ? THREE.TOUCH.ROTATE
+            : THREE.TOUCH.PAN,
+        TWO: controlMode === "mode-b" || controlMode === "mode-d"
+          ? undefined as unknown as number
+          : controlMode === "mode-e"
+            ? THREE.TOUCH.DOLLY_ROTATE
+            : THREE.TOUCH.DOLLY_PAN,
       }}
     />
   );
@@ -2020,23 +3322,29 @@ export default function GameBoard() {
   const gameId = parseInt(params.id ?? "0");
   const { user } = useUser();
   const devUserId = useDevUserId();
-  const myUserId = import.meta.env.DEV ? devUserId : (user?.id ?? "");
+  const temporaryUsername = useTemporaryUsername();
+  void temporaryUsername;
+  const rawMyUserId = temporaryUsernameAuthEnabled
+    ? getTemporaryUserId() ?? ""
+    : import.meta.env.DEV ? devUserId : (user?.id ?? "");
   const qc = useQueryClient();
   const inputProfile = useInputProfile();
+  const [uiControlMode] = useUiControlMode();
+  const [uiArcColorScheme] = useUiArcColorScheme();
+  const [shipMeshTintsEnabled] = useUiShipMeshTints();
+  const [shipHullNamesEnabled] = useUiShipHullNames();
+  const [boardOpacity] = useUiBoardOpacity();
+  const [attackPulseOpacity] = useUiAttackPhasePulseOpacity();
+  const [attackPulseStrength] = useUiAttackPhasePulseStrength();
   const isTouchInput = inputProfile.input === "touch" || inputProfile.input === "hybrid";
   const isTabletDevice = inputProfile.deviceClass === "tablet";
   const mobileGameChrome = inputProfile.layout === "compact" || inputProfile.deviceClass === "phone";
   const touchGameControls = mobileGameChrome || isTabletDevice;
   const [opsPanelOpen, setOpsPanelOpen] = useState(false);
-  const [manualOrbitInput, setManualOrbitInput] = useState<ManualOrbitInput>({ x: 0, y: 0 });
 
   useEffect(() => {
     setOpsPanelOpen(!mobileGameChrome);
   }, [mobileGameChrome]);
-
-  useEffect(() => {
-    if (!touchGameControls) setManualOrbitInput({ x: 0, y: 0 });
-  }, [touchGameControls]);
 
   // Live sync for two simultaneous players: poll the game state on an interval
   // so an opponent's action (movement, firing, end-phase, etc.) appears on this
@@ -2061,6 +3369,16 @@ export default function GameBoard() {
       },
     },
   });
+  const game = gameData?.game;
+  const units = gameData?.units ?? [];
+  const turns = gameData?.turns ?? [];
+  const devAiCommanderActive =
+    import.meta.env.DEV &&
+    (rawMyUserId === "test-user-1" || rawMyUserId === "test-user-2") &&
+    game?.opponentKind === "ai" &&
+    game.opponentId === AI_OPPONENT_ID &&
+    rawMyUserId !== game.challengerId;
+  const myUserId = devAiCommanderActive ? AI_OPPONENT_ID : rawMyUserId;
   const { data: fleets } = useListFleets();
   const { data: shipModels } = useListShipModels();
   const acceptGame = useAcceptGame();
@@ -2073,6 +3391,7 @@ export default function GameBoard() {
   const fireWeapon = useFireWeapon();
   const damageControl = useDamageControl();
   const rollInitiative = useRollInitiative();
+  const runAiStep = useRunAiStep();
   const chooseFirstActivator = useChooseFirstActivator();
   const passEndPhase = usePassEndPhase();
   const surrenderGame = useSurrenderGame();
@@ -2087,6 +3406,7 @@ export default function GameBoard() {
   const [specialActionFeedback, setSpecialActionFeedback] = useState<
     { action: string; success: boolean; cqRoll: number | null; cqTotal: number | null; cqRequired: number | null } | null
   >(null);
+  const [activationFeedback, setActivationFeedback] = useState<string | null>(null);
   // For "Concentrate All Fire-power" we need a target picker before sending.
   const [concentratePicking, setConcentratePicking] = useState(false);
 
@@ -2094,6 +3414,7 @@ export default function GameBoard() {
   const threeRef = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
   const draggedShipRef = useRef<ShipModel | null>(null);
   const boardPointerDownRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastEmptyBoardTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const [stagedUnits, setStagedUnits] = useState<StagedUnitData[]>([]);
   const currentStagedUnits = useMemo(
     () => stagedUnits.filter(u => u.ownerId === myUserId),
@@ -2154,13 +3475,28 @@ export default function GameBoard() {
     [shipModels, selectedFaction]
   );
   // filename → weapon arcs lookup for GameUnit3D
-  const weaponsByFilename = useMemo(() => {
-    const map: Record<string, Pick<Weapon, "arc">[]> = {};
+  const shipModelById = useMemo(() => {
+    const map: Record<number, ShipModel> = {};
     for (const m of shipModels ?? []) {
-      map[m.filename] = m.weapons ?? [];
+      map[m.id] = m;
     }
     return map;
   }, [shipModels]);
+  const shipModelByName = useMemo(() => {
+    const map: Record<string, ShipModel> = {};
+    for (const m of shipModels ?? []) {
+      map[m.name] = m;
+    }
+    return map;
+  }, [shipModels]);
+  const getShipModelForUnit = useCallback((unit: { shipModelId?: number | null; name: string; modelFilename: string }): ShipModel | undefined => {
+    return (unit.shipModelId != null ? shipModelById[unit.shipModelId] : undefined)
+      ?? shipModelByName[unit.name]
+      ?? (shipModels ?? []).find(m => m.filename === unit.modelFilename);
+  }, [shipModelById, shipModelByName, shipModels]);
+  const getWeaponsForUnit = useCallback((unit: { shipModelId?: number | null; name: string; modelFilename: string }): Weapon[] => {
+    return (getShipModelForUnit(unit)?.weapons as Weapon[] | undefined) ?? [];
+  }, [getShipModelForUnit]);
 
   const [selectedUnit, setSelectedUnit] = useState<number | null>(null);
   const [cameraFocusRequest, setCameraFocusRequest] = useState<CameraFocusRequest | null>(null);
@@ -2197,12 +3533,116 @@ export default function GameBoard() {
   // ref flips synchronously the moment we kick off a mutate() and is cleared
   // when the request settles, so the 2nd–Nth events in the same gesture bail.
   const firingInFlightRef = useRef(false);
+  const [passAllFiringPending, setPassAllFiringPending] = useState(false);
+  const [passAllFiringConfirmOpen, setPassAllFiringConfirmOpen] = useState(false);
   // Dice-roll modal payload. The reveal is staged behind explicit player
   // confirmations: pending (waiting for server) → attack-ready (press to
   // roll attack) → attack-rolling (shuffle anim) → attack-shown → if hits,
   // damage-ready → damage-rolling → damage-shown → close (confirmed). The
   // server returns the full result in one shot; the staging is purely UX.
   const [diceModal, setDiceModal] = useState<DiceModalState | null>(null);
+  const [selfRepairModal, setSelfRepairModal] = useState<SelfRepairModalState | null>(null);
+  const [aiWeaponFxReplay, setAiWeaponFxReplay] = useState<AiWeaponFxReplay | null>(null);
+  const lastSeenAiWeaponFxKeyRef = useRef<string | null>(null);
+  const antiFighterState = useMemo(() => readAntiFighterUiState(game?.aiState), [game?.aiState]);
+  const isMyAntiFighterAllocation =
+    game?.status === "active" &&
+    game.phase === "movement" &&
+    antiFighterState?.currentPlayerId === myUserId;
+  const [antiFighterAssignments, setAntiFighterAssignments] = useState<Record<string, number>>({});
+  const [antiFighterCommitting, setAntiFighterCommitting] = useState(false);
+  const [antiFighterError, setAntiFighterError] = useState<string | null>(null);
+  const [antiFighterResult, setAntiFighterResult] = useState<AntiFighterUiState["lastResult"] | null>(null);
+  useEffect(() => {
+    setAntiFighterAssignments({});
+    setAntiFighterError(null);
+  }, [antiFighterState?.round, antiFighterState?.currentPlayerId]);
+  const assignAntiFighterDie = useCallback((attacker: AntiFighterUiAttacker, target: AntiFighterUiTarget) => {
+    setAntiFighterAssignments(prev => {
+      const used = Object.entries(prev)
+        .filter(([key]) => key.startsWith(`${attacker.attackerUnitId}:`))
+        .reduce((sum, [, count]) => sum + count, 0);
+      if (used >= attacker.dice) return prev;
+      const key = `${attacker.attackerUnitId}:${target.targetUnitId}`;
+      return { ...prev, [key]: (prev[key] ?? 0) + 1 };
+    });
+  }, []);
+  const clearAntiFighterAssignments = useCallback(() => {
+    setAntiFighterAssignments({});
+  }, []);
+  useEffect(() => {
+    if (!game || game.opponentKind !== "ai") return;
+    const aiDiagnostics = readAiDiagnostics(game.aiState);
+    const latestFireDecision = [...(aiDiagnostics.decisionLog ?? [])]
+      .reverse()
+      .find(entry => entry.step === "firing.fire-weapon" || entry.step === "firing.fire-weapon-game-over");
+    if (!latestFireDecision?.details) {
+      if (lastSeenAiWeaponFxKeyRef.current === null) lastSeenAiWeaponFxKeyRef.current = "";
+      return;
+    }
+
+    const chosen = latestFireDecision.details.chosen;
+    const result = latestFireDecision.details.result;
+    if (!chosen || typeof chosen !== "object" || Array.isArray(chosen)) return;
+    if (!result || typeof result !== "object" || Array.isArray(result)) return;
+    const chosenRecord = chosen as Record<string, unknown>;
+    const resultRecord = result as Record<string, unknown>;
+    const attackerUnitId = latestFireDecision.unitId;
+    const weaponId = typeof chosenRecord.weaponId === "number" ? chosenRecord.weaponId : null;
+    const targetUnitId = typeof chosenRecord.targetId === "number" ? chosenRecord.targetId : null;
+    if (typeof attackerUnitId !== "number" || weaponId == null || targetUnitId == null) return;
+
+    const key = [
+      latestFireDecision.at ?? "",
+      latestFireDecision.step ?? "",
+      attackerUnitId,
+      weaponId,
+      targetUnitId,
+      resultRecord.hits ?? "",
+      resultRecord.damage ?? "",
+      resultRecord.crew ?? "",
+    ].join("|");
+
+    if (lastSeenAiWeaponFxKeyRef.current === null) {
+      lastSeenAiWeaponFxKeyRef.current = key;
+      return;
+    }
+    if (lastSeenAiWeaponFxKeyRef.current === key) return;
+    lastSeenAiWeaponFxKeyRef.current = key;
+
+    const hits = typeof resultRecord.hits === "number" ? resultRecord.hits : 0;
+    setAiWeaponFxReplay({ key, attackerUnitId, targetUnitId, weaponId, hits });
+    const timeout = window.setTimeout(() => {
+      setAiWeaponFxReplay(current => current?.key === key ? null : current);
+    }, 2400);
+    return () => window.clearTimeout(timeout);
+  }, [game?.aiState, game?.opponentKind]);
+
+  const commitAntiFighterAllocations = useCallback(async () => {
+    if (!antiFighterState || antiFighterCommitting) return;
+    setAntiFighterCommitting(true);
+    setAntiFighterError(null);
+    const allocations = Object.entries(antiFighterAssignments)
+      .map(([key, dice]) => {
+        const [attackerUnitId, targetUnitId] = key.split(":").map(Number);
+        return { attackerUnitId, targetUnitId, dice };
+      })
+      .filter(row => row.dice > 0 && Number.isFinite(row.attackerUnitId) && Number.isFinite(row.targetUnitId));
+    try {
+      const updated = await customFetch<{ aiState?: unknown }>(`/api/games/${gameId}/anti-fighter/commit`, {
+        method: "POST",
+        body: JSON.stringify({ allocations }),
+        responseType: "json",
+      });
+      setAntiFighterResult(readAntiFighterLastResult(updated.aiState));
+      setAntiFighterAssignments({});
+      await qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    } catch (err) {
+      setAntiFighterError(cleanApiErrorMessage(err, "Anti-Fighter allocation failed"));
+    } finally {
+      setAntiFighterCommitting(false);
+    }
+  }, [antiFighterAssignments, antiFighterCommitting, antiFighterState, gameId, qc]);
   // Keep the polling-pause flag in sync with the dice modal: while the staged
   // dice reveal is open we must not let a background refetch replace game state
   // mid-sequence. Pausing the interval alone isn't enough — a poll already in
@@ -2210,14 +3650,88 @@ export default function GameBoard() {
   // reveal, so we also cancel any outstanding game fetch on open. Re-enables
   // polling as soon as the modal closes.
   useEffect(() => {
-    const open = diceModal !== null;
+    const open = diceModal !== null || selfRepairModal !== null;
     pausePollingRef.current = open;
-    if (open) qc.cancelQueries({ queryKey: getGetGameQueryKey(gameId) });
-  }, [diceModal, qc, gameId]);
+    if (open) {
+      void qc.cancelQueries({ queryKey: getGetGameQueryKey(gameId) }).catch(() => {
+        // Cancelling an in-flight poll intentionally aborts its request. Some
+        // dev runtimes surface that abort as an unhandled error unless it is
+        // consumed here.
+      });
+    }
+  }, [diceModal, selfRepairModal, qc, gameId]);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
   const [movementGesture, setMovementGesture] = useState<MovementGesture>(null);
+  const commitStagedShot = useCallback((shot: DiceModalState) => {
+    if (firingInFlightRef.current) return;
+    const firedWeaponId = shot.weapon.id;
+    const firingUnitId = shot.attackerUnitId;
+    firingInFlightRef.current = true;
+    setPendingFired(prev => {
+      if (prev && prev.unitId !== firingUnitId) {
+        return { unitId: firingUnitId, ids: new Set([firedWeaponId]) };
+      }
+      const next = new Set(prev?.ids ?? []);
+      next.add(firedWeaponId);
+      return { unitId: firingUnitId, ids: next };
+    });
+    setFiringWeaponPicking(null);
+    setDiceModal(m => (
+      m && m.attackerUnitId === firingUnitId && m.weapon.id === firedWeaponId && m.targetId === shot.targetId
+        ? { ...m, phase: "pending", confirmingClose: false }
+        : m
+    ));
+    fireWeapon.mutate(
+      {
+        gameId,
+        unitId: firingUnitId,
+        data: {
+          weaponId: firedWeaponId,
+          targetUnitId: shot.targetId,
+          useScoutCoordination: shot.useScoutCoordination || undefined,
+        },
+      },
+      {
+        onSuccess: (res) => {
+          firingInFlightRef.current = false;
+          setUseCoordOnNext(false);
+          // Do NOT invalidate the game query here - that would refresh the
+          // board (target HP, shields, destroyed flag) BEFORE the player has
+          // revealed the dice. The modal close performs the refresh.
+          setDiceModal(m => (
+            m && m.attackerUnitId === firingUnitId && m.weapon.id === firedWeaponId && m.targetId === shot.targetId
+              ? { ...m, phase: "attack-rolling", result: res }
+              : m
+          ));
+          setTimeout(() => {
+            setDiceModal(m => (
+              m && m.attackerUnitId === firingUnitId && m.weapon.id === firedWeaponId && m.targetId === shot.targetId && m.phase === "attack-rolling"
+                ? { ...m, phase: "attack-shown" }
+                : m
+            ));
+          }, 700);
+        },
+        onError: (err: any) => {
+          firingInFlightRef.current = false;
+          const message = cleanApiErrorMessage(err, "Shot failed");
+          setPendingFired(prev => {
+            if (!prev || prev.unitId !== firingUnitId) return prev;
+            const next = new Set(prev.ids);
+            next.delete(firedWeaponId);
+            return next.size === 0 ? null : { unitId: firingUnitId, ids: next };
+          });
+          setActivationFeedback(message);
+          setDiceModal(m => (
+            m && m.attackerUnitId === firingUnitId && m.weapon.id === firedWeaponId && m.targetId === shot.targetId
+              ? { ...m, phase: "error", error: message }
+              : m
+          ));
+        },
+      },
+    );
+  }, [fireWeapon, gameId]);
   useEffect(() => {
     setMovePlan(null);
     setMovementGesture(null);
@@ -2230,10 +3744,9 @@ export default function GameBoard() {
   // (or since the start of the activation, if no turn yet). It governs the
   // turn-eligibility gate: first turn requires ≥ half base speed moved;
   // each follow-up turn requires ≥ 2" moved since the previous turn.
-  const [phaseLedger, setPhaseLedger] = useState<Record<number, { distance: number; turns: number; distSinceLastTurn: number }>>({});
+  const [phaseLedger, setPhaseLedger] = useState<Record<number, MovementLedger>>({});
   const currentRoundNumber = gameData?.game?.currentRound ?? 1;
   useEffect(() => { setPhaseLedger({}); }, [currentRoundNumber]);
-  const getLedger = useCallback((uid: number) => phaseLedger[uid] ?? { distance: 0, turns: 0, distSinceLastTurn: 0 }, [phaseLedger]);
 
   // Fleet Yards: optional pre-built fleet to deploy from. Empty string =
   // direct drop-in mode (no fleet — server materializes an ephemeral one
@@ -2241,24 +3754,77 @@ export default function GameBoard() {
   // player gets to choose between "Quick-load a saved fleet" and
   // "Just drag what I want onto the board."
   const [yardsFleetId, setYardsFleetId] = useState<string>("");
+  const autoStagedFleetIdRef = useRef<string | null>(null);
   const { data: yardsFleetShips } = useListFleetShips(parseInt(yardsFleetId || "0"), {
     query: { queryKey: getListFleetShipsQueryKey(parseInt(yardsFleetId || "0")), enabled: !!yardsFleetId }
   });
 
-  const game = gameData?.game;
-  const units = gameData?.units ?? [];
-  const turns = gameData?.turns ?? [];
-  const shipModelByFilename = useMemo(() => {
-    const map: Record<string, ShipModel> = {};
-    for (const model of shipModels ?? []) {
-      map[model.filename] = model;
+  const [autoAiRunning, setAutoAiRunning] = useState(false);
+  const [autoAiError, setAutoAiError] = useState<string | null>(null);
+  const runAiUntilHuman = useCallback(async () => {
+    if (!game || autoAiRunning) return;
+    setAutoAiRunning(true);
+    setAutoAiError(null);
+    let lastSignature = aiProgressSignature(game);
+    try {
+      for (let step = 0; step < AI_AUTO_STEP_LIMIT; step++) {
+        if (step === 0 && shouldStopAiAutoRun(game, myUserId)) break;
+        const next = await runAiStep.mutateAsync({ gameId });
+        await qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        const nextSignature = aiProgressSignature(next);
+        if (nextSignature === lastSignature) break;
+        lastSignature = nextSignature;
+        if (shouldStopAiAutoRun(next, myUserId)) break;
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+    } catch (err) {
+      setAutoAiError((err as Error).message || "AI auto-run failed");
+    } finally {
+      setAutoAiRunning(false);
     }
-    return map;
-  }, [shipModels]);
+  }, [autoAiRunning, game, gameId, myUserId, qc, runAiStep]);
   type BoardUnit = (typeof units)[number];
   const isFighterUnit = useCallback((unit: BoardUnit): boolean => {
-    return shipModelHasFighterTrait(shipModelByFilename[unit.modelFilename]);
-  }, [shipModelByFilename]);
+    return shipModelHasFighterTrait(getShipModelForUnit(unit));
+  }, [getShipModelForUnit]);
+  const unitsWithFighterFlags = useMemo(() => (
+    units.map(unit => ({ ...unit, isFighter: isFighterUnit(unit) }))
+  ), [isFighterUnit, units]);
+  const serverMovementLedgerByUnit = useMemo<Record<number, MovementLedger>>(() => {
+    const map: Record<number, MovementLedger> = {};
+    for (const unit of units as RuntimeMovementUnit[]) {
+      const distance = unit.inchesMovedThisActivation ?? 0;
+      map[unit.id] = {
+        distance,
+        turns: unit.turnsMadeThisActivation ?? 0,
+        distSinceLastTurn: unit.distanceSinceLastTurnThisActivation ?? distance,
+      };
+    }
+    return map;
+  }, [units]);
+  const getLedger = useCallback((uid: number): MovementLedger => {
+    const local = phaseLedger[uid];
+    const server = serverMovementLedgerByUnit[uid];
+    if (!local) return server ?? EMPTY_MOVEMENT_LEDGER;
+    if (!server) return local;
+
+    // The local ledger is an optimistic overlay, while the server ledger is
+    // authoritative once a /move response or poll lands. Never let a stale
+    // local zero/partial record mask server movement already spent; doing so
+    // makes the ghost/vector preview overrun the real remaining allowance.
+    const distance = Math.max(local.distance, server.distance);
+    const turns = Math.max(local.turns, server.turns);
+    let distSinceLastTurn: number;
+    if (local.turns > server.turns) {
+      distSinceLastTurn = local.distSinceLastTurn;
+    } else if (server.turns > local.turns) {
+      distSinceLastTurn = server.distSinceLastTurn;
+    } else {
+      distSinceLastTurn = Math.max(local.distSinceLastTurn, server.distSinceLastTurn);
+    }
+
+    return { distance, turns, distSinceLastTurn };
+  }, [phaseLedger, serverMovementLedgerByUnit]);
 
   const isChallenger = game?.challengerId === myUserId;
   // Surrender eligibility: every one of MY ships is at ≤0 hull OR ≤0 crew
@@ -2300,6 +3866,13 @@ export default function GameBoard() {
     : myUserId === game.challengerId ? "challenger"
     : myUserId === game.opponentId ? "opponent"
     : null;
+  const canDevRedeployAiOpponent = devAiCommanderActive && game?.status === "deploying";
+  const myDeploymentLocked = Boolean(
+    game &&
+    ((mySide === "challenger" && game.challengerDeployed) ||
+      (mySide === "opponent" && game.opponentDeployed)) &&
+    !canDevRedeployAiOpponent,
+  );
   const scenarioPriority = normalizePriorityLevel(game?.priorityLevel);
   const allocationPoints = game?.allocationPoints ?? Math.max(1, Math.round((game?.pointLimit ?? 500) / 100));
   const stagedAllocation = useMemo(
@@ -2310,7 +3883,7 @@ export default function GameBoard() {
     ),
     [currentStagedUnits, scenarioPriority, allocationPoints],
   );
-  const makeStagedUnit = useCallback((ship: ShipModel, index: number, total: number): StagedUnitData => {
+  const makeStagedUnit = useCallback((ship: ShipModel, index: number, total: number, stagedName = ship.name): StagedUnitData => {
     const columns = Math.min(3, Math.max(1, total));
     const row = Math.floor(index / columns);
     const col = index % columns;
@@ -2325,7 +3898,7 @@ export default function GameBoard() {
       id: `staged-template-${Date.now()}-${ship.id}-${index}`,
       ownerId: myUserId,
       shipModelId: ship.id,
-      name: ship.name,
+      name: stagedName,
       modelFilename: ship.filename,
       faction: ship.faction,
       priorityLevel: ship.priorityLevel,
@@ -2390,12 +3963,42 @@ export default function GameBoard() {
     setDraggingId(null);
     setTapPlacementShip(null);
   }, [makeStagedUnit, myUserId, shipModels]);
+  useEffect(() => {
+    if (!yardsFleetId) {
+      autoStagedFleetIdRef.current = null;
+      return;
+    }
+    if (!yardsFleetShips || autoStagedFleetIdRef.current === yardsFleetId) return;
+
+    autoStagedFleetIdRef.current = yardsFleetId;
+    const staged = yardsFleetShips.map((fleetShip, index) =>
+      makeStagedUnit(fleetShip.shipModel, index, yardsFleetShips.length, fleetShip.name || fleetShip.shipModel.name)
+    );
+    setStagedUnits(prev => [...prev.filter(u => u.ownerId !== myUserId), ...staged]);
+    setSelectedStagedId(staged[0]?.id ?? null);
+    setDraggingId(null);
+    setTapPlacementShip(null);
+  }, [yardsFleetId, yardsFleetShips, makeStagedUnit, myUserId]);
   const isOpponent = game?.opponentId === myUserId;
   // New activation model: it's "my turn" if the server says I'm the
   // active player for the round's next ship activation.
   const isMyActivation = game?.status === "active" && game.activePlayerId === myUserId;
-  const activeUnitId = game?.activeUnitId ?? null;
+  const serverActiveUnitId = game?.activeUnitId ?? null;
+  const [optimisticActiveUnitId, setOptimisticActiveUnitId] = useState<number | null>(null);
+  const activeUnitId = optimisticActiveUnitId ?? serverActiveUnitId;
   const hasActiveUnit = activeUnitId !== null;
+  useEffect(() => {
+    if (!isMyActivation || game?.status !== "active") {
+      setOptimisticActiveUnitId(null);
+      return;
+    }
+    if (optimisticActiveUnitId !== null && serverActiveUnitId === optimisticActiveUnitId) {
+      setOptimisticActiveUnitId(null);
+    }
+    if (optimisticActiveUnitId !== null && !activateUnit.isPending && serverActiveUnitId !== optimisticActiveUnitId) {
+      setOptimisticActiveUnitId(null);
+    }
+  }, [activateUnit.isPending, game?.status, isMyActivation, optimisticActiveUnitId, serverActiveUnitId]);
   // With live polling, an opponent's action can advance the turn/activation
   // while this client still has a staged move preview. Drop any pending preview
   // the moment it's no longer our activation so a stale ghost can't linger; this
@@ -2404,10 +4007,72 @@ export default function GameBoard() {
   useEffect(() => {
     if (!isMyActivation) setMovePlan(null);
   }, [isMyActivation]);
+  useEffect(() => {
+    setActivationFeedback(null);
+  }, [game?.phase, serverActiveUnitId]);
   const selectedUnitData = units.find(u => u.id === selectedUnit);
   // The selected ship is only "controllable" if it's the one the server
   // currently has activated for THIS player.
   const isSelectedUnitActive = !!selectedUnitData && selectedUnitData.id === activeUnitId && isMyActivation;
+  const mergeGameIntoCache = useCallback((updatedGame: GameDetail["game"]) => {
+    qc.setQueryData<GameDetail | undefined>(getGetGameQueryKey(gameId), old => {
+      if (!old) return old;
+      return {
+        ...old,
+        game: { ...old.game, ...updatedGame },
+      };
+    });
+  }, [gameId, qc]);
+  const mergeUpdatedUnitIntoGame = useCallback((updatedUnit: GameUnit) => {
+    qc.setQueryData<GameDetail | undefined>(getGetGameQueryKey(gameId), old => {
+      if (!old) return old;
+      return {
+        ...old,
+        units: old.units.map(unit => unit.id === updatedUnit.id ? { ...unit, ...updatedUnit } : unit),
+      };
+    });
+  }, [gameId, qc]);
+  const commitSelfRepair = useCallback(async (modal: SelfRepairModalState) => {
+    if (modal.phase !== "ready" && modal.phase !== "error") return;
+    setSelfRepairModal(m => m && m.unitId === modal.unitId ? { ...m, phase: "rolling", error: undefined, confirmingClose: false } : m);
+    try {
+      const result = await customFetch<SelfRepairResult>(`/api/games/${gameId}/units/${modal.unitId}/self-repair`, {
+        method: "POST",
+        responseType: "json",
+      });
+      mergeUpdatedUnitIntoGame(result.unit);
+      window.setTimeout(() => {
+        setSelfRepairModal(m => m && m.unitId === modal.unitId ? {
+          ...m,
+          phase: "shown",
+          dice: result.dice,
+          rolls: result.rolls,
+          total: result.total,
+          repaired: result.repaired,
+          hullBefore: result.hullBefore,
+          hullAfter: result.hullAfter,
+          error: undefined,
+          confirmingClose: false,
+        } : m);
+      }, 700);
+    } catch (err) {
+      setSelfRepairModal(m => m && m.unitId === modal.unitId ? {
+        ...m,
+        phase: "error",
+        error: cleanApiErrorMessage(err, "Self Repair failed"),
+        confirmingClose: false,
+      } : m);
+    }
+  }, [gameId, mergeUpdatedUnitIntoGame]);
+  const mergeActiveUnitIntoGame = useCallback((unitId: number | null) => {
+    qc.setQueryData<GameDetail | undefined>(getGetGameQueryKey(gameId), old => {
+      if (!old) return old;
+      return {
+        ...old,
+        game: { ...old.game, activeUnitId: unitId },
+      };
+    });
+  }, [gameId, qc]);
 
   const confirmMovePlan = useCallback(() => {
     const u = units.find(x => x.id === selectedUnit);
@@ -2421,7 +4086,7 @@ export default function GameBoard() {
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
-    const traitsStr = (shipModels ?? []).find(m => m.filename === u.modelFilename)?.traits ?? "";
+    const traitsStr = getShipModelForUnit(u)?.traits ?? "";
     const rawMovementTraits = parseUiMovementTraits(traitsStr);
     const movementTraits = { ...rawMovementTraits, superManeuverable: rawMovementTraits.superManeuverable && !u.isCrippled };
     const isSuperManeuverable = movementTraits.superManeuverable;
@@ -2439,7 +4104,15 @@ export default function GameBoard() {
     let toHexQ = u.hexQ, toHexR = u.hexR, newHeading = u.heading;
     let distanceCommitted = 0;
     if (movePlan.kind === "forward") {
-      const plannedDistance = Math.min(speedCap - led.distance, snapMovementDistance(movePlan.distance));
+      const v = headingForwardVec(u);
+      const requestedDistance = Math.min(speedCap - led.distance, snapMovementDistance(movePlan.distance));
+      const plannedDistance = clampForwardDistanceToLegalRestingSpot(
+        { ...u, isFighter: isFighterUnit(u) },
+        unitsWithFighterFlags,
+        v,
+        requestedDistance,
+        Math.max(0, speedCap - led.distance),
+      );
       if (plannedDistance <= 0) { setMovePlan(null); return; }
       // SA cap re-check: a stale forward plan could otherwise commit a value
       // larger than the current allowance (e.g. if a Run Silent declaration
@@ -2447,7 +4120,6 @@ export default function GameBoard() {
       if (led.distance + plannedDistance > speedCap + 1e-6) { setMovePlan(null); return; }
       // FLIP_MODELS render their nose along local -Z, so movement direction must
       // mirror the visual nose, not the abstract heading vector.
-      const v = headingForwardVec(u);
       const dx = v.x * plannedDistance;
       const dz = v.z * plannedDistance;
       // hexQ/hexR are stored as world inches (see hexToWorld above), so the
@@ -2468,20 +4140,12 @@ export default function GameBoard() {
       const sharpBonus = isComeAboutSharp && led.turns === 0 ? 45 : 0;
       const angleCap = isAllStopPivot ? baseTurnAngle * 2 : baseTurnAngle + sharpBonus;
       if (Math.abs(movePlan.deltaDeg) > angleCap + 1e-6) { setMovePlan(null); return; }
-      // Three.js right-handed Y-up: a positive Y rotation takes +Z → +X, which
-      // appears CLOCKWISE looking down -Y. That matches the arc preview's
-      // "positive deltaDeg sweeps to starboard" convention for unflipped models.
-      // FLIP_MODELS render with an extra 180° Y-rotation: rotating their stored
-      // heading by +Δ moves the visible nose by -Δ in world space, so the arc
-      // (which is mirrored to track the visible nose via the [1,1,-1] z-scale
-      // in MovementPlanner) appears on the visually-correct side, but a naive
-      // heading + Δ commit turns the ship the OTHER way. Negate for flipped.
-      const flip = FLIP_MODELS.has(u.modelFilename);
-      const headingDelta = flip ? -movePlan.deltaDeg : movePlan.deltaDeg;
+      const headingDelta = visualTurnDeltaToHeadingDelta(u.modelFilename, movePlan.deltaDeg);
       newHeading = ((u.heading + headingDelta) % 360 + 360) % 360;
     }
     const planKind = movePlan.kind;
     const unitId = u.id;
+    const ledgerBeforeCommit = led;
     // Optimistically charge the phase ledger BEFORE the mutate resolves —
     // otherwise rapid R/F presses (or another commit) read stale allowances
     // between confirm and onSuccess, bypassing the per-phase limits.
@@ -2506,32 +4170,22 @@ export default function GameBoard() {
     moveUnit.mutate(
       { gameId, unitId, data: { toHexQ, toHexR, newHeading } },
       {
-        onSuccess: () => { qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }); },
+        onSuccess: (updatedUnit) => {
+          setActivationFeedback(null);
+          mergeUpdatedUnitIntoGame(updatedUnit);
+          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        },
         // Roll back the optimistic ledger charge on server rejection.
-        onError: () => {
-          setPhaseLedger(prev => {
-            const cur = prev[unitId];
-            if (!cur) return prev;
-            // Best-effort rollback. We can't perfectly restore
-            // distSinceLastTurn after a rejected turn (we don't remember the
-            // pre-turn value), but a rejected forward CAN be cleanly undone.
-            return {
-              ...prev,
-              [unitId]: {
-                distance: Math.max(0, cur.distance - ledgerDelta.distance),
-                turns: Math.max(0, cur.turns - ledgerDelta.turns),
-                distSinceLastTurn: ledgerDelta.resetSinceTurn
-                  ? cur.distSinceLastTurn // turn was rejected; keep accumulated forward inches
-                  : Math.max(0, cur.distSinceLastTurn - ledgerDelta.distSinceLastTurnDelta),
-              },
-            };
-          });
+        onError: (err: any) => {
+          setActivationFeedback(`Move rejected: ${cleanApiErrorMessage(err)}`);
+          setPhaseLedger(prev => ({ ...prev, [unitId]: ledgerBeforeCommit }));
+          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
         },
       }
     );
     setMovePlan(null);
     setMovementGesture(null);
-  }, [units, selectedUnit, movePlan, moveUnit, gameId, qc, shipModels]);
+  }, [units, selectedUnit, movePlan, moveUnit, gameId, getLedger, qc, shipModels, mergeUpdatedUnitIntoGame]);
 
   const cancelMovePlan = useCallback(() => {
     setMovePlan(null);
@@ -2539,8 +4193,8 @@ export default function GameBoard() {
   }, []);
 
   // Keyboard controls for movement planning:
-  //   R          → enter/extend turn plan by +5° clockwise (capped at +turnAngle)
-  //   Shift+R    → enter/extend turn plan by −5° counter-clockwise (capped at −turnAngle)
+  //   Q          -> enter/extend turn plan by -5 deg left/port
+  //   E          -> enter/extend turn plan by +5 deg right/starboard
   //   F          → forward-move plan
   //   Enter      → confirm current plan (queue it)
   //   Esc        → cancel current plan, or if none, discard the queued move for this ship
@@ -2567,7 +4221,7 @@ export default function GameBoard() {
       }
       const u = selectedUnitData;
       const baseSpeed = effectiveUiSpeed(u);
-      const traitsStr = (shipModels ?? []).find(m => m.filename === u.modelFilename)?.traits ?? "";
+      const traitsStr = getShipModelForUnit(u)?.traits ?? "";
       const rawMovementTraits = parseUiMovementTraits(traitsStr);
       const movementTraits = { ...rawMovementTraits, superManeuverable: rawMovementTraits.superManeuverable && !u.isCrippled };
       const isSuperManeuverable = movementTraits.superManeuverable;
@@ -2611,14 +4265,13 @@ export default function GameBoard() {
         isAllPower ? Math.floor(baseSpeed * 1.5) :
         baseSpeed;
       const remainingMove = Math.max(0, speedCap - led.distance);
-      if (e.key === "r" || e.key === "R") {
+      if (e.key === "e" || e.key === "E" || e.key === "q" || e.key === "Q") {
         e.preventDefault();
         // Allow refining an in-progress turn plan even if `canTurn` is false,
         // since the plan hasn't been committed yet.
         if (!canTurn && (!movePlan || movePlan.kind !== "turn")) return;
-        // R = clockwise (+), Shift+R = counter-clockwise (−). Mirrors the
-        // placement-phase R/Shift+R convention.
-        const step = e.shiftKey ? 5 : -5;
+        // Match tablet controls: Q/left = negative, E/right = positive.
+        const step = (e.key === "q" || e.key === "Q") ? -5 : 5;
         // All Stop and Pivot doubles the per-turn cap (any direction).
         // Come About (sharp-turn variant): adds 45° to ONE turn this
         // activation — applied to the first turn the player makes
@@ -2648,7 +4301,7 @@ export default function GameBoard() {
     // Capture on document so we get the keydown regardless of which element has focus.
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [game?.status, isSelectedUnitActive, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending, endActivation, gameId, qc, shipModels]);
+  }, [game?.status, isSelectedUnitActive, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending, endActivation, gameId, qc, shipModels, isFighterUnit, unitsWithFighterFlags]);
 
   // Special-Action-adjusted caps for the selected unit. Single source of truth
   // shared by keyboard gating, drag clamp, confirmMovePlan re-validation, and
@@ -2663,7 +4316,7 @@ export default function GameBoard() {
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
-    const traitsStr = (shipModels ?? []).find(m => m.filename === u.modelFilename)?.traits ?? "";
+    const traitsStr = getShipModelForUnit(u)?.traits ?? "";
     const movementTraits = parseUiMovementTraits(traitsStr);
     const isSuperManeuverable = movementTraits.superManeuverable && !u.isCrippled;
     const baseSpeed = effectiveUiSpeed(u);
@@ -2694,7 +4347,7 @@ export default function GameBoard() {
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAboutSharp = u.specialAction === "come-about-sharp-turn";
-    const traitsStr = (shipModels ?? []).find(m => m.filename === u.modelFilename)?.traits ?? "";
+    const traitsStr = getShipModelForUnit(u)?.traits ?? "";
     const rawMovementTraits = parseUiMovementTraits(traitsStr);
     const movementTraits = {
       ...rawMovementTraits,
@@ -2724,6 +4377,18 @@ export default function GameBoard() {
       turnGateExempt,
     };
   }, [selectedUnitData, selectedSaCaps, selectedRemainingMove, getLedger, shipModels]);
+  useEffect(() => {
+    if (!movePlan) return;
+    if (movePlan.kind === "forward" && movePlan.distance > selectedRemainingMove) {
+      const clamped = Math.floor(selectedRemainingMove / TABLET_FORWARD_STEP) * TABLET_FORWARD_STEP;
+      setMovePlan(clamped > 0 ? { kind: "forward", distance: clamped } : null);
+      return;
+    }
+    if (movePlan.kind === "turn" && selectedMovementUi && Math.abs(movePlan.deltaDeg) > selectedMovementUi.angleCap) {
+      const clamped = Math.max(-selectedMovementUi.angleCap, Math.min(selectedMovementUi.angleCap, movePlan.deltaDeg));
+      setMovePlan(Math.abs(clamped) > 0 ? { kind: "turn", deltaDeg: clamped } : null);
+    }
+  }, [movePlan, selectedMovementUi, selectedRemainingMove]);
   const selectedDragOffset = useMemo(() => {
     if (!selectedUnitData || !movePlan || movePlan.kind !== "forward") return null;
     const v = headingForwardVec(selectedUnitData);
@@ -2731,7 +4396,7 @@ export default function GameBoard() {
   }, [selectedUnitData, movePlan]);
   const selectedPreviewHeadingDelta = useMemo(() => {
     if (!selectedUnitData || !movePlan || movePlan.kind !== "turn") return 0;
-    return FLIP_MODELS.has(selectedUnitData.modelFilename) ? -movePlan.deltaDeg : movePlan.deltaDeg;
+    return visualTurnDeltaToHeadingDelta(selectedUnitData.modelFilename, movePlan.deltaDeg);
   }, [selectedUnitData, movePlan]);
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
@@ -2741,6 +4406,21 @@ export default function GameBoard() {
   }, [units]);
   const canDeclareScoutSupport =
     game?.status === "active" && currentPhase === "firing" && !hasAnyWeaponFiredThisPhase;
+  const hasAvailableScoutCoordToken = useMemo(() => {
+    return units.some(u =>
+      u.ownerId === myUserId
+      && u.scoutAction === "coord"
+      && !u.scoutCoordConsumed
+      && !u.isDestroyed
+      && u.hullPoints > 0
+      && ((u.maxCrewPoints ?? 0) <= 0 || (u.crewPoints ?? 0) > 0)
+    );
+  }, [myUserId, units]);
+  useEffect(() => {
+    if (!hasAvailableScoutCoordToken && useCoordOnNext) {
+      setUseCoordOnNext(false);
+    }
+  }, [hasAvailableScoutCoordToken, useCoordOnNext]);
 
   // Eligible-to-activate count for the current player in the current phase.
   // Mirrors the server's `remainingFor` filter so the UI can offer a "Pass
@@ -2764,14 +4444,15 @@ export default function GameBoard() {
   }, [currentPhase]);
   const activationSegment = useMemo<"capital" | "fighter" | null>(() => {
     if (currentPhase !== "movement" && currentPhase !== "firing") return null;
-    const eligible = units.filter(unitEligibleForCurrentPhase);
+    const activeOwnerId = game?.activePlayerId;
+    const eligible = units.filter(u => u.ownerId === activeOwnerId && unitEligibleForCurrentPhase(u));
     const hasFighter = eligible.some(isFighterUnit);
     const hasCapital = eligible.some(u => !isFighterUnit(u));
     if (currentPhase === "firing") {
       return hasFighter ? "fighter" : hasCapital ? "capital" : null;
     }
     return hasCapital ? "capital" : hasFighter ? "fighter" : null;
-  }, [currentPhase, isFighterUnit, unitEligibleForCurrentPhase, units]);
+  }, [currentPhase, game?.activePlayerId, isFighterUnit, unitEligibleForCurrentPhase, units]);
   const myEligibleActivations = useMemo(() => {
     if (!isMyActivation || !myUserId) return 0;
     return units.filter(u => {
@@ -2783,6 +4464,7 @@ export default function GameBoard() {
     }).length;
   }, [activationSegment, isFighterUnit, isMyActivation, myUserId, unitEligibleForCurrentPhase, units]);
   const canPassPhase = isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
+  const canPassAllFiring = isMyActivation && currentPhase === "firing" && !antiFighterState;
 
   // Movement-phase minimum-speed gate (mirrors the server check in
   // /end-activation). A ship must either move at least ceil(speed/2)
@@ -2809,11 +4491,22 @@ export default function GameBoard() {
     const moved = activeUnitData.inchesMovedThisActivation ?? 0;
     return { blocked: moved < required, required, moved };
   }, [activeUnitData, currentPhase]);
+  const activeActivationCommitted = useMemo(() => {
+    if (!activeUnitData) return false;
+    if (currentPhase === "firing") {
+      return ((activeUnitData.firedWeaponIds ?? []) as number[]).length > 0;
+    }
+    if (currentPhase !== "movement") return false;
+    const led = getLedger(activeUnitData.id);
+    return led.distance > 0 || led.turns > 0 || Boolean(activeUnitData.specialAction);
+  }, [activeUnitData, currentPhase, getLedger]);
   const canConfirmMovePlan = !!movePlan
     && !moveUnit.isPending
+    && !activateUnit.isPending
     && (movePlan.kind === "forward" ? movePlan.distance > 0 : Math.abs(movePlan.deltaDeg) > 0);
   const tabletMoveHint = useMemo(() => {
     if (!selectedMovementUi) return "";
+    if (activateUnit.isPending) return "Activating ship...";
     if (moveUnit.isPending) return "Committing movement...";
     if (selectedMovementUi.turnsForbidden) return "Current action forbids turns.";
     if (selectedMovementUi.canTurn) {
@@ -2835,37 +4528,62 @@ export default function GameBoard() {
       return `Move ${remaining.toFixed(remaining % 1 === 0 ? 0 : 1)}" straight before turning.`;
     }
     return "Turn unavailable.";
-  }, [movePlan, moveUnit.isPending, selectedMovementUi]);
+  }, [activateUnit.isPending, movePlan, moveUnit.isPending, selectedMovementUi]);
 
   const nudgeForwardPlan = useCallback((delta: number) => {
-    if (!selectedMovementUi || moveUnit.isPending) return;
+    if (!selectedMovementUi || moveUnit.isPending || activateUnit.isPending) return;
     if (delta > 0 && !selectedMovementUi.canForward) return;
     if (delta < 0 && (movePlan?.kind !== "forward" || movePlan.distance <= 0)) return;
+    if (!selectedUnitData) return;
 
     setMovementGesture({ kind: "forward" });
     setMovePlan(prev => {
       const current = prev?.kind === "forward" ? prev.distance : 0;
-      const next = Math.max(0, Math.min(selectedRemainingMove, snapMovementDistance(current + delta)));
+      const requested = Math.max(0, Math.min(selectedRemainingMove, snapMovementDistance(current + delta)));
+      const v = headingForwardVec(selectedUnitData);
+      const next = clampForwardDistanceToLegalRestingSpot(
+        { ...selectedUnitData, isFighter: isFighterUnit(selectedUnitData) },
+        unitsWithFighterFlags,
+        v,
+        requested,
+        selectedRemainingMove,
+        delta > 0 ? "forward" : "nearest",
+      );
       return { kind: "forward", distance: next };
     });
-  }, [movePlan, moveUnit.isPending, selectedMovementUi, selectedRemainingMove]);
+  }, [activateUnit.isPending, movePlan, moveUnit.isPending, selectedMovementUi, selectedRemainingMove, selectedUnitData, unitsWithFighterFlags, isFighterUnit]);
 
-  const nudgeTurnPlan = useCallback((deltaDeg: number) => {
-    if (!selectedMovementUi?.canTurn || moveUnit.isPending) return;
-    const direction = deltaDeg < 0 ? "left" : "right";
+  const nudgeTurnPlan = useCallback((deltaDeg: number, visualDirection?: "left" | "right") => {
+    if (!selectedMovementUi?.canTurn || moveUnit.isPending || activateUnit.isPending) return;
+    const direction = visualDirection ?? (deltaDeg < 0 ? "left" : "right");
     setMovementGesture({ kind: "turn", direction });
     setMovePlan(prev => {
       const current = prev?.kind === "turn" ? prev.deltaDeg : 0;
       const next = Math.max(-selectedMovementUi.angleCap, Math.min(selectedMovementUi.angleCap, current + deltaDeg));
       return { kind: "turn", deltaDeg: next };
     });
-  }, [moveUnit.isPending, selectedMovementUi]);
+  }, [activateUnit.isPending, moveUnit.isPending, selectedMovementUi]);
 
   const startFreeTurnPlan = useCallback(() => {
-    if (!selectedMovementUi?.canTurn || !selectedMovementUi.isSuperManeuverable || moveUnit.isPending) return;
+    if (!selectedMovementUi?.canTurn || !selectedMovementUi.isSuperManeuverable || moveUnit.isPending || activateUnit.isPending) return;
     setMovementGesture({ kind: "turn", direction: "free" });
     setMovePlan(prev => (prev?.kind === "turn" ? prev : { kind: "turn", deltaDeg: 0 }));
-  }, [moveUnit.isPending, selectedMovementUi]);
+  }, [activateUnit.isPending, moveUnit.isPending, selectedMovementUi]);
+
+  const boardPointHasUnit = useCallback((x: number, z: number): boolean => {
+    for (const unit of units) {
+      const dx = x - unit.hexQ;
+      const dz = z - unit.hexR;
+      const radius = rulesBaseRadius(unit) + 0.18;
+      if (dx * dx + dz * dz <= radius * radius) return true;
+    }
+    for (const unit of currentStagedUnits) {
+      const dx = x - unit.x;
+      const dz = z - unit.z;
+      if (dx * dx + dz * dz <= 1.8 * 1.8) return true;
+    }
+    return false;
+  }, [currentStagedUnits, units]);
 
   // Reset per-activation firing state whenever the active unit changes (new
   // ship picked up, or the previous activation ended). Server clears its own
@@ -2926,7 +4644,8 @@ export default function GameBoard() {
     moveUnit.mutate(
       { gameId, unitId: u.id, data: { toHexQ, toHexR, newHeading: u.heading } },
       {
-        onSuccess: () => {
+        onSuccess: (updatedUnit) => {
+          mergeUpdatedUnitIntoGame(updatedUnit);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           endActivation.mutate({ gameId }, {
             onSuccess: () => {
@@ -2940,7 +4659,7 @@ export default function GameBoard() {
         onError: () => { commitDriftRef.current = false; },
       },
     );
-  }, [selectedUnitData, moveUnit, endActivation, gameId, qc]);
+  }, [selectedUnitData, moveUnit, endActivation, gameId, qc, mergeUpdatedUnitIntoGame]);
   // Reset the in-flight latch whenever the active unit changes so a new
   // adrift activation can drift on its own button click.
   useEffect(() => {
@@ -2983,12 +4702,12 @@ export default function GameBoard() {
               cqTotal: res.cqTotal ?? null,
               cqRequired: res.cqRequired ?? null,
             });
+            mergeUpdatedUnitIntoGame(res.unit);
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           },
           onError: (err: any) => {
             setSpecialActionFeedback({ action: "concentrate-fire", success: false, cqRoll: null, cqTotal: null, cqRequired: null });
-            // eslint-disable-next-line no-console
-            console.warn("Concentrate failed:", err?.message);
+            setActivationFeedback(cleanApiErrorMessage(err, "Special action failed"));
           },
         },
       );
@@ -3022,8 +4741,7 @@ export default function GameBoard() {
           },
           onError: (err: any) => {
             setScoutFeedback({ action: declared, success: false, cqRoll: null, cqTotal: null, cqRequired: 8 });
-            // eslint-disable-next-line no-console
-            console.warn("Scout action failed:", err?.message);
+            setActivationFeedback(cleanApiErrorMessage(err, "Scout action failed"));
           },
         },
       );
@@ -3033,6 +4751,54 @@ export default function GameBoard() {
     // ── FIRING-PHASE target click ──
     // While picking a target for a weapon, clicking an enemy ship resolves
     // the shot immediately via the server.
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "firing" &&
+      firingWeaponPicking === null &&
+      hasActiveUnit &&
+      unit.ownerId !== myUserId
+    ) {
+      const attacker = unitsWithFighterFlags.find(u => u.id === activeUnitId);
+      const target = unitsWithFighterFlags.find(u => u.id === unitId);
+      if (attacker?.isFighter && target?.isFighter && uiBasesInContact(attacker, target)) {
+        if (firingInFlightRef.current) return;
+        firingInFlightRef.current = true;
+        customFetch<{
+          attackerRoll: number;
+          attackerDogfight: number;
+          attackerScore: number;
+          targetRoll: number;
+          targetDogfight: number;
+          targetScore: number;
+          destroyedUnitId: number | null;
+          tied: boolean;
+        }>(`/api/games/${gameId}/units/${attacker.id}/dogfight`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetUnitId: target.id }),
+        })
+          .then(result => {
+            const outcome = result.tied
+              ? "Dogfight tied; fighters remain locked."
+              : result.destroyedUnitId === target.id
+                ? `${target.name} destroyed in dogfight.`
+                : `${attacker.name} destroyed in dogfight.`;
+            setActivationFeedback(
+              `${outcome} ${attacker.name}: ${result.attackerRoll}+${result.attackerDogfight}=${result.attackerScore}; ${target.name}: ${result.targetRoll}+${result.targetDogfight}=${result.targetScore}.`,
+            );
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          })
+          .catch(err => {
+            setActivationFeedback(cleanApiErrorMessage(err, "Dogfight failed"));
+          })
+          .finally(() => {
+            firingInFlightRef.current = false;
+          });
+        return;
+      }
+    }
+
     if (
       game?.status === "active" &&
       isMyActivation &&
@@ -3048,64 +4814,23 @@ export default function GameBoard() {
       // into a confusing "already fired" error in the dice modal.
       if (firingInFlightRef.current) return;
       const attacker = units.find(u => u.id === activeUnitId);
-      const weapon = (weaponsByFilename[attacker?.modelFilename ?? ""] as Weapon[] | undefined)
-        ?.find(w => w.id === firingWeaponPicking);
+      const weapon = attacker
+        ? getWeaponsForUnit(attacker).find(w => w.id === firingWeaponPicking)
+        : undefined;
       if (!attacker || !weapon) return;
-      // Optimistically mark this weapon as fired BEFORE the network call so
-      // the weapon-list button disables immediately, the picker clears, and
-      // any duplicate target clicks fall through the firingWeaponPicking
-      // gate above on the next render.
-      const firedWeaponId = weapon.id;
       const firingUnitId = attacker.id;
-      firingInFlightRef.current = true;
-      setPendingFired(prev => {
-        if (prev && prev.unitId !== firingUnitId) {
-          return { unitId: firingUnitId, ids: new Set([firedWeaponId]) };
-        }
-        const next = new Set(prev?.ids ?? []);
-        next.add(firedWeaponId);
-        return { unitId: firingUnitId, ids: next };
-      });
       setFiringWeaponPicking(null);
-      // Open the modal in "pending" while the server resolves the shot. We
-      // do NOT advance to attack-ready until the result lands, so the player
-      // is never asked to roll dice we haven't received yet.
+      // Stage the target selection only. The weapon is not marked fired and
+      // no server mutation runs until the player presses Roll to Hit.
       setDiceModal({
         weapon,
         attackerUnitId: firingUnitId,
         targetName: unit.name,
         targetId: unit.id,
         attackDice: weapon.attackDice,
-        phase: "pending",
+        useScoutCoordination: useCoordOnNext || undefined,
+        phase: "target-picked",
       });
-      fireWeapon.mutate(
-        { gameId, unitId: firingUnitId, data: { weaponId: firedWeaponId, targetUnitId: unit.id, useScoutCoordination: useCoordOnNext || undefined } },
-        {
-          onSuccess: (res) => {
-            firingInFlightRef.current = false;
-            setUseCoordOnNext(false);
-            // Do NOT invalidate the game query here — that would refresh the
-            // board (target HP, shields, destroyed flag) BEFORE the player
-            // has even rolled to hit, leaking the outcome. We defer the
-            // invalidation until the player closes the dice modal (see
-            // DiceRollModal.confirmClose). Local state still updates from
-            // the server's authoritative result.
-            setDiceModal(m => (m ? { ...m, phase: "attack-ready", result: res } : null));
-          },
-          onError: (err: any) => {
-            firingInFlightRef.current = false;
-            setUseCoordOnNext(false);
-            // Roll back the optimistic fired-marker so the player can retry.
-            setPendingFired(prev => {
-              if (!prev || prev.unitId !== firingUnitId) return prev;
-              const next = new Set(prev.ids);
-              next.delete(firedWeaponId);
-              return next.size === 0 ? null : { unitId: firingUnitId, ids: next };
-            });
-            setDiceModal(m => (m ? { ...m, phase: "error", error: err?.message ?? "Shot failed" } : null));
-          },
-        },
-      );
       return;
     }
 
@@ -3147,18 +4872,49 @@ export default function GameBoard() {
         currentPhase === "firing" &&
         (unit.hullPoints <= 0 ||
           ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0));
-      if (firingIneligible) return;
+      if (firingIneligible) {
+        setSelectedUnit(unitId);
+        setActivationFeedback(`${unit.name} cannot fire: no surviving hull or crew.`);
+        return;
+      }
       const unitIsFighter = isFighterUnit(unit);
-      if (activationSegment === "fighter" && !unitIsFighter) return;
-      if (activationSegment === "capital" && unitIsFighter) return;
+      if (activationSegment === "fighter" && !unitIsFighter) {
+        setSelectedUnit(unitId);
+        setActivationFeedback(
+          currentPhase === "movement"
+            ? "Capital ships have finished moving; activate fighter flights now."
+            : "Fighter flights fire before capital ships this phase."
+        );
+        return;
+      }
+      if (activationSegment === "capital" && unitIsFighter) {
+        setSelectedUnit(unitId);
+        setActivationFeedback(
+          currentPhase === "movement"
+            ? "Capital ships must move before fighter flights."
+            : "Capital ships still have firing activations pending."
+        );
+        return;
+      }
       if (!hasActiveUnit && !phaseDone) {
         // Pick this ship up for its activation.
         if (activateUnit.isPending) return;
         setSelectedUnit(unitId);
+        setOptimisticActiveUnitId(unitId);
+        setActivationFeedback(null);
         setMoveTarget(null);
         setAttackTarget(null);
         activateUnit.mutate({ gameId, unitId }, {
-          onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+          onSuccess: () => {
+            mergeActiveUnitIntoGame(unitId);
+            setOptimisticActiveUnitId(null);
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          },
+          onError: (err: any) => {
+            setOptimisticActiveUnitId(null);
+            setSelectedUnit(null);
+            setActivationFeedback(`Cannot activate ${unit.name}: ${cleanApiErrorMessage(err)}`);
+          },
         });
         return;
       }
@@ -3167,6 +4923,7 @@ export default function GameBoard() {
         // active ship selected so a double-click camera focus cannot leave
         // the player in a visually deselected "locked-in" state.
         setSelectedUnit(unitId);
+        setActivationFeedback(null);
         setMoveTarget(null);
         setAttackTarget(null);
         return;
@@ -3176,19 +4933,40 @@ export default function GameBoard() {
       // action yet (no movement / SA in movement phase; no shot fired in
       // firing phase). On rejection, the prior activation stays put and we
       // surface the server's reason via the existing error toast path.
-      if (phaseDone) return;
+      if (activeActivationCommitted) {
+        if (activeUnitId !== null) setSelectedUnit(activeUnitId);
+        setActivationFeedback("Finish the active ship before selecting another one.");
+        setMovePlan(null);
+        setMoveTarget(null);
+        setAttackTarget(null);
+        return;
+      }
+      if (phaseDone) {
+        setSelectedUnit(unitId);
+        setActivationFeedback(`${unit.name} already activated this phase.`);
+        return;
+      }
       if (activateUnit.isPending) return;
       // Optimistically reflect the new selection so the sidebar swaps even
       // before the server confirms; revert on error.
       const prevSelected = selectedUnit;
+      const prevOptimisticActive = optimisticActiveUnitId;
       setSelectedUnit(unitId);
+      setOptimisticActiveUnitId(unitId);
+      setActivationFeedback(null);
       setMovePlan(null);
       setMoveTarget(null);
       setAttackTarget(null);
       activateUnit.mutate({ gameId, unitId }, {
-        onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+        onSuccess: () => {
+          mergeActiveUnitIntoGame(unitId);
+          setOptimisticActiveUnitId(null);
+          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        },
         onError: (err: any) => {
           setSelectedUnit(prevSelected);
+          setOptimisticActiveUnitId(prevOptimisticActive);
+          setActivationFeedback(`Cannot activate ${unit.name}: ${cleanApiErrorMessage(err)}`);
           // eslint-disable-next-line no-console
           console.warn("Swap activation failed:", err?.message);
         },
@@ -3209,12 +4987,41 @@ export default function GameBoard() {
     if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
     endActivation.mutate({ gameId }, {
       onSuccess: () => {
+        mergeActiveUnitIntoGame(null);
         qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
         setSelectedUnit(null);
         setMovePlan(null);
+        setOptimisticActiveUnitId(null);
       }
     });
-  }, [hasActiveUnit, canPassPhase, endActivation, gameId, qc]);
+  }, [hasActiveUnit, canPassPhase, endActivation, gameId, mergeActiveUnitIntoGame, qc]);
+
+  const handleRequestPassAllFiring = useCallback(() => {
+    if (!canPassAllFiring || passAllFiringPending || antiFighterCommitting || diceModal !== null) return;
+    setActivationFeedback(null);
+    setPassAllFiringConfirmOpen(true);
+  }, [antiFighterCommitting, canPassAllFiring, diceModal, passAllFiringPending]);
+
+  const handlePassAllFiring = useCallback(async () => {
+    if (currentPhase !== "firing" || !isMyActivation || passAllFiringPending || antiFighterState) return;
+    setPassAllFiringConfirmOpen(false);
+    setPassAllFiringPending(true);
+    setActivationFeedback(null);
+    try {
+      await customFetch(`/api/games/${gameId}/pass-firing`, { method: "POST" });
+      mergeActiveUnitIntoGame(null);
+      setSelectedUnit(null);
+      setFiringWeaponPicking(null);
+      setDiceModal(null);
+      setUseCoordOnNext(false);
+      setOptimisticActiveUnitId(null);
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    } catch (err) {
+      setActivationFeedback(cleanApiErrorMessage(err, "Pass All failed"));
+    } finally {
+      setPassAllFiringPending(false);
+    }
+  }, [antiFighterState, currentPhase, gameId, isMyActivation, mergeActiveUnitIntoGame, passAllFiringPending, qc]);
 
   const handleSubmitTurn = () => {
     submitTurn.mutate(
@@ -3309,7 +5116,7 @@ export default function GameBoard() {
   return (
     <Layout title={`${game.challengerName ?? "?"} vs ${game.opponentName ?? "?"}`}>
       <div
-        className="game-board-shell flex flex-col lg:flex-row h-full min-h-[calc(100dvh-4rem)]"
+        className="game-board-shell flex flex-col lg:flex-row h-full min-h-[calc(100dvh-4rem)] lg:h-[calc(100dvh-4rem)] lg:min-h-0 lg:overflow-hidden"
         data-input={inputProfile.input}
         data-layout={inputProfile.layout}
         data-platform={inputProfile.platform}
@@ -3320,7 +5127,7 @@ export default function GameBoard() {
       >
         {/* 3D Board */}
         <div
-          className={`game-board-viewport flex-1 relative h-[58dvh] min-h-[320px] max-h-[70dvh] lg:h-auto lg:min-h-0 lg:max-h-none bg-black touch-none select-none overscroll-none ${
+          className={`game-board-viewport flex-1 relative h-[58dvh] min-h-[320px] max-h-[70dvh] lg:h-full lg:min-h-0 lg:max-h-none bg-black touch-none select-none overscroll-none ${
             isTouchInput ? "min-h-[360px]" : ""
           }`}
           data-input={inputProfile.input}
@@ -3345,7 +5152,14 @@ export default function GameBoard() {
               const [sx, , sz] = hexToWorld(selectedUnitData.hexQ, selectedUnitData.hexR);
               const v = headingForwardVec(selectedUnitData);
               const proj = (px - sx) * v.x + (pz - sz) * v.z;
-              const distance = Math.max(0, Math.min(selectedRemainingMove, snapMovementDistance(proj)));
+              const requested = Math.max(0, Math.min(selectedRemainingMove, snapMovementDistance(proj)));
+              const distance = clampForwardDistanceToLegalRestingSpot(
+                { ...selectedUnitData, isFighter: isFighterUnit(selectedUnitData) },
+                unitsWithFighterFlags,
+                v,
+                requested,
+                selectedRemainingMove,
+              );
               setMovePlan({ kind: "forward", distance });
               return;
             }
@@ -3398,6 +5212,44 @@ export default function GameBoard() {
                 }
               }
             }
+            if (!tapPlacementShip && !draggingId && !movementGesture) {
+              const start = boardPointerDownRef.current;
+              const dx = start ? e.clientX - start.x : 0;
+              const dy = start ? e.clientY - start.y : 0;
+              const elapsed = start ? performance.now() - start.time : 0;
+              const target = e.target as HTMLElement | null;
+              const boardTap = Boolean(start)
+                && dx * dx + dy * dy <= 144
+                && elapsed <= 700
+                && target?.tagName?.toLowerCase() === "canvas";
+              if (boardTap) {
+                const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+                if (pos) {
+                  const [x, z] = pos;
+                  if (!boardPointHasUnit(x, z)) {
+                    const now = performance.now();
+                    const last = lastEmptyBoardTapRef.current;
+                    const lastDx = last ? e.clientX - last.x : 999;
+                    const lastDy = last ? e.clientY - last.y : 999;
+                    if (last && now - last.time <= 420 && lastDx * lastDx + lastDy * lastDy <= 576) {
+                      lastEmptyBoardTapRef.current = null;
+                      setCameraFocusRequest({
+                        seq: Date.now(),
+                        x,
+                        z,
+                        distance: BOARD_FOCUS_CAMERA_DISTANCE,
+                        targetHeight: BOARD_FOCUS_TARGET_HEIGHT,
+                      });
+                      boardPointerDownRef.current = null;
+                      return;
+                    }
+                    lastEmptyBoardTapRef.current = { x: e.clientX, y: e.clientY, time: now };
+                  } else {
+                    lastEmptyBoardTapRef.current = null;
+                  }
+                }
+              }
+            }
             setDraggingId(null);
             boardPointerDownRef.current = null;
           }}
@@ -3445,7 +5297,7 @@ export default function GameBoard() {
               locked: false,
               // Default CQ is Veteran (4). In "standard" games this is also
               // the only legal value; in "custom" games the player can pick
-              // 1..6 via the expandable card in the staged-units list.
+              // 1..7 via the expandable card in the staged-units list.
               crewQuality: 4,
             }]);
             setSelectedStagedId(newId);
@@ -3471,11 +5323,118 @@ export default function GameBoard() {
               </button>
             </div>
           )}
-          {touchGameControls && (
-            <CameraOrbitPuck
-              disabled={Boolean(draggingId) || Boolean(movementGesture)}
-              onChange={setManualOrbitInput}
-            />
+          {isMyAntiFighterAllocation && antiFighterState && (
+            <div
+              className="fixed left-1/2 top-4 z-50 w-[min(420px,calc(100vw-24px))] -translate-x-1/2 rounded border border-emerald-400/50 bg-black/90 px-3 py-2 shadow-xl backdrop-blur"
+              data-testid="anti-fighter-allocation-panel"
+            >
+              <div className="mb-2 text-[10px] font-mono uppercase tracking-wider text-emerald-200">
+                assign anti-fighter dice to targets
+              </div>
+              <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
+                {antiFighterState.attackers.map(attacker => {
+                  const assigned = Object.entries(antiFighterAssignments)
+                    .filter(([key]) => key.startsWith(`${attacker.attackerUnitId}:`))
+                    .reduce((sum, [, count]) => sum + count, 0);
+                  return (
+                    <div key={attacker.attackerUnitId} className="rounded border border-emerald-500/25 bg-emerald-500/5 p-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="truncate text-[11px] font-mono text-emerald-100">{attacker.attackerName}</span>
+                        <span className="shrink-0 text-[10px] font-mono text-emerald-300">{attacker.trait} {attacker.dice}</span>
+                      </div>
+                      <div className="mb-2 flex gap-1">
+                        {Array.from({ length: attacker.dice }).map((_, i) => (
+                          <span
+                            key={i}
+                            className={`h-3 w-3 rotate-45 border ${i < assigned ? "border-zinc-500 bg-black" : "border-emerald-200 bg-emerald-400"}`}
+                            aria-label={i < assigned ? "assigned die" : "unassigned die"}
+                          />
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-1 gap-1">
+                        {attacker.eligibleTargets.map(target => {
+                          const key = `${attacker.attackerUnitId}:${target.targetUnitId}`;
+                          const count = antiFighterAssignments[key] ?? 0;
+                          return (
+                            <button
+                              key={target.targetUnitId}
+                              type="button"
+                              onClick={() => assignAntiFighterDie(attacker, target)}
+                              disabled={assigned >= attacker.dice || antiFighterCommitting}
+                              className="flex items-center justify-between rounded border border-emerald-500/20 bg-zinc-950/80 px-2 py-1 text-left text-[11px] font-mono text-zinc-100 hover:border-emerald-300/60 disabled:cursor-not-allowed disabled:opacity-50"
+                              data-testid={`anti-fighter-target-${attacker.attackerUnitId}-${target.targetUnitId}`}
+                            >
+                              <span className="truncate">{target.targetName}</span>
+                              <span className="ml-2 shrink-0 text-emerald-300">{count > 0 ? `${count} die` : `${target.distance}" H${target.hull}`}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {antiFighterError && (
+                <div className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-mono text-red-200">
+                  {antiFighterError}
+                </div>
+              )}
+              <div className="mt-2 flex justify-end gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={clearAntiFighterAssignments} disabled={antiFighterCommitting}>
+                  Clear
+                </Button>
+                <Button type="button" size="sm" onClick={commitAntiFighterAllocations} disabled={antiFighterCommitting}>
+                  {antiFighterCommitting ? "Committing..." : "Commit"}
+                </Button>
+              </div>
+            </div>
+          )}
+          {antiFighterResult && (
+            <div
+              className="fixed left-1/2 top-4 z-50 w-[min(420px,calc(100vw-24px))] -translate-x-1/2 rounded border border-emerald-300/50 bg-zinc-950/95 px-3 py-2 shadow-xl backdrop-blur"
+              data-testid="anti-fighter-result-panel"
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-200">Anti-Fighter rolls</span>
+                <Button type="button" size="sm" variant="outline" onClick={() => setAntiFighterResult(null)}>Close</Button>
+              </div>
+              <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+                {antiFighterResult.attacks.flatMap(attack => {
+                  const byTarget = new Map<number, AntiFighterUiRoll[]>();
+                  for (const roll of attack.rolls) {
+                    byTarget.set(roll.targetId, [...(byTarget.get(roll.targetId) ?? []), roll]);
+                  }
+                  return [...byTarget.entries()].map(([targetId, rolls]) => {
+                    const first = rolls[0]!;
+                    const destroyed = rolls.some(roll => roll.destroyed);
+                    return (
+                      <div key={`${attack.attackerId}-${targetId}`} className="rounded border border-emerald-500/25 bg-emerald-500/5 p-2 font-mono">
+                        <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
+                          <span className="truncate text-zinc-100">{attack.attackerName} → {first.targetName}</span>
+                          <span className={destroyed ? "text-red-300" : "text-zinc-400"}>{destroyed ? "destroyed" : `Hull ${first.targetHull}`}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {rolls.map((roll, idx) => (
+                            <span
+                              key={`${roll.targetId}-${idx}`}
+                              className={`flex h-7 min-w-7 items-center justify-center rounded border px-1 text-xs font-bold ${roll.destroyed ? "border-red-400 bg-red-500/20 text-red-100" : "border-emerald-400/40 bg-black text-emerald-200"}`}
+                              title={`${roll.die}${roll.bonus ? ` + ${roll.bonus}` : ""} = ${roll.total}`}
+                            >
+                              {roll.total}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  });
+                })}
+                {antiFighterResult.attacks.every(attack => attack.rolls.length === 0) && (
+                  <div className="rounded border border-zinc-700 bg-black/60 px-2 py-2 text-center text-[11px] font-mono text-zinc-400">
+                    No dice assigned.
+                  </div>
+                )}
+              </div>
+            </div>
           )}
           <Canvas camera={{ position: [0, 40, 50], fov: 45 }} shadows>
             <CameraCapture refs={threeRef} />
@@ -3488,15 +5447,24 @@ export default function GameBoard() {
             {/* Fog tinted a very dark warm tone so distant ships fade into the
                 nebula backdrop instead of a mismatched cold grey-black. */}
             <fog attach="fog" args={["#0a0503", 60, 110]} />
-            <SpaceGrid />
+            <SpaceGrid boardOpacity={boardOpacity} />
+            <AttackPhaseBoardPulse
+              active={game.status === "active" && currentPhase === "firing"}
+              opacity={attackPulseOpacity}
+              strength={attackPulseStrength}
+            />
+            {game.status === "active" && (
+              <ConcentrateFireTargetLines units={units} />
+            )}
             <BoardBoundary />
             {game.status === "deploying" && (
               <DeploymentZones depth={deploymentDepth} mySide={mySide} />
             )}
             {units.map(unit => {
-              const dimmed = currentPhase === "firing"
-                ? unit.hasFiredThisRound && !unit.isDestroyed
-                : (unit.hasMovedThisRound || unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next") && !unit.isDestroyed;
+              const phaseViable =
+                game.status === "active" &&
+                (currentPhase === "movement" || currentPhase === "firing") &&
+                unitEligibleForCurrentPhase(unit);
               // Show the weapon's full-range coverage sector ONLY for the
               // active firing ship while a weapon is selected for targeting.
               let firingArc: { arc: string; range: number } | null = null;
@@ -3505,8 +5473,7 @@ export default function GameBoard() {
                 firingWeaponPicking !== null &&
                 unit.id === activeUnitId
               ) {
-                const w = (weaponsByFilename[unit.modelFilename] as Weapon[] | undefined)
-                  ?.find(x => x.id === firingWeaponPicking);
+                const w = getWeaponsForUnit(unit).find(x => x.id === firingWeaponPicking);
                 if (w) {
                   firingArc = {
                     arc: w.arc,
@@ -3522,11 +5489,16 @@ export default function GameBoard() {
                   onClick={() => handleUnitClick(unit.id)}
                   onCameraFocus={() => handleUnitFocus(unit.id)}
                   myUserId={myUserId}
-                  weapons={weaponsByFilename[unit.modelFilename] ?? []}
+                  weapons={getWeaponsForUnit(unit)}
                   dragOffset={unit.id === selectedUnit ? selectedDragOffset : null}
                   previewHeadingDelta={unit.id === selectedUnit ? selectedPreviewHeadingDelta : 0}
-                  dimmed={dimmed}
+                  phaseViable={phaseViable}
                   firingArc={firingArc}
+                  arcColorScheme={uiArcColorScheme}
+                  healthBarFacesCamera={uiControlMode === "mode-f"}
+                  shipMeshTintsEnabled={shipMeshTintsEnabled}
+                  shipHullNamesEnabled={shipHullNamesEnabled}
+                  isFighter={isFighterUnit(unit)}
                 />
               );
             })}
@@ -3553,12 +5525,12 @@ export default function GameBoard() {
                 />
               );
             })()}
-            {currentPhase === "movement" && !isTabletDevice && isSelectedUnitActive && selectedUnitData && selectedMovementUi && !selectedUnitData.isDestroyed && selectedUnitData.damageState !== "adrift" && selectedUnitData.damageState !== "exploding-end-of-next" && (
+            {currentPhase === "movement" && mobileGameChrome && !touchGameControls && isSelectedUnitActive && selectedUnitData && selectedMovementUi && !selectedUnitData.isDestroyed && selectedUnitData.damageState !== "adrift" && selectedUnitData.damageState !== "exploding-end-of-next" && (
               <MovementRadialMenu
                 unit={selectedUnitData}
                 flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
-                canForward={selectedMovementUi.canForward && !moveUnit.isPending}
-                canTurn={selectedMovementUi.canTurn && !moveUnit.isPending}
+                canForward={selectedMovementUi.canForward && !moveUnit.isPending && !activateUnit.isPending}
+                canTurn={selectedMovementUi.canTurn && !moveUnit.isPending && !activateUnit.isPending}
                 isSuperManeuverable={selectedMovementUi.isSuperManeuverable}
                 activeGesture={movementGesture}
                 onForward={() => {
@@ -3590,12 +5562,15 @@ export default function GameBoard() {
                   setSelectedStagedId(unit.id);
                   setDraggingId(unit.id);
                 }}
+                arcColorScheme={uiArcColorScheme}
+                shipMeshTintsEnabled={shipMeshTintsEnabled}
+                shipHullNamesEnabled={shipHullNamesEnabled}
               />
             ))}
             <BoardCameraControls
               disabled={Boolean(draggingId) || Boolean(movementGesture)}
               focusRequest={cameraFocusRequest}
-              manualOrbit={touchGameControls ? manualOrbitInput : undefined}
+              controlMode={uiControlMode}
             />
             {/* Weapon firing FX — mounts when a shot starts rolling and stays
                 mounted for the rest of the dice modal lifetime. Internal
@@ -3631,6 +5606,27 @@ export default function GameBoard() {
                 />
               );
             })()}
+            {(() => {
+              if (!aiWeaponFxReplay) return null;
+              const attacker = units.find(u => u.id === aiWeaponFxReplay.attackerUnitId);
+              const target = units.find(u => u.id === aiWeaponFxReplay.targetUnitId);
+              if (!attacker || !target) return null;
+              const weapon = getWeaponsForUnit(attacker).find(w => w.id === aiWeaponFxReplay.weaponId);
+              if (!weapon) return null;
+              const [ax, , az] = hexToWorld(attacker.hexQ, attacker.hexR);
+              const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
+              return (
+                <WeaponFx
+                  key={aiWeaponFxReplay.key}
+                  from={new THREE.Vector3(ax, 2, az)}
+                  to={new THREE.Vector3(tx, 2, tz)}
+                  weapon={weapon}
+                  attackerFaction={attacker.faction}
+                  hits={aiWeaponFxReplay.hits}
+                  totalDice={weapon.attackDice}
+                />
+              );
+            })()}
             <EffectComposer>
               <Bloom
                 intensity={0.9}
@@ -3640,11 +5636,11 @@ export default function GameBoard() {
               />
             </EffectComposer>
           </Canvas>
-          {isTabletDevice && currentPhase === "movement" && isSelectedUnitActive && selectedUnitData && selectedMovementUi && !selectedUnitData.isDestroyed && selectedUnitData.damageState !== "adrift" && selectedUnitData.damageState !== "exploding-end-of-next" && (
+          {touchGameControls && currentPhase === "movement" && isSelectedUnitActive && selectedUnitData && selectedMovementUi && !selectedUnitData.isDestroyed && selectedUnitData.damageState !== "adrift" && selectedUnitData.damageState !== "exploding-end-of-next" && (
             <TabletMovementController
               plan={movePlan}
-              canForward={selectedMovementUi.canForward && !moveUnit.isPending}
-              canTurn={selectedMovementUi.canTurn && !moveUnit.isPending}
+              canForward={selectedMovementUi.canForward && !moveUnit.isPending && !activateUnit.isPending}
+              canTurn={selectedMovementUi.canTurn && !moveUnit.isPending && !activateUnit.isPending}
               canConfirm={canConfirmMovePlan}
               isSuperManeuverable={selectedMovementUi.isSuperManeuverable}
               freeTurnActive={movementGesture?.kind === "turn" && movementGesture.direction === "free"}
@@ -3653,14 +5649,22 @@ export default function GameBoard() {
               turnHint={tabletMoveHint}
               onForward={() => nudgeForwardPlan(TABLET_FORWARD_STEP)}
               onBack={() => nudgeForwardPlan(-TABLET_FORWARD_STEP)}
-              onTurnLeft={() => nudgeTurnPlan(-TABLET_TURN_STEP_DEG)}
-              onTurnRight={() => nudgeTurnPlan(TABLET_TURN_STEP_DEG)}
+              onTurnLeft={() => nudgeTurnPlan(-TABLET_TURN_STEP_DEG, "left")}
+              onTurnRight={() => nudgeTurnPlan(TABLET_TURN_STEP_DEG, "right")}
               onFreeTurn={startFreeTurnPlan}
               onCancel={cancelMovePlan}
               onConfirm={confirmMovePlan}
+              canEndActivation={hasActiveUnit && !endActivation.isPending && !minMoveGate.blocked}
+              endActivationLabel={endActivation.isPending ? "Ending..." : "End Activation"}
+              endActivationTitle={
+                minMoveGate.blocked
+                  ? `Must move at least ${minMoveGate.required}" or declare All Stop before ending activation`
+                  : undefined
+              }
+              onEndActivation={handleEndActivation}
             />
           )}
-          {mobileGameChrome && currentPhase === "movement" && isSelectedUnitActive && selectedUnitData && movePlan && (
+          {mobileGameChrome && !touchGameControls && currentPhase === "movement" && isSelectedUnitActive && selectedUnitData && movePlan && (
             <div
               className="absolute bottom-14 right-3 z-20 w-[min(92vw,22rem)] rounded border border-cyan-500/50 bg-card/95 p-2 shadow-xl"
               data-testid="mobile-move-confirm-strip"
@@ -3701,7 +5705,7 @@ export default function GameBoard() {
               </div>
             </div>
           )}
-          {game.status === "deploying" && !((mySide === "challenger" && game.challengerDeployed) || (mySide === "opponent" && game.opponentDeployed)) && (
+          {game.status === "deploying" && !myDeploymentLocked && (
             <DeploymentAllocationHud
               units={currentStagedUnits}
               scenarioPriority={scenarioPriority}
@@ -3730,6 +5734,11 @@ export default function GameBoard() {
                 Activating · {units.find(u => u.id === activeUnitId)?.name ?? "—"}
               </div>
             )}
+            {game.status === "active" && isMyActivation && activationFeedback && (
+              <div className="max-w-[min(72vw,420px)] px-2 py-1 rounded text-xs font-mono border border-amber-500/40 bg-black/70 text-amber-200 normal-case tracking-normal" data-testid="hud-activation-feedback">
+                {activationFeedback}
+              </div>
+            )}
             {game.status === "active" && !isMyActivation && (
               <div className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-muted/40 bg-muted/10 text-muted-foreground" data-testid="hud-waiting">
                 Waiting · Opponent {hasActiveUnit ? "activating" : "to pick"}
@@ -3747,8 +5756,20 @@ export default function GameBoard() {
               {isTouchInput
                 ? movementGesture
                   ? "Drag ship preview · Release to stage · Confirm to commit"
-                  : `${touchGameControls ? "Drag to pan · Orbit puck rotates camera" : "Drag to pan"} · Radial handles move ships · Pinch to zoom`
-                : "WASD to pan · Scroll to zoom · Right-drag to orbit"}
+                  : uiControlMode === "mode-b"
+                    ? "Left side orbit - Right side pan - Pinch to zoom - Controller moves ships"
+                    : uiControlMode === "mode-c"
+                    ? "Drag to pan - Pinch to zoom - Two-finger drag to pan - Controller moves ships"
+                    : uiControlMode === "mode-d"
+                    ? "Drag to pan - Long-press then drag to orbit - Pinch to zoom - Controller moves ships"
+                    : uiControlMode === "mode-e"
+                    ? "Drag to pan - Pinch to zoom - Two-finger drag to orbit - Controller moves ships"
+                    : uiControlMode === "mode-f"
+                    ? "Top-down - Drag to pan - Pinch to zoom - Orbit locked - Controller moves ships"
+                    : touchGameControls
+                    ? "Drag to orbit · Pinch to zoom · Two-finger drag to pan · Controller moves ships"
+                    : "Drag to orbit · Pinch to zoom · Two-finger drag to pan"
+                : "WASD to pan · F forward · Q/E turn · Enter confirm · Scroll to zoom · Right-drag orbit"}
             </div>
             {game.status === "deploying" && (
               <div className="text-[10px] text-gray-600 font-mono">
@@ -3791,7 +5812,7 @@ export default function GameBoard() {
           className={`game-board-sidebar border-border bg-card flex flex-col transition-transform duration-200 ease-out ${
             mobileGameChrome
               ? `fixed inset-y-0 right-0 z-40 w-[min(88vw,22rem)] border-l shadow-2xl safe-top safe-bottom overflow-y-auto ${opsPanelOpen ? "translate-x-0" : "translate-x-full"}`
-              : "w-full lg:w-72 border-t lg:border-t-0 lg:border-l"
+              : "w-full lg:w-72 lg:h-full lg:min-h-0 lg:overflow-y-auto border-t lg:border-t-0 lg:border-l"
           }`}
           data-state={opsPanelOpen ? "open" : "closed"}
           data-testid="game-operations-sidebar"
@@ -3812,7 +5833,19 @@ export default function GameBoard() {
           )}
 
           {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
-          {game.status === "deploying" && ((mySide === "challenger" && game.challengerDeployed) || (mySide === "opponent" && game.opponentDeployed)) && (
+          <AiDiagnosticsPanel
+            game={game}
+            onRunStep={() => runAiStep.mutate(
+              { gameId },
+              { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+            )}
+            onRunUntilHuman={runAiUntilHuman}
+            isRunning={runAiStep.isPending}
+            isAutoRunning={autoAiRunning}
+            runError={autoAiError ?? (runAiStep.isError ? ((runAiStep.error as Error).message || "AI step failed") : null)}
+          />
+
+          {game.status === "deploying" && myDeploymentLocked && (
             <div className="p-4 border-b border-border space-y-2" data-testid="panel-awaiting-opponent">
               <p className="text-xs font-mono text-green-400 uppercase tracking-widest flex items-center gap-1.5">
                 <CheckCircle className="w-3.5 h-3.5" /> Fleet Deployed
@@ -3824,7 +5857,7 @@ export default function GameBoard() {
           )}
 
           {/* ── FLEET YARDS (deploy phase, current player not yet deployed) ── */}
-          {game.status === "deploying" && !((mySide === "challenger" && game.challengerDeployed) || (mySide === "opponent" && game.opponentDeployed)) && (
+          {game.status === "deploying" && !myDeploymentLocked && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">Fleet Yards</p>
               {((mySide === "challenger" && game.opponentDeployed) || (mySide === "opponent" && game.challengerDeployed)) && (
@@ -3840,14 +5873,14 @@ export default function GameBoard() {
               </p>
 
               {/* Fleet selector */}
-              {scenarioPriority === "raid" && (
+              {TEST_FLEET_TEMPLATES.length > 0 && (
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-mono text-amber-400/90 uppercase tracking-wider">EA Raid Templates</p>
-                    <span className="text-[10px] font-mono text-muted-foreground">5 FAP</span>
+                    <p className="text-[10px] font-mono text-amber-400/90 uppercase tracking-wider">Test Fleet Templates</p>
+                    <span className="text-[10px] font-mono text-muted-foreground">{priorityLabel(scenarioPriority)} {allocationPoints} FAP</span>
                   </div>
                   <div className="space-y-1">
-                    {RAID_TEST_FLEET_TEMPLATES.map(template => {
+                    {TEST_FLEET_TEMPLATES.map(template => {
                       const missingNames = template.ships
                         .filter(entry => !(shipModels ?? []).some(ship => ship.name === entry.modelName))
                         .map(entry => entry.modelName);
@@ -4011,7 +6044,7 @@ export default function GameBoard() {
                               Crew Quality — {CREW_QUALITY_LABELS[u.crewQuality]}
                             </p>
                             <div className="grid grid-cols-6 gap-1">
-                              {[1, 2, 3, 4, 5, 6].map(cq => (
+                              {[1, 2, 3, 4, 5, 6, 7].map(cq => (
                                 <button
                                   key={cq}
                                   data-testid={`staged-cq-${u.id}-${cq}`}
@@ -4358,6 +6391,14 @@ export default function GameBoard() {
                 const winnerKnown = bothRolled && !!game.initiativeWinnerId;
                 const iWon = winnerKnown && game.initiativeWinnerId === myUserId;
                 const oppName = isChallenger ? game.opponentName : game.challengerName;
+                const aiDiagnostics = readAiDiagnostics(game.aiState);
+                const initiativeTieMessage =
+                  !haveRolled &&
+                  !oppRolled &&
+                  aiDiagnostics.lastStep === "initiative.tie" &&
+                  aiDiagnostics.lastInitiativeTieRound === game.currentRound
+                    ? aiDiagnostics.message ?? "Initiative tied; re-roll initiative."
+                    : null;
                 return (
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2 text-center">
@@ -4391,6 +6432,15 @@ export default function GameBoard() {
                       </div>
                     )}
 
+                    {initiativeTieMessage && (
+                      <div
+                        className="rounded border border-amber-500/60 bg-amber-500/10 px-2 py-1.5 text-center font-mono text-[11px] uppercase tracking-widest text-amber-300"
+                        data-testid="text-initiative-tie"
+                      >
+                        {initiativeTieMessage}
+                      </div>
+                    )}
+
                     {/* Pre-roll / waiting-for-opponent: Roll button. */}
                     {!winnerKnown && (
                       <Button
@@ -4401,7 +6451,10 @@ export default function GameBoard() {
                         onClick={() => {
                           rollInitiative.mutate(
                             { gameId },
-                            { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                            {
+                              onSuccess: mergeGameIntoCache,
+                              onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+                            },
                           );
                         }}
                       >
@@ -4567,6 +6620,19 @@ export default function GameBoard() {
                     ? "Pass Phase (N)"
                     : "End Activation (N)"}
               </Button>
+              {currentPhase === "firing" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-testid="button-pass-all-firing"
+                  className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
+                  onClick={handleRequestPassAllFiring}
+                  disabled={!canPassAllFiring || passAllFiringPending || antiFighterCommitting || diceModal !== null}
+                  title={antiFighterState ? "Resolve pending Anti-Fighter allocation first" : undefined}
+                >
+                  {passAllFiringPending ? "Passing All..." : "Pass All Firing"}
+                </Button>
+              )}
               {minMoveGate.blocked && (
                 <p
                   data-testid="text-min-move-gate"
@@ -4593,7 +6659,8 @@ export default function GameBoard() {
                 </div>
               )}
               {selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && currentPhase === "movement" && isSelectedUnitActive && !isAdriftActive && (() => {
-                const traitsForSA = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
+                if (isFighterUnit(selectedUnitData)) return null;
+                const traitsForSA = getShipModelForUnit(selectedUnitData)?.traits ?? "";
                 const isLumbering = /\blumbering\b/i.test(traitsForSA);
                 const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about-extra-turn" | "come-about-sharp-turn" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire" | "all-hands-on-deck"; label: string; cq: number | null; hint: string; hidden?: boolean }[] = [
                   { id: "all-power-engines", label: "All Power to Engines!", cq: null, hint: "Speed +50%; no turns" },
@@ -4704,12 +6771,12 @@ export default function GameBoard() {
                                         cqTotal: res.cqTotal ?? null,
                                         cqRequired: res.cqRequired ?? null,
                                       });
+                                      mergeUpdatedUnitIntoGame(res.unit);
                                       qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
                                     },
                                     onError: (err: any) => {
                                       setSpecialActionFeedback({ action: a.id, success: false, cqRoll: null, cqTotal: null, cqRequired: a.cq });
-                                      // eslint-disable-next-line no-console
-                                      console.warn("Special action failed:", err?.message);
+                                      setActivationFeedback(cleanApiErrorMessage(err, "Special action failed"));
                                     },
                                   },
                                 );
@@ -4772,12 +6839,12 @@ export default function GameBoard() {
                     </div>
                     <div className="text-sm font-bold">
                       {movePlan?.kind === "forward" && `FORWARD ${movePlan.distance.toFixed(1)}" / ${selectedRemainingMove.toFixed(1)}" left`}
-                      {movePlan?.kind === "turn" && `TURN ${movePlan.deltaDeg > 0 ? "+" : "−"}${Math.abs(movePlan.deltaDeg)}° / ±${selectedUnitData.turnAngle}°`}
+                      {movePlan?.kind === "turn" && `TURN ${movePlan.deltaDeg > 0 ? "+" : "−"}${Math.abs(movePlan.deltaDeg)}° / ±${selectedMovementUi?.angleCap ?? selectedUnitData.turnAngle}°`}
                       {!movePlan && turnMoves.some(m => m.unitId === selectedUnitData.id) && "QUEUED"}
                       {!movePlan && !turnMoves.some(m => m.unitId === selectedUnitData.id) && "— idle —"}
                     </div>
                     <div className="text-[10px] uppercase tracking-wider opacity-70 mt-1">
-                      Phase: {getLedger(selectedUnitData.id).distance.toFixed(1)}"/{selectedUnitData.speed}" moved · {getLedger(selectedUnitData.id).turns}/{selectedUnitData.turns ?? 1} turns
+                      Phase: {getLedger(selectedUnitData.id).distance.toFixed(1)}"/{selectedUnitData.speed}" moved · {getLedger(selectedUnitData.id).turns}/{selectedSaCaps?.maxTurns ?? selectedUnitData.turns ?? 1} turns
                     </div>
                     {(() => {
                       // Surface the turn-eligibility gate alongside the phase
@@ -4789,7 +6856,7 @@ export default function GameBoard() {
                       const isRunSilent = baseAction === "run-silent";
                       if (isAllStop || isAllPower || isRunSilent) return null;
                       const led = getLedger(selectedUnitData.id);
-                      const traitsStr = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
+                      const traitsStr = getShipModelForUnit(selectedUnitData)?.traits ?? "";
                       const rawMovementTraits = parseUiMovementTraits(traitsStr);
                       const movementTraits = {
                         ...rawMovementTraits,
@@ -4824,7 +6891,7 @@ export default function GameBoard() {
               {currentPhase === "firing" && hasActiveUnit && (() => {
                 const attacker = units.find(u => u.id === activeUnitId);
                 if (!attacker || attacker.ownerId !== myUserId) return null;
-                const weapons = (weaponsByFilename[attacker.modelFilename] as Weapon[] | undefined) ?? [];
+                const weapons = getWeaponsForUnit(attacker);
                 // Authoritative fired-set = server's ledger ∪ optimistic local
                 // adds (covers the brief window before query invalidation lands).
                 const serverFired = new Set((attacker.firedWeaponIds ?? []) as number[]);
@@ -4834,7 +6901,7 @@ export default function GameBoard() {
                   ...serverFired,
                   ...(pendingForThisUnit ?? []),
                 ]);
-                const attackerTraits = (shipModels ?? []).find(m => m.filename === attacker.modelFilename)?.traits ?? "";
+                const attackerTraits = getShipModelForUnit(attacker)?.traits ?? "";
                 const skeletonFiringLimited = attacker.isSkeletonCrew && !/\bflight\s+computer\b/i.test(attackerTraits);
                 return (
                   <div className="space-y-1.5" data-testid="firing-panel">
@@ -4903,6 +6970,7 @@ export default function GameBoard() {
                         weapon eligibility on submit; we show the checkbox
                         unconditionally so the player can see it as an
                         option. */}
+                    {hasAvailableScoutCoordToken && (
                     <label
                       className="flex items-center gap-2 text-[10px] font-mono text-cyan-300/80 cursor-pointer select-none border border-cyan-500/30 bg-cyan-500/5 rounded px-2 py-1 hover:bg-cyan-500/10"
                       data-testid="scout-coord-toggle"
@@ -4916,6 +6984,7 @@ export default function GameBoard() {
                       />
                       <span>Use Scout Coord on next shot · re-roll missed AD</span>
                     </label>
+                    )}
                     <p className="text-[10px] text-muted-foreground font-mono">
                       Pick weapons → target → End Activation when done.
                     </p>
@@ -4927,7 +6996,7 @@ export default function GameBoard() {
                   pre-fire window. Doesn't require the scout to be the
                   active ship. */}
               {canDeclareScoutSupport && selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (() => {
-                const traitsStr = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
+                const traitsStr = getShipModelForUnit(selectedUnitData)?.traits ?? "";
                 const hasScout = /\bscout\b/i.test(traitsStr);
                 if (!hasScout) return null;
                 const rawAct = selectedUnitData.scoutAction ?? null;
@@ -5004,7 +7073,7 @@ export default function GameBoard() {
           )}
 
           {game.status === "active" && !isMyActivation && canDeclareScoutSupport && selectedUnitData && selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (() => {
-            const traitsStr = (shipModels ?? []).find(m => m.filename === selectedUnitData.modelFilename)?.traits ?? "";
+            const traitsStr = getShipModelForUnit(selectedUnitData)?.traits ?? "";
             const hasScout = /\bscout\b/i.test(traitsStr);
             if (!hasScout) return null;
             const rawAct = selectedUnitData.scoutAction ?? null;
@@ -5103,6 +7172,17 @@ export default function GameBoard() {
             const allHandsFailed = rawSA === "all-hands-on-deck-failed";
             const cq = selectedUnitData.crewQuality;
             const allHandsBonus = allHandsActive ? 2 : 0;
+            const traitsForSelfRepair = getShipModelForUnit(selectedUnitData)?.traits ?? "";
+            const selfRepairDice = parseUiSelfRepairDice(traitsForSelfRepair);
+            const selfRepairUsedThisRound = (selectedUnitData.lastSelfRepairRound ?? 0) === currentRound;
+            const selfRepairBusy = selfRepairModal?.unitId === selectedUnitData.id && selfRepairModal.phase === "rolling";
+            const canSelfRepair =
+              selfRepairDice > 0 &&
+              selectedUnitData.hullPoints < selectedUnitData.maxHullPoints &&
+              !selfRepairUsedThisRound &&
+              !selfRepairBusy &&
+              isMyEndWindow &&
+              !myPassedEnd;
             return (
               <div className="p-4 border-b border-border space-y-1.5" data-testid="crit-panel">
                 <div className="text-[10px] uppercase tracking-wider text-red-400/80 font-mono flex items-center justify-between">
@@ -5130,6 +7210,39 @@ export default function GameBoard() {
                 {crits.length === 0 && inEndPhase && (
                   <div className="rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 font-mono text-[10px] text-emerald-300/80" data-testid="crit-panel-empty">
                     No critical damage to repair on this ship.
+                  </div>
+                )}
+                {inEndPhase && selfRepairDice > 0 && (
+                  <div className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-1.5 font-mono text-[11px] text-sky-200" data-testid="self-repair-row">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold uppercase">Self Repair</span>
+                      <span className="text-[9px] opacity-70">{selectedUnitData.hullPoints}/{selectedUnitData.maxHullPoints} hull</span>
+                    </div>
+                    <button
+                      data-testid="button-self-repair"
+                      disabled={!canSelfRepair}
+                      onClick={() => {
+                        setSelfRepairModal({
+                          unitId: selectedUnitData.id,
+                          unitName: selectedUnitData.name,
+                          dice: selfRepairDice,
+                          phase: "ready",
+                        });
+                      }}
+                      className="mt-1 w-full rounded border border-sky-400/50 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-200 hover:bg-sky-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {selfRepairBusy
+                        ? "Rolling..."
+                        : selectedUnitData.hullPoints >= selectedUnitData.maxHullPoints
+                        ? "Hull fully repaired"
+                        : selfRepairUsedThisRound
+                        ? "Self Repair used this round"
+                        : myPassedEnd
+                        ? "You've passed End Phase"
+                        : !isMyEndWindow
+                        ? "Available in your End Phase"
+                        : `Self Repair (${selfRepairDice}d6)`}
+                    </button>
                   </div>
                 )}
                 {crits.map((c) => {
@@ -5227,6 +7340,14 @@ export default function GameBoard() {
                 ) : (
                   units.filter(u => u.ownerId === myUserId).map(unit => {
                     const selected = selectedUnit === unit.id;
+                    const active = activeUnitId === unit.id;
+                    const unavailableDuringCommittedActivation =
+                      game.status === "active" &&
+                      isMyActivation &&
+                      currentPhase !== "end" &&
+                      hasActiveUnit &&
+                      !active &&
+                      activeActivationCommitted;
                     // Firing-phase derelict: hull or crew gone. Cannot be
                     // activated to fire. Greyed out + "INERT" badge so the
                     // player understands why clicking does nothing.
@@ -5239,12 +7360,28 @@ export default function GameBoard() {
                       <div
                         key={unit.id}
                         data-testid={`unit-${unit.id}`}
-                        className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-colors ${selected ? "border border-blue-400/60 bg-blue-400/10" : "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"} ${unit.isDestroyed ? "opacity-40 line-through cursor-not-allowed" : firingInert ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                        className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-colors ${active ? "border border-amber-300/80 bg-amber-300/15" : selected ? "border border-blue-400/60 bg-blue-400/10" : "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"} ${unit.isDestroyed ? "opacity-40 line-through cursor-not-allowed" : firingInert || unavailableDuringCommittedActivation ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                         onClick={() => handleUnitClick(unit.id)}
                         title={firingInert ? (unit.hullPoints <= 0 ? "Hull breached — cannot fire" : "No surviving crew — cannot fire") : undefined}
                       >
-                        <span className={`font-mono truncate max-w-[110px] ${selected ? "text-blue-300" : "text-green-300"}`}>{unit.name}</span>
+                        <span className={`font-mono truncate max-w-[110px] ${active ? "text-amber-200" : selected ? "text-blue-300" : "text-green-300"}`}>{unit.name}</span>
                         <div className="flex items-center gap-1 shrink-0">
+                          {active && (
+                            <span
+                              data-testid={`unit-${unit.id}-active-badge`}
+                              className="font-mono text-[9px] uppercase tracking-wider px-1 py-px rounded bg-amber-400/20 text-amber-200 border border-amber-400/50"
+                            >
+                              Active
+                            </span>
+                          )}
+                          {unavailableDuringCommittedActivation && (
+                            <span
+                              data-testid={`unit-${unit.id}-locked-badge`}
+                              className="font-mono text-[9px] uppercase tracking-wider px-1 py-px rounded bg-slate-500/20 text-slate-300 border border-slate-500/40"
+                            >
+                              Locked
+                            </span>
+                          )}
                           {firingInert && (
                             <span
                               data-testid={`unit-${unit.id}-inert-badge`}
@@ -5266,10 +7403,69 @@ export default function GameBoard() {
       </div>
 
       {/* ── DICE ROLL MODAL ── */}
+      <AlertDialog
+        open={passAllFiringConfirmOpen}
+        onOpenChange={(open) => {
+          if (!passAllFiringPending) setPassAllFiringConfirmOpen(open);
+        }}
+      >
+        <AlertDialogContent
+          className="fixed max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] overflow-hidden border-2 border-yellow-300/90 bg-black p-0 text-yellow-50 shadow-[0_0_45px_rgba(250,204,21,0.32)] sm:max-w-md"
+          data-testid="dialog-pass-all-firing-confirm"
+        >
+          <div
+            className="absolute inset-0 opacity-35"
+            style={{
+              backgroundImage: "repeating-linear-gradient(135deg, #facc15 0 18px, #facc15 18px 34px, #020617 34px 52px, #020617 52px 68px)",
+            }}
+          />
+          <div className="relative m-2 max-h-[calc(100dvh-2.5rem)] overflow-y-auto border border-yellow-300/60 bg-black/95 p-4 shadow-inner shadow-black sm:p-5">
+            <AlertDialogHeader className="space-y-3 text-left">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-yellow-300/80 bg-yellow-300 text-black shadow-[0_0_18px_rgba(250,204,21,0.45)]">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <AlertDialogTitle className="font-mono text-lg uppercase tracking-[0.18em] text-yellow-200">
+                  Pass All Firing?
+                </AlertDialogTitle>
+              </div>
+              <AlertDialogDescription className="font-mono text-xs leading-relaxed text-yellow-100/85">
+                This will end every remaining firing activation for your fleet this phase. No weapons will be fired, no dice will be rolled, and the action cannot be undone after confirmation.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="my-4 border border-yellow-300/35 bg-yellow-300/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-yellow-100/90">
+              Remaining eligible activations: {myEligibleActivations}
+            </div>
+            <AlertDialogFooter className="gap-2 sm:space-x-0">
+              <AlertDialogCancel
+                disabled={passAllFiringPending}
+                className="border-slate-500 bg-slate-950 font-mono text-xs uppercase tracking-widest text-slate-100 hover:bg-slate-800"
+                data-testid="button-cancel-pass-all-firing"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                disabled={passAllFiringPending}
+                onClick={handlePassAllFiring}
+                className="bg-yellow-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-yellow-200 disabled:bg-slate-700 disabled:text-slate-400"
+                data-testid="button-confirm-pass-all-firing"
+              >
+                {passAllFiringPending ? "Passing..." : "Confirm Pass All"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {diceModal && (
         <DiceRollModal
           modal={diceModal}
           setModal={setDiceModal}
+          onCommitShot={commitStagedShot}
+          onCancelBeforeRoll={(modal) => {
+            setFiringWeaponPicking(modal.weapon.id);
+            setDiceModal(null);
+          }}
           onClose={() => {
             // The shot was already applied authoritatively on the server,
             // but we deliberately deferred the cache invalidation so the
@@ -5277,6 +7473,17 @@ export default function GameBoard() {
             // Refresh now that the dice modal is dismissed.
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             setDiceModal(null);
+          }}
+        />
+      )}
+      {selfRepairModal && (
+        <SelfRepairDiceModal
+          modal={selfRepairModal}
+          setModal={setSelfRepairModal}
+          onRoll={commitSelfRepair}
+          onClose={() => {
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            setSelfRepairModal(null);
           }}
         />
       )}
@@ -5288,7 +7495,15 @@ export default function GameBoard() {
 // Dice roll modal — plays a brief shuffle animation, then reveals the server's
 // authoritative attack rolls / hits / damage / crits.
 // ─────────────────────────────────────────────────────────────────────────────
-function DiceFace({ value, rolling }: { value: number; rolling: boolean }) {
+function DiceFace({
+  value,
+  rolling,
+  tone = "default",
+}: {
+  value: number;
+  rolling: boolean;
+  tone?: "default" | "bulkhead" | "solid" | "crit";
+}) {
   const [display, setDisplay] = useState<number>(value);
   useEffect(() => {
     if (!rolling) { setDisplay(value); return; }
@@ -5304,20 +7519,164 @@ function DiceFace({ value, rolling }: { value: number; rolling: boolean }) {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [rolling, value]);
+  const toneClass = tone === "bulkhead"
+    ? "border-red-500/80 text-red-200 shadow-[0_0_8px_rgba(239,68,68,0.35)]"
+    : tone === "solid"
+      ? "border-green-400/80 text-green-200 shadow-[0_0_8px_rgba(74,222,128,0.3)]"
+      : tone === "crit"
+        ? "border-sky-300/90 text-sky-100 shadow-[0_0_10px_rgba(125,211,252,0.4)]"
+        : "border-amber-500/60 text-amber-300";
   return (
-    <span className="inline-flex items-center justify-center w-9 h-9 rounded border border-amber-500/60 bg-black/60 text-amber-300 font-mono text-lg font-bold tabular-nums">
+    <span className={`inline-flex items-center justify-center w-9 h-9 rounded border bg-black/60 font-mono text-lg font-bold tabular-nums ${toneClass}`}>
       {display}
     </span>
   );
 }
 
+function SelfRepairDiceModal({
+  modal,
+  setModal,
+  onRoll,
+  onClose,
+}: {
+  modal: SelfRepairModalState;
+  setModal: React.Dispatch<React.SetStateAction<SelfRepairModalState | null>>;
+  onRoll: (modal: SelfRepairModalState) => void;
+  onClose: () => void;
+}) {
+  const rolling = modal.phase === "rolling";
+  const shown = modal.phase === "shown";
+  const error = modal.phase === "error";
+  const displayRolls = shown && modal.rolls?.length
+    ? modal.rolls
+    : Array.from({ length: modal.dice }, () => 1);
+
+  const requestClose = () => {
+    if (rolling) return;
+    if (shown) {
+      setModal(m => m ? { ...m, confirmingClose: true } : m);
+      return;
+    }
+    onClose();
+  };
+  const cancelClose = () => setModal(m => m ? { ...m, confirmingClose: false } : m);
+  const confirmClose = () => onClose();
+
+  const footer = (() => {
+    if (modal.phase === "ready") {
+      return { label: `Roll Self Repair - ${modal.dice}D`, disabled: false, onClick: () => onRoll(modal), testid: "button-roll-self-repair" };
+    }
+    if (rolling) {
+      return { label: "Rolling...", disabled: true, onClick: () => {}, testid: "button-self-repair-rolling" };
+    }
+    return { label: "Close", disabled: false, onClick: requestClose, testid: "button-close-self-repair" };
+  })();
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4" role="dialog" aria-modal="true">
+      <div className="relative w-full max-w-md rounded border border-sky-400/50 bg-slate-950/95 p-4 shadow-2xl shadow-sky-950/40">
+        <button
+          type="button"
+          onClick={requestClose}
+          disabled={rolling}
+          className="absolute right-3 top-3 rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-mono text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+          aria-label="Close Self Repair roll"
+        >
+          X
+        </button>
+        <div className="pr-8">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-sky-300/80 font-mono">End Phase</div>
+          <h2 className="mt-1 font-mono text-lg font-black uppercase text-sky-100">Self Repair</h2>
+          <p className="mt-1 font-mono text-xs text-slate-300">{modal.unitName}</p>
+        </div>
+
+        <div className="mt-4 rounded border border-sky-500/30 bg-sky-500/10 p-3">
+          <div className="flex flex-wrap gap-2">
+            {displayRolls.map((roll, idx) => (
+              <DiceFace key={idx} value={roll} rolling={rolling} tone="solid" />
+            ))}
+          </div>
+          {shown && (
+            <div className="mt-3 space-y-1 font-mono text-xs text-sky-100">
+              <div>Total rolled: <span className="font-bold text-white">{modal.total}</span></div>
+              <div>Hull restored: <span className="font-bold text-white">{modal.repaired}</span></div>
+              <div>Hull: <span className="font-bold text-white">{modal.hullBefore} -&gt; {modal.hullAfter}</span></div>
+            </div>
+          )}
+          {error && (
+            <div className="mt-3 rounded border border-red-500/50 bg-red-500/10 px-2 py-1.5 font-mono text-xs text-red-200">
+              {modal.error ?? "Self Repair failed"}
+            </div>
+          )}
+          {modal.phase === "ready" && (
+            <p className="mt-3 font-mono text-xs text-slate-300">
+              Roll {modal.dice}d6 and restore that many hull points, capped at the ship's maximum hull.
+            </p>
+          )}
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          {modal.phase === "ready" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={requestClose}
+              className="border-slate-600 bg-slate-900 font-mono text-xs uppercase text-slate-100 hover:bg-slate-800"
+              data-testid="button-cancel-self-repair"
+            >
+              Cancel
+            </Button>
+          )}
+          <Button
+            size="sm"
+            disabled={footer.disabled}
+            onClick={footer.onClick}
+            className="bg-sky-300 font-mono text-xs font-black uppercase text-black hover:bg-sky-200 disabled:bg-slate-700 disabled:text-slate-400"
+            data-testid={footer.testid}
+          >
+            {footer.label}
+          </Button>
+        </div>
+
+        {modal.confirmingClose && (
+          <div className="absolute inset-0 flex items-center justify-center rounded bg-black/70 p-4">
+            <div className="w-full max-w-xs rounded border border-sky-400/60 bg-slate-950 p-3 text-center shadow-xl">
+              <div className="font-mono text-sm font-bold uppercase text-sky-100">Close repair roll?</div>
+              <div className="mt-1 font-mono text-xs text-slate-300">The hull repair has already been applied.</div>
+              <div className="mt-3 flex justify-center gap-2">
+                <Button variant="outline" size="sm" onClick={cancelClose} className="border-slate-600 bg-slate-900 font-mono text-xs uppercase text-slate-100 hover:bg-slate-800">
+                  Keep Open
+                </Button>
+                <Button size="sm" onClick={confirmClose} className="bg-sky-300 font-mono text-xs font-black uppercase text-black hover:bg-sky-200">
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function attackTableOutcomeLabel(raw: number, effective: number): string {
+  const adjusted = effective !== raw ? `Precise ${raw}->${effective} - ` : "";
+  if (effective <= 1) return `${adjusted}Bulkhead`;
+  if (effective <= 5) return `${adjusted}Solid`;
+  return `${adjusted}Crit`;
+}
+
 function DiceRollModal({
   modal,
   setModal,
+  onCommitShot,
+  onCancelBeforeRoll,
   onClose,
 }: {
   modal: DiceModalState;
   setModal: React.Dispatch<React.SetStateAction<DiceModalState | null>>;
+  onCommitShot: (modal: DiceModalState) => void;
+  onCancelBeforeRoll: (modal: DiceModalState) => void;
   onClose: () => void;
 }) {
   const { weapon, targetName, attackDice, phase, result, error, confirmingClose, critIndex } = modal;
@@ -5325,7 +7684,8 @@ function DiceRollModal({
   const damageRolling = phase === "damage-rolling";
   const critRolling = phase === "crit-rolling";
   // Show attack dice once we've started rolling them; before that they're hidden.
-  const attackVisible = phase !== "pending" && phase !== "attack-ready" && phase !== "error";
+  const attackVisible =
+    phase !== "target-picked" && phase !== "pending" && phase !== "attack-ready" && phase !== "error";
   // Show damage dice once we've started rolling them. They persist through the
   // per-crit reveal so the player keeps the context of where each crit came from.
   const damageVisible =
@@ -5344,10 +7704,23 @@ function DiceRollModal({
 
   const rolls = result?.attackRolls ?? Array.from({ length: attackDice }, () => 0);
   const rollKinds = result?.attackRollKinds ?? [];
-  const hitThreshold = result?.hitThreshold;
+  const rolledAttackDice = result ? rollKinds.filter(kind => kind === "normal").length : attackDice;
+  const interceptedAttackDice = result?.interceptedHits ?? 0;
+  const hasStealthCheck = result?.stealthCheckTarget != null;
+  const rawHitThreshold = result?.hitThreshold;
+  const stealthCheckUnresolved = hasStealthCheck && (attackRolling || !result?.stealthCheckPassed);
+  const hitThreshold = stealthCheckUnresolved ? undefined : rawHitThreshold;
+  const attackThresholdLabel = stealthCheckUnresolved
+    ? "pending stealth"
+    : rawHitThreshold ? `need ${rawHitThreshold}+` : "";
 
   // ── Stage transitions ──
   // Roll-to-hit: attack-ready → attack-rolling (animate ~700ms) → attack-shown.
+  const handleCommitShot = () => {
+    if (phase !== "target-picked") return;
+    onCommitShot(modal);
+  };
+
   const handleRollAttack = () => {
     setModal(m => (m ? { ...m, phase: "attack-rolling" } : null));
     setTimeout(() => {
@@ -5386,12 +7759,21 @@ function DiceRollModal({
   // the result by misclicking the backdrop or the corner X. Final confirm
   // delegates to the parent so it can invalidate the game query (deferred
   // until close so the board doesn't reveal damage before the dice roll).
-  const requestClose = () => setModal(m => (m ? { ...m, confirmingClose: true } : null));
+  const requestClose = () => {
+    if (phase === "target-picked") {
+      onCancelBeforeRoll(modal);
+      return;
+    }
+    setModal(m => (m ? { ...m, confirmingClose: true } : null));
+  };
   const cancelClose = () => setModal(m => (m ? { ...m, confirmingClose: false } : null));
   const confirmClose = () => onClose();
 
   // The footer button is contextual based on phase. Disabled while shuffles play.
   const footer = (() => {
+    if (phase === "target-picked") {
+      return { label: `Roll to Hit - ${attackDice}D`, onClick: handleCommitShot, testid: "button-commit-shot", disabled: false };
+    }
     if (phase === "error") {
       return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
     }
@@ -5399,7 +7781,7 @@ function DiceRollModal({
       return { label: "Resolving…", onClick: () => {}, testid: "button-pending", disabled: true };
     }
     if (phase === "attack-ready") {
-      return { label: `Roll to Hit · ${attackDice}D`, onClick: handleRollAttack, testid: "button-roll-attack", disabled: false };
+      return { label: `Roll to Hit · ${rolledAttackDice}D`, onClick: handleRollAttack, testid: "button-roll-attack", disabled: false };
     }
     if (phase === "attack-rolling") {
       return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-attack", disabled: true };
@@ -5532,6 +7914,26 @@ function DiceRollModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-testid="dice-modal-content">
+        {phase === "target-picked" && (
+          <div className="space-y-3 py-4 text-center" data-testid="target-picked-prompt">
+            <div className="text-sm font-mono text-amber-300">
+              Target selected. No dice have been rolled yet.
+            </div>
+            <div className="text-[11px] font-mono text-muted-foreground">
+              Roll to commit this shot, or pick a different target.
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-amber-500/40 uppercase tracking-widest text-xs"
+              data-testid="button-change-target"
+              onClick={() => onCancelBeforeRoll(modal)}
+            >
+              Change Target
+            </Button>
+          </div>
+        )}
+
         {phase === "error" && (
           <div className="text-sm font-mono text-red-400 py-4 text-center" data-testid="dice-error">
             ✕ {error}
@@ -5546,8 +7948,27 @@ function DiceRollModal({
 
         {phase === "attack-ready" && (
           <div className="text-sm font-mono text-muted-foreground py-4 text-center" data-testid="dice-prompt-attack">
-            Ready to roll <span className="text-amber-300 font-bold">{attackDice}</span> attack
+            {hasStealthCheck ? (
+              <>
+                Ready to roll stealth check before attack dice.
+                {rawHitThreshold ? (
+                  <div className="mt-1 text-[11px] text-muted-foreground/80">
+                    If stealth is beaten, <span className="text-amber-300 font-bold">{rolledAttackDice}</span> attack dice need{" "}
+                    <span className="text-amber-300 font-bold">{rawHitThreshold}+</span> to hit.
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <>
+            Ready to roll <span className="text-amber-300 font-bold">{rolledAttackDice}</span> attack
             dice{hitThreshold ? <> · need <span className="text-amber-300 font-bold">{hitThreshold}+</span> to hit</> : null}.
+              </>
+            )}
+            {interceptedAttackDice > 0 && (
+              <div className="mt-1 text-[11px] text-cyan-300/80">
+                {interceptedAttackDice} AD intercepted before the to-hit roll.
+              </div>
+            )}
             {result?.stealthCheckTarget != null && (
               <div className="mt-2 text-[11px] text-cyan-300/80" data-testid="stealth-prompt">
                 Target is stealthed — single 1d6 must hit{" "}
@@ -5626,7 +8047,7 @@ function DiceRollModal({
                 const kind = rollKinds[i] ?? "normal";
                 const exploded = kind === "explosion";
                 const reroll = kind === "twin-reroll" || kind === "concentrate-reroll";
-                const hit = !attackRolling && hitThreshold !== undefined && r >= hitThreshold;
+                const hit = !attackRolling && rawHitThreshold !== undefined && r >= rawHitThreshold;
                 // Broader orange ring (ring-2 + offset) + soft glow for
                 // exploded dice. Cyan ring for re-rolls so all three flavours
                 // of "extra" die are visually distinct from regular AD.
@@ -5658,7 +8079,7 @@ function DiceRollModal({
             </div>
             {phase === "attack-shown" && result && (
               <p className="text-[11px] font-mono text-amber-300/80 pt-1">
-                {result.hits} hit{result.hits === 1 ? "" : "s"} of {attackDice}.
+                {result.hits} hit{result.hits === 1 ? "" : "s"} of {rolledAttackDice}.
               </p>
             )}
           </div>
@@ -5678,7 +8099,7 @@ function DiceRollModal({
               {result.interceptorAttempts.map((att, idx) => (
                 <div key={idx} className="flex items-center gap-2">
                   <span className="text-[9px] font-mono text-muted-foreground w-14">
-                    Hit {idx + 1} · {att.threshold}+
+                    AD {idx + 1} · {att.threshold}+
                   </span>
                   <div className="flex flex-wrap gap-1" data-testid={`interceptor-attempt-${idx}`}>
                     {att.rolls.map((d, i) => {
@@ -5702,7 +8123,7 @@ function DiceRollModal({
             </div>
             <p className="text-[11px] font-mono text-cyan-300/80 pt-0.5">
               {result.interceptedHits > 0
-                ? <>−{result.interceptedHits} hit{result.interceptedHits === 1 ? "" : "s"} intercepted.</>
+                ? <>−{result.interceptedHits} AD intercepted.</>
                 : <>No interceptions.</>}
               {result.interceptorDiceAfter < result.interceptorDiceBefore && (
                 <> {result.interceptorDiceBefore - result.interceptorDiceAfter} die{result.interceptorDiceBefore - result.interceptorDiceAfter === 1 ? "" : "s"} burned out (lost for the rest of the turn).</>
@@ -5728,14 +8149,14 @@ function DiceRollModal({
             <div className="flex flex-wrap gap-1.5" data-testid="damage-dice">
               {result.damageRolls.map((d, i) => {
                 const effective = result.attackTableModifiedRolls?.[i] ?? d;
-                const dmg = effective === 1 ? 0 : effective <= 5 ? 1 : 2;
-                const preciseAdjusted = effective !== d;
+                const outcomeLabel = attackTableOutcomeLabel(d, effective);
+                const tone = effective <= 1 ? "bulkhead" : effective <= 5 ? "solid" : "crit";
                 return (
                   <div key={i} className="flex flex-col items-center">
-                    <DiceFace value={d} rolling={damageRolling} />
+                    <DiceFace value={d} rolling={damageRolling} tone={damageRolling ? "default" : tone} />
                     {!damageRolling && (
                       <span className={`text-[10px] font-mono mt-0.5 ${effective === 6 ? "text-red-400 font-bold" : effective === 1 ? "text-muted-foreground" : "text-amber-300"}`}>
-                        {preciseAdjusted ? `${d}->${effective} ` : ""}{dmg}{effective === 6 ? "+crit" : ""}
+                        {outcomeLabel}
                       </span>
                     )}
                   </div>
@@ -5834,7 +8255,7 @@ function DiceRollModal({
             {result.interceptedHits > 0 && (
               <div className="flex justify-between" data-testid="row-intercepted">
                 <span className="text-muted-foreground">Interceptors</span>
-                <span className="text-cyan-300">−{result.interceptedHits} hit{result.interceptedHits === 1 ? "" : "s"}</span>
+                <span className="text-cyan-300">−{result.interceptedHits} AD</span>
               </div>
             )}
             {(result.shieldedHits > 0 || result.targetShieldsBefore !== result.targetShieldsAfter) && (

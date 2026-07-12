@@ -19,4 +19,5 @@ export const GamePriorityLevel = {
   battle: 'battle',
   war: 'war',
   armageddon: 'armageddon',
+  ancient: 'ancient',
 } as const;

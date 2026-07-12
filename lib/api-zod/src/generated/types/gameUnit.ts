@@ -27,6 +27,8 @@ export interface GameUnit {
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
   lastDcRound?: number;
+  /** Last round (1-based) this unit resolved Self Repair. 0 = never. */
+  lastSelfRepairRound?: number;
   /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
@@ -50,9 +52,9 @@ export interface GameUnit {
   weaponRange: number;
   weaponDamage: number;
   /**
-     * Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops.
+     * Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.
      * @minimum 1
-     * @maximum 6
+     * @maximum 7
      */
   crewQuality: number;
   isDestroyed: boolean;

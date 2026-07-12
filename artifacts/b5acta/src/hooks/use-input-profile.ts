@@ -35,15 +35,28 @@ function detectDeviceClass(platform: PlatformKind, hasTouch: boolean): DeviceCla
   if (!hasTouch && platform === "desktop") return "desktop";
   if (!hasTouch) return platform === "unknown" ? "unknown" : "desktop";
 
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platformText = `${nav.userAgentData?.platform ?? nav.platform ?? ""}`.toLowerCase();
+  const ua = nav.userAgent.toLowerCase();
+  const maxTouchPoints = nav.maxTouchPoints ?? 0;
+  const isIpadLike =
+    /ipad/.test(ua) ||
+    /ipad/.test(platformText) ||
+    (platformText.includes("mac") && maxTouchPoints > 1);
+  const isIphoneLike = /iphone|ipod/.test(ua) || /iphone|ipod/.test(platformText);
+
+  if (isIpadLike) return "tablet";
+  if (isIphoneLike) return "phone";
+
   const width = window.visualViewport?.width ?? window.innerWidth;
   const height = window.visualViewport?.height ?? window.innerHeight;
   const shortestSide = Math.min(width, height);
 
   if (platform === "ios" || platform === "android") {
-    return shortestSide >= 600 ? "tablet" : "phone";
+    return shortestSide >= 540 ? "tablet" : "phone";
   }
 
-  if (hasTouch) return shortestSide >= 600 ? "tablet" : "phone";
+  if (hasTouch) return shortestSide >= 540 ? "tablet" : "phone";
   return "desktop";
 }
 

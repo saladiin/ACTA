@@ -563,6 +563,9 @@ Not implemented or partial:
 
 ## Highest Priority Rule Mismatches To Fix
 
+Related focused audits:
+- Ancients/First Ones rules gaps: `docs/ANCIENTS_RULES_AUDIT.md`
+
 Corrected rule mismatches:
 - AP/Super AP now modify attack die results instead of increasing AD count.
 - Damage Control now repairs critical effects only and does not restore hull/crew.

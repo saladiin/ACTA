@@ -18,6 +18,15 @@ function sanitizeCallsign(raw: string | null | undefined): string | null {
   return CALLSIGN_RE.test(trimmed) ? trimmed : null;
 }
 
+function temporaryCallsignFromUserId(userId: string): string | null {
+  if (!userId.startsWith("temp-user:")) return null;
+  try {
+    return sanitizeCallsign(decodeURIComponent(userId.slice("temp-user:".length)));
+  } catch {
+    return null;
+  }
+}
+
 async function ensurePlayer(userId: string): Promise<void> {
   const existing = await db.select().from(playersTable).where(eq(playersTable.clerkUserId, userId));
   if (existing.length === 0) {
@@ -27,6 +36,8 @@ async function ensurePlayer(userId: string): Promise<void> {
     // can change this anytime via PATCH /players/me.
     let username = `Commander-${Math.floor(1000 + Math.random() * 9000)}`;
     let avatarUrl: string | null = null;
+    const temporaryUsername = temporaryCallsignFromUserId(userId);
+    if (temporaryUsername) username = temporaryUsername;
     try {
       const clerkUser = await clerkClient.users.getUser(userId);
       // Honour an explicit, valid Clerk username if the player chose one, but

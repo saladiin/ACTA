@@ -5,24 +5,27 @@ export const PRIORITY_LEVELS = [
   "battle",
   "war",
   "armageddon",
+  "ancient",
 ] as const;
 
 export type PriorityLevel = typeof PRIORITY_LEVELS[number];
 
-export const ALLOCATION_TICKS_PER_FAP = 72;
+export const ALLOCATION_TICKS_PER_FAP = 360;
 
 const COST_BY_DELTA: Record<number, number> = {
-  "-5": 4,
-  "-4": 6,
-  "-3": 9,
-  "-2": 18,
-  "-1": 36,
-  0: 72,
-  1: 144,
-  2: 288,
-  3: 576,
-  4: 864,
-  5: 1296,
+  "-6": 12,
+  "-5": 20,
+  "-4": 30,
+  "-3": 45,
+  "-2": 90,
+  "-1": 180,
+  0: 360,
+  1: 720,
+  2: 1440,
+  3: 2880,
+  4: 4320,
+  5: 6480,
+  6: 12960,
 };
 
 export function normalizePriorityLevel(value: unknown, fallback: PriorityLevel = "raid"): PriorityLevel {
@@ -71,4 +74,3 @@ export function formatAllocationTicks(ticks: number): string {
   const asDecimal = ticks / ALLOCATION_TICKS_PER_FAP;
   return `${asDecimal.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} FAP`;
 }
-

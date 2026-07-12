@@ -7,7 +7,7 @@
  */
 
 /**
- * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..6) individually during deploy.
+ * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.
  */
 export type GameCrewQualityMode = typeof GameCrewQualityMode[keyof typeof GameCrewQualityMode];
 
