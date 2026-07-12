@@ -1,7 +1,7 @@
 {
-  "name": "Babylon 5: A Call to Arms",
-  "short_name": "B5 ACTA",
-  "description": "Tactical starship combat for Babylon 5: A Call to Arms.",
+  "name": "Babylon 5: Wheel of Fire",
+  "short_name": "Wheel of Fire",
+  "description": "Tactical starship combat for Babylon 5: Wheel of Fire.",
   "start_url": "/lobby",
   "scope": "/",
   "display": "standalone",
@@ -10,9 +10,9 @@
   "theme_color": "#050507",
   "icons": [
     {
-      "src": "/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any"
     },
     {

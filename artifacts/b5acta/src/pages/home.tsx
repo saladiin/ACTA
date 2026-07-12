@@ -1,8 +1,9 @@
 import { Link } from "wouter";
-import { Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function Home() {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background relative overflow-hidden">
       {/* Background grid pattern */}
@@ -10,8 +11,11 @@ export default function Home() {
       
       <header className="px-6 h-20 flex items-center justify-between border-b border-border/50 relative z-10 backdrop-blur-sm bg-background/50">
         <div className="flex items-center gap-3">
-          <Shield className="w-8 h-8 text-primary shadow-[0_0_15px_rgba(251,191,36,0.3)]" />
-          <span className="font-bold tracking-[0.3em] uppercase text-xl text-primary">B5:ACTA</span>
+          <img
+            src={`${basePath}/brand-logo.png`}
+            alt="Babylon 5 Wheel of Fire"
+            className="h-16 w-auto max-w-[280px] object-contain"
+          />
         </div>
         <div className="flex gap-4">
           <Link href="/sign-in" className="text-sm font-medium tracking-widest uppercase hover:text-primary transition-colors flex items-center px-4">

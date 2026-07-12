@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, Shield, PanelLeftClose, PanelLeftOpen, Settings, Sparkles } from "lucide-react";
+import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, Settings, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useInputProfile } from "@/hooks/use-input-profile";
 import { clearTemporaryUsername, temporaryUsernameAuthEnabled } from "@/lib/temporary-user";
@@ -61,10 +61,14 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
         data-testid="main-navigation-sidebar"
       >
         <div className="p-4 md:p-6 border-b border-border flex items-center gap-3">
-          <Shield className="w-8 h-8 text-primary" />
-          <div className="flex flex-col">
-            <span className="font-bold tracking-widest text-lg leading-tight">B5: ACTA</span>
-            <span className="text-[10px] text-primary uppercase tracking-[0.2em] font-mono">Command</span>
+          <img
+            src={`${basePath}/logo.png`}
+            alt="Babylon 5 Wheel of Fire"
+            className="h-12 w-12 shrink-0 object-contain drop-shadow-[0_0_12px_rgba(249,115,22,0.35)]"
+          />
+          <div className="flex flex-col leading-none">
+            <span className="font-bold text-base tracking-[0.08em] text-stone-100">Babylon 5:</span>
+            <span className="mt-1 text-[11px] text-primary uppercase tracking-[0.2em] font-mono">Wheel of Fire</span>
           </div>
         </div>
         <nav className={`p-4 flex-1 flex gap-2 hide-scrollbar ${mobileChrome ? "flex-col overflow-visible" : "flex-row md:flex-col overflow-x-auto md:overflow-visible"}`}>
