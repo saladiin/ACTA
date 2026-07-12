@@ -10,6 +10,7 @@ Use Render for the first broader test:
 - One managed Render Postgres database stores games and player data.
 - Clerk handles user auth.
 - The deployment branch is `public-alpha`, not the day-to-day development branch.
+- The Render build runs `pnpm --filter @workspace/db run push-force` so a newly provisioned Postgres instance receives the Drizzle schema before the API starts serving traffic.
 
 Approximate monthly floor:
 

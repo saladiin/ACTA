@@ -10,6 +10,7 @@ services:
     buildCommand: |
       corepack enable
       pnpm install --frozen-lockfile
+      pnpm --filter @workspace/db run push-force
       PORT=10000 BASE_PATH=/ VITE_CLERK_PROXY_URL=/api/__clerk pnpm --filter @workspace/b5acta run build
       pnpm --filter @workspace/api-server run build
     startCommand: pnpm --filter @workspace/api-server run start
