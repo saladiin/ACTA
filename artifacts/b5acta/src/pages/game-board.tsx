@@ -1,6 +1,6 @@
 import React, { useState, useRef, Suspense, useMemo, useEffect, useCallback } from "react";
 import { useParams, Link, useLocation } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree, useFrame } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -36,7 +36,7 @@ import {
   getListFleetShipsQueryKey,
   customFetch,
 } from "@workspace/api-client-react";
-import type { GameDetail, GameUnit, ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
+import type { DamageControlResult, GameDetail, GameUnit, ShipModel, Weapon, FireWeaponResult } from "@workspace/api-client-react";
 import { useUser } from "@clerk/react";
 import { Layout } from "@/components/layout";
 import { useDevUserId } from "@/lib/dev-user";
@@ -1866,6 +1866,43 @@ type RuntimeMovementUnit = GameUnit & {
   turnsMadeThisActivation?: number;
   distanceSinceLastTurnThisActivation?: number;
 };
+type AttackAuditUnitSnapshot = {
+  id?: number;
+  name?: string;
+  hullPoints?: number;
+  crewPoints?: number;
+};
+type AttackAuditWeaponSnapshot = {
+  id?: number;
+  name?: string;
+};
+type AttackAuditPayload = Record<string, unknown> & {
+  attacker?: AttackAuditUnitSnapshot;
+  targetBefore?: AttackAuditUnitSnapshot;
+  targetAfter?: AttackAuditUnitSnapshot;
+  weapon?: AttackAuditWeaponSnapshot;
+  finalDamage?: number;
+  finalCrewLost?: number;
+};
+type AttackAuditLogEntry = {
+  id: number;
+  gameId: number;
+  round: number;
+  phase: string;
+  actorKind: "player" | "ai" | string;
+  actorPlayerId: string | null;
+  attackerUnitId: number;
+  targetUnitId: number;
+  weaponId: number;
+  summary: string;
+  payload: AttackAuditPayload;
+  createdAt: string;
+};
+type AttackAuditLogResponse = {
+  gameId: number;
+  count: number;
+  logs: AttackAuditLogEntry[];
+};
 const EMPTY_MOVEMENT_LEDGER: MovementLedger = { distance: 0, turns: 0, distSinceLastTurn: 0 };
 const TABLET_MOVEMENT_CONTROLLER_POSITION_KEY = "b5acta.ui.tabletMovementControllerPosition";
 
@@ -1901,6 +1938,36 @@ function cleanApiErrorMessage(err: unknown, fallback = "Action failed"): string 
 
 // Heading → unit world-space forward vector (accounting for FLIP_MODELS which
 // render their visual nose along local -Z).
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function attackAuditSummary(log: AttackAuditLogEntry, units: GameUnit[]): string {
+  const payload = log.payload ?? {};
+  const attackerName =
+    payload.attacker?.name ??
+    units.find(u => u.id === log.attackerUnitId)?.name ??
+    "Opponent ship";
+  const targetName =
+    payload.targetAfter?.name ??
+    payload.targetBefore?.name ??
+    units.find(u => u.id === log.targetUnitId)?.name ??
+    "target";
+  const weaponName = payload.weapon?.name;
+  const damage =
+    numberOrNull(payload.finalDamage) ??
+    Math.max(0, (numberOrNull(payload.targetBefore?.hullPoints) ?? 0) - (numberOrNull(payload.targetAfter?.hullPoints) ?? 0));
+  const crew =
+    numberOrNull(payload.finalCrewLost) ??
+    Math.max(0, (numberOrNull(payload.targetBefore?.crewPoints) ?? 0) - (numberOrNull(payload.targetAfter?.crewPoints) ?? 0));
+  const effects = [
+    `${damage} damage`,
+    crew > 0 ? `${crew} crew` : null,
+  ].filter(Boolean).join(", ");
+
+  return `${attackerName} attacked ${targetName}${weaponName ? ` with ${weaponName}` : ""}; ${targetName} suffered ${effects}.`;
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -1983,6 +2050,10 @@ function turnDistanceNeeded(speed: number, turnsMade: number, traits: { agile: b
 
 function snapMovementDistance(distance: number): number {
   return Math.max(0, Math.round(distance / TABLET_FORWARD_STEP) * TABLET_FORWARD_STEP);
+}
+
+function formatInches(value: number): string {
+  return value.toFixed(value % 1 === 0 ? 0 : 1);
 }
 
 function snapBoardCoord(value: number): number {
@@ -3450,6 +3521,17 @@ export default function GameBoard() {
   const [specialActionFeedback, setSpecialActionFeedback] = useState<
     { action: string; success: boolean; cqRoll: number | null; cqTotal: number | null; cqRequired: number | null } | null
   >(null);
+  const [damageControlFeedback, setDamageControlFeedback] = useState<{
+    unitId: number;
+    effectId: number;
+    effectName: string;
+    success: boolean;
+    dcRoll: number;
+    dcTotal: number;
+    dcThreshold: number;
+    dcPenalty: number;
+    dcBonus: number;
+  } | null>(null);
   const [activationFeedback, setActivationFeedback] = useState<string | null>(null);
   // For "Concentrate All Fire-power" we need a target picker before sending.
   const [concentratePicking, setConcentratePicking] = useState(false);
@@ -3582,6 +3664,7 @@ export default function GameBoard() {
   const firingInFlightRef = useRef(false);
   const [passAllFiringPending, setPassAllFiringPending] = useState(false);
   const [passAllFiringConfirmOpen, setPassAllFiringConfirmOpen] = useState(false);
+  const [endActivationConfirmOpen, setEndActivationConfirmOpen] = useState(false);
   // Dice-roll modal payload. The reveal is staged behind explicit player
   // confirmations: pending (waiting for server) → attack-ready (press to
   // roll attack) → attack-rolling (shuffle anim) → attack-shown → if hits,
@@ -4145,6 +4228,7 @@ export default function GameBoard() {
   }, [isMyActivation]);
   useEffect(() => {
     setActivationFeedback(null);
+    setDamageControlFeedback(null);
   }, [game?.phase, serverActiveUnitId]);
   const selectedUnitData = units.find(u => u.id === selectedUnit);
   // The selected ship is only "controllable" if it's the one the server
@@ -4346,13 +4430,7 @@ export default function GameBoard() {
       if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         if (endActivation.isPending) return;
-        endActivation.mutate({ gameId }, {
-          onSuccess: () => {
-            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-            setSelectedUnit(null);
-            setMovePlan(null);
-          }
-        });
+        setEndActivationConfirmOpen(true);
         return;
       }
       const u = selectedUnitData;
@@ -4601,9 +4679,27 @@ export default function GameBoard() {
   }, [activationSegment, isFighterUnit, isMyActivation, myUserId, unitEligibleForCurrentPhase, units]);
   const canPassPhase = isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
   const canPassAllFiring = isMyActivation && currentPhase === "firing" && !antiFighterState;
+  const { data: attackAuditData } = useQuery<AttackAuditLogResponse>({
+    queryKey: ["attack-audit-log", gameId],
+    queryFn: () => customFetch<AttackAuditLogResponse>(`/api/games/${gameId}/attack-audit-log?limit=80`),
+    enabled: !!gameId && game?.status === "active" && currentPhase === "firing",
+    refetchInterval: game?.status === "active" && currentPhase === "firing" && !pausePollingRef.current
+      ? POLL_INTERVAL_MS
+      : false,
+  });
+  const lastOpponentAttackSummary = useMemo(() => {
+    if (!game || currentPhase !== "firing") return null;
+    const logs = attackAuditData?.logs ?? [];
+    const lastOpponentLog = [...logs].reverse().find(log => {
+      if (log.round !== game.currentRound || log.phase !== "firing") return false;
+      if (log.actorKind === "ai") return myUserId !== AI_OPPONENT_ID;
+      return !!log.actorPlayerId && log.actorPlayerId !== myUserId;
+    });
+    return lastOpponentLog ? attackAuditSummary(lastOpponentLog, units) : null;
+  }, [attackAuditData?.logs, currentPhase, game, myUserId, units]);
 
   // Movement-phase minimum-speed gate (mirrors the server check in
-  // /end-activation). A ship must either move at least ceil(speed/2)
+  // /end-activation). A ship must either move at least half speed
   // inches this activation OR declare All Stop / All Stop and Pivot,
   // unless it is adrift (which has its own compulsory-drift gate).
   // We surface this in the UI so the End Activation button explains
@@ -4620,13 +4716,14 @@ export default function GameBoard() {
     if (baseSA === "all-stop" || baseSA === "all-stop-pivot") {
       return { blocked: false, required: 0, moved: 0 };
     }
-    // Client doesn't know crit speedReduce, so this is a best-effort
-    // floor based on printed speed. Server is the source of truth and
-    // re-checks against effective max speed (crit-adjusted).
-    const required = Math.max(1, Math.ceil(effectiveUiSpeed(activeUnitData) / 2));
-    const moved = activeUnitData.inchesMovedThisActivation ?? 0;
+    // Client doesn't know every server-side speed adjustment, so this is a
+    // best-effort floor. Use the merged movement ledger rather than only the
+    // unit row field so a rejected follow-up turn cannot leave the end button
+    // stuck behind stale movement data.
+    const required = Math.max(1, effectiveUiSpeed(activeUnitData) / 2);
+    const moved = getLedger(activeUnitData.id).distance;
     return { blocked: moved < required, required, moved };
-  }, [activeUnitData, currentPhase]);
+  }, [activeUnitData, currentPhase, getLedger]);
   const activeActivationCommitted = useMemo(() => {
     if (!activeUnitData) return false;
     if (currentPhase === "firing") {
@@ -5145,10 +5242,16 @@ export default function GameBoard() {
     setAttackTarget(null);
   };
 
-  const handleEndActivation = useCallback(() => {
+  const handleRequestEndActivation = useCallback(() => {
     // Either ending a real activation OR passing the phase when zero
     // eligible ships remain. Pass authorisation is enforced server-side.
     if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
+    setEndActivationConfirmOpen(true);
+  }, [hasActiveUnit, canPassPhase, endActivation.isPending]);
+
+  const handleConfirmEndActivation = useCallback(() => {
+    if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
+    setEndActivationConfirmOpen(false);
     endActivation.mutate({ gameId }, {
       onSuccess: () => {
         mergeActiveUnitIntoGame(null);
@@ -5822,10 +5925,10 @@ export default function GameBoard() {
               endActivationLabel={endActivation.isPending ? "Ending..." : "End Activation"}
               endActivationTitle={
                 minMoveGate.blocked
-                  ? `Must move at least ${minMoveGate.required}" or declare All Stop before ending activation`
+                  ? `Must move at least ${formatInches(minMoveGate.required)}" or declare All Stop before ending activation`
                   : undefined
               }
-              onEndActivation={handleEndActivation}
+              onEndActivation={handleRequestEndActivation}
             />
           )}
           {mobileGameChrome && !touchGameControls && currentPhase === "movement" && isSelectedUnitActive && selectedUnitData && movePlan && (
@@ -6771,11 +6874,20 @@ export default function GameBoard() {
                     ? "No eligible ships — pass the phase"
                     : "Pick a Ship"}
               </p>
+              {currentPhase === "firing" && lastOpponentAttackSummary && (
+                <div
+                  data-testid="panel-last-opponent-attack"
+                  className="rounded border border-red-500/35 bg-red-950/30 px-3 py-2 font-mono text-[11px] leading-relaxed text-red-100"
+                >
+                  <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-red-300/80">Opponent last attack</div>
+                  <div>{lastOpponentAttackSummary}</div>
+                </div>
+              )}
               <Button
                 size="sm"
                 data-testid="button-end-activation"
                 className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
-                onClick={handleEndActivation}
+                onClick={handleRequestEndActivation}
                 disabled={(!hasActiveUnit && !canPassPhase) || endActivation.isPending || minMoveGate.blocked}
               >
                 {endActivation.isPending
@@ -6802,7 +6914,7 @@ export default function GameBoard() {
                   data-testid="text-min-move-gate"
                   className="text-[10px] font-mono uppercase tracking-wider text-amber-400/90"
                 >
-                  Must move ≥ {minMoveGate.required}" or declare All Stop (moved {minMoveGate.moved}")
+                  Must move ≥ {formatInches(minMoveGate.required)}" or declare All Stop (moved {formatInches(minMoveGate.moved)}")
                 </p>
               )}
               <div className="space-y-1 text-xs text-muted-foreground font-mono">
@@ -7466,6 +7578,26 @@ export default function GameBoard() {
                     No critical damage to repair on this ship.
                   </div>
                 )}
+                {damageControlFeedback && damageControlFeedback.unitId === selectedUnitData.id && (
+                  <div
+                    className={`rounded border px-2 py-1.5 font-mono text-[10px] ${
+                      damageControlFeedback.success
+                        ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                        : "border-red-500/50 bg-red-500/10 text-red-300"
+                    }`}
+                    data-testid="damage-control-feedback"
+                  >
+                    <div className="font-bold uppercase">
+                      {damageControlFeedback.success ? "Damage Control Success" : "Damage Control Failed"}
+                    </div>
+                    <div className="mt-0.5">
+                      {damageControlFeedback.effectName}: rolled {damageControlFeedback.dcRoll} + CQ {cq}
+                      {damageControlFeedback.dcBonus > 0 ? ` + ${damageControlFeedback.dcBonus}` : ""}
+                      {damageControlFeedback.dcPenalty > 0 ? ` - ${damageControlFeedback.dcPenalty}` : ""}
+                      {" = "}{damageControlFeedback.dcTotal} vs {damageControlFeedback.dcThreshold}+.
+                    </div>
+                  </div>
+                )}
                 {inEndPhase && selfRepairDice > 0 && (
                   <div className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-1.5 font-mono text-[11px] text-sky-200" data-testid="self-repair-row">
                     <div className="flex items-center justify-between gap-2">
@@ -7527,7 +7659,32 @@ export default function GameBoard() {
                         onClick={() => {
                           damageControl.mutate(
                             { gameId, unitId: selectedUnitData.id, data: { effectId: c.id } },
-                            { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
+                            {
+                              onSuccess: (res: DamageControlResult) => {
+                                mergeUpdatedUnitIntoGame(res.unit);
+                                setDamageControlFeedback({
+                                  unitId: selectedUnitData.id,
+                                  effectId: c.id,
+                                  effectName: c.name,
+                                  success: res.success,
+                                  dcRoll: res.dcRoll,
+                                  dcTotal: res.dcTotal,
+                                  dcThreshold: res.dcThreshold,
+                                  dcPenalty: res.dcPenalty,
+                                  dcBonus: res.dcBonus,
+                                });
+                                setActivationFeedback(
+                                  res.success
+                                    ? `Damage Control repaired ${c.name}.`
+                                    : `Damage Control failed on ${c.name}.`,
+                                );
+                              },
+                              onError: (err: unknown) => {
+                                setDamageControlFeedback(null);
+                                setActivationFeedback(cleanApiErrorMessage(err, "Damage Control failed"));
+                              },
+                              onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+                            },
                           );
                         }}
                         className="mt-1 w-full rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -7657,6 +7814,58 @@ export default function GameBoard() {
       </div>
 
       {/* ── DICE ROLL MODAL ── */}
+      <AlertDialog
+        open={endActivationConfirmOpen}
+        onOpenChange={(open) => {
+          if (!endActivation.isPending) setEndActivationConfirmOpen(open);
+        }}
+      >
+        <AlertDialogContent
+          className="fixed max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] overflow-hidden border-2 border-amber-300/90 bg-black p-0 text-amber-50 shadow-[0_0_45px_rgba(251,191,36,0.28)] sm:max-w-md"
+          data-testid="dialog-end-activation-confirm"
+        >
+          <div className="relative m-2 max-h-[calc(100dvh-2.5rem)] overflow-y-auto border border-amber-300/60 bg-black/95 p-4 shadow-inner shadow-black sm:p-5">
+            <AlertDialogHeader className="space-y-3 text-left">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-amber-300/80 bg-amber-300 text-black shadow-[0_0_18px_rgba(251,191,36,0.45)]">
+                  <CheckCircle className="h-6 w-6" />
+                </div>
+                <AlertDialogTitle className="font-mono text-lg uppercase tracking-[0.18em] text-amber-200">
+                  {canPassPhase ? "Pass Phase?" : "End Activation?"}
+                </AlertDialogTitle>
+              </div>
+              <AlertDialogDescription className="font-mono text-xs leading-relaxed text-amber-100/85">
+                {canPassPhase
+                  ? "This will pass your current phase because no eligible ships remain."
+                  : "This will finish the active ship's current activation and hand play to the next eligible activation."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {hasActiveUnit && (
+              <div className="my-4 border border-amber-300/35 bg-amber-300/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-amber-100/90">
+                Active unit: {units.find(u => u.id === activeUnitId)?.name ?? "Unknown"}
+              </div>
+            )}
+            <AlertDialogFooter className="gap-2 sm:space-x-0">
+              <AlertDialogCancel
+                disabled={endActivation.isPending}
+                className="border-slate-500 bg-slate-950 font-mono text-xs uppercase tracking-widest text-slate-100 hover:bg-slate-800"
+                data-testid="button-cancel-end-activation"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                disabled={endActivation.isPending}
+                onClick={handleConfirmEndActivation}
+                className="bg-amber-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-amber-200 disabled:bg-slate-700 disabled:text-slate-400"
+                data-testid="button-confirm-end-activation"
+              >
+                {endActivation.isPending ? "Ending..." : canPassPhase ? "Confirm Pass" : "Confirm End"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog
         open={passAllFiringConfirmOpen}
         onOpenChange={(open) => {

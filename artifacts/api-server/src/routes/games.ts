@@ -5706,11 +5706,12 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                 const effectiveMax = effectiveBaseSpeed(endedUnit, cap);
                 const minRequired = endedTraits.superManeuverable
                   ? 0
-                  : effectiveMax > 0 ? Math.max(1, Math.ceil(effectiveMax / 2)) : 0;
+                  : effectiveMax > 0 ? Math.max(1, effectiveMax / 2) : 0;
                 if (minRequired > 0 && endedUnit.inchesMovedThisActivation < minRequired) {
+                  const fmt = (value: number): string => value.toFixed(value % 1 === 0 ? 0 : 1);
                   throw Object.assign(
                     new Error(
-                      `Ship must move at least ${minRequired}" this activation or declare All Stop (moved ${endedUnit.inchesMovedThisActivation}")`,
+                      `Ship must move at least ${fmt(minRequired)}" this activation or declare All Stop (moved ${fmt(endedUnit.inchesMovedThisActivation)}")`,
                     ),
                     { status: 400 },
                   );
