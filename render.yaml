@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: b5acta-public-alpha
+    runtime: node
+    plan: starter
+    branch: public-alpha
+    numInstances: 1
+    autoDeployTrigger: off
+    healthCheckPath: /api/healthz
+    buildCommand: |
+      corepack enable
+      pnpm install --frozen-lockfile
+      PORT=10000 BASE_PATH=/ VITE_CLERK_PROXY_URL=/api/__clerk pnpm --filter @workspace/b5acta run build
+      pnpm --filter @workspace/api-server run build
+    startCommand: pnpm --filter @workspace/api-server run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: B5_SERVE_WEB
+        value: "true"
+      - key: BASE_PATH
+        value: /
+      - key: LOG_LEVEL
+        value: info
+      - key: VITE_CLERK_PROXY_URL
+        value: /api/__clerk
+      - key: B5_USERNAME_AUTH
+        value: "false"
+      - key: B5_TEMP_USERNAME_AUTH
+        value: "false"
+      - key: VITE_B5_USERNAME_AUTH
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: b5acta-public-alpha-db
+          property: connectionString
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: B5_ALLOWED_USERS
+        sync: false
+      - key: B5_ALLOWED_ORIGINS
+        sync: false
+
+databases:
+  - name: b5acta-public-alpha-db
+    plan: basic-256mb
+    databaseName: b5acta
+    user: b5acta
+    ipAllowList: []
