@@ -629,16 +629,18 @@ const FLIP_MODELS: Set<string> = new Set();
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const VISUAL_ROTATE_180_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb", "battlecrab.glb", DEAD_BATTLECRAB_MODEL_FILENAME, "primus.glb", "whitestar.glb", "avenger.glb"]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
+  "hyperion.glb": 1.25,
   "olympus.glb": 0.5,
   "omega.glb": 1.15,
   "nova.glb": 1.15,
+  "tethys.glb": 0.5,
   "vorchan.glb": 0.5,
   "covran.glb": 0.5,
   "whitestar.glb": 0.5,
   "oracle.glb": 0.5,
   "sagittarius.glb": 0.5,
   "gquan.glb": 1.5,
-  "primus.glb": 1.5,
+  "primus.glb": 1.875,
   "sharlin.glb": 1.5,
   "avioki.glb": 1.5,
   "battlecrab.glb": 1.5,
