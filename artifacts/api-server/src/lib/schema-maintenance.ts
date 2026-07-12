@@ -79,6 +79,80 @@ const CSV_MODEL_FILENAMES: Record<string, string> = {
   avioki: "avioki.glb",
 };
 
+const FALLBACK_ACTA_SHIP_CSV = String.raw`SHIP STATS,,,,,,,,,,,,,,,,,
+Faction,Name,Class,Hull,Troops,Damage,Damage Threshold,Crew,Crew Threshold,Speed,Turns,Turn Angle (deg),Crew Quality,Shield,Shield Max,Shield Regen Rate,Ship Traits,Small craft
+Shadows,Shadow Cruiser (Ancient),Dreadnought,6,0,150,38,0,0,8,0,0,N/A,20,20,10,Super Maneuverable; Self Repair:3d6,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,5,3,28,6,32,6,8,2,45,Veteran,0,0,0,Anti-Fighter 2; Interceptors 2; Jump Engine,Aurora Starfury (1)
+Minbari,Sharlin War Cruiser,Warcruiser,5,5,60,20,66,22,8,1,45,Elite,0,0,0,Advanced Anti-Fighter 5; Advanced Jump Engine; Flight Computer; Lumbering; Stealth +5,"Nial (4), Flyer (1)"
+Earth Alliance,Olympus Corvette,Corvette,5,1,18,4,20,4,8,2,45,Regular,0,0,0,Interceptors 1,
+Minbari,Tinashi,Warship,5,4,38,12,42,14,10,2,45,Regular,0,0,0,Advanced Anti-Fighter 4; Advanced Jump Engine; Flight Computer; Stealth +5,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,4,0,16,5,22,6,12,2,45,Regular,0,0,0,Interceptors 2; Anti-Fighter 4; Jump Engine; Scout; Stealth +3,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,6,4,48,10,62,14,7,1,45,Regular,0,0,0,Interceptors 3; Anti-Fighter 6; Jump Engine; Lumbering,Aurora Starfury (4)
+Earth Alliance,Nova Dreadnought,Dreadnought,5,2,36,9,45,12,6,1,45,Regular,0,0,0,Interceptors 2; Jump Engine; Lumbering,Aurora Starfury (4)
+Narn,G'Quan Cruiser,Heavy Cruiser,6,8,55,13,70,19,6,1,45,Regular,0,0,0,Anti-Fighter 2; Jump Engine; Lumbering,Frazi (2)
+Interstellar Alliance,White Star,Advanced Frigate,5,1,10,3,12,3,15,2,90,Elite,0,0,0,Adaptive Armor; Advanced Jump Engine; Agile; Atmospheric; Dodge +4; Flight Computer; Scout; Self-repair 1,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,6,4,64,10,68,10,6,1,45,Regular,0,0,0,Anti-Fighter 2; Jump Engine; Lumbering,
+WEAPONS,,,,,,,,,,,,,,,,,
+Faction,Ship Name,Ship Class,Weapon Name,Arc,Range,Attack Dice,Weapon Traits,,,,,,,,,,
+Shadows,Shadow Cruiser (Ancient),Dreadnought,Molecular Slicer Beam,Forward,24,6,Beam; Precise; Quad Damage,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Heavy Laser Cannon,Boresight Forward,18,4,Beam; Double Damage,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Forward,10,4,,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Plasma Cannon,Forward,8,4,Armor Piercing; Twin-Linked,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Port,10,8,,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Starboard,10,8,,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Aft,10,2,,,,,,,,,,,
+Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Heavy Laser Cannon,Boresight Aft,18,2,Beam; Double Damage,,,,,,,,,,
+Minbari,Sharlin War Cruiser,Warcruiser,Neutron Laser,Forward,30,8,Beam; Double Damage; Precise,,,,,,,,,,
+Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Forward,18,8,Mini Beam,,,,,,,,,,
+Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Port,18,8,Mini Beam,,,,,,,,,,
+Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Starboard,18,8,Mini Beam,,,,,,,,,,
+Minbari,Sharlin War Cruiser,Warcruiser,Neutron Laser,Aft,30,6,Beam; Double Damage; Precise,,,,,,,,,,
+Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Aft,18,8,Mini Beam,,,,,,,,,,
+Earth Alliance,Olympus Corvette,Corvette,Medium Pulse Cannon,Forward,10,6,Twin-Linked,,,,,,,,,,
+Earth Alliance,Olympus Corvette,Corvette,Medium Pulse Cannon,Port,10,4,Twin-Linked,,,,,,,,,,
+Earth Alliance,Olympus Corvette,Corvette,Missile Rack,Turret,30,2,Precise; Slow Loading; Super Armor Piercing,,,,,,,,,,
+Earth Alliance,Olympus Corvette,Corvette,Railguns,Turret,12,4,Armor Piercing; Double Damage,,,,,,,,,,
+Earth Alliance,Olympus Corvette,Corvette,Medium Pulse Cannon,Starboard,10,4,Twin-Linked,,,,,,,,,,
+Minbari,Tinashi,Warship,Neutron Laser,Forward,25,4,Beam; Double Damage; Precise,,,,,,,,,,
+Minbari,Tinashi,Warship,Fusion Cannon,Forward,18,8,Mini-beam; Twin-linked,,,,,,,,,,
+Minbari,Tinashi,Warship,Fusion Cannon,Port,18,6,Mini-beam; Twin-linked,,,,,,,,,,
+Minbari,Tinashi,Warship,Fusion Cannon,Starboard,18,6,Mini-beam; Twin-linked,,,,,,,,,,
+Minbari,Tinashi,Warship,Fusion Cannon,Rear,18,6,Mini-beam; Twin-linked,,,,,,,,,,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,Medium Laser Cannon,Boresight forward,15,2,Beam,,,,,,,,,,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,Missile Rack,Turret,30,1,Precise; Slow Loading; Super Armor Piercing,,,,,,,,,,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,Light Pulse Cannon,Forward,8,2,Twin-Linked,,,,,,,,,,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,Light Pulse Cannon,Port,8,2,Twin-Linked,,,,,,,,,,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,Light Pulse Cannon,Starboard,8,2,Twin-Linked,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Heavy Laser Cannon,Boresight Forward,30,6,Beam; Double Damage,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Heavy Laser Cannon,Boresight Aft,30,4,Beam; Double Damage,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Heavy Pulse Cannon,Forward,12,4,Twin-Linked,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Light Laser Cannon,Port,15,4,Mini-beam; Slow Loading,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Light Laser Cannon,Starboard,15,4,Mini-beam; Slow Loading,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Medium Pulse Cannon,Aft,10,4,Twin-Linked,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Medium Pulse Cannon,Port,10,8,Twin-Linked,,,,,,,,,,
+Earth Alliance,Omega Destroyer,Heavy Destroyer,Medium Pulse Cannon,Starboard,10,8,Twin-Linked,,,,,,,,,,
+Earth Alliance,Nova Dreadnought,Dreadnought,Heavy Pulse Cannon,Forward,12,8,Twin-Linked,,,,,,,,,,
+Earth Alliance,Nova Dreadnought,Dreadnought,Heavy Pulse Cannon,Aft,12,4,Twin-Linked,,,,,,,,,,
+Earth Alliance,Nova Dreadnought,Dreadnought,Heavy Pulse Cannon,Port,12,14,Twin-Linked,,,,,,,,,,
+Earth Alliance,Nova Dreadnought,Dreadnought,Heavy Pulse Cannon,Starboard,12,14,Twin-Linked,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Heavy Laser Cannon,Boresight Forward,30,4,Beam; Double Damage,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Energy Mine,Forward,30,6,Armor Piercing; Energy Mine; One-Shot; Triple Damage,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Ion Cannon,Forward,8,10,Twin-Linked,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Ion Cannon,Aft,8,10,Twin-Linked,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Ion Cannon,Port,8,10,Twin-Linked,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Ion Cannon,Starboard,8,10,Twin-Linked,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Pulse Cannon,Forward,8,6,,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Pulse Cannon,Aft,8,6,,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Pulse Cannon,Port,8,6,,,,,,,,,,,
+Narn,G'Quan Cruiser,Heavy Cruiser,Light Pulse Cannon,Starboard,8,6,,,,,,,,,,,
+Interstellar Alliance,White Star,Advanced Frigate,Improved Neutron Laser,Forward,18,2,Beam; Precise; Triple Damage,,,,,,,,,,
+Interstellar Alliance,White Star,Advanced Frigate,Molecular Pulsar,Forward,10,4,Accurate; Armor Piercing; Double Damage,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Particle Beam,Forward,18,8,Beam; Double Damage; Slow Loading,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Forward,12,10,Armor Piercing,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Aft,12,4,Armor Piercing,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Port,12,8,Armor Piercing,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Starboard,12,8,Armor Piercing,,,,,,,,,,`;
+
 const SAGITTARIUS_WEAPONS = [
   { name: "Missile Rack", arc: "Forward", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
   { name: "Missile Rack", arc: "Aft", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
@@ -536,15 +610,16 @@ function resolveActaShipCsv(): string | null {
   return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
 }
 
-function readActaShipCsv(): { ships: CsvShipSeed[]; weaponsByShip: Map<string, CsvWeaponSeed[]> } | null {
+function readActaShipCsv(): { ships: CsvShipSeed[]; weaponsByShip: Map<string, CsvWeaponSeed[]>; source: string } {
   const csvPath = resolveActaShipCsv();
-  if (!csvPath) return null;
+  const csvText = csvPath ? fs.readFileSync(csvPath, "utf8") : FALLBACK_ACTA_SHIP_CSV;
+  const source = csvPath ?? "embedded-fallback";
 
   const ships: CsvShipSeed[] = [];
   const weaponsByShip = new Map<string, CsvWeaponSeed[]>();
   let section: "ships" | "weapons" | null = null;
 
-  const lines = fs.readFileSync(csvPath, "utf8").split(/\r?\n/g);
+  const lines = csvText.split(/\r?\n/g);
   for (const line of lines) {
     const cells = parseCsvLine(line);
     const first = cells[0]?.trim();
@@ -599,15 +674,13 @@ function readActaShipCsv(): { ships: CsvShipSeed[]; weaponsByShip: Map<string, C
     }
   }
 
-  return { ships, weaponsByShip };
+  return { ships, weaponsByShip, source };
 }
 
 async function seedActaCsvShips(): Promise<void> {
   const csv = readActaShipCsv();
-  if (!csv) {
-    logger.warn("ACTA ship CSV not found; skipping base ship seed");
-    return;
-  }
+  let seededShips = 0;
+  let seededWeapons = 0;
 
   for (const ship of csv.ships) {
     const key = ship.name.toLowerCase();
@@ -704,6 +777,7 @@ async function seedActaCsvShips(): Promise<void> {
 
     const shipId = shipResult.rows[0]?.id;
     if (!shipId) continue;
+    seededShips++;
 
     const weapons = csv.weaponsByShip.get(key) ?? [];
     if (weapons.length === 0) continue;
@@ -716,8 +790,14 @@ async function seedActaCsvShips(): Promise<void> {
         `,
         [shipId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
       );
+      seededWeapons++;
     }
   }
+
+  logger.info(
+    { source: csv.source, seededShips, seededWeapons },
+    "Seeded ACTA base ship roster",
+  );
 }
 
 export async function ensureActaAllocationSchema(): Promise<void> {
