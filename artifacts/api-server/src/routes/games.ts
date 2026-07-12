@@ -3882,12 +3882,21 @@ function isDevAiCommander(game: typeof gamesTable.$inferSelect, userId: string):
   return isDevBuiltinCommander(userId) && game.opponentKind === "ai" && game.opponentId === AI_OPPONENT_ID && userId !== game.challengerId;
 }
 
+function canDeployAiOpponentForAlpha(game: typeof gamesTable.$inferSelect, userId: string): boolean {
+  return game.status === "deploying" &&
+    game.opponentKind === "ai" &&
+    game.opponentId === AI_OPPONENT_ID &&
+    game.challengerId === userId &&
+    game.challengerDeployed &&
+    !game.opponentDeployed;
+}
+
 function effectiveGameUserId(game: typeof gamesTable.$inferSelect, userId: string): string {
-  return isDevAiCommander(game, userId) ? AI_OPPONENT_ID : userId;
+  return isDevAiCommander(game, userId) || canDeployAiOpponentForAlpha(game, userId) ? AI_OPPONENT_ID : userId;
 }
 
 function shouldAutoDeployAiOpponentOnCreate(): boolean {
-  return process.env.NODE_ENV === "production";
+  return false;
 }
 
 router.get("/games", requireAuth, async (req, res): Promise<void> => {
@@ -3970,7 +3979,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
         {
           message: shouldAutoDeployAiOpponent
             ? "AI opponent game created; preparing deployment."
-            : "AI opponent game created; deployment is waiting for the dev AI-side commander.",
+            : "AI opponent game created; deploy your fleet, then deploy the AI fleet.",
         },
       )
       : {},

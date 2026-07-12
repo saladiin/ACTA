@@ -3555,7 +3555,15 @@ export default function GameBoard() {
     game?.opponentKind === "ai" &&
     game.opponentId === AI_OPPONENT_ID &&
     rawMyUserId !== game.challengerId;
-  const myUserId = devAiCommanderActive ? AI_OPPONENT_ID : rawMyUserId;
+  const aiDeploymentControlActive =
+    !devAiCommanderActive &&
+    game?.status === "deploying" &&
+    game.opponentKind === "ai" &&
+    game.opponentId === AI_OPPONENT_ID &&
+    rawMyUserId === game.challengerId &&
+    game.challengerDeployed &&
+    !game.opponentDeployed;
+  const myUserId = devAiCommanderActive || aiDeploymentControlActive ? AI_OPPONENT_ID : rawMyUserId;
   const { data: fleets } = useListFleets();
   const { data: shipModels } = useListShipModels();
   const acceptGame = useAcceptGame();
@@ -6373,14 +6381,18 @@ export default function GameBoard() {
           {/* ── FLEET YARDS (deploy phase, current player not yet deployed) ── */}
           {game.status === "deploying" && !myDeploymentLocked && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
-              <p className="text-xs font-mono text-primary uppercase tracking-widest">Fleet Yards</p>
-              {((mySide === "challenger" && game.opponentDeployed) || (mySide === "opponent" && game.challengerDeployed)) && (
+              <p className="text-xs font-mono text-primary uppercase tracking-widest">
+                {aiDeploymentControlActive ? "Deploy AI Opponent" : "Fleet Yards"}
+              </p>
+              {!aiDeploymentControlActive && ((mySide === "challenger" && game.opponentDeployed) || (mySide === "opponent" && game.challengerDeployed)) && (
                 <p className="text-[10px] font-mono text-green-400/80" data-testid="text-opponent-ready">
                   ⚡ Opponent has deployed — they're waiting on you.
                 </p>
               )}
               <p className="text-[10px] font-mono text-muted-foreground leading-snug" data-testid="text-deploy-hint">
-                Drag ships from the roster below straight onto the board, or quick-load a saved fleet.
+                {aiDeploymentControlActive
+                  ? "Place the AI fleet on the opponent edge, then commit deployment to begin the engagement."
+                  : "Drag ships from the roster below straight onto the board, or quick-load a saved fleet."}
                 {fleets && fleets.length === 0 && (
                   <> No fleets yet? <Link to="/fleets" data-testid="link-build-fleet" className="text-primary hover:underline">Build one →</Link></>
                 )}

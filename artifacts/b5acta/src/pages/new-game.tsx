@@ -188,7 +188,7 @@ export default function NewGame() {
           </div>
           {opponentKind === "ai" && (
             <p className="mt-2 text-[11px] text-amber-400 font-mono">
-              AI fleet auto-deploys and can be stepped from the game board.
+              Deploy your fleet first, then place the AI fleet on the opponent side before play begins.
             </p>
           )}
         </section>
