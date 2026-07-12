@@ -21,7 +21,7 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
-  /** Choose human for lobby matchmaking. The ai lane is contract-ready but returns 501 until the automation worker is enabled. */
+  /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
   /**
      * Required when visibility=private. Stored hashed; required again on accept.

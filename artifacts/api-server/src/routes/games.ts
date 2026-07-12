@@ -4025,6 +4025,9 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const units = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
   const turns = await db.select().from(turnsTable).where(eq(turnsTable.gameId, params.data.gameId)).orderBy(turnsTable.turnNumber);
+  const shipIds = [...new Set(units.map(u => u.shipId))];
+  const unitShips = shipIds.length === 0 ? [] : await db.select().from(shipsTable).where(inArray(shipsTable.id, shipIds));
+  const shipModelIdByShipId = new Map(unitShips.map(ship => [ship.id, ship.shipModelId]));
   // Attach live critical-hit rows to each unit so the UI can render the
   // crit panel and DC button without a second query.
   const unitIds = units.map(u => u.id);
@@ -4040,6 +4043,7 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     const rows = critsByUnit.get(u.id) ?? [];
     return {
       ...u,
+      shipModelId: shipModelIdByShipId.get(u.shipId) ?? 0,
       // Centralized adrift overlay — see `effectiveDamageState` for the
       // why. Used here AND by every mutation route that echoes a unit row,
       // so all consumers see the same canonical state.

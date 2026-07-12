@@ -5465,7 +5465,7 @@ export default function GameBoard() {
       const available = [...yardsFleetShips];
       placements = [];
       for (const staged of currentStagedUnits) {
-        const idx = available.findIndex(s => s.shipModel.filename === staged.modelFilename);
+        const idx = available.findIndex(s => s.shipModel.id === staged.shipModelId);
         if (idx === -1) {
           // Staged a ship that isn't in the selected fleet — fall back
           // to direct drop-in for THIS unit so nothing silently disappears.

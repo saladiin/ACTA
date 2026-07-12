@@ -14,6 +14,8 @@ export interface GameUnit {
   gameId: number;
   ownerId: string;
   shipId: number;
+  /** Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename. */
+  shipModelId: number;
   name: string;
   modelFilename: string;
   faction: string;
@@ -27,8 +29,6 @@ export interface GameUnit {
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
   lastDcRound?: number;
-  /** Last round (1-based) this unit resolved Self Repair. 0 = never. */
-  lastSelfRepairRound?: number;
   /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */

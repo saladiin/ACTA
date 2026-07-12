@@ -831,12 +831,13 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, name, modelFilename, faction, baseRadiusInches, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
+      required: [id, gameId, ownerId, shipId, shipModelId, name, modelFilename, faction, baseRadiusInches, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
         ownerId:       { type: string }
         shipId:        { type: integer }
+        shipModelId:   { type: integer, description: "Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename." }
         name:          { type: string }
         modelFilename: { type: string }
         faction:       { type: string }
