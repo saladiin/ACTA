@@ -3093,31 +3093,35 @@ function StagedUnit3D({
   const ringOpacity = isSelected ? 0.8 : unit.locked ? 0.55 : 0.45;
   const fillOpacity = isSelected ? 0.28 : 0.15;
   const headingRad = (unit.heading * Math.PI) / 180;
+  const baseRadius = rulesBaseRadius(unit);
+  const ringInner = Math.max(0.05, baseRadius - 0.05);
+  const pulseInner = baseRadius + 0.18;
+  const pulseOuter = baseRadius + 0.28;
 
   return (
     <group position={[unit.x, 0, unit.z]} onClick={onClick} onPointerDown={onPointerDown}>
       {/* Selection pulse ring */}
       {isSelected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-          <ringGeometry args={[1.3, 1.5, 48]} />
+          <ringGeometry args={[pulseInner, pulseOuter, 48]} />
           <meshStandardMaterial color="white" transparent opacity={0.35} emissive="white" emissiveIntensity={0.4} depthWrite={false} />
         </mesh>
       )}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
-        <circleGeometry args={[1.2, 48]} />
+        <circleGeometry args={[baseRadius, 48]} />
         <meshStandardMaterial color={baseColor} transparent opacity={fillOpacity} depthWrite={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-        <ringGeometry args={[1.15, 1.2, 48]} />
+        <ringGeometry args={[ringInner, baseRadius, 48]} />
         <meshStandardMaterial color={baseColor} transparent opacity={ringOpacity} emissive={baseColor} emissiveIntensity={0.25} />
       </mesh>
       {/* Weapon arcs — rendered in heading-rotated group so they turn with the ship */}
       <group rotation={[0, headingRad, 0]}>
-        <BaseOrientationDisplay flip={FLIP_MODELS.has(unit.modelFilename)} opacityScale={isSelected ? 1 : 0.78} arcColorScheme={arcColorScheme} arcSide="friendly" />
+        <BaseOrientationDisplay flip={FLIP_MODELS.has(unit.modelFilename)} baseRadius={baseRadius} opacityScale={isSelected ? 1 : 0.78} arcColorScheme={arcColorScheme} arcSide="friendly" />
       </group>
       {isSelected && unit.weapons.length > 0 && (
         <group rotation={[0, headingRad, 0]}>
-          <WeaponArcDisplay weapons={unit.weapons} flip={FLIP_MODELS.has(unit.modelFilename)} arcColorScheme={arcColorScheme} arcSide="friendly" />
+          <WeaponArcDisplay weapons={unit.weapons} flip={FLIP_MODELS.has(unit.modelFilename)} baseRadius={baseRadius} arcColorScheme={arcColorScheme} arcSide="friendly" />
         </group>
       )}
       {/* Ship model, rotated to match heading */}
