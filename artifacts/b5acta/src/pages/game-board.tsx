@@ -740,6 +740,15 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "sentri.glb": 0.165,
 };
 const FIGHTER_SQUADRON_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "tiger.glb", "nial.glb", "flyer.glb", "sentri.glb"]);
+const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
+  aurora: "aurora.glb",
+  thunderbolt: "thunderbolt.glb",
+  tiger: "tiger.glb",
+  nial: "nial.glb",
+  flyer: "flyer.glb",
+  sentri: "sentri.glb",
+};
+const FIGHTER_IDENTITY_PATTERN = /\b(?:aurora|thunderbolt|tiger|nial|flyer|sentri)\b/i;
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -884,8 +893,18 @@ function CameraFacingGroup({ children, ...props }: React.ComponentProps<"group">
   return <group ref={ref} {...props}>{children}</group>;
 }
 
-function isFighterSquadronModel(filename: string): boolean {
-  return FIGHTER_SQUADRON_MODELS.has(filename.toLowerCase());
+function canonicalFighterSquadronFilename(filename: string | null | undefined): string | null {
+  const normalized = (filename ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (FIGHTER_SQUADRON_MODELS.has(normalized)) return normalized;
+  for (const [key, canonical] of Object.entries(FIGHTER_SQUADRON_CANONICAL_FILENAMES)) {
+    if (normalized.includes(key)) return canonical;
+  }
+  return null;
+}
+
+function isFighterSquadronModel(filename: string | null | undefined): boolean {
+  return canonicalFighterSquadronFilename(filename) !== null;
 }
 
 function hasExplicitFighterTrait(raw: string | null | undefined): boolean {
@@ -896,10 +915,22 @@ function hasExplicitFighterTrait(raw: string | null | undefined): boolean {
     .some(t => t === "fighter");
 }
 
-function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "traits" | "name"> | undefined): boolean {
+type FighterIdentityModel = {
+  filename?: string | null;
+  traits?: string | null;
+  name?: string | null;
+  shipClass?: string | null;
+};
+
+function shipModelHasFighterTrait(model: FighterIdentityModel | undefined): boolean {
+  const identity = [model?.name, model?.filename, model?.shipClass]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ");
   return hasExplicitFighterTrait(model?.traits)
+    || /\bfighter\b/i.test(model?.shipClass ?? "")
     || /fighter flight/i.test(model?.name ?? "")
-    || isFighterSquadronModel(model?.filename ?? "");
+    || isFighterSquadronModel(model?.filename ?? "")
+    || FIGHTER_IDENTITY_PATTERN.test(identity);
 }
 
 type StagedFighterInventoryItem = {
@@ -927,6 +958,7 @@ const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   sentri: "Sentri Flight",
   "sentri fighter": "Sentri Flight",
   "sentri fighter flight": "Sentri Flight",
+  "sentri flight": "Sentri Flight",
 };
 
 function normalizeSmallCraftKey(value: string): string {
@@ -1105,15 +1137,16 @@ function clampForwardDistanceToLegalRestingSpot(
 }
 
 function BoardModelVisual({ filename, tint, opacity = 1, meshTintsEnabled = true }: { filename: string; tint: string; opacity?: number; meshTintsEnabled?: boolean }) {
-  if (!isFighterSquadronModel(filename)) {
+  const fighterFilename = canonicalFighterSquadronFilename(filename);
+  if (!fighterFilename) {
     return <ShipModel3D filename={filename} tint={tint} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />;
   }
 
   return (
     <group>
       {FIGHTER_SQUADRON_OFFSETS.map((offset, index) => (
-        <group key={`${filename}-${index}`} position={[offset.x, 0, offset.z]} rotation={[0, offset.yaw, 0]}>
-          <ShipModel3D filename={filename} tint={tint} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />
+        <group key={`${fighterFilename}-${index}`} position={[offset.x, 0, offset.z]} rotation={[0, offset.yaw, 0]}>
+          <ShipModel3D filename={fighterFilename} tint={tint} opacity={opacity} meshTintsEnabled={meshTintsEnabled} />
         </group>
       ))}
     </group>
@@ -4233,7 +4266,11 @@ export default function GameBoard() {
   }, [autoAiRunning, game, gameId, myUserId, qc, runAiStep]);
   type BoardUnit = (typeof units)[number];
   const isFighterUnit = useCallback((unit: BoardUnit): boolean => {
-    return shipModelHasFighterTrait(getShipModelForUnit(unit));
+    return shipModelHasFighterTrait(getShipModelForUnit(unit))
+      || shipModelHasFighterTrait({
+        name: unit.name,
+        filename: unit.modelFilename,
+      });
   }, [getShipModelForUnit]);
   const unitsWithFighterFlags = useMemo(() => (
     units.map(unit => ({ ...unit, isFighter: isFighterUnit(unit) }))
@@ -4353,8 +4390,13 @@ export default function GameBoard() {
     ),
     [currentStagedUnits, scenarioPriority, allocationPoints],
   );
-  const stagedUnitIsFighter = useCallback((unit: Pick<StagedUnitData, "shipModelId">): boolean => {
-    return shipModelHasFighterTrait(shipModelById[unit.shipModelId]);
+  const stagedUnitIsFighter = useCallback((unit: Pick<StagedUnitData, "shipModelId" | "name" | "modelFilename" | "traits">): boolean => {
+    return shipModelHasFighterTrait(shipModelById[unit.shipModelId])
+      || shipModelHasFighterTrait({
+        name: unit.name,
+        filename: unit.modelFilename,
+        traits: unit.traits ?? null,
+      });
   }, [shipModelById]);
   const deploymentBlockers = useCallback((ignoredStagedIds: Set<string> = new Set()): UiBaseFootprint[] => {
     return [
