@@ -996,6 +996,21 @@ function uiBasesInContact(
     <= rulesBaseRadius(a) + rulesBaseRadius(b) + BASE_CONTACT_EPSILON;
 }
 
+type UiBaseFootprint = {
+  id: string | number;
+  x: number;
+  z: number;
+  isFighter?: boolean;
+  baseRadiusInches?: number | null;
+};
+
+function uiBaseFootprintsIllegallyOverlap(a: UiBaseFootprint, b: UiBaseFootprint): boolean {
+  if (a.id === b.id) return false;
+  if (uiBasesCanOverlap(a, b)) return false;
+  const minimumDistance = Math.max(0, rulesBaseRadius(a) + rulesBaseRadius(b) - BASE_CONTACT_EPSILON);
+  return Math.hypot(a.x - b.x, a.z - b.z) < minimumDistance;
+}
+
 function finalForwardPositionOverlapsBase(
   moving: { id: number; hexQ: number; hexR: number; isFighter?: boolean; baseRadiusInches?: number | null },
   others: Array<{ id: number; hexQ: number; hexR: number; isDestroyed: boolean; isFighter?: boolean; baseRadiusInches?: number | null }>,
@@ -4313,6 +4328,50 @@ export default function GameBoard() {
     ),
     [currentStagedUnits, scenarioPriority, allocationPoints],
   );
+  const stagedUnitIsFighter = useCallback((unit: Pick<StagedUnitData, "shipModelId">): boolean => {
+    return shipModelHasFighterTrait(shipModelById[unit.shipModelId]);
+  }, [shipModelById]);
+  const deploymentBlockers = useCallback((ignoredStagedIds: Set<string> = new Set()): UiBaseFootprint[] => {
+    return [
+      ...units
+        .filter(unit => !unit.isDestroyed)
+        .map(unit => ({
+          id: unit.id,
+          x: unit.hexQ,
+          z: unit.hexR,
+          isFighter: isFighterUnit(unit),
+          baseRadiusInches: unit.baseRadiusInches,
+        })),
+      ...currentStagedUnits
+        .filter(unit => !ignoredStagedIds.has(unit.id))
+        .map(unit => ({
+          id: unit.id,
+          x: unit.x,
+          z: unit.z,
+          isFighter: stagedUnitIsFighter(unit),
+          baseRadiusInches: unit.baseRadiusInches,
+        })),
+    ];
+  }, [currentStagedUnits, isFighterUnit, stagedUnitIsFighter, units]);
+  const deploymentPlacementOverlaps = useCallback((candidate: UiBaseFootprint, ignoredStagedIds: Set<string> = new Set()): boolean => {
+    return deploymentBlockers(ignoredStagedIds).some(blocker => uiBaseFootprintsIllegallyOverlap(candidate, blocker));
+  }, [deploymentBlockers]);
+  const deploymentOverlapWarning = useMemo(() => {
+    for (const staged of currentStagedUnits) {
+      const ignored = new Set([staged.id]);
+      const candidate: UiBaseFootprint = {
+        id: staged.id,
+        x: staged.x,
+        z: staged.z,
+        isFighter: stagedUnitIsFighter(staged),
+        baseRadiusInches: staged.baseRadiusInches,
+      };
+      if (deploymentPlacementOverlaps(candidate, ignored)) {
+        return "Deployment contains overlapping bases. Move ships apart before committing.";
+      }
+    }
+    return null;
+  }, [currentStagedUnits, deploymentPlacementOverlaps, stagedUnitIsFighter]);
   const makeStagedUnit = useCallback((ship: ShipModel, index: number, total: number, stagedName = ship.name): StagedUnitData => {
     const columns = Math.min(3, Math.max(1, total));
     const row = Math.floor(index / columns);
@@ -4350,6 +4409,17 @@ export default function GameBoard() {
   }, [clampToDeployZone, deploymentDepth, mySide, myUserId, shipModels]);
   const stageShipAtBoardPoint = useCallback((ship: ShipModel, rawX: number, rawZ: number) => {
     const [x, z] = clampToDeployZone(rawX, rawZ);
+    const candidate: UiBaseFootprint = {
+      id: `candidate-${ship.id}`,
+      x,
+      z,
+      isFighter: shipModelHasFighterTrait(ship),
+      baseRadiusInches: ship.baseRadiusInches,
+    };
+    if (deploymentPlacementOverlaps(candidate)) {
+      setActivationFeedback("Cannot place ship: base overlaps another ship.");
+      return;
+    }
     const newId = `staged-${Date.now()}-${ship.id}`;
     setStagedUnits(prev => [...prev, {
       id: newId,
@@ -4378,7 +4448,8 @@ export default function GameBoard() {
     setDraggingId(null);
     setTapPlacementShip(null);
     draggedShipRef.current = null;
-  }, [clampToDeployZone, mySide, myUserId, shipModels]);
+    setActivationFeedback(null);
+  }, [clampToDeployZone, deploymentPlacementOverlaps, mySide, myUserId, shipModels]);
   const stageCarrierFighter = useCallback((carrier: StagedUnitData, item: StagedFighterInventoryItem) => {
     if (!item.shipModelId) return;
     const fighterModel = (shipModels ?? []).find(model => model.id === item.shipModelId);
@@ -5801,6 +5872,10 @@ export default function GameBoard() {
 
   const handleYardsDeploy = useCallback(() => {
     if (currentStagedUnits.length === 0) return;
+    if (deploymentOverlapWarning) {
+      setActivationFeedback(deploymentOverlapWarning);
+      return;
+    }
     // Two paths, mirroring the API's two deploy modes:
     //   1. A saved fleet is selected → match each staged ship to a fleet
     //      Ship row by model filename and send `shipId`.
@@ -5859,7 +5934,7 @@ export default function GameBoard() {
         },
       }
     );
-  }, [yardsFleetId, yardsFleetShips, currentStagedUnits, deployFleet, gameId, qc, myUserId]);
+  }, [yardsFleetId, yardsFleetShips, currentStagedUnits, deploymentOverlapWarning, deployFleet, gameId, qc, myUserId]);
 
   if (isLoading) {
     return (
@@ -5934,6 +6009,22 @@ export default function GameBoard() {
                 const [x, z] = carrier
                   ? clampToCarriedFighterDeployCircle(rx, rz, carrier)
                   : clampToDeployZone(rx, rz);
+                const ignoredStagedIds = new Set([
+                  moving.id,
+                  ...prev
+                    .filter(unit => unit.launchedFromStagedId === moving.id)
+                    .map(unit => unit.id),
+                ]);
+                const candidate: UiBaseFootprint = {
+                  id: moving.id,
+                  x,
+                  z,
+                  isFighter: stagedUnitIsFighter(moving),
+                  baseRadiusInches: moving.baseRadiusInches,
+                };
+                if (deploymentPlacementOverlaps(candidate, ignoredStagedIds)) {
+                  return prev;
+                }
                 const movedCarrier = { ...moving, x, z };
                 return prev.map(unit => {
                   if (unit.id === draggingId) return movedCarrier;
@@ -6923,6 +7014,11 @@ export default function GameBoard() {
                       Fleet exceeds {priorityLabel(scenarioPriority)} {allocationPoints} FAP by {formatAllocationTicks(Math.abs(stagedAllocation.remainingTicks))}.
                     </p>
                   )}
+                  {deploymentOverlapWarning && (
+                    <p className="text-[10px] font-mono text-red-400 leading-snug px-1 pb-1" data-testid="text-deploy-overlap-warning">
+                      {deploymentOverlapWarning}
+                    </p>
+                  )}
                   {currentStagedUnits.map(u => {
                     const isExpanded = selectedStagedId === u.id;
                     const carrier = currentStagedUnits.find(candidate => candidate.id === u.launchedFromStagedId);
@@ -7041,7 +7137,7 @@ export default function GameBoard() {
               <Button
                 data-testid="button-confirm-deployment"
                 className="w-full mt-2 uppercase tracking-widest text-xs gap-2"
-                disabled={currentStagedUnits.length === 0 || !stagedAllocation.legal || deployFleet.isPending}
+                disabled={currentStagedUnits.length === 0 || !stagedAllocation.legal || Boolean(deploymentOverlapWarning) || deployFleet.isPending}
                 onClick={handleYardsDeploy}
               >
                 <Swords className="w-3.5 h-3.5" />
