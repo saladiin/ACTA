@@ -8,6 +8,7 @@ const PEOPLE = [
   "Conor Clancy",
   "I_E_Mavericks",
   "Amras-Arfeiniel",
+  "BadQueenCreations",
   "Premier Valle / Premier Valleweb",
 ];
 
