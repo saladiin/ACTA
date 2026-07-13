@@ -841,6 +841,79 @@ async function removeStaleHyperionBaseRows(): Promise<void> {
   }
 }
 
+async function removeDuplicateCanonicalShipRows(): Promise<void> {
+  const duplicateProneShipNames = [
+    "Avioki Heavy Cruiser",
+    "G'Quan Heavy Cruiser",
+    "Shadow Battlecrab",
+    "Tinashi Warship",
+  ];
+
+  const result = await pool.query<{ name: string; deleted_count: number }>(
+    `
+      WITH target_names(name) AS (
+        SELECT unnest($1::text[])
+      ),
+      ranked AS (
+        SELECT
+          sm.id,
+          sm.name,
+          lower(sm.name) AS name_key,
+          row_number() OVER (
+            PARTITION BY lower(sm.name)
+            ORDER BY
+              count(w.id) FILTER (
+                WHERE trim(coalesce(w.name, '')) <> ''
+                  AND lower(trim(coalesce(w.name, ''))) <> 'weapon'
+              ) DESC,
+              sm.id ASC
+          ) AS rank
+        FROM ship_models sm
+        INNER JOIN target_names tn ON lower(sm.name) = lower(tn.name)
+        LEFT JOIN weapons w ON w.ship_model_id = sm.id
+        GROUP BY sm.id, sm.name
+      ),
+      canonical AS (
+        SELECT name_key, id
+        FROM ranked
+        WHERE rank = 1
+      ),
+      duplicates AS (
+        SELECT r.id, r.name, c.id AS canonical_id
+        FROM ranked r
+        INNER JOIN canonical c ON c.name_key = r.name_key
+        WHERE r.rank > 1
+      ),
+      reassigned_ships AS (
+        UPDATE ships s
+        SET ship_model_id = d.canonical_id
+        FROM duplicates d
+        WHERE s.ship_model_id = d.id
+        RETURNING s.id
+      ),
+      deleted_weapons AS (
+        DELETE FROM weapons
+        WHERE ship_model_id IN (SELECT id FROM duplicates)
+        RETURNING id
+      ),
+      deleted_models AS (
+        DELETE FROM ship_models
+        WHERE id IN (SELECT id FROM duplicates)
+        RETURNING name
+      )
+      SELECT name, count(*)::int AS deleted_count
+      FROM deleted_models
+      GROUP BY name
+      ORDER BY name
+    `,
+    [duplicateProneShipNames],
+  );
+
+  if (result.rows.length > 0) {
+    logger.info({ removedShipModelDuplicates: result.rows }, "Removed duplicate canonical ship-model rows");
+  }
+}
+
 export async function ensureActaAllocationSchema(): Promise<void> {
   try {
     await pool.query(`
@@ -2105,6 +2178,8 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         );
       }
     }
+
+    await removeDuplicateCanonicalShipRows();
 
     for (const seed of SHIP_AI_PROFILE_SEEDS) {
       await pool.query(
