@@ -734,10 +734,12 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
   "aurora.glb": 0.165,
   "thunderbolt.glb": 0.165,
+  "tiger.glb": 0.165,
   "nial.glb": 0.165,
+  "flyer.glb": 0.165,
   "sentri.glb": 0.165,
 };
-const FIGHTER_SQUADRON_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb", "sentri.glb"]);
+const FIGHTER_SQUADRON_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "tiger.glb", "nial.glb", "flyer.glb", "sentri.glb"]);
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -912,9 +914,16 @@ const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "thunderbolt": "Thunderbolt Starfury Flight",
   "thunderbolt starfury": "Thunderbolt Starfury Flight",
   "thunderbolt starfury flight": "Thunderbolt Starfury Flight",
+  tiger: "Tiger Starfury Flight",
+  "tiger starfury": "Tiger Starfury Flight",
+  "tiger starfury flight": "Tiger Starfury Flight",
   nial: "Nial Heavy Fighter Flight",
   "nial fighter": "Nial Heavy Fighter Flight",
   "nial fighter flight": "Nial Heavy Fighter Flight",
+  flyer: "Flyer Flight",
+  "flyer flight": "Flyer Flight",
+  "minbari flyer": "Flyer Flight",
+  "minbari flyer flight": "Flyer Flight",
   sentri: "Sentri Flight",
   "sentri fighter": "Sentri Flight",
   "sentri fighter flight": "Sentri Flight",

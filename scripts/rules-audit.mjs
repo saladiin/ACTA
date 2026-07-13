@@ -14,6 +14,9 @@ const canonicalFighters = new Map([
   ["thunderbolt", "Thunderbolt Starfury Flight"],
   ["thunderbolt starfury", "Thunderbolt Starfury Flight"],
   ["thunderbolt starfury flight", "Thunderbolt Starfury Flight"],
+  ["tiger", "Tiger Starfury Flight"],
+  ["tiger starfury", "Tiger Starfury Flight"],
+  ["tiger starfury flight", "Tiger Starfury Flight"],
   ["nial", "Nial Heavy Fighter Flight"],
   ["nial fighter", "Nial Heavy Fighter Flight"],
   ["nial fighter flight", "Nial Heavy Fighter Flight"],
@@ -29,6 +32,8 @@ const canonicalFighters = new Map([
   ["frazi flight", "Frazi Flight"],
   ["flyer", "Flyer Flight"],
   ["flyer flight", "Flyer Flight"],
+  ["minbari flyer", "Flyer Flight"],
+  ["minbari flyer flight", "Flyer Flight"],
 ]);
 
 const implementedShipTraits = [

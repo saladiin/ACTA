@@ -47,6 +47,8 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Sagittarius Missile Cruiser", priority: "skirmish" },
   { name: "Nial Fighter Flight", priority: "patrol" },
   { name: "Sentri Flight", priority: "patrol" },
+  { name: "Tiger Starfury Flight", priority: "patrol" },
+  { name: "Flyer Flight", priority: "patrol" },
 ];
 
 const CAPITAL_BASE_RADIUS_INCHES = 0.8;
@@ -514,6 +516,24 @@ const FIGHTER_FLIGHTS = [
     ],
   },
   {
+    name: "Tiger Starfury Flight",
+    filename: "tiger.glb",
+    faction: "Earth Alliance",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 5,
+    speed: 8,
+    traits: "Dodge 3+; Dogfight +1; Fighter; Super Maneuverable",
+    weaponRange: 4,
+    weaponDamage: 2,
+    description: "Earth Alliance early-years Tiger Starfury fighter flight",
+    aliases: ["Tiger Starfury Flight", "Tiger Starfury Wing", "Tiger Flight"],
+    weapons: [
+      { name: "Burst Plasma Cannon", arc: "Turret", range: 2, attackDice: 1, traits: "Weak" },
+      { name: "Missile Rack", arc: "Turret", range: 4, attackDice: 1, traits: "Armor Piercing" },
+    ],
+  },
+  {
     name: "Nial Heavy Fighter Flight",
     filename: "nial.glb",
     faction: "Minbari Federation",
@@ -528,6 +548,23 @@ const FIGHTER_FLIGHTS = [
     aliases: ["Nial Heavy Fighter Flight", "Nial Fighter Flight", "Nial Flight", "Nial Wing"],
     weapons: [
       { name: "Light Fusion Cannon", arc: "Turret", range: 2, attackDice: 3, traits: "Mini Beam" },
+    ],
+  },
+  {
+    name: "Flyer Flight",
+    filename: "flyer.glb",
+    faction: "Minbari Federation",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 4,
+    speed: 12,
+    traits: "Atmospheric; Dodge 4+; Dogfight +1; Fighter; Stealth +5; Super Maneuverable",
+    weaponRange: 2,
+    weaponDamage: 2,
+    description: "Minbari Flyer light fighter flight",
+    aliases: ["Flyer Flight", "Minbari Flyer Flight", "Flyer Wing", "Minbari Flyer Wing"],
+    weapons: [
+      { name: "Light Fusion Cannon", arc: "Turret", range: 2, attackDice: 2, traits: "Mini Beam" },
     ],
   },
   {

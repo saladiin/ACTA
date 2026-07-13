@@ -18,7 +18,6 @@ Implemented:
 
 Audit gaps:
 - `G'Quan Cruiser` / `G'Quan Heavy Cruiser` carry `Frazi`, but no `Frazi Flight` model is currently seeded or present in `public/models`.
-- `Sharlin War Cruiser` carries `Flyer`, but no `Flyer Flight` model is currently seeded or present in `public/models`.
 
 ### Anti-Fighter, Escort, And Web Of Death
 

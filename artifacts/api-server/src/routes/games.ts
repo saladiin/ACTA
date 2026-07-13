@@ -588,7 +588,7 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter
     || /\bfighter\b/i.test(model.shipClass ?? "")
     || /fighter flight/i.test(model.name ?? "")
-    || /\b(?:aurora|thunderbolt|nial|sentri|frazi|flyer)\b/i.test(identity);
+    || /\b(?:aurora|thunderbolt|tiger|nial|sentri|frazi|flyer)\b/i.test(identity);
 }
 
 function movementTraitsForModel(
@@ -610,6 +610,9 @@ const SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "thunderbolt": "Thunderbolt Starfury Flight",
   "thunderbolt starfury": "Thunderbolt Starfury Flight",
   "thunderbolt starfury flight": "Thunderbolt Starfury Flight",
+  tiger: "Tiger Starfury Flight",
+  "tiger starfury": "Tiger Starfury Flight",
+  "tiger starfury flight": "Tiger Starfury Flight",
   nial: "Nial Heavy Fighter Flight",
   "nial fighter": "Nial Heavy Fighter Flight",
   "nial fighter flight": "Nial Heavy Fighter Flight",
@@ -625,6 +628,8 @@ const SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "frazi flight": "Frazi Flight",
   flyer: "Flyer Flight",
   "flyer flight": "Flyer Flight",
+  "minbari flyer": "Flyer Flight",
+  "minbari flyer flight": "Flyer Flight",
 };
 
 function normalizeSmallCraftKey(value: string): string {
