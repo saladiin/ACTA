@@ -714,7 +714,7 @@ function ObjModel({ url, tint, opacity = 1, meshTintsEnabled = true }: { url: st
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
-const VISUAL_ROTATE_180_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb", "battlecrab.glb", DEAD_BATTLECRAB_MODEL_FILENAME, "primus.glb", "whitestar.glb", "avenger.glb"]);
+const VISUAL_ROTATE_180_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "tiger.glb", "nial.glb", "flyer.glb", "battlecrab.glb", DEAD_BATTLECRAB_MODEL_FILENAME, "primus.glb", "whitestar.glb", "avenger.glb"]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.25,
   "olympus.glb": 0.5,
