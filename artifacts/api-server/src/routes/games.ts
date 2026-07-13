@@ -5165,9 +5165,9 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         if (shipModelIsFighter(carrierModel)) {
           throw Object.assign(new Error("Fighter flights cannot carry deployed fighters"), { status: 400 });
         }
-        const distance = centerDistance(
-          { x: placement.hexQ, z: placement.hexR },
-          { x: carrierPlacement.hexQ, z: carrierPlacement.hexR },
+        const distance = edgeDistance(
+          { x: placement.hexQ, z: placement.hexR, baseRadiusInches: rulesBaseRadius(fighterModel) },
+          { x: carrierPlacement.hexQ, z: carrierPlacement.hexR, baseRadiusInches: rulesBaseRadius(carrierModel) },
         );
         if (distance > 3 + 1e-6) {
           throw Object.assign(new Error("Deployed carried fighters must be placed within 3 inches of their carrier"), { status: 400 });
@@ -5763,7 +5763,10 @@ router.post("/games/:gameId/units/:unitId/launch-fighter", requireAuth, async (r
       if (!shipModelIsFighter(fighterModel)) throw Object.assign(new Error("Selected ship model is not a fighter flight"), { status: 400 });
       const finalHexQ = snapBoardCoord(hexQ);
       const finalHexR = snapBoardCoord(hexR);
-      const launchDistance = centerDistance({ x: carrier.hexQ, z: carrier.hexR }, { x: finalHexQ, z: finalHexR });
+      const launchDistance = edgeDistance(
+        { x: carrier.hexQ, z: carrier.hexR, baseRadiusInches: rulesBaseRadius(carrier) },
+        { x: finalHexQ, z: finalHexR, baseRadiusInches: rulesBaseRadius(fighterModel) },
+      );
       if (launchDistance > 3 + 1e-6) throw Object.assign(new Error("Fighters must launch within 3 inches of the carrier"), { status: 400 });
       if (finalHexQ < -24 || finalHexQ > 24 || finalHexR < -36 || finalHexR > 36) throw Object.assign(new Error("Launch position is outside the board"), { status: 400 });
 

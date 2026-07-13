@@ -618,7 +618,7 @@ function DeploymentZones({ depth, mySide }: { depth: number; mySide: "challenger
 
 function CarriedFighterDeploymentGuide({
   carrier,
-  radius = CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES,
+  radius = carriedFighterDeployCenterRadius(),
 }: {
   carrier: Pick<StagedUnitData, "x" | "z">;
   radius?: number;
@@ -977,6 +977,13 @@ function rulesBaseRadius(_unit?: { baseRadiusInches?: number | null }): number {
   return STANDARD_BASE_RADIUS_INCHES;
 }
 
+function carriedFighterDeployCenterRadius(
+  carrier?: { baseRadiusInches?: number | null },
+  fighter?: { baseRadiusInches?: number | null },
+): number {
+  return CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES + rulesBaseRadius(carrier) + rulesBaseRadius(fighter);
+}
+
 const BASE_CONTACT_EPSILON = 0.05;
 
 function uiBasesCanOverlap(
@@ -1009,6 +1016,10 @@ function uiBaseFootprintsIllegallyOverlap(a: UiBaseFootprint, b: UiBaseFootprint
   if (uiBasesCanOverlap(a, b)) return false;
   const minimumDistance = Math.max(0, rulesBaseRadius(a) + rulesBaseRadius(b) - BASE_CONTACT_EPSILON);
   return Math.hypot(a.x - b.x, a.z - b.z) < minimumDistance;
+}
+
+function uiBaseFootprintEdgeDistance(a: UiBaseFootprint, b: UiBaseFootprint): number {
+  return Math.max(0, Math.hypot(a.x - b.x, a.z - b.z) - rulesBaseRadius(a) - rulesBaseRadius(b));
 }
 
 function finalForwardPositionOverlapsBase(
@@ -4292,9 +4303,10 @@ export default function GameBoard() {
   const clampToCarriedFighterDeployCircle = useCallback((
     rawX: number,
     rawZ: number,
-    carrier: Pick<StagedUnitData, "x" | "z">,
-    radius = CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES,
+    carrier: Pick<StagedUnitData, "x" | "z" | "baseRadiusInches">,
+    fighter?: { baseRadiusInches?: number | null },
   ): [number, number] => {
+    const radius = carriedFighterDeployCenterRadius(carrier, fighter);
     let [x, z] = clampToDeployZone(rawX, rawZ);
     for (let i = 0; i < 4; i += 1) {
       const dx = x - carrier.x;
@@ -4483,26 +4495,39 @@ export default function GameBoard() {
       })),
     ];
     const angleOffsets = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
-    const distances = [1.6, 2.1, 2.6, 3];
+    const maxCenterDistance = carriedFighterDeployCenterRadius(carrier, fighterModel);
+    const distances = [1.6, 2.2, 2.8, 3.4, 4, maxCenterDistance];
     const baseAngle = (carrier.heading * Math.PI) / 180;
     let spot: { x: number; z: number } | null = null;
     for (const distance of distances) {
       for (const offset of angleOffsets) {
         const rawX = carrier.x + Math.sin(baseAngle + offset) * distance;
         const rawZ = carrier.z + Math.cos(baseAngle + offset) * distance;
-        const [x, z] = clampToCarriedFighterDeployCircle(rawX, rawZ, carrier);
-        if (Math.hypot(x - carrier.x, z - carrier.z) > CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES + 1e-6) continue;
+        const [x, z] = clampToCarriedFighterDeployCircle(rawX, rawZ, carrier, fighterModel);
         const candidate = {
           id: -1,
-          hexQ: x,
-          hexR: z,
+          x,
+          z,
           isFighter: true,
           baseRadiusInches: fighterModel.baseRadiusInches,
         };
+        const carrierFootprint = {
+          id: -2,
+          x: carrier.x,
+          z: carrier.z,
+          isFighter: false,
+          baseRadiusInches: carrier.baseRadiusInches,
+        };
+        if (uiBaseFootprintEdgeDistance(candidate, carrierFootprint) > CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES + 1e-6) continue;
         const illegalOverlap = allBlockers.some(other => {
-          if (uiBasesCanOverlap(candidate, other)) return false;
-          return Math.hypot(candidate.hexQ - other.hexQ, candidate.hexR - other.hexR)
-            < rulesBaseRadius(candidate) + rulesBaseRadius(other) - BASE_CONTACT_EPSILON;
+          const otherFootprint = {
+            id: other.id,
+            x: other.hexQ,
+            z: other.hexR,
+            isFighter: other.isFighter,
+            baseRadiusInches: other.baseRadiusInches,
+          };
+          return uiBaseFootprintsIllegallyOverlap(candidate, otherFootprint);
         });
         if (!illegalOverlap) {
           spot = { x, z };
@@ -5032,7 +5057,8 @@ export default function GameBoard() {
     const forward = headingForwardVec(carrier);
     const baseAngle = Math.atan2(forward.z, forward.x);
     const angleOffsets = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
-    const distances = [1.6, 2.2, 2.8, 3];
+    const maxCenterDistance = carriedFighterDeployCenterRadius(carrier, { baseRadiusInches: STANDARD_BASE_RADIUS_INCHES });
+    const distances = [1.6, 2.2, 2.8, 3.4, 4, maxCenterDistance];
     for (const distance of distances) {
       for (const offset of angleOffsets) {
         const angle = baseAngle + offset;
@@ -5044,11 +5070,30 @@ export default function GameBoard() {
           baseRadiusInches: STANDARD_BASE_RADIUS_INCHES,
         };
         if (candidate.hexQ < -24 || candidate.hexQ > 24 || candidate.hexR < -36 || candidate.hexR > 36) continue;
+        const candidateFootprint = {
+          id: candidate.id,
+          x: candidate.hexQ,
+          z: candidate.hexR,
+          isFighter: candidate.isFighter,
+          baseRadiusInches: candidate.baseRadiusInches,
+        };
+        const carrierFootprint = {
+          id: carrier.id,
+          x: carrier.hexQ,
+          z: carrier.hexR,
+          isFighter: false,
+          baseRadiusInches: carrier.baseRadiusInches,
+        };
+        if (uiBaseFootprintEdgeDistance(candidateFootprint, carrierFootprint) > CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES + 1e-6) continue;
         const illegalOverlap = unitsWithFighterFlags.some(other => {
           if (other.isDestroyed) return false;
-          if (uiBasesCanOverlap(candidate, other)) return false;
-          return Math.hypot(candidate.hexQ - other.hexQ, candidate.hexR - other.hexR)
-            < rulesBaseRadius(candidate) + rulesBaseRadius(other) - BASE_CONTACT_EPSILON;
+          return uiBaseFootprintsIllegallyOverlap(candidateFootprint, {
+            id: other.id,
+            x: other.hexQ,
+            z: other.hexR,
+            isFighter: other.isFighter,
+            baseRadiusInches: other.baseRadiusInches,
+          });
         });
         if (!illegalOverlap) return { ...candidate, heading: carrier.heading };
       }
@@ -5897,24 +5942,24 @@ export default function GameBoard() {
         if (idx === -1) {
           // Staged a ship that isn't in the selected fleet — fall back
           // to direct drop-in for THIS unit so nothing silently disappears.
-          placements.push({ shipModelId: staged.shipModelId, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: staged.heading, crewQuality: staged.crewQuality });
+          placements.push({ shipModelId: staged.shipModelId, hexQ: snapBoardCoord(staged.x), hexR: snapBoardCoord(staged.z), heading: staged.heading, crewQuality: staged.crewQuality });
           continue;
         }
         const ship = available.splice(idx, 1)[0];
-        placements.push({ shipId: ship.id, hexQ: Math.round(staged.x), hexR: Math.round(staged.z), heading: staged.heading, crewQuality: staged.crewQuality });
+        placements.push({ shipId: ship.id, hexQ: snapBoardCoord(staged.x), hexR: snapBoardCoord(staged.z), heading: staged.heading, crewQuality: staged.crewQuality });
       }
       // Mixed fleet+drop-in payload is not supported by the API. If ANY
       // placement lacks shipId, drop the fleetId entirely and let the
       // server treat it as a pure direct-deploy.
       const allHaveShipId = placements.every(p => p.shipId !== undefined);
       fleetIdToSend = allHaveShipId ? parseInt(yardsFleetId) : undefined;
-      if (!allHaveShipId) placements = placements.map(p => ({ shipModelId: p.shipModelId ?? currentStagedUnits.find(s => Math.round(s.x) === p.hexQ && Math.round(s.z) === p.hexR)?.shipModelId, hexQ: p.hexQ, hexR: p.hexR, heading: p.heading, crewQuality: p.crewQuality }));
+      if (!allHaveShipId) placements = placements.map(p => ({ shipModelId: p.shipModelId ?? currentStagedUnits.find(s => snapBoardCoord(s.x) === p.hexQ && snapBoardCoord(s.z) === p.hexR)?.shipModelId, hexQ: p.hexQ, hexR: p.hexR, heading: p.heading, crewQuality: p.crewQuality }));
     } else {
       // Pure direct drop-in.
       placements = currentStagedUnits.map(s => ({
         shipModelId: s.shipModelId,
-        hexQ: Math.round(s.x),
-        hexR: Math.round(s.z),
+        hexQ: snapBoardCoord(s.x),
+        hexR: snapBoardCoord(s.z),
         heading: s.heading,
         crewQuality: s.crewQuality,
         launchedFromPlacementIndex: s.launchedFromStagedId ? stagedIndexById.get(s.launchedFromStagedId) ?? null : null,
@@ -6011,7 +6056,7 @@ export default function GameBoard() {
                   ? prev.find(unit => unit.id === moving.launchedFromStagedId)
                   : null;
                 const [x, z] = carrier
-                  ? clampToCarriedFighterDeployCircle(rx, rz, carrier)
+                  ? clampToCarriedFighterDeployCircle(rx, rz, carrier, moving)
                   : clampToDeployZone(rx, rz);
                 const ignoredStagedIds = new Set([
                   moving.id,
@@ -6033,7 +6078,7 @@ export default function GameBoard() {
                 return prev.map(unit => {
                   if (unit.id === draggingId) return movedCarrier;
                   if (unit.launchedFromStagedId === draggingId) {
-                    const [childX, childZ] = clampToCarriedFighterDeployCircle(unit.x, unit.z, movedCarrier);
+                    const [childX, childZ] = clampToCarriedFighterDeployCircle(unit.x, unit.z, movedCarrier, unit);
                     return { ...unit, x: childX, z: childZ };
                   }
                   return unit;
