@@ -25,12 +25,12 @@ Movement exists, but full tabletop movement geometry is not fully server-authori
 
 Known/suspected gaps:
 - Full turn-count and turn-angle timing needs stricter server validation.
-- Ship overlap/stacking is not fully enforced server-side.
+- Final-position base overlap/stacking is enforced server-side.
 - Some special-action movement restrictions may be split between client and server.
 - Ramming is not implemented.
 
 Impact:
-- Honest players can play normally, but edge cases may permit illegal final positions or turns.
+- Honest players can play normally, but edge cases may permit illegal turn timing or special-action movement.
 
 Likely work:
 - Move all movement legality checks to the server as source of truth.
@@ -41,7 +41,6 @@ Likely work:
 Fighters are only partially represented.
 
 Known gaps:
-- Fighter launch and recovery are not implemented.
 - Fighter attack timing before ships is not fully implemented.
 - Dogfighting is not implemented.
 - Anti-Fighter and Advanced Anti-Fighter are incomplete or not fully rules-faithful.
@@ -343,14 +342,15 @@ Ship traits need two layers: parsing and behavior. The app currently parses or l
 Status: partial.
 
 Current app note:
-- UI and server hooks exist for Anti-Fighter allocation/results, but the complete fighter system is not finished.
+- UI and server hooks exist for Anti-Fighter allocation/results.
+- Escort and Minbari Web of Death extend Anti-Fighter target eligibility through nearby protected allies.
 
 Remaining work:
 - Confirm Movement Phase timing.
 - Confirm eligible attackers and targets.
 - Implement Advanced Anti-Fighter differences exactly.
-- Integrate with dogfighting once fighters are fully implemented.
-- Verify interaction with Escort, Guardian Array, Web of Death, and future fighter interceptor support.
+- Add regression coverage for dogfight exclusion, Escort lending, and Web of Death restrictions.
+- Verify future fighter interceptor support.
 
 Tests:
 - Capital ship with Anti-Fighter can attack eligible fighter targets at the correct time.
@@ -359,18 +359,20 @@ Tests:
 
 ### Carrier / Fleet Carrier
 
-Status: not implemented as gameplay behavior.
+Status: partial.
 
-Missing behavior:
+Implemented:
 - Launch/recovery support.
 - Craft capacity tracking.
-- Fighter repair/replacement if applicable.
-- Fleet Carrier command/support effects.
+- Fleet Carrier pre-battle deployment support.
+- Fleet Carrier dogfight and destroyed-flight recovery support.
+
+Missing behavior:
+- Fighter repair/replacement if applicable beyond destroyed-flight recovery.
 - Loss of carrier benefits when crippled, skeleton-crewed, destroyed, or trait-lost.
 
 Dependencies:
-- Fighter launch/recovery subsystem.
-- Runtime carried-craft inventory.
+- Regression tests for fighter launch/recovery and Fleet Carrier edge cases.
 
 ### Command and Admiral interactions
 
@@ -434,13 +436,13 @@ Tests:
 
 ### Super Maneuverable
 
-Status: partial.
+Status: implemented for movement.
 
 Current app note:
-- UI movement logic recognizes Super Maneuverable for turn-distance behavior.
+- UI and server movement logic recognize Super Maneuverable for turn-distance and minimum-move behavior.
+- Fighter flight models are treated as Super Maneuverable for movement even when older/stale model rows are missing the explicit trait string.
 
 Remaining work:
-- Confirm server enforcement matches client movement planner.
 - Confirm exact interaction with ramming defense once ramming exists.
 - Confirm restrictions from criticals and special actions.
 
@@ -707,7 +709,7 @@ Known gaps:
 
 Known gaps:
 - Fighter interceptor support is not implemented.
-- Guardian Array and similar fleet-specific interceptor support are not implemented.
+- Guardian Array is parsed but fleet-specific interceptor lending is not implemented; it needs an attack-declaration choice rather than automatic spending.
 
 ### Dodge
 

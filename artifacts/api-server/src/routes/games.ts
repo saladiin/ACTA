@@ -577,10 +577,29 @@ function headingForwardVec(unit: { heading: number; modelFilename: string }): { 
 }
 
 function shipModelIsFighter(model: {
+  name?: string | null;
+  filename?: string | null;
   shipClass?: string | null;
   traits?: string | null;
 }): boolean {
-  return parseShipTraits(model.traits ?? "").fighter || /\bfighter\b/i.test(model.shipClass ?? "");
+  const identity = [model.name, model.filename, model.shipClass]
+    .filter(Boolean)
+    .join(" ");
+  return parseShipTraits(model.traits ?? "").fighter
+    || /\bfighter\b/i.test(model.shipClass ?? "")
+    || /fighter flight/i.test(model.name ?? "")
+    || /\b(?:aurora|thunderbolt|nial|sentri|frazi|flyer)\b/i.test(identity);
+}
+
+function movementTraitsForModel(
+  model: Pick<typeof shipModelsTable.$inferSelect, "name" | "filename" | "traits" | "shipClass">,
+  crits: { lostTraitNames: Set<string> },
+): ReturnType<typeof parseShipTraits> {
+  const traits = parseShipTraits(filterLostTraits(model.traits, crits.lostTraitNames));
+  return {
+    ...traits,
+    superManeuverable: traits.superManeuverable || shipModelIsFighter(model),
+  };
 }
 
 type FighterInventoryModel = Pick<typeof shipModelsTable.$inferSelect, "id" | "name">;
@@ -1141,44 +1160,6 @@ function findIllegalBaseOverlap(candidate: UnitFootprint, others: UnitFootprint[
   return null;
 }
 
-function findLegalEndpointAlongSegment(
-  start: { x: number; z: number },
-  requestedEnd: { x: number; z: number },
-  moving: UnitFootprint,
-  blockers: UnitFootprint[],
-): { x: number; z: number; moved: number; blocker: UnitFootprint | null } {
-  const vx = requestedEnd.x - start.x;
-  const vz = requestedEnd.z - start.z;
-  const length = Math.hypot(vx, vz);
-  const normalized = length > 1e-9
-    ? { x: vx / length, z: vz / length }
-    : { x: 0, z: 0 };
-
-  for (let distance = snapHalfInch(length); distance >= 0; distance -= 0.5) {
-    const x = snapBoardCoord(start.x + normalized.x * distance);
-    const z = snapBoardCoord(start.z + normalized.z * distance);
-    const candidate: UnitFootprint = {
-      ...moving,
-      x,
-      z,
-    };
-    const blocker = findIllegalBaseOverlap(candidate, blockers);
-    if (!blocker) return { x, z, moved: distance, blocker: null };
-  }
-
-  const candidate: UnitFootprint = {
-    ...moving,
-    x: snapBoardCoord(start.x),
-    z: snapBoardCoord(start.z),
-  };
-  return {
-    x: candidate.x,
-    z: candidate.z,
-    moved: 0,
-    blocker: findIllegalBaseOverlap(candidate, blockers),
-  };
-}
-
 type AiMovementHeadingCandidate = {
   heading: number;
   label: string;
@@ -1624,57 +1605,6 @@ function buildLegalAiMovementPlans(
     || b.moved - a.moved,
   );
   return plans;
-}
-
-function clampMovementToFirstIllegalContact(
-  start: { x: number; z: number },
-  requestedEnd: { x: number; z: number },
-  moving: Pick<UnitFootprint, "id" | "isFighter" | "baseRadiusInches">,
-  blockers: UnitFootprint[],
-): { x: number; z: number; clamped: boolean; blocker: UnitFootprint | null } {
-  const vx = requestedEnd.x - start.x;
-  const vz = requestedEnd.z - start.z;
-  const a = vx * vx + vz * vz;
-  if (a <= 1e-9) return { ...requestedEnd, clamped: false, blocker: null };
-
-  let bestT = 1;
-  let bestBlocker: UnitFootprint | null = null;
-  for (const blocker of blockers) {
-    if (moving.id === blocker.id) continue;
-    if (canBasesOverlap(moving, blocker)) continue;
-
-    const minDistance = rulesBaseRadius(moving) + rulesBaseRadius(blocker);
-    const sx = start.x - blocker.x;
-    const sz = start.z - blocker.z;
-    const currentDistance = Math.hypot(sx, sz);
-    const b = 2 * (sx * vx + sz * vz);
-    const c = sx * sx + sz * sz - minDistance * minDistance;
-    const discriminant = b * b - 4 * a * c;
-    if (discriminant < 0) continue;
-
-    const sqrtDisc = Math.sqrt(discriminant);
-    const roots = [(-b - sqrtDisc) / (2 * a), (-b + sqrtDisc) / (2 * a)]
-      .filter(t => t >= -1e-6 && t <= 1 + 1e-6)
-      .map(t => Math.max(0, Math.min(1, t)))
-      .sort((x, y) => x - y);
-    const hitT = roots[0];
-    if (hitT === undefined) continue;
-    if (hitT <= BASE_CONTACT_EPSILON && currentDistance <= minDistance + BASE_CONTACT_EPSILON) {
-      continue;
-    }
-    if (hitT < bestT) {
-      bestT = hitT;
-      bestBlocker = blocker;
-    }
-  }
-
-  if (!bestBlocker || bestT >= 1) return { ...requestedEnd, clamped: false, blocker: null };
-  return {
-    x: start.x + vx * bestT,
-    z: start.z + vz * bestT,
-    clamped: true,
-    blocker: bestBlocker,
-  };
 }
 
 function fighterWeaponRangeDistance(
@@ -2205,7 +2135,9 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
     lostTraits: r.lostTraits ?? [],
   })));
   const model = await getShipModelForUnit(tx, unit);
-  const traits = parseShipTraits(filterLostTraits(model?.traits ?? "", crits.lostTraitNames));
+  const traits = model
+    ? movementTraitsForModel(model, crits)
+    : parseShipTraits("");
   const speedCap = movementSpeedCap(unit, crits);
   const turnProfile = effectiveTurnProfile(unit, traits);
   const minMove = traits.superManeuverable ? 0 : speedCap > 0 ? Math.max(1, Math.ceil(effectiveBaseSpeed(unit, crits) / 2)) : 0;
@@ -3415,6 +3347,87 @@ type AntiFighterPendingState = {
   };
 };
 
+type AntiFighterEntry = {
+  unit: typeof gameUnitsTable.$inferSelect;
+  model: typeof shipModelsTable.$inferSelect;
+  traits: ParsedShipTraits;
+  footprint: UnitFootprint;
+};
+
+function isMinbariEntry(entry: AntiFighterEntry): boolean {
+  return /minbari/i.test(entry.model.faction ?? "")
+    || /minbari/i.test(entry.unit.faction ?? "");
+}
+
+function hasWebOfDeathEscort(entry: AntiFighterEntry, entries: AntiFighterEntry[]): boolean {
+  if (entry.footprint.isFighter || !isMinbariEntry(entry)) return false;
+  return entries.some(other =>
+    other.unit.id !== entry.unit.id
+    && !other.footprint.isFighter
+    && other.unit.ownerId === entry.unit.ownerId
+    && isMinbariEntry(other)
+    && antiFighterRangeDistance(entry.footprint, other.footprint) <= 4 + 1e-6
+  );
+}
+
+function escortProtectedAllies(entry: AntiFighterEntry, entries: AntiFighterEntry[]): AntiFighterEntry[] {
+  const protectedAllies: AntiFighterEntry[] = [];
+  if (entry.traits.escort) {
+    protectedAllies.push(...entries.filter(other =>
+      other.unit.id !== entry.unit.id
+      && other.unit.ownerId === entry.unit.ownerId
+      && antiFighterRangeDistance(entry.footprint, other.footprint) <= 8 + 1e-6
+    ));
+  }
+
+  if (hasWebOfDeathEscort(entry, entries)) {
+    protectedAllies.push(...entries.filter(other =>
+      other.unit.id !== entry.unit.id
+      && !other.footprint.isFighter
+      && other.unit.ownerId === entry.unit.ownerId
+      && isMinbariEntry(other)
+      && antiFighterRangeDistance(entry.footprint, other.footprint) <= 4 + 1e-6
+    ));
+  }
+
+  const unique = new Map<number, AntiFighterEntry>();
+  for (const ally of protectedAllies) unique.set(ally.unit.id, ally);
+  return [...unique.values()];
+}
+
+function antiFighterEligibleTargetsFor(
+  attackerEntry: AntiFighterEntry,
+  entries: AntiFighterEntry[],
+  fighterEntries: AntiFighterEntry[],
+  dogfightingIds: Set<number>,
+  liveIds?: Set<number>,
+): Array<{ targetEntry: AntiFighterEntry; distance: number }> {
+  const best = new Map<number, { targetEntry: AntiFighterEntry; distance: number }>();
+  const consider = (targetEntry: AntiFighterEntry, distance: number) => {
+    const previous = best.get(targetEntry.unit.id);
+    if (!previous || distance < previous.distance) {
+      best.set(targetEntry.unit.id, { targetEntry, distance });
+    }
+  };
+
+  const protectedAllies = escortProtectedAllies(attackerEntry, entries);
+  for (const targetEntry of fighterEntries) {
+    if (liveIds && !liveIds.has(targetEntry.unit.id)) continue;
+    if (targetEntry.unit.ownerId === attackerEntry.unit.ownerId) continue;
+    if (dogfightingIds.has(targetEntry.unit.id)) continue;
+
+    const directDistance = antiFighterRangeDistance(attackerEntry.footprint, targetEntry.footprint);
+    if (directDistance <= 2 + 1e-6) consider(targetEntry, directDistance);
+
+    for (const ally of protectedAllies) {
+      const protectedDistance = antiFighterRangeDistance(ally.footprint, targetEntry.footprint);
+      if (protectedDistance <= 2 + 1e-6) consider(targetEntry, protectedDistance);
+    }
+  }
+
+  return [...best.values()];
+}
+
 function readAntiFighterPending(raw: unknown): AntiFighterPendingState | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const state = raw as Record<string, unknown>;
@@ -3438,12 +3451,7 @@ async function buildAntiFighterPendingState(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.isDestroyed, false),
   ));
-  const entries: Array<{
-    unit: typeof gameUnitsTable.$inferSelect;
-    model: typeof shipModelsTable.$inferSelect;
-    traits: ParsedShipTraits;
-    footprint: UnitFootprint;
-  }> = [];
+  const entries: AntiFighterEntry[] = [];
 
   for (const unit of rows as Array<typeof gameUnitsTable.$inferSelect>) {
     const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
@@ -3495,16 +3503,11 @@ async function buildAntiFighterPendingState(
     const standardDice = Math.max(0, attackerEntry.traits.antiFighter);
     const dice = advancedDice > 0 ? advancedDice : standardDice;
     if (dice <= 0) continue;
-    const eligibleTargets = fighterEntries
-      .filter(targetEntry =>
-        targetEntry.unit.ownerId !== attackerEntry.unit.ownerId
-        && !dogfightingIds.has(targetEntry.unit.id)
-        && antiFighterRangeDistance(attackerEntry.footprint, targetEntry.footprint) <= 2 + 1e-6
-      )
-      .map(targetEntry => ({
+    const eligibleTargets = antiFighterEligibleTargetsFor(attackerEntry, entries, fighterEntries, dogfightingIds)
+      .map(({ targetEntry, distance }) => ({
         targetUnitId: targetEntry.unit.id,
         targetName: targetEntry.unit.name,
-        distance: Number(antiFighterRangeDistance(attackerEntry.footprint, targetEntry.footprint).toFixed(2)),
+        distance: Number(distance.toFixed(2)),
         hull: targetEntry.model.hullRating ?? targetEntry.model.hull ?? targetEntry.unit.maxHullPoints,
       }))
       .sort((a, b) => a.hull - b.hull || a.distance - b.distance || a.targetUnitId - b.targetUnitId);
@@ -3551,12 +3554,7 @@ async function resolveEndOfMovementAntiFighter(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.isDestroyed, false),
   ));
-  const byId = new Map<number, {
-    unit: typeof gameUnitsTable.$inferSelect;
-    model: typeof shipModelsTable.$inferSelect;
-    traits: ParsedShipTraits;
-    footprint: UnitFootprint;
-  }>();
+  const byId = new Map<number, AntiFighterEntry>();
 
   for (const unit of rows as Array<typeof gameUnitsTable.$inferSelect>) {
     const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
@@ -3615,13 +3613,13 @@ async function resolveEndOfMovementAntiFighter(
     if (dice <= 0) continue;
     const bonus = advancedDice > 0 ? 1 : 0;
     const trait = advancedDice > 0 ? "Advanced Anti-Fighter" : "Anti-Fighter";
-    const eligibleTargets = fighterEntries
-      .filter(targetEntry =>
-        liveIds.has(targetEntry.unit.id)
-        && targetEntry.unit.ownerId !== attackerEntry.unit.ownerId
-        && !dogfightingIds.has(targetEntry.unit.id)
-        && antiFighterRangeDistance(attackerEntry.footprint, targetEntry.footprint) <= 2 + 1e-6
-      )
+    const eligibleTargets = antiFighterEligibleTargetsFor(
+      attackerEntry,
+      [...byId.values()],
+      fighterEntries,
+      dogfightingIds,
+      liveIds,
+    ).map(({ targetEntry }) => targetEntry)
       .sort((a, b) =>
         (a.model.hullRating ?? 0) - (b.model.hullRating ?? 0)
         || antiFighterRangeDistance(attackerEntry.footprint, a.footprint) - antiFighterRangeDistance(attackerEntry.footprint, b.footprint)
@@ -5541,7 +5539,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   if (!moveShip) { res.status(500).json({ error: "Ship record missing" }); return; }
   const [moveModel] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, moveShip.shipModelId));
   if (!moveModel) { res.status(500).json({ error: "Ship model missing" }); return; }
-  const moveTraits = parseShipTraits(filterLostTraits(moveModel.traits, moveCrits.lostTraitNames));
+  const moveTraits = movementTraitsForModel(moveModel, moveCrits);
   const currentSpeedCap = movementSpeedCap(unit, moveCrits);
   const turnProfile = effectiveTurnProfile(unit, moveTraits);
   const isAdriftLike =
@@ -6729,7 +6727,9 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                 if (endedShip) {
                   [endedModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, endedShip.shipModelId));
                 }
-                const endedTraits = parseShipTraits(filterLostTraits(endedModel?.traits ?? "", cap.lostTraitNames));
+                const endedTraits = endedModel
+                  ? movementTraitsForModel(endedModel, cap)
+                  : parseShipTraits("");
                 const effectiveMax = effectiveBaseSpeed(endedUnit, cap);
                 const minRequired = endedTraits.superManeuverable
                   ? 0

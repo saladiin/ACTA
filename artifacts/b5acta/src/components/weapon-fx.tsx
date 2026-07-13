@@ -29,8 +29,18 @@ const TRACER_TUNING = {
   intensity: 1,
   count: 7,
 };
-const MISSILE_BODY_COLOR = "#ffd089";
-const MISSILE_IMPACT_COLOR = "#ff7733";
+const MISSILE_BODY_COLOR = "#ff6600";
+const MISSILE_IMPACT_COLOR = "#ff0000";
+const MISSILE_TUNING = {
+  speed: 1.15,
+  size: 0.4,
+  fade: 1,
+  intensity: 0.15,
+  spread: 1.3,
+  count: 8,
+  arc: 1.45,
+  thickness: 2.05,
+};
 const ENERGY_MINE_TUNING = {
   color: "#f5f5f4",
   secondaryColor: "#6e6ce4",
@@ -58,6 +68,17 @@ export function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): WeaponC
 export function beamColorFor(faction: string, weapon?: Pick<Weapon, "name">): string {
   if ((weapon?.name ?? "").toLowerCase().includes("molecular slicer")) return SHADOW_SLICER_COLOR;
   return FACTION_BEAM_COLOR[faction] ?? DEFAULT_BEAM_COLOR;
+}
+
+function tracerColorsFor(faction: string, weapon?: Pick<Weapon, "name">): { color: string; impact: string } {
+  const name = (weapon?.name ?? "").toLowerCase();
+  if (name.includes("matter") || name.includes("particle")) {
+    return { color: "#ffa040", impact: "#ffd166" };
+  }
+  if (/brakiri|league/i.test(faction) || name.includes("pulsar") || name.includes("ion")) {
+    return { color: TRACER_COLOR, impact: TRACER_IMPACT_COLOR };
+  }
+  return { color: TRACER_COLOR, impact: TRACER_IMPACT_COLOR };
 }
 
 // Common envelope: short ramp-up, plateau, then fade. Returns 0..1.
@@ -314,7 +335,7 @@ function MissileVolleyFx({
   count: number;
 }) {
   const startRef = useRef<number>(performance.now());
-  const n = Math.max(1, Math.min(count, 5));
+  const n = Math.max(1, Math.min(count, MISSILE_TUNING.count));
   // Pop missiles into a small arc so they look like a salvo, not a single line.
   return (
     <>
@@ -325,14 +346,15 @@ function MissileVolleyFx({
           to={to}
           color={color}
           delayMs={i * 130}
-          travelMs={1000}
+          travelMs={1000 / MISSILE_TUNING.speed}
           startRef={startRef}
-          size={0.066}
-          arcHeight={2.5 + (i % 2) * 1.5}
-          fadeMs={300}
+          size={0.066 * MISSILE_TUNING.size}
+          arcHeight={MISSILE_TUNING.arc * MISSILE_TUNING.spread * (1 + (i % 2) * 0.25)}
+          fadeMs={300 * MISSILE_TUNING.fade}
+          intensity={MISSILE_TUNING.intensity}
           ribbonTrail
           ribbonLengthT={0.12}
-          ribbonWidth={0.18}
+          ribbonWidth={0.18 * MISSILE_TUNING.thickness}
         />
       ))}
     </>
@@ -571,14 +593,15 @@ export function WeaponFx({
   }
 
   // Tracer (cannons / mass drivers / ion / pulse).
+  const tracerColors = tracerColorsFor(attackerFaction, weapon);
   return (
     <>
-      <TracerSalvoFx from={from} to={to} color={TRACER_COLOR} count={totalDice} />
+      <TracerSalvoFx from={from} to={to} color={tracerColors.color} count={totalDice} />
       {Array.from({ length: hits }).map((_, i) => (
         <ImpactFlash
           key={i}
           position={to}
-          color={TRACER_IMPACT_COLOR}
+          color={tracerColors.impact}
           delayMs={380 + i * 70}
           size={0.5}
         />

@@ -62,6 +62,8 @@ export interface ShipTraits {
   flightComputer: boolean;
   scout: boolean;
   fighter: boolean;
+  escort: boolean;
+  guardianArray: boolean;
   carrier: number;
   fleetCarrier: boolean;
   command: number;
@@ -88,6 +90,8 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     flightComputer: hasTrait(t, ["Flight Computer"]),
     scout: hasTrait(t, ["Scout"]),
     fighter: hasTrait(t, ["Fighter"]),
+    escort: hasTrait(t, ["Escort"]),
+    guardianArray: hasTrait(t, ["Guardian Array"]),
     carrier: numericTrait(t, ["Carrier"]),
     fleetCarrier: hasTrait(t, ["Fleet Carrier"]),
     command: numericTrait(t, ["Command"]),

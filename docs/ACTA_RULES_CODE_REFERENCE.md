@@ -64,7 +64,7 @@ Implementation:
 Current app:
 - Uses 48 x 72 board and world inches.
 - Allows pre-measure-like range/arc visualization.
-- Does not appear to enforce ship overlap/collision.
+- Enforces illegal final-position base overlap server-side.
 
 ## Initiative
 
@@ -109,11 +109,12 @@ Current app:
 - Uses integer hex/world coordinates and Euclidean distance.
 - Turn limits are partly enforced client-side through movement planner; server inspected here enforces some special-action heading restrictions but not the full turn timing/turn-count movement geometry.
 - Engine critical speed penalties affect minimum speed calculation.
+- Server rejects illegal final-position base overlap; movement paths are not blocked merely for passing over another base.
 
 Audit:
 - Forced adrift movement timing now matches the base rule timing at a coarse level: the server performs the straight-line drift during End Phase.
 - Full turn-count/turn-angle server enforcement is unclear or incomplete.
-- Ship overlap/stacking not enforced server-side.
+- Final-position ship overlap/stacking is enforced server-side.
 - Printed damage/crew thresholds are now used for crippled/skeleton logic, with half-max as a legacy fallback.
 
 ## Attack Phase
@@ -549,9 +550,9 @@ Implemented or substantially implemented:
 
 Not implemented or partial:
 - Fleet/race initiative modifiers.
-- Full movement geometry/collision and per-turn distance gate server enforcement.
-- Ship collision/stacking.
-- Fighters, dogfights, launch/recovery, Anti-Fighter.
+- Full movement geometry/collision edge cases.
+- Ramming/collision damage.
+- Fighter regression coverage for deployment, dogfights, launch/recovery, Anti-Fighter, Escort, and Web of Death.
 - Hyperspace/jump points.
 - Boarding.
 - Terrain/stellar debris.

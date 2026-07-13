@@ -616,6 +616,31 @@ function DeploymentZones({ depth, mySide }: { depth: number; mySide: "challenger
   );
 }
 
+function CarriedFighterDeploymentGuide({
+  carrier,
+  radius = CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES,
+}: {
+  carrier: Pick<StagedUnitData, "x" | "z">;
+  radius?: number;
+}) {
+  return (
+    <group position={[carrier.x, 0, carrier.z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]} renderOrder={2}>
+        <circleGeometry args={[radius, 80]} />
+        <meshBasicMaterial color="#22d3ee" transparent opacity={0.08} depthWrite={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.018, 0]} renderOrder={3}>
+        <ringGeometry args={[Math.max(0.05, radius - 0.035), radius + 0.035, 96]} />
+        <meshBasicMaterial color="#67e8f9" transparent opacity={0.72} depthWrite={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} renderOrder={3}>
+        <ringGeometry args={[Math.max(0.05, radius - 0.22), radius - 0.17, 96]} />
+        <meshBasicMaterial color="#0891b2" transparent opacity={0.28} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
 function BoardBoundary() {
   const geo = useMemo(() => {
     const hw = BOARD_W / 2; // 24
@@ -869,8 +894,9 @@ function hasExplicitFighterTrait(raw: string | null | undefined): boolean {
     .some(t => t === "fighter");
 }
 
-function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "traits"> | undefined): boolean {
+function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "traits" | "name"> | undefined): boolean {
   return hasExplicitFighterTrait(model?.traits)
+    || /fighter flight/i.test(model?.name ?? "")
     || isFighterSquadronModel(model?.filename ?? "");
 }
 
@@ -945,6 +971,7 @@ function isShadowCodedDamageVessel(unit: { faction?: string | null; name?: strin
 }
 
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
+const CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES = 3;
 
 function rulesBaseRadius(_unit?: { baseRadiusInches?: number | null }): number {
   return STANDARD_BASE_RADIUS_INCHES;
@@ -2168,6 +2195,14 @@ function parseUiMovementTraits(raw: string | null | undefined): { agile: boolean
   };
 }
 
+function uiMovementTraitsForModel(model: ShipModel | undefined, unit: { isCrippled?: boolean }): { agile: boolean; superManeuverable: boolean } {
+  const raw = parseUiMovementTraits(model?.traits ?? "");
+  return {
+    ...raw,
+    superManeuverable: (raw.superManeuverable || shipModelHasFighterTrait(model)) && !unit.isCrippled,
+  };
+}
+
 function parseUiSelfRepairDice(raw: string | null | undefined): number {
   const match = (raw ?? "").match(/\bself[-\s]?repair\b\s*:?\s*(\d+)/i);
   return match ? Math.max(0, Number(match[1]) || 0) : 0;
@@ -2331,7 +2366,6 @@ function MovementPlanner({ unit, plan, flip, remainingMove, minRequired, committ
   committedBefore: number;
   minExempt: boolean;
 }) {
-  if (!plan) return null;
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
   const headingRad = (unit.heading * Math.PI) / 180;
   // FLIP_MODELS only swap fore↔aft (same convention used by WeaponArcDisplay's
@@ -2342,16 +2376,16 @@ function MovementPlanner({ unit, plan, flip, remainingMove, minRequired, committ
     <group position={[x, 0, z]}>
       <group rotation={[0, headingRad, 0]}>
         <group scale={flip ? [1, 1, -1] : [1, 1, 1]}>
-          {plan.kind === "forward" && (
+          {(!plan || plan.kind === "forward") && (
             <ForwardPreview
-              distance={plan.distance}
+              distance={plan?.kind === "forward" ? plan.distance : 0}
               maxDistance={remainingMove}
               minRequired={minRequired}
               committedBefore={committedBefore}
               minExempt={minExempt}
             />
           )}
-          {plan.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
+          {plan?.kind === "turn" && <TurnArcPreview deltaDeg={plan.deltaDeg} />}
         </group>
       </group>
     </group>
@@ -4236,6 +4270,25 @@ export default function GameBoard() {
     }
     return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
   }, [game, myUserId, deploymentDepth]);
+  const clampToCarriedFighterDeployCircle = useCallback((
+    rawX: number,
+    rawZ: number,
+    carrier: Pick<StagedUnitData, "x" | "z">,
+    radius = CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES,
+  ): [number, number] => {
+    let [x, z] = clampToDeployZone(rawX, rawZ);
+    for (let i = 0; i < 4; i += 1) {
+      const dx = x - carrier.x;
+      const dz = z - carrier.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > radius && dist > 1e-6) {
+        x = carrier.x + (dx / dist) * radius;
+        z = carrier.z + (dz / dist) * radius;
+      }
+      [x, z] = clampToDeployZone(x, z);
+    }
+    return [x, z];
+  }, [clampToDeployZone]);
   const mySide: "challenger" | "opponent" | null = !game
     ? null
     : myUserId === game.challengerId ? "challenger"
@@ -4362,8 +4415,8 @@ export default function GameBoard() {
       for (const offset of angleOffsets) {
         const rawX = carrier.x + Math.sin(baseAngle + offset) * distance;
         const rawZ = carrier.z + Math.cos(baseAngle + offset) * distance;
-        const [x, z] = clampToDeployZone(rawX, rawZ);
-        if (Math.hypot(x - carrier.x, z - carrier.z) > 3 + 1e-6) continue;
+        const [x, z] = clampToCarriedFighterDeployCircle(rawX, rawZ, carrier);
+        if (Math.hypot(x - carrier.x, z - carrier.z) > CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES + 1e-6) continue;
         const candidate = {
           id: -1,
           hexQ: x,
@@ -4409,7 +4462,21 @@ export default function GameBoard() {
       crewQuality: carrier.crewQuality,
     }]);
     setSelectedStagedId(newId);
-  }, [clampToDeployZone, currentStagedUnits, isFighterUnit, myUserId, shipModelById, shipModels, units]);
+  }, [clampToCarriedFighterDeployCircle, currentStagedUnits, isFighterUnit, myUserId, shipModelById, shipModels, units]);
+  const carriedFighterDeploymentGuideCarrier = useMemo(() => {
+    const activeId = draggingId ?? selectedStagedId;
+    if (!activeId) return null;
+    const active = currentStagedUnits.find(unit => unit.id === activeId);
+    if (!active) return null;
+    if (active.launchedFromStagedId) {
+      return currentStagedUnits.find(unit => unit.id === active.launchedFromStagedId) ?? null;
+    }
+    const carriedFighters = active.carriedFighters ?? [];
+    if (carriedFighters.length === 0) return null;
+    const deployedFromCarrier = currentStagedUnits.filter(unit => unit.launchedFromStagedId === active.id);
+    if (deployedFromCarrier.length >= uiPrebattleFighterDeploymentLimit(active)) return null;
+    return active;
+  }, [currentStagedUnits, draggingId, selectedStagedId]);
   const applyFleetTemplate = useCallback((template: FleetTemplate) => {
     const roster = shipModels ?? [];
     const chosenShips: ShipModel[] = [];
@@ -4574,9 +4641,7 @@ export default function GameBoard() {
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
-    const traitsStr = getShipModelForUnit(u)?.traits ?? "";
-    const rawMovementTraits = parseUiMovementTraits(traitsStr);
-    const movementTraits = { ...rawMovementTraits, superManeuverable: rawMovementTraits.superManeuverable && !u.isCrippled };
+    const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(u), u);
     const isSuperManeuverable = movementTraits.superManeuverable;
     const baseSpeed = effectiveUiSpeed(u);
     const baseTurns = isSuperManeuverable ? 999 : effectiveUiTurns(u);
@@ -4703,9 +4768,7 @@ export default function GameBoard() {
       }
       const u = selectedUnitData;
       const baseSpeed = effectiveUiSpeed(u);
-      const traitsStr = getShipModelForUnit(u)?.traits ?? "";
-      const rawMovementTraits = parseUiMovementTraits(traitsStr);
-      const movementTraits = { ...rawMovementTraits, superManeuverable: rawMovementTraits.superManeuverable && !u.isCrippled };
+      const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(u), u);
       const isSuperManeuverable = movementTraits.superManeuverable;
       const max = isSuperManeuverable ? 360 : effectiveUiTurnAngle(u);
       const baseTurns = isSuperManeuverable ? 999 : effectiveUiTurns(u);
@@ -4798,9 +4861,8 @@ export default function GameBoard() {
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
-    const traitsStr = getShipModelForUnit(u)?.traits ?? "";
-    const movementTraits = parseUiMovementTraits(traitsStr);
-    const isSuperManeuverable = movementTraits.superManeuverable && !u.isCrippled;
+    const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(u), u);
+    const isSuperManeuverable = movementTraits.superManeuverable;
     const baseSpeed = effectiveUiSpeed(u);
     const maxTurns = (isSuperManeuverable ? 999 : effectiveUiTurns(u)) + (isComeAboutExtra ? 1 : 0);
     // Keep in sync with the keyboard handler's turnsForbidden — All Stop
@@ -4829,12 +4891,7 @@ export default function GameBoard() {
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
     const isComeAboutSharp = u.specialAction === "come-about-sharp-turn";
-    const traitsStr = getShipModelForUnit(u)?.traits ?? "";
-    const rawMovementTraits = parseUiMovementTraits(traitsStr);
-    const movementTraits = {
-      ...rawMovementTraits,
-      superManeuverable: rawMovementTraits.superManeuverable && !u.isCrippled,
-    };
+    const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(u), u);
     const led = getLedger(u.id);
     const baseSpeed = effectiveUiSpeed(u);
     const baseTurnAngle = movementTraits.superManeuverable ? 360 : effectiveUiTurnAngle(u);
@@ -5088,6 +5145,10 @@ export default function GameBoard() {
     if (baseSA === "all-stop" || baseSA === "all-stop-pivot") {
       return { blocked: false, required: 0, moved: 0 };
     }
+    const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(activeUnitData), activeUnitData);
+    if (movementTraits.superManeuverable) {
+      return { blocked: false, required: 0, moved: 0 };
+    }
     // Client doesn't know every server-side speed adjustment, so this is a
     // best-effort floor. Use the merged movement ledger rather than only the
     // unit row field so a rejected follow-up turn cannot leave the end button
@@ -5095,7 +5156,7 @@ export default function GameBoard() {
     const required = Math.max(1, effectiveUiSpeed(activeUnitData) / 2);
     const moved = getLedger(activeUnitData.id).distance;
     return { blocked: moved < required, required, moved };
-  }, [activeUnitData, currentPhase, getLedger]);
+  }, [activeUnitData, currentPhase, getLedger, getShipModelForUnit]);
   const activeActivationCommitted = useMemo(() => {
     if (!activeUnitData) return false;
     if (currentPhase === "firing") {
@@ -5825,7 +5886,7 @@ export default function GameBoard() {
         data-device={inputProfile.deviceClass}
         data-touch={inputProfile.hasTouch ? "true" : "false"}
         data-hover={inputProfile.hasHover ? "true" : "false"}
-        data-testid="game-board-shell"
+          data-testid="game-board-shell"
       >
         {/* 3D Board */}
         <div
@@ -5835,6 +5896,28 @@ export default function GameBoard() {
           data-input={inputProfile.input}
           onPointerDown={e => {
             boardPointerDownRef.current = { x: e.clientX, y: e.clientY, time: performance.now() };
+            if (
+              game.status === "active" &&
+              currentPhase === "movement" &&
+              isSelectedUnitActive &&
+              selectedUnitData &&
+              selectedMovementUi?.canForward &&
+              selectedUnitData.ownerId === myUserId &&
+              !draggingId &&
+              !movementGesture &&
+              !movePlan
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (pos) {
+                const [x, z] = pos;
+                const baseRadius = rulesBaseRadius(selectedUnitData);
+                const distanceFromSelected = Math.hypot(x - selectedUnitData.hexQ, z - selectedUnitData.hexR);
+                if (distanceFromSelected <= baseRadius + 0.9) {
+                  setMovementGesture({ kind: "forward" });
+                  setMovePlan({ kind: "forward", distance: 0 });
+                }
+              }
+            }
           }}
           onPointerMove={e => {
             // Staged unit drag (deploy phase)
@@ -5842,8 +5925,25 @@ export default function GameBoard() {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
               if (!pos) return;
               const [rx, rz] = pos;
-              const [x, z] = clampToDeployZone(rx, rz);
-              setStagedUnits(prev => prev.map(u => u.id === draggingId ? { ...u, x, z } : u));
+              setStagedUnits(prev => {
+                const moving = prev.find(unit => unit.id === draggingId);
+                if (!moving) return prev;
+                const carrier = moving.launchedFromStagedId
+                  ? prev.find(unit => unit.id === moving.launchedFromStagedId)
+                  : null;
+                const [x, z] = carrier
+                  ? clampToCarriedFighterDeployCircle(rx, rz, carrier)
+                  : clampToDeployZone(rx, rz);
+                const movedCarrier = { ...moving, x, z };
+                return prev.map(unit => {
+                  if (unit.id === draggingId) return movedCarrier;
+                  if (unit.launchedFromStagedId === draggingId) {
+                    const [childX, childZ] = clampToCarriedFighterDeployCircle(unit.x, unit.z, movedCarrier);
+                    return { ...unit, x: childX, z: childZ };
+                  }
+                  return unit;
+                });
+              });
               return;
             }
             // Forward-move drag: project cursor onto heading axis from ship origin.
@@ -5953,14 +6053,17 @@ export default function GameBoard() {
               }
             }
             setDraggingId(null);
+            if (movementGesture?.kind === "forward") setMovementGesture(null);
             boardPointerDownRef.current = null;
           }}
           onPointerCancel={() => {
             setDraggingId(null);
+            if (movementGesture?.kind === "forward") setMovementGesture(null);
             boardPointerDownRef.current = null;
           }}
           onPointerLeave={() => {
             setDraggingId(null);
+            if (movementGesture?.kind === "forward") setMovementGesture(null);
             boardPointerDownRef.current = null;
           }}
           onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setIsDragOver(true); }}
@@ -6166,6 +6269,9 @@ export default function GameBoard() {
             {game.status === "deploying" && (
               <DeploymentZones depth={deploymentDepth} mySide={mySide} />
             )}
+            {game.status === "deploying" && carriedFighterDeploymentGuideCarrier && (
+              <CarriedFighterDeploymentGuide carrier={carriedFighterDeploymentGuideCarrier} />
+            )}
             {units.map(unit => {
               const phaseViable =
                 game.status === "active" &&
@@ -6216,7 +6322,8 @@ export default function GameBoard() {
               const baseAction = (selectedUnitData.specialAction ?? "").replace(/-failed$/, "");
               const minExempt =
                 baseAction === "all-stop" ||
-                baseAction === "all-stop-pivot";
+                baseAction === "all-stop-pivot" ||
+                Boolean(selectedMovementUi?.isSuperManeuverable);
               const minRequired = minExempt ? 0 : effectiveUiSpeed(selectedUnitData) / 2;
               const committedBefore = getLedger(selectedUnitData.id).distance;
               return (
@@ -7823,12 +7930,7 @@ export default function GameBoard() {
                       const isRunSilent = baseAction === "run-silent";
                       if (isAllStop || isAllPower || isRunSilent) return null;
                       const led = getLedger(selectedUnitData.id);
-                      const traitsStr = getShipModelForUnit(selectedUnitData)?.traits ?? "";
-                      const rawMovementTraits = parseUiMovementTraits(traitsStr);
-                      const movementTraits = {
-                        ...rawMovementTraits,
-                        superManeuverable: rawMovementTraits.superManeuverable && !selectedUnitData.isCrippled,
-                      };
+                      const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(selectedUnitData), selectedUnitData);
                       const exempt = isAllStopPivot
                         || movementTraits.superManeuverable
                         || selectedUnitData.damageState === "adrift"
