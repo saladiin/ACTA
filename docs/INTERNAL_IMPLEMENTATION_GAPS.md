@@ -374,17 +374,20 @@ Dependencies:
 
 ### Command and Admiral interactions
 
-Status: not implemented.
+Status: partially implemented.
+
+Implemented:
+- Command initiative bonus uses the highest live, non-crippled, non-skeleton-crewed Command score in the player's deployed fleet.
+- Command bonuses respect destroyed ships and critical-effect trait loss.
 
 Missing behavior:
-- Command bonuses.
 - Fleet admiral assignment and fleet-level effects.
-- Loss of Command/Admiral benefits when crippled, skeleton-crewed, trait-lost, or destroyed.
+- Loss of Admiral benefits when crippled, skeleton-crewed, trait-lost, or destroyed.
 
 Implementation shape:
 - Model command/admiral as fleet-level state, not just a ship trait.
 - Add battle setup UI for assigning admirals if required.
-- Apply modifiers in initiative, CQ checks, or fleet-level actions only after confirming exact 2E scope.
+- Apply non-initiative Command/Admiral modifiers only after confirming exact 2E scope.
 
 ### Jump Engine / Advanced Jump Engine
 

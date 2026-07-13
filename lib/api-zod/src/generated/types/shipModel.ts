@@ -30,5 +30,10 @@ export interface ShipModel {
      * @nullable
      */
   traits?: string | null;
+  /**
+     * Printed carried fighter/small-craft complement, parsed at deployment for carrier bay inventory.
+     * @nullable
+     */
+  smallCraft?: string | null;
   weapons?: Weapon[];
 }

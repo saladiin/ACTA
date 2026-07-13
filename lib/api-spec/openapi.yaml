@@ -619,6 +619,66 @@ paths:
         "400":
           description: Invalid move
 
+  /games/{gameId}/units/{unitId}/launch-fighter:
+    post:
+      operationId: launchFighter
+      tags: [turns]
+      summary: Launch one carried fighter flight from a carrier during the End Phase
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: unitId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LaunchFighterInput"
+      responses:
+        "200":
+          description: Fighter launched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FighterLaunchResult"
+        "400":
+          description: Invalid phase, bay capacity, launch limit, or placement
+
+  /games/{gameId}/units/{unitId}/recover-fighter:
+    post:
+      operationId: recoverFighter
+      tags: [turns]
+      summary: Recover one launched fighter flight into a carrier during the End Phase
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: unitId
+          in: path
+          required: true
+          schema: { type: integer, description: "Fighter unit id to recover." }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoverFighterInput"
+      responses:
+        "200":
+          description: Fighter recovered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FighterRecoveryResult"
+        "400":
+          description: Invalid phase, bay capacity, recovery limit, or contact
+
   # --- Lobby / Matchmaking ---
   /lobby:
     get:
@@ -723,6 +783,7 @@ components:
         hullRating:   { type: integer, description: "Roll-to-hit target (≥) for attacks against this ship's class." }
         description:  { type: ["string", "null"] }
         traits:       { type: ["string", "null"], description: "Semicolon-separated trait list (e.g. 'Lumbering; Agile; Interceptors 2'). Parsed client-side." }
+        smallCraft:   { type: ["string", "null"], description: "Printed carried fighter/small-craft complement, parsed at deployment for carrier bay inventory." }
         weapons:
           type: array
           items:
@@ -831,7 +892,7 @@ components:
 
     GameUnit:
       type: object
-      required: [id, gameId, ownerId, shipId, shipModelId, name, modelFilename, faction, baseRadiusInches, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
+      required: [id, gameId, ownerId, shipId, shipModelId, name, modelFilename, faction, baseRadiusInches, hullPoints, maxHullPoints, damageThreshold, shieldsCurrent, crewPoints, maxCrewPoints, crewThreshold, carriedFighters, hexQ, hexR, heading, speed, turnAngle, turns, weaponRange, weaponDamage, crewQuality, isDestroyed, hasMovedThisRound, hasFiredThisRound, firedWeaponIds, slowLoadingWeaponCooldowns]
       properties:
         id:            { type: integer }
         gameId:        { type: integer }
@@ -847,12 +908,36 @@ components:
         damageThreshold: { type: integer, description: "Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull." }
         shieldsCurrent: { type: integer, description: "Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round." }
         lastDcRound:    { type: integer, description: "Last round (1-based) this unit attempted Damage Control. 0 = never." }
+        lastSelfRepairRound: { type: integer, description: "Last round (1-based) this unit resolved Self Repair. 0 = never." }
         crewPoints:     { type: integer, description: "Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew." }
         maxCrewPoints:  { type: integer, description: "Maximum crew complement, set at deploy from ship_model.crew." }
         crewThreshold:  { type: integer, description: "Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback." }
         damageState:    { type: string, enum: [normal, adrift, exploding-end-of-next, destroyed], description: "Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed." }
         isCrippled:     { type: boolean, description: "Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral." }
         isSkeletonCrew: { type: boolean, description: "Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral." }
+        carriedFighters:
+          type: array
+          description: "Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array."
+          items:
+            type: object
+            required: [name, shipModelId, total, available, launched, recovered, destroyed]
+            properties:
+              name: { type: string }
+              shipModelId: { type: ["integer", "null"], description: "Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog." }
+              total: { type: integer, minimum: 0 }
+              available: { type: integer, minimum: 0 }
+              launched: { type: integer, minimum: 0 }
+              recovered: { type: integer, minimum: 0 }
+              destroyed: { type: integer, minimum: 0 }
+        launchedFromUnitId:
+          type: ["integer", "null"]
+          description: "Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters."
+        fighterBayOperationsRound:
+          type: integer
+          description: "Round number for the current fighter bay operation counter."
+        fighterBayOperationsUsed:
+          type: integer
+          description: "Launch/recovery operations used by this unit in fighterBayOperationsRound."
         criticals:
           type: array
           items: { $ref: "#/components/schemas/CriticalEffect" }
@@ -889,7 +974,7 @@ components:
           description: "Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover."
         specialAction:
           type: ["string", "null"]
-          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship's damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound)."
+          description: "Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship's damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase."
         specialActionTargetId:
           type: ["integer", "null"]
           description: "Nominated target unit id for 'concentrate-fire'; null otherwise."
@@ -932,6 +1017,10 @@ components:
           minimum: 1
           maximum: 7
           description: "Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless."
+        launchedFromPlacementIndex:
+          type: ["integer", "null"]
+          minimum: 0
+          description: "Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship."
 
     DeploymentInput:
       type: object
@@ -1212,7 +1301,7 @@ components:
       properties:
         action:
           type: string
-          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck]
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble]
         targetUnitId:
           type: ["integer", "null"]
           description: "Required for 'concentrate-fire' — the nominated enemy unit id."
@@ -1260,6 +1349,35 @@ components:
         toHexQ:     { type: number }
         toHexR:     { type: number }
         newHeading: { type: integer }
+
+    LaunchFighterInput:
+      type: object
+      required: [shipModelId, hexQ, hexR]
+      properties:
+        shipModelId: { type: integer, description: "Fighter ship_model id from the carrier's carriedFighters entry." }
+        hexQ:        { type: number }
+        hexR:        { type: number }
+        heading:     { type: integer }
+
+    RecoverFighterInput:
+      type: object
+      required: [carrierUnitId]
+      properties:
+        carrierUnitId: { type: integer, description: "Friendly carrier unit in base contact with the launched fighter." }
+
+    FighterLaunchResult:
+      type: object
+      required: [carrier, fighter]
+      properties:
+        carrier: { $ref: "#/components/schemas/GameUnit" }
+        fighter: { $ref: "#/components/schemas/GameUnit" }
+
+    FighterRecoveryResult:
+      type: object
+      required: [carrier, recoveredUnitId]
+      properties:
+        carrier: { $ref: "#/components/schemas/GameUnit" }
+        recoveredUnitId: { type: integer }
 
     TurnInput:
       type: object

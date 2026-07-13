@@ -710,8 +710,9 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "aurora.glb": 0.165,
   "thunderbolt.glb": 0.165,
   "nial.glb": 0.165,
+  "sentri.glb": 0.165,
 };
-const FIGHTER_SQUADRON_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb"]);
+const FIGHTER_SQUADRON_MODELS = new Set(["aurora.glb", "thunderbolt.glb", "nial.glb", "sentri.glb"]);
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -873,6 +874,66 @@ function shipModelHasFighterTrait(model: Pick<ShipModel, "filename" | "traits"> 
     || isFighterSquadronModel(model?.filename ?? "");
 }
 
+type StagedFighterInventoryItem = {
+  name: string;
+  shipModelId: number | null;
+  total: number;
+};
+
+const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
+  "aurora starfury": "Aurora Starfury Flight",
+  "aurora starfury flight": "Aurora Starfury Flight",
+  "thunderbolt": "Thunderbolt Starfury Flight",
+  "thunderbolt starfury": "Thunderbolt Starfury Flight",
+  "thunderbolt starfury flight": "Thunderbolt Starfury Flight",
+  nial: "Nial Heavy Fighter Flight",
+  "nial fighter": "Nial Heavy Fighter Flight",
+  "nial fighter flight": "Nial Heavy Fighter Flight",
+  sentri: "Sentri Flight",
+  "sentri fighter": "Sentri Flight",
+  "sentri fighter flight": "Sentri Flight",
+};
+
+function normalizeSmallCraftKey(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function parseUiSmallCraftInventory(
+  smallCraft: string | null | undefined,
+  models: ShipModel[],
+): StagedFighterInventoryItem[] {
+  if (!smallCraft || /^(?:none|n\/a|-|\u2014)$/i.test(smallCraft.trim())) return [];
+  const byName = new Map(models.map(model => [normalizeSmallCraftKey(model.name), model]));
+  return smallCraft
+    .split(/[,;]+/)
+    .map(raw => raw.trim())
+    .filter(Boolean)
+    .map(raw => {
+      const entry = raw.match(/^(.*?)\s*(?:\((\d+)\)|x\s*(\d+)|(\d+)\s*x)?$/i);
+      const rawName = (entry?.[1] ?? raw).trim();
+      const total = Math.max(1, Number(entry?.[2] ?? entry?.[3] ?? entry?.[4] ?? 1));
+      const canonicalName = UI_SMALL_CRAFT_CANONICAL_NAMES[normalizeSmallCraftKey(rawName)] ?? rawName;
+      const candidates = [
+        canonicalName,
+        /\bflight\b/i.test(canonicalName) ? canonicalName : `${canonicalName} Flight`,
+        canonicalName.replace(/\bfighter\b/gi, "").replace(/\s+/g, " ").trim(),
+      ].filter(Boolean);
+      const model = candidates
+        .map(candidate => UI_SMALL_CRAFT_CANONICAL_NAMES[normalizeSmallCraftKey(candidate)] ?? candidate)
+        .map(candidate => byName.get(normalizeSmallCraftKey(candidate)))
+        .find(Boolean);
+      return { name: model?.name ?? canonicalName, shipModelId: model?.id ?? null, total };
+    });
+}
+
+function uiPrebattleFighterDeploymentLimit(carrier: { carriedFighters?: StagedFighterInventoryItem[]; traits?: string | null }): number {
+  const totalFlights = (carrier.carriedFighters ?? []).reduce((sum, item) => sum + item.total, 0);
+  if (totalFlights <= 0) return 0;
+  return /\bfleet\s+carrier\b/i.test(carrier.traits ?? "")
+    ? Math.max(1, Math.floor(totalFlights / 2))
+    : 1;
+}
+
 function isShadowCodedDamageVessel(unit: { faction?: string | null; name?: string | null; modelFilename?: string | null }): boolean {
   const text = [unit.faction, unit.name, unit.modelFilename]
     .filter(Boolean)
@@ -895,7 +956,9 @@ function uiBasesCanOverlap(
   moving: { isFighter?: boolean },
   other: { isFighter?: boolean },
 ): boolean {
-  return !!moving.isFighter !== !!other.isFighter;
+  void moving;
+  void other;
+  return false;
 }
 
 function uiBasesInContact(
@@ -1913,6 +1976,12 @@ type SelfRepairResult = {
   unit: GameUnit;
 };
 
+type FighterBayActionResult = {
+  carrier: GameUnit;
+  fighter?: GameUnit;
+  recoveredUnitId?: number;
+};
+
 type MovePlan =
   | { kind: "forward"; distance: number }
   | { kind: "turn"; deltaDeg: number }
@@ -2766,7 +2835,11 @@ interface StagedUnitData {
   speed: number;
   weaponRange: number;
   weaponDamage: number;
+  baseRadiusInches: number;
   weapons: Pick<Weapon, "arc">[];
+  traits?: string | null;
+  carriedFighters?: StagedFighterInventoryItem[];
+  launchedFromStagedId?: string | null;
   x: number;
   z: number;
   heading: number; // degrees, 0 = +Z axis, clockwise
@@ -3603,6 +3676,8 @@ export default function GameBoard() {
     dcBonus: number;
   } | null>(null);
   const [activationFeedback, setActivationFeedback] = useState<string | null>(null);
+  const [fighterBayFeedback, setFighterBayFeedback] = useState<string | null>(null);
+  const [fighterBayBusyKey, setFighterBayBusyKey] = useState<string | null>(null);
   // For "Concentrate All Fire-power" we need a target picker before sending.
   const [concentratePicking, setConcentratePicking] = useState(false);
 
@@ -3654,7 +3729,7 @@ export default function GameBoard() {
         setStagedUnits(prev => {
           const target = prev.find(u => u.id === selectedStagedId);
           if (target?.locked) return prev;
-          return prev.filter(u => u.id !== selectedStagedId);
+          return prev.filter(u => u.id !== selectedStagedId && u.launchedFromStagedId !== selectedStagedId);
         });
         setSelectedStagedId(null);
       } else if (e.key === "Escape") {
@@ -4177,7 +4252,9 @@ export default function GameBoard() {
   const allocationPoints = game?.allocationPoints ?? Math.max(1, Math.round((game?.pointLimit ?? 500) / 100));
   const stagedAllocation = useMemo(
     () => calculateAllocation(
-      currentStagedUnits.map(u => normalizePriorityLevel(u.priorityLevel)),
+      currentStagedUnits
+        .filter(u => !u.launchedFromStagedId)
+        .map(u => normalizePriorityLevel(u.priorityLevel)),
       scenarioPriority,
       allocationPoints,
     ),
@@ -4206,14 +4283,18 @@ export default function GameBoard() {
       speed: ship.speed,
       weaponRange: ship.weaponRange,
       weaponDamage: ship.weaponDamage,
+      baseRadiusInches: ship.baseRadiusInches,
       weapons: ship.weapons ?? [],
+      traits: ship.traits ?? null,
+      carriedFighters: parseUiSmallCraftInventory(ship.smallCraft, shipModels ?? []),
+      launchedFromStagedId: null,
       x: cx,
       z: cz,
       heading: mySide === "challenger" ? 180 : 0,
       locked: false,
       crewQuality: 4,
     };
-  }, [clampToDeployZone, deploymentDepth, mySide, myUserId]);
+  }, [clampToDeployZone, deploymentDepth, mySide, myUserId, shipModels]);
   const stageShipAtBoardPoint = useCallback((ship: ShipModel, rawX: number, rawZ: number) => {
     const [x, z] = clampToDeployZone(rawX, rawZ);
     const newId = `staged-${Date.now()}-${ship.id}`;
@@ -4229,7 +4310,11 @@ export default function GameBoard() {
       speed: ship.speed,
       weaponRange: ship.weaponRange,
       weaponDamage: ship.weaponDamage,
+      baseRadiusInches: ship.baseRadiusInches,
       weapons: ship.weapons ?? [],
+      traits: ship.traits ?? null,
+      carriedFighters: parseUiSmallCraftInventory(ship.smallCraft, shipModels ?? []),
+      launchedFromStagedId: null,
       x,
       z,
       heading: mySide === "challenger" ? 180 : 0,
@@ -4240,7 +4325,91 @@ export default function GameBoard() {
     setDraggingId(null);
     setTapPlacementShip(null);
     draggedShipRef.current = null;
-  }, [clampToDeployZone, mySide, myUserId]);
+  }, [clampToDeployZone, mySide, myUserId, shipModels]);
+  const stageCarrierFighter = useCallback((carrier: StagedUnitData, item: StagedFighterInventoryItem) => {
+    if (!item.shipModelId) return;
+    const fighterModel = (shipModels ?? []).find(model => model.id === item.shipModelId);
+    if (!fighterModel) return;
+    const alreadyFromCarrier = currentStagedUnits.filter(unit => unit.launchedFromStagedId === carrier.id);
+    const limit = uiPrebattleFighterDeploymentLimit(carrier);
+    if (alreadyFromCarrier.length >= limit) return;
+    const alreadyThisModel = alreadyFromCarrier.filter(unit => unit.shipModelId === item.shipModelId).length;
+    if (alreadyThisModel >= item.total) return;
+
+    const allBlockers = [
+      ...units.filter(unit => !unit.isDestroyed).map(unit => ({
+        id: unit.id,
+        hexQ: unit.hexQ,
+        hexR: unit.hexR,
+        isDestroyed: false,
+        isFighter: isFighterUnit(unit),
+        baseRadiusInches: unit.baseRadiusInches,
+      })),
+      ...currentStagedUnits.map((unit, index) => ({
+        id: -1000 - index,
+        hexQ: unit.x,
+        hexR: unit.z,
+        isDestroyed: false,
+        isFighter: shipModelHasFighterTrait(shipModelById[unit.shipModelId]),
+        baseRadiusInches: unit.baseRadiusInches,
+      })),
+    ];
+    const angleOffsets = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
+    const distances = [1.6, 2.1, 2.6, 3];
+    const baseAngle = (carrier.heading * Math.PI) / 180;
+    let spot: { x: number; z: number } | null = null;
+    for (const distance of distances) {
+      for (const offset of angleOffsets) {
+        const rawX = carrier.x + Math.sin(baseAngle + offset) * distance;
+        const rawZ = carrier.z + Math.cos(baseAngle + offset) * distance;
+        const [x, z] = clampToDeployZone(rawX, rawZ);
+        if (Math.hypot(x - carrier.x, z - carrier.z) > 3 + 1e-6) continue;
+        const candidate = {
+          id: -1,
+          hexQ: x,
+          hexR: z,
+          isFighter: true,
+          baseRadiusInches: fighterModel.baseRadiusInches,
+        };
+        const illegalOverlap = allBlockers.some(other => {
+          if (uiBasesCanOverlap(candidate, other)) return false;
+          return Math.hypot(candidate.hexQ - other.hexQ, candidate.hexR - other.hexR)
+            < rulesBaseRadius(candidate) + rulesBaseRadius(other) - BASE_CONTACT_EPSILON;
+        });
+        if (!illegalOverlap) {
+          spot = { x, z };
+          break;
+        }
+      }
+      if (spot) break;
+    }
+    if (!spot) return;
+    const newId = `staged-carried-${Date.now()}-${fighterModel.id}`;
+    setStagedUnits(prev => [...prev, {
+      id: newId,
+      ownerId: myUserId,
+      shipModelId: fighterModel.id,
+      name: fighterModel.name,
+      modelFilename: fighterModel.filename,
+      faction: fighterModel.faction,
+      priorityLevel: fighterModel.priorityLevel,
+      hullPoints: fighterModel.hullPoints,
+      speed: fighterModel.speed,
+      weaponRange: fighterModel.weaponRange,
+      weaponDamage: fighterModel.weaponDamage,
+      baseRadiusInches: fighterModel.baseRadiusInches,
+      weapons: fighterModel.weapons ?? [],
+      traits: fighterModel.traits ?? null,
+      carriedFighters: [],
+      launchedFromStagedId: carrier.id,
+      x: spot.x,
+      z: spot.z,
+      heading: carrier.heading,
+      locked: false,
+      crewQuality: carrier.crewQuality,
+    }]);
+    setSelectedStagedId(newId);
+  }, [clampToDeployZone, currentStagedUnits, isFighterUnit, myUserId, shipModelById, shipModels, units]);
   const applyFleetTemplate = useCallback((template: FleetTemplate) => {
     const roster = shipModels ?? [];
     const chosenShips: ShipModel[] = [];
@@ -4714,6 +4883,110 @@ export default function GameBoard() {
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
     (game?.phase as "initiative" | "movement" | "firing" | "end") ?? "movement";
+  const isMyEndPhaseWindow = game?.status === "active" && currentPhase === "end" && game.activePlayerId === myUserId;
+  const mergeFighterBayResultIntoGame = useCallback((result: FighterBayActionResult) => {
+    qc.setQueryData<GameDetail | undefined>(getGetGameQueryKey(gameId), old => {
+      if (!old) return old;
+      const updatedUnits = old.units
+        .map(unit => unit.id === result.carrier.id ? { ...unit, ...result.carrier } : unit)
+        .filter(unit => unit.id !== result.recoveredUnitId);
+      if (result.fighter && !updatedUnits.some(unit => unit.id === result.fighter!.id)) {
+        updatedUnits.push(result.fighter);
+      }
+      return { ...old, units: updatedUnits };
+    });
+  }, [gameId, qc]);
+  const findAutoLaunchSpot = useCallback((carrier: GameUnit): { hexQ: number; hexR: number; heading: number } | null => {
+    const forward = headingForwardVec(carrier);
+    const baseAngle = Math.atan2(forward.z, forward.x);
+    const angleOffsets = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
+    const distances = [1.6, 2.2, 2.8, 3];
+    for (const distance of distances) {
+      for (const offset of angleOffsets) {
+        const angle = baseAngle + offset;
+        const candidate = {
+          id: -1,
+          hexQ: snapBoardCoord(carrier.hexQ + Math.cos(angle) * distance),
+          hexR: snapBoardCoord(carrier.hexR + Math.sin(angle) * distance),
+          isFighter: true,
+          baseRadiusInches: STANDARD_BASE_RADIUS_INCHES,
+        };
+        if (candidate.hexQ < -24 || candidate.hexQ > 24 || candidate.hexR < -36 || candidate.hexR > 36) continue;
+        const illegalOverlap = unitsWithFighterFlags.some(other => {
+          if (other.isDestroyed) return false;
+          if (uiBasesCanOverlap(candidate, other)) return false;
+          return Math.hypot(candidate.hexQ - other.hexQ, candidate.hexR - other.hexR)
+            < rulesBaseRadius(candidate) + rulesBaseRadius(other) - BASE_CONTACT_EPSILON;
+        });
+        if (!illegalOverlap) return { ...candidate, heading: carrier.heading };
+      }
+    }
+    return null;
+  }, [unitsWithFighterFlags]);
+  const launchFighterFromCarrier = useCallback(async (carrier: GameUnit, item: GameUnit["carriedFighters"][number]) => {
+    if (!item.shipModelId) {
+      setFighterBayFeedback(`${item.name} is not linked to a fighter model yet.`);
+      return;
+    }
+    const spot = findAutoLaunchSpot(carrier);
+    if (!spot) {
+      setFighterBayFeedback("No legal launch position within 3 inches.");
+      return;
+    }
+    const key = `launch:${carrier.id}:${item.shipModelId}`;
+    setFighterBayBusyKey(key);
+    setFighterBayFeedback(null);
+    try {
+      const result = await customFetch<FighterBayActionResult>(`/api/games/${gameId}/units/${carrier.id}/launch-fighter`, {
+        method: "POST",
+        body: JSON.stringify({
+          shipModelId: item.shipModelId,
+          hexQ: spot.hexQ,
+          hexR: spot.hexR,
+          heading: spot.heading,
+        }),
+        responseType: "json",
+      });
+      mergeFighterBayResultIntoGame(result);
+      if (result.fighter) setSelectedUnit(result.fighter.id);
+      setFighterBayFeedback(`${item.name} launched.`);
+    } catch (err) {
+      setFighterBayFeedback(cleanApiErrorMessage(err, "Launch failed"));
+    } finally {
+      setFighterBayBusyKey(null);
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    }
+  }, [findAutoLaunchSpot, gameId, mergeFighterBayResultIntoGame, qc]);
+  const recoverFighterToCarrier = useCallback(async (fighter: GameUnit, carrier: GameUnit) => {
+    const key = `recover:${fighter.id}:${carrier.id}`;
+    setFighterBayBusyKey(key);
+    setFighterBayFeedback(null);
+    try {
+      const result = await customFetch<FighterBayActionResult>(`/api/games/${gameId}/units/${fighter.id}/recover-fighter`, {
+        method: "POST",
+        body: JSON.stringify({ carrierUnitId: carrier.id }),
+        responseType: "json",
+      });
+      mergeFighterBayResultIntoGame(result);
+      setSelectedUnit(result.carrier.id);
+      setFighterBayFeedback(`${fighter.name} recovered.`);
+    } catch (err) {
+      setFighterBayFeedback(cleanApiErrorMessage(err, "Recovery failed"));
+    } finally {
+      setFighterBayBusyKey(null);
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    }
+  }, [gameId, mergeFighterBayResultIntoGame, qc]);
+  const selectedRecoveryCarriers = useMemo(() => {
+    if (!selectedUnitData || !isFighterUnit(selectedUnitData) || !selectedUnitData.launchedFromUnitId) return [];
+    return units.filter(unit => (
+      unit.ownerId === myUserId
+      && !unit.isDestroyed
+      && !isFighterUnit(unit)
+      && (unit.carriedFighters ?? []).some(item => item.available < item.total)
+      && uiBasesInContact(selectedUnitData, unit)
+    ));
+  }, [isFighterUnit, myUserId, selectedUnitData, units]);
   const hasAnyWeaponFiredThisPhase = useMemo(() => {
     return units.some(u => u.hasFiredThisRound || ((u.firedWeaponIds ?? []) as number[]).length > 0);
   }, [units]);
@@ -5126,9 +5399,11 @@ export default function GameBoard() {
         customFetch<{
           attackerRoll: number;
           attackerDogfight: number;
+          attackerFleetCarrierBonus?: number;
           attackerScore: number;
           targetRoll: number;
           targetDogfight: number;
+          targetFleetCarrierBonus?: number;
           targetScore: number;
           destroyedUnitId: number | null;
           tied: boolean;
@@ -5143,8 +5418,12 @@ export default function GameBoard() {
               : result.destroyedUnitId === target.id
                 ? `${target.name} destroyed in dogfight.`
                 : `${attacker.name} destroyed in dogfight.`;
+            const attackerMods = result.attackerDogfight + (result.attackerFleetCarrierBonus ?? 0);
+            const targetMods = result.targetDogfight + (result.targetFleetCarrierBonus ?? 0);
+            const attackerFc = result.attackerFleetCarrierBonus ? " incl. Fleet Carrier" : "";
+            const targetFc = result.targetFleetCarrierBonus ? " incl. Fleet Carrier" : "";
             setActivationFeedback(
-              `${outcome} ${attacker.name}: ${result.attackerRoll}+${result.attackerDogfight}=${result.attackerScore}; ${target.name}: ${result.targetRoll}+${result.targetDogfight}=${result.targetScore}.`,
+              `${outcome} ${attacker.name}: ${result.attackerRoll}+${attackerMods}=${result.attackerScore}${attackerFc}; ${target.name}: ${result.targetRoll}+${targetMods}=${result.targetScore}${targetFc}.`,
             );
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           })
@@ -5466,10 +5745,11 @@ export default function GameBoard() {
     //      Ship row by model filename and send `shipId`.
     //   2. No fleet selected → direct drop-in: send `shipModelId` per
     //      placement and let the server materialize an ephemeral fleet.
-    let placements: Array<{ shipId?: number; shipModelId?: number; hexQ: number; hexR: number; heading: number; crewQuality?: number }>;
+    let placements: Array<{ shipId?: number; shipModelId?: number; hexQ: number; hexR: number; heading: number; crewQuality?: number; launchedFromPlacementIndex?: number | null }>;
     let fleetIdToSend: number | undefined;
+    const stagedIndexById = new Map(currentStagedUnits.map((unit, index) => [unit.id, index]));
 
-    if (yardsFleetId && yardsFleetShips) {
+    if (yardsFleetId && yardsFleetShips && currentStagedUnits.every(unit => !unit.launchedFromStagedId)) {
       const available = [...yardsFleetShips];
       placements = [];
       for (const staged of currentStagedUnits) {
@@ -5497,6 +5777,7 @@ export default function GameBoard() {
         hexR: Math.round(s.z),
         heading: s.heading,
         crewQuality: s.crewQuality,
+        launchedFromPlacementIndex: s.launchedFromStagedId ? stagedIndexById.get(s.launchedFromStagedId) ?? null : null,
       }));
       fleetIdToSend = undefined;
     }
@@ -5708,7 +5989,11 @@ export default function GameBoard() {
               speed: ship.speed,
               weaponRange: ship.weaponRange,
               weaponDamage: ship.weaponDamage,
+              baseRadiusInches: ship.baseRadiusInches,
               weapons: ship.weapons ?? [],
+              traits: ship.traits ?? null,
+              carriedFighters: parseUiSmallCraftInventory(ship.smallCraft, shipModels ?? []),
+              launchedFromStagedId: null,
               x, z,
               // Default facing: nose toward the opposing player's edge so a
               // freshly-dropped ship is already pointed at the enemy.
@@ -6533,6 +6818,10 @@ export default function GameBoard() {
                   )}
                   {currentStagedUnits.map(u => {
                     const isExpanded = selectedStagedId === u.id;
+                    const carrier = currentStagedUnits.find(candidate => candidate.id === u.launchedFromStagedId);
+                    const carriedFighters = u.carriedFighters ?? [];
+                    const deployedFromCarrier = currentStagedUnits.filter(candidate => candidate.launchedFromStagedId === u.id);
+                    const fighterDeployLimit = uiPrebattleFighterDeploymentLimit(u);
                     // CQ picker only appears in "custom" games. In "standard"
                     // games crew quality is fixed at 4 (Veteran) by the
                     // server, so we don't render the picker at all to keep
@@ -6551,6 +6840,11 @@ export default function GameBoard() {
                       >
                         <div className="flex items-center gap-1.5 px-2 py-1">
                           <span className="flex-1 truncate">{u.locked ? "🔒 " : ""}{u.name}</span>
+                          {carrier && (
+                            <span className="text-[9px] text-cyan-300/80 shrink-0" title={`Deployed from ${carrier.name}`}>
+                              carried
+                            </span>
+                          )}
                           {game?.crewQualityMode === "custom" && (
                             <span className="text-[9px] text-amber-400/80 shrink-0" title="Crew Quality">
                               CQ{u.crewQuality}
@@ -6560,7 +6854,7 @@ export default function GameBoard() {
                             <button
                               className="text-muted-foreground hover:text-destructive ml-1"
                               data-testid={`staged-remove-${u.id}`}
-                              onClick={e => { e.stopPropagation(); setStagedUnits(prev => prev.filter(s => s.id !== u.id)); setSelectedStagedId(null); }}
+                              onClick={e => { e.stopPropagation(); setStagedUnits(prev => prev.filter(s => s.id !== u.id && s.launchedFromStagedId !== u.id)); setSelectedStagedId(null); }}
                             >✕</button>
                           )}
                         </div>
@@ -6592,6 +6886,37 @@ export default function GameBoard() {
                             <p className="text-[9px] text-muted-foreground/70 mt-1 text-center">
                               1 Rookie · 2 Green · 3 Comp · 4 Vet · 5 Elite · 6 Spec Ops
                             </p>
+                          </div>
+                        )}
+                        {isExpanded && carriedFighters.length > 0 && (
+                          <div className="px-2 pb-1.5 pt-0.5 border-t border-primary/20 space-y-1">
+                            <div className="flex items-center justify-between gap-2 text-[9px] uppercase tracking-wider text-muted-foreground">
+                              <span>Carried Fighters</span>
+                              <span>{deployedFromCarrier.length}/{fighterDeployLimit} setup</span>
+                            </div>
+                            <div className="space-y-1">
+                              {carriedFighters.map(item => {
+                                const deployedThisModel = deployedFromCarrier.filter(unit => unit.shipModelId === item.shipModelId).length;
+                                const disabled = !item.shipModelId || deployedThisModel >= item.total || deployedFromCarrier.length >= fighterDeployLimit;
+                                return (
+                                  <button
+                                    key={`${u.id}-${item.name}-${item.shipModelId ?? "unlinked"}`}
+                                    type="button"
+                                    disabled={disabled}
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      stageCarrierFighter(u, item);
+                                    }}
+                                    className="w-full rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-left text-[10px] text-cyan-100 transition-colors hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="truncate">{item.name}</span>
+                                      <span>{deployedThisModel}/{item.total}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -6907,6 +7232,76 @@ export default function GameBoard() {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">Hex: {selectedUnitData.hexQ},{selectedUnitData.hexR}</p>
+                {selectedUnitData.ownerId === myUserId && !selectedUnitData.isDestroyed && (
+                  <div className="mt-3 space-y-2">
+                    {(selectedUnitData.carriedFighters ?? []).length > 0 && (
+                      <div className="rounded border border-border/70 bg-black/20 p-2 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-mono uppercase tracking-widest text-primary">Fighter Bay</span>
+                          <span className="text-[9px] font-mono text-muted-foreground">
+                            {isMyEndPhaseWindow ? "End Phase" : "Standby"}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {selectedUnitData.carriedFighters.map(item => {
+                            const key = `launch:${selectedUnitData.id}:${item.shipModelId ?? item.name}`;
+                            const disabled =
+                              !isMyEndPhaseWindow
+                              || fighterBayBusyKey !== null
+                              || item.available <= 0
+                              || !item.shipModelId
+                              || !!selectedUnitData.specialAction;
+                            return (
+                              <div key={`${item.name}-${item.shipModelId ?? "unlinked"}`} className="flex items-center justify-between gap-2 rounded bg-muted/20 px-2 py-1">
+                                <div className="min-w-0">
+                                  <div className="truncate text-[11px] font-mono text-foreground">{item.name}</div>
+                                  <div className="text-[9px] font-mono text-muted-foreground">
+                                    {item.available}/{item.total} bay · {item.launched} out
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 shrink-0 px-2 text-[10px] uppercase tracking-widest"
+                                  disabled={disabled}
+                                  onClick={() => void launchFighterFromCarrier(selectedUnitData, item)}
+                                >
+                                  {fighterBayBusyKey === key ? "..." : "Launch"}
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {selectedRecoveryCarriers.length > 0 && (
+                      <div className="rounded border border-border/70 bg-black/20 p-2 space-y-2">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-primary">Recovery</span>
+                        {selectedRecoveryCarriers.map(carrier => {
+                          const key = `recover:${selectedUnitData.id}:${carrier.id}`;
+                          return (
+                            <Button
+                              key={carrier.id}
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 w-full justify-between px-2 text-[10px] uppercase tracking-widest"
+                              disabled={!isMyEndPhaseWindow || fighterBayBusyKey !== null || !!carrier.specialAction}
+                              onClick={() => void recoverFighterToCarrier(selectedUnitData, carrier)}
+                            >
+                              <span className="truncate">Recover to {carrier.name}</span>
+                              <span>{fighterBayBusyKey === key ? "..." : "Dock"}</span>
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {fighterBayFeedback && (
+                      <p className="text-[10px] font-mono text-muted-foreground">{fighterBayFeedback}</p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -7233,7 +7628,7 @@ export default function GameBoard() {
                 if (isFighterUnit(selectedUnitData)) return null;
                 const traitsForSA = getShipModelForUnit(selectedUnitData)?.traits ?? "";
                 const isLumbering = /\blumbering\b/i.test(traitsForSA);
-                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about-extra-turn" | "come-about-sharp-turn" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire" | "all-hands-on-deck"; label: string; cq: number | null; hint: string; hidden?: boolean }[] = [
+                const SPECIAL_ACTIONS: { id: "all-power-engines" | "all-stop" | "all-stop-pivot" | "come-about-extra-turn" | "come-about-sharp-turn" | "blast-doors" | "intensify-defense" | "run-silent" | "concentrate-fire" | "all-hands-on-deck" | "scramble"; label: string; cq: number | null; hint: string; hidden?: boolean }[] = [
                   { id: "all-power-engines", label: "All Power to Engines!", cq: null, hint: "Speed +50%; no turns" },
                   { id: "all-stop",          label: "All Stop!",             cq: null, hint: "0..½ speed; no turns" },
                   { id: "all-stop-pivot",    label: "All Stop & Pivot!",     cq: null, hint: "No move; 1 weapon; 2× turn rate" },
@@ -7248,6 +7643,7 @@ export default function GameBoard() {
                   { id: "run-silent",        label: "Run Silent!",           cq: 8,    hint: "Stealth; no fire/turn; ≤½ speed" },
                   { id: "concentrate-fire",  label: "Concentrate All Fire!", cq: 8,    hint: "Re-roll missed AD vs picked target" },
                   { id: "all-hands-on-deck", label: "All Hands on Deck!",    cq: 9,    hint: "1 weapon this round; +2 DC & ∞ repairs in End Phase" },
+                  { id: "scramble",          label: "Scramble! Scramble!",   cq: 7,    hint: "Launch +2 fighter flights in End Phase" },
                 ];
                 const rawAction = selectedUnitData.specialAction ?? null;
                 const baseAction = rawAction ? rawAction.replace(/-failed$/, "") : null;

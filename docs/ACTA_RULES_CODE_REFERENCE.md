@@ -574,10 +574,10 @@ Corrected rule mismatches:
 
 Highest remaining rule mismatches:
 
-1. Command/Fleet Carrier/Admiral systems not implemented.
-   - Current: Crippled/Skeleton combat, movement, Special Action, scout, Damage Control, Interceptor, and Shield effects are enforced where those systems exist.
-   - Expected: Command/Fleet Carrier/Admiral benefits should also drop when their host ship is Crippled or Skeleton Crewed.
-   - Risk: once those systems are added, they must consume derived rule state rather than raw traits.
+1. Fleet Carrier/Admiral systems remain incomplete; Command is partially implemented.
+   - Current: Command adds the highest eligible live Command score to initiative and drops when the host ship is Crippled, Skeleton Crewed, destroyed, or has lost the trait. Crippled/Skeleton combat, movement, Special Action, scout, Damage Control, Interceptor, and Shield effects are enforced where those systems exist.
+   - Expected: Fleet Carrier/Admiral benefits should also drop when their host ship is Crippled or Skeleton Crewed.
+   - Risk: remaining fleet-level systems must consume derived rule state rather than raw traits.
 
 2. One-Shot not fully enforced.
    - Current: parsed and stealth-fail exception exists, but successful use does not appear permanently spent.

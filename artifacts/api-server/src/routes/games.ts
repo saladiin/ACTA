@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, type CarriedFighterInventoryItem } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import {
   parseShipTraits,
@@ -583,6 +583,373 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter || /\bfighter\b/i.test(model.shipClass ?? "");
 }
 
+type FighterInventoryModel = Pick<typeof shipModelsTable.$inferSelect, "id" | "name">;
+
+const SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
+  "aurora starfury": "Aurora Starfury Flight",
+  "aurora starfury flight": "Aurora Starfury Flight",
+  "thunderbolt": "Thunderbolt Starfury Flight",
+  "thunderbolt starfury": "Thunderbolt Starfury Flight",
+  "thunderbolt starfury flight": "Thunderbolt Starfury Flight",
+  nial: "Nial Heavy Fighter Flight",
+  "nial fighter": "Nial Heavy Fighter Flight",
+  "nial fighter flight": "Nial Heavy Fighter Flight",
+  "nial heavy fighter": "Nial Heavy Fighter Flight",
+  "nial heavy fighter flight": "Nial Heavy Fighter Flight",
+  sentri: "Sentri Flight",
+  "sentri fighter": "Sentri Flight",
+  "sentri fighter flight": "Sentri Flight",
+  "sentri flight": "Sentri Flight",
+  frazi: "Frazi Flight",
+  "frazi fighter": "Frazi Flight",
+  "frazi fighter flight": "Frazi Flight",
+  "frazi flight": "Frazi Flight",
+  flyer: "Flyer Flight",
+  "flyer flight": "Flyer Flight",
+};
+
+function normalizeSmallCraftKey(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function resolveFighterModel(
+  name: string,
+  models: FighterInventoryModel[],
+): FighterInventoryModel | null {
+  const byName = new Map(models.map((model) => [normalizeSmallCraftKey(model.name), model]));
+  const candidates = [
+    name,
+    SMALL_CRAFT_CANONICAL_NAMES[normalizeSmallCraftKey(name)] ?? name,
+    /\bflight\b/i.test(name) ? name : `${name} Flight`,
+    name.replace(/\bfighter\b/gi, "").replace(/\s+/g, " ").trim(),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const canonical = SMALL_CRAFT_CANONICAL_NAMES[normalizeSmallCraftKey(candidate)] ?? candidate;
+    const model = byName.get(normalizeSmallCraftKey(canonical));
+    if (model) return model;
+  }
+  return null;
+}
+
+function carriedFightersFromSmallCraft(
+  smallCraft: string | null | undefined,
+  models: FighterInventoryModel[],
+): CarriedFighterInventoryItem[] {
+  if (!smallCraft || /^(?:none|n\/a|-|\u2014)$/i.test(smallCraft.trim())) return [];
+  return smallCraft
+    .split(/[,;]+/)
+    .map((raw) => raw.trim())
+    .filter(Boolean)
+    .map((raw) => {
+      const entry = raw.match(/^(.*?)\s*(?:\((\d+)\)|x\s*(\d+)|(\d+)\s*x)?$/i);
+      const rawName = (entry?.[1] ?? raw).trim();
+      const total = Math.max(1, Number(entry?.[2] ?? entry?.[3] ?? entry?.[4] ?? 1));
+      const canonicalName = SMALL_CRAFT_CANONICAL_NAMES[normalizeSmallCraftKey(rawName)] ?? rawName;
+      const model = resolveFighterModel(canonicalName, models);
+      const name = model?.name ?? canonicalName;
+      return {
+        name,
+        shipModelId: model?.id ?? null,
+        total,
+        available: total,
+        launched: 0,
+        recovered: 0,
+        destroyed: 0,
+      };
+    });
+}
+
+function fighterBayOperationsUsedThisRound(
+  unit: Pick<typeof gameUnitsTable.$inferSelect, "fighterBayOperationsRound" | "fighterBayOperationsUsed">,
+  round: number,
+): number {
+  return unit.fighterBayOperationsRound === round ? unit.fighterBayOperationsUsed : 0;
+}
+
+function fighterBayOperationLimit(
+  unit: Pick<typeof gameUnitsTable.$inferSelect, "carriedFighters" | "specialAction">,
+  model: Pick<typeof shipModelsTable.$inferSelect, "traits">,
+  mode: "launch" | "recover" = "launch",
+): number {
+  if (!Array.isArray(unit.carriedFighters) || unit.carriedFighters.length === 0) return 0;
+  const traits = parseShipTraits(model.traits);
+  const base = Math.max(1, traits.carrier || 0);
+  return mode === "launch" && unit.specialAction === "scramble"
+    ? (traits.carrier ? traits.carrier + 2 : 2)
+    : base;
+}
+
+function prebattleFighterDeploymentLimit(
+  inventory: CarriedFighterInventoryItem[],
+  carrierModel: Pick<typeof shipModelsTable.$inferSelect, "traits">,
+): number {
+  const totalFlights = inventory.reduce((sum, item) => sum + Math.max(0, item.total), 0);
+  if (totalFlights <= 0) return 0;
+  const traits = parseShipTraits(carrierModel.traits);
+  return traits.fleetCarrier ? Math.max(1, Math.floor(totalFlights / 2)) : 1;
+}
+
+function normalizeHeadingInput(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return normalizeHeadingDegrees(fallback);
+  return normalizeHeadingDegrees(n);
+}
+
+function assertEndPhaseFighterBayWindow(
+  game: typeof gamesTable.$inferSelect,
+  userId: string,
+): void {
+  if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+  if (game.phase !== "end") throw Object.assign(new Error("Fighters launch and recover in the End Phase"), { status: 400 });
+  if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your End Phase fighter window"), { status: 400 });
+  const alreadyPassed = userId === game.challengerId
+    ? game.endPhaseChallengerPassed
+    : userId === game.opponentId
+    ? game.endPhaseOpponentPassed
+    : true;
+  if (alreadyPassed) throw Object.assign(new Error("You've already passed the End Phase this round"), { status: 400 });
+}
+
+function requireNoSpecialActionForFighterBay(
+  unit: Pick<typeof gameUnitsTable.$inferSelect, "specialAction">,
+  mode: "launch" | "recover",
+): void {
+  if (unit.specialAction && !(mode === "launch" && unit.specialAction === "scramble")) {
+    throw Object.assign(new Error("Ships that performed a Special Action cannot launch or recover fighters"), { status: 400 });
+  }
+}
+
+function updateFighterInventoryItem(
+  inventory: CarriedFighterInventoryItem[],
+  index: number,
+  update: (item: CarriedFighterInventoryItem) => CarriedFighterInventoryItem,
+): CarriedFighterInventoryItem[] {
+  return inventory.map((item, i) => i === index ? update(item) : item);
+}
+
+type DestroyedFighterRecoveryContext =
+  | "weapon"
+  | "anti-fighter"
+  | "dogfight"
+  | "explosion"
+  | "end-phase";
+
+type DestroyedFighterRecoveryResult = {
+  fighterUnitId: number;
+  fighterName: string;
+  context: DestroyedFighterRecoveryContext;
+  attempted: boolean;
+  recovered: boolean;
+  roll: number | null;
+  modifier: number;
+  target: number;
+  carrierUnitId: number | null;
+  carrierName: string | null;
+  fleetCarrierUnitId: number | null;
+  fleetCarrierName: string | null;
+  reason?: string;
+};
+
+function inventoryIndexForFighterModel(
+  inventory: CarriedFighterInventoryItem[],
+  fighterModel: Pick<typeof shipModelsTable.$inferSelect, "id" | "name">,
+): number {
+  return inventory.findIndex(item =>
+    item.shipModelId === fighterModel.id
+    || normalizeSmallCraftKey(item.name) === normalizeSmallCraftKey(fighterModel.name)
+  );
+}
+
+async function eligibleFleetCarrierSupportNearPoint(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+  point: { x: number; z: number },
+  rangeInches: number,
+): Promise<typeof gameUnitsTable.$inferSelect | null> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.ownerId, ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  for (const unit of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (isCrippledUnit(unit) || isSkeletonCrewUnit(unit)) continue;
+    if (centerDistance({ x: unit.hexQ, z: unit.hexR }, point) > rangeInches + 1e-6) continue;
+    const model = await getShipModelForUnit(tx, unit);
+    if (!model || shipModelIsFighter(model)) continue;
+    const critRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+    const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    const traits = parseShipTraits(filterLostTraits(model.traits, crits.lostTraitNames));
+    if (traits.fleetCarrier) return unit;
+  }
+  return null;
+}
+
+async function resolveDestroyedFighterRecovery(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  fighter: typeof gameUnitsTable.$inferSelect,
+  context: DestroyedFighterRecoveryContext,
+): Promise<DestroyedFighterRecoveryResult | null> {
+  const fighterModel = await getShipModelForUnit(tx, fighter);
+  if (!fighterModel || !shipModelIsFighter(fighterModel)) return null;
+  if (!fighter.launchedFromUnitId) {
+    return {
+      fighterUnitId: fighter.id,
+      fighterName: fighter.name,
+      context,
+      attempted: false,
+      recovered: false,
+      roll: null,
+      modifier: 0,
+      target: 5,
+      carrierUnitId: null,
+      carrierName: null,
+      fleetCarrierUnitId: null,
+      fleetCarrierName: null,
+      reason: "fighter-not-launched-from-carrier",
+    };
+  }
+
+  const [originCarrier] = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.id, fighter.launchedFromUnitId),
+    eq(gameUnitsTable.gameId, game.id),
+  ));
+  const originInventory = originCarrier && Array.isArray(originCarrier.carriedFighters)
+    ? originCarrier.carriedFighters as CarriedFighterInventoryItem[]
+    : [];
+  const originIndex = inventoryIndexForFighterModel(originInventory, fighterModel);
+
+  const candidateRows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.ownerId, fighter.ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const sortedCandidates = [...candidateRows as Array<typeof gameUnitsTable.$inferSelect>].sort((a, b) => {
+    if (a.id === fighter.launchedFromUnitId) return -1;
+    if (b.id === fighter.launchedFromUnitId) return 1;
+    return centerDistance({ x: a.hexQ, z: a.hexR }, { x: fighter.hexQ, z: fighter.hexR })
+      - centerDistance({ x: b.hexQ, z: b.hexR }, { x: fighter.hexQ, z: fighter.hexR });
+  });
+
+  let recoveryCarrier: typeof gameUnitsTable.$inferSelect | null = null;
+  let recoveryInventory: CarriedFighterInventoryItem[] = [];
+  let recoveryIndex = -1;
+  for (const candidate of sortedCandidates) {
+    if (candidate.id === fighter.id) continue;
+    if (candidate.damageState === "adrift" || candidate.damageState === "exploding-end-of-next") continue;
+    const candidateModel = await getShipModelForUnit(tx, candidate);
+    if (!candidateModel || shipModelIsFighter(candidateModel)) continue;
+    const inventory = Array.isArray(candidate.carriedFighters)
+      ? candidate.carriedFighters as CarriedFighterInventoryItem[]
+      : [];
+    const index = inventoryIndexForFighterModel(inventory, fighterModel);
+    if (index < 0) continue;
+    const item = inventory[index]!;
+    if (item.available >= item.total) continue;
+    recoveryCarrier = candidate;
+    recoveryInventory = inventory;
+    recoveryIndex = index;
+    break;
+  }
+
+  const fleetCarrier = await eligibleFleetCarrierSupportNearPoint(
+    tx,
+    game.id,
+    fighter.ownerId,
+    { x: fighter.hexQ, z: fighter.hexR },
+    10,
+  );
+  const modifier = fleetCarrier ? 1 : 0;
+
+  if (!recoveryCarrier) {
+    if (originCarrier && originIndex >= 0) {
+      const nextOriginInventory = updateFighterInventoryItem(originInventory, originIndex, item => ({
+        ...item,
+        launched: Math.max(0, item.launched - 1),
+        destroyed: item.destroyed + 1,
+      }));
+      await tx.update(gameUnitsTable)
+        .set({ carriedFighters: nextOriginInventory })
+        .where(eq(gameUnitsTable.id, originCarrier.id));
+    }
+    return {
+      fighterUnitId: fighter.id,
+      fighterName: fighter.name,
+      context,
+      attempted: false,
+      recovered: false,
+      roll: null,
+      modifier,
+      target: 5,
+      carrierUnitId: null,
+      carrierName: null,
+      fleetCarrierUnitId: fleetCarrier?.id ?? null,
+      fleetCarrierName: fleetCarrier?.name ?? null,
+      reason: "no-empty-compatible-carrier-bay",
+    };
+  }
+
+  const roll = rollD6();
+  const recovered = roll + modifier >= 5;
+  if (recovered) {
+    if (originCarrier && originIndex >= 0 && originCarrier.id !== recoveryCarrier.id) {
+      const nextOriginInventory = updateFighterInventoryItem(originInventory, originIndex, item => ({
+        ...item,
+        launched: Math.max(0, item.launched - 1),
+      }));
+      await tx.update(gameUnitsTable)
+        .set({ carriedFighters: nextOriginInventory })
+        .where(eq(gameUnitsTable.id, originCarrier.id));
+    }
+    const inventoryForRecoveryCarrier = originCarrier?.id === recoveryCarrier.id && originIndex >= 0
+      ? updateFighterInventoryItem(recoveryInventory, originIndex, item => ({
+        ...item,
+        launched: Math.max(0, item.launched - 1),
+      }))
+      : recoveryInventory;
+    const nextRecoveryInventory = updateFighterInventoryItem(inventoryForRecoveryCarrier, recoveryIndex, item => ({
+      ...item,
+      available: Math.min(item.total, item.available + 1),
+      recovered: item.recovered + 1,
+    }));
+    await tx.update(gameUnitsTable)
+      .set({ carriedFighters: nextRecoveryInventory })
+      .where(eq(gameUnitsTable.id, recoveryCarrier.id));
+    await tx.delete(gameUnitsTable).where(eq(gameUnitsTable.id, fighter.id));
+  } else if (originCarrier && originIndex >= 0) {
+    const nextOriginInventory = updateFighterInventoryItem(originInventory, originIndex, item => ({
+      ...item,
+      launched: Math.max(0, item.launched - 1),
+      destroyed: item.destroyed + 1,
+    }));
+    await tx.update(gameUnitsTable)
+      .set({ carriedFighters: nextOriginInventory })
+      .where(eq(gameUnitsTable.id, originCarrier.id));
+  }
+
+  return {
+    fighterUnitId: fighter.id,
+    fighterName: fighter.name,
+    context,
+    attempted: true,
+    recovered,
+    roll,
+    modifier,
+    target: 5,
+    carrierUnitId: recoveryCarrier.id,
+    carrierName: recoveryCarrier.name,
+    fleetCarrierUnitId: fleetCarrier?.id ?? null,
+    fleetCarrierName: fleetCarrier?.name ?? null,
+  };
+}
+
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
 const BASE_CONTACT_EPSILON = 0.05;
 
@@ -742,7 +1109,9 @@ function shipAiProfileForModel(model: { name?: string | null; aiProfile?: string
 }
 
 function canBasesOverlap(a: Pick<UnitFootprint, "isFighter">, b: Pick<UnitFootprint, "isFighter">): boolean {
-  return a.isFighter !== b.isFighter;
+  void a;
+  void b;
+  return false;
 }
 
 function basesOverlap(a: UnitFootprint, b: UnitFootprint): boolean {
@@ -1506,6 +1875,7 @@ async function autoDeployAiOpponent(gameId: number): Promise<typeof gamesTable.$
       maxCrewPoints: model.crew ?? 0,
       crewThreshold: model.crewThreshold ?? (model.crew ? Math.ceil(model.crew / 2) : 0),
       damageState: "normal",
+      carriedFighters: carriedFightersFromSmallCraft(model.smallCraft, models),
       isDestroyed: false,
     }).returning();
 
@@ -1586,13 +1956,28 @@ async function initiativeModifierForPlayer(tx: any, gameId: number, playerId: st
     eq(gameUnitsTable.ownerId, playerId),
     eq(gameUnitsTable.isDestroyed, false),
   ));
+  let ancientBonus = 0;
+  let commandBonus = 0;
   for (const u of units) {
     const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
     if (!ship) continue;
     const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-    if (model && parseShipTraits(model.traits).ancient) return 4;
+    if (!model) continue;
+    const critRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, u.id));
+    const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    const traits = parseShipTraits(filterLostTraits(model.traits, crits.lostTraitNames));
+    if (traits.ancient) ancientBonus = Math.max(ancientBonus, 4);
+    if (!isCrippledUnit(u) && !isSkeletonCrewUnit(u)) {
+      commandBonus = Math.max(commandBonus, traits.command);
+    }
   }
-  return 0;
+  return ancientBonus + commandBonus;
 }
 
 async function chooseHumanFirstAfterAiInitiative(
@@ -1630,6 +2015,34 @@ async function getShipModelForUnit(tx: any, unit: typeof gameUnitsTable.$inferSe
   if (!ship) return null;
   const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
   return model ?? null;
+}
+
+async function fleetCarrierDogfightBonus(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+): Promise<number> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.ownerId, ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  for (const unit of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (isCrippledUnit(unit) || isSkeletonCrewUnit(unit)) continue;
+    const model = await getShipModelForUnit(tx, unit);
+    if (!model || shipModelIsFighter(model)) continue;
+    const critRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+    const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    const traits = parseShipTraits(filterLostTraits(model.traits, crits.lostTraitNames));
+    if (traits.fleetCarrier) return 1;
+  }
+  return 0;
 }
 
 async function aiMovementEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
@@ -2522,6 +2935,7 @@ async function resolveBasicAiWeaponFire(
   finalCrewLost: number;
   shieldedHits: number;
   targetDestroyed: boolean;
+  fighterRecovery: DestroyedFighterRecoveryResult | null;
   winnerId: string | null;
   gameCompleted: boolean;
 }> {
@@ -2811,6 +3225,9 @@ async function resolveBasicAiWeaponFire(
     damageState: nextDamageState,
     isDestroyed: targetDestroyed,
   }).where(eq(gameUnitsTable.id, target.id)).returning();
+  const fighterRecovery = targetDestroyed
+    ? await resolveDestroyedFighterRecovery(tx, game, updatedTarget, "weapon")
+    : null;
 
   const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
   if (!stealthFailWastedSlowLoading) {
@@ -2922,6 +3339,7 @@ async function resolveBasicAiWeaponFire(
       targetHullAfter,
       targetCrewAfter,
       targetDestroyed,
+      fighterRecovery,
       damageTable,
       winnerId,
       gameCompleted,
@@ -2936,6 +3354,7 @@ async function resolveBasicAiWeaponFire(
     finalCrewLost,
     shieldedHits,
     targetDestroyed,
+    fighterRecovery,
     winnerId,
     gameCompleted,
   };
@@ -2992,6 +3411,7 @@ type AntiFighterPendingState = {
     playerId: string;
     attacks: AntiFighterAttackLog[];
     destroyedUnitIds: number[];
+    fighterRecoveries?: DestroyedFighterRecoveryResult[];
   };
 };
 
@@ -3126,7 +3546,7 @@ async function buildAntiFighterPendingState(
 async function resolveEndOfMovementAntiFighter(
   tx: any,
   game: typeof gamesTable.$inferSelect,
-): Promise<{ attacks: AntiFighterAttackLog[]; destroyedUnitIds: number[] }> {
+): Promise<{ attacks: AntiFighterAttackLog[]; destroyedUnitIds: number[]; fighterRecoveries: DestroyedFighterRecoveryResult[] }> {
   const rows = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.isDestroyed, false),
@@ -3185,6 +3605,7 @@ async function resolveEndOfMovementAntiFighter(
 
   const attacks: AntiFighterAttackLog[] = [];
   const destroyedUnitIds = new Set<number>();
+  const fighterRecoveries: DestroyedFighterRecoveryResult[] = [];
 
   for (const attackerEntry of byId.values()) {
     if (!liveIds.has(attackerEntry.unit.id)) continue;
@@ -3232,6 +3653,7 @@ async function resolveEndOfMovementAntiFighter(
     }
 
     for (const targetId of destroyedByThisAttack) {
+      const targetEntry = byId.get(targetId);
       liveIds.delete(targetId);
       destroyedUnitIds.add(targetId);
       await tx.update(gameUnitsTable).set({
@@ -3240,6 +3662,16 @@ async function resolveEndOfMovementAntiFighter(
         damageState: "destroyed",
         isDestroyed: true,
       }).where(eq(gameUnitsTable.id, targetId));
+      if (targetEntry) {
+        const recovery = await resolveDestroyedFighterRecovery(tx, game, {
+          ...targetEntry.unit,
+          hullPoints: 0,
+          crewPoints: 0,
+          damageState: "destroyed",
+          isDestroyed: true,
+        }, "anti-fighter");
+        if (recovery) fighterRecoveries.push(recovery);
+      }
     }
 
     attacks.push({
@@ -3258,6 +3690,7 @@ async function resolveEndOfMovementAntiFighter(
     const summary = {
       round: game.currentRound,
       destroyedUnitIds: [...destroyedUnitIds],
+      fighterRecoveries,
       dogfightingUnitIdsSkipped: [...dogfightingIds],
       attacks,
     };
@@ -3288,7 +3721,7 @@ async function resolveEndOfMovementAntiFighter(
       .where(eq(gamesTable.id, game.id));
   }
 
-  return { attacks, destroyedUnitIds: [...destroyedUnitIds] };
+  return { attacks, destroyedUnitIds: [...destroyedUnitIds], fighterRecoveries };
 }
 
 async function resolvePlayerAntiFighterAllocations(
@@ -3296,7 +3729,7 @@ async function resolvePlayerAntiFighterAllocations(
   game: typeof gamesTable.$inferSelect,
   pending: AntiFighterPendingState,
   allocations: Array<{ attackerUnitId: number; targetUnitId: number; dice: number }>,
-): Promise<{ playerId: string; attacks: AntiFighterAttackLog[]; destroyedUnitIds: number[] }> {
+): Promise<{ playerId: string; attacks: AntiFighterAttackLog[]; destroyedUnitIds: number[]; fighterRecoveries: DestroyedFighterRecoveryResult[] }> {
   const attackerById = new Map(pending.attackers.map(attacker => [attacker.attackerUnitId, attacker]));
   const diceByAttacker = new Map<number, number>();
   const expandedAssignments = new Map<number, number[]>();
@@ -3326,6 +3759,7 @@ async function resolvePlayerAntiFighterAllocations(
 
   const attacks: AntiFighterAttackLog[] = [];
   const destroyedUnitIds = new Set<number>();
+  const fighterRecoveries: DestroyedFighterRecoveryResult[] = [];
   for (const attacker of pending.attackers) {
     const assignments = expandedAssignments.get(attacker.attackerUnitId) ?? [];
     if (assignments.length === 0) continue;
@@ -3365,6 +3799,10 @@ async function resolvePlayerAntiFighterAllocations(
   }
 
   for (const targetId of destroyedUnitIds) {
+    const [targetUnit] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, targetId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
     await tx.update(gameUnitsTable).set({
       hullPoints: 0,
       crewPoints: 0,
@@ -3374,6 +3812,16 @@ async function resolvePlayerAntiFighterAllocations(
       eq(gameUnitsTable.id, targetId),
       eq(gameUnitsTable.gameId, game.id),
     ));
+    if (targetUnit) {
+      const recovery = await resolveDestroyedFighterRecovery(tx, game, {
+        ...targetUnit,
+        hullPoints: 0,
+        crewPoints: 0,
+        damageState: "destroyed",
+        isDestroyed: true,
+      }, "anti-fighter");
+      if (recovery) fighterRecoveries.push(recovery);
+    }
   }
 
   const survivors = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
@@ -3395,7 +3843,7 @@ async function resolvePlayerAntiFighterAllocations(
       .where(eq(gamesTable.id, game.id));
   }
 
-  return { playerId: pending.currentPlayerId, attacks, destroyedUnitIds: [...destroyedUnitIds] };
+  return { playerId: pending.currentPlayerId, attacks, destroyedUnitIds: [...destroyedUnitIds], fighterRecoveries };
 }
 
 async function advanceAfterAntiFighter(
@@ -3726,13 +4174,19 @@ async function rollOverRoundAfterEndPhase(
     oneWeaponThisRound: false,
   }).where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
 
-  await tx.update(gameUnitsTable).set({
-    damageState: "destroyed",
-    isDestroyed: true,
-  }).where(and(
+  const delayedKills = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.damageState, "exploding-end-of-next"),
   ));
+  for (const unit of delayedKills as Array<typeof gameUnitsTable.$inferSelect>) {
+    const [destroyedUnit] = await tx.update(gameUnitsTable).set({
+      damageState: "destroyed",
+      isDestroyed: true,
+    }).where(eq(gameUnitsTable.id, unit.id)).returning();
+    if (destroyedUnit) {
+      await resolveDestroyedFighterRecovery(tx, game, destroyedUnit, "end-phase");
+    }
+  }
 
   await autoRepairRedundantSystemCriticals(tx, game.id);
 
@@ -4682,9 +5136,68 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         }
         placedModelByShipId.set(ship.id, model);
       }
+      const fighterInventoryModels = await tx.select({
+        id: shipModelsTable.id,
+        name: shipModelsTable.name,
+      }).from(shipModelsTable);
+      const predeployedFighterLinks = new Map<number, number>();
+      const predeployedByCarrierIndex = new Map<number, number>();
+      const predeployedByCarrierAndModel = new Map<string, number>();
+      for (let index = 0; index < parsed.data.placements.length; index += 1) {
+        const placement = parsed.data.placements[index]!;
+        const carrierIndex = placement.launchedFromPlacementIndex;
+        if (carrierIndex == null) continue;
+        if (!Number.isInteger(carrierIndex) || carrierIndex < 0 || carrierIndex >= parsed.data.placements.length || carrierIndex === index) {
+          throw Object.assign(new Error("Invalid carrier placement link for deployed fighter"), { status: 400 });
+        }
+        const carrierPlacement = parsed.data.placements[carrierIndex]!;
+        if (carrierPlacement.launchedFromPlacementIndex != null) {
+          throw Object.assign(new Error("A deployed fighter cannot act as another fighter's carrier"), { status: 400 });
+        }
+        const fighterShip = placedShips[index];
+        const carrierShip = placedShips[carrierIndex];
+        const fighterModel = fighterShip ? placedModelByShipId.get(fighterShip.id) : undefined;
+        const carrierModel = carrierShip ? placedModelByShipId.get(carrierShip.id) : undefined;
+        if (!fighterShip || !carrierShip || !fighterModel || !carrierModel) {
+          throw Object.assign(new Error("Invalid fighter deployment carrier link"), { status: 400 });
+        }
+        if (!shipModelIsFighter(fighterModel)) {
+          throw Object.assign(new Error("Only fighter flights can be deployed from a carrier"), { status: 400 });
+        }
+        if (shipModelIsFighter(carrierModel)) {
+          throw Object.assign(new Error("Fighter flights cannot carry deployed fighters"), { status: 400 });
+        }
+        const distance = centerDistance(
+          { x: placement.hexQ, z: placement.hexR },
+          { x: carrierPlacement.hexQ, z: carrierPlacement.hexR },
+        );
+        if (distance > 3 + 1e-6) {
+          throw Object.assign(new Error("Deployed carried fighters must be placed within 3 inches of their carrier"), { status: 400 });
+        }
+        const inventory = carriedFightersFromSmallCraft(carrierModel.smallCraft, fighterInventoryModels);
+        const item = inventory.find(candidate => candidate.shipModelId === fighterModel.id);
+        if (!item) {
+          throw Object.assign(new Error(`${carrierModel.name} does not carry ${fighterModel.name}`), { status: 400 });
+        }
+        const usedByCarrier = predeployedByCarrierIndex.get(carrierIndex) ?? 0;
+        const limit = prebattleFighterDeploymentLimit(inventory, carrierModel);
+        if (usedByCarrier >= limit) {
+          throw Object.assign(new Error(`Pre-battle fighter deployment limit exceeded for ${carrierModel.name}`), { status: 400 });
+        }
+        const modelKey = `${carrierIndex}:${fighterModel.id}`;
+        const usedByModel = predeployedByCarrierAndModel.get(modelKey) ?? 0;
+        if (usedByModel >= item.total) {
+          throw Object.assign(new Error(`${carrierModel.name} has no remaining ${fighterModel.name} flights to deploy`), { status: 400 });
+        }
+        predeployedFighterLinks.set(index, carrierIndex);
+        predeployedByCarrierIndex.set(carrierIndex, usedByCarrier + 1);
+        predeployedByCarrierAndModel.set(modelKey, usedByModel + 1);
+      }
       const scenarioPriority = normalizePriorityLevel(game.priorityLevel);
       const allocation = calculateAllocation(
-        placedShips.map(ship => normalizePriorityLevel(placedModelByShipId.get(ship.id)?.priorityLevel)),
+        placedShips
+          .filter((_ship, index) => !predeployedFighterLinks.has(index))
+          .map(ship => normalizePriorityLevel(placedModelByShipId.get(ship.id)?.priorityLevel)),
         scenarioPriority,
         game.allocationPoints,
       );
@@ -4767,7 +5280,9 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       // we honor the per-ship value, defaulting to 4 if omitted, clamped to 1..7.
       const isStandardCQ = game.crewQualityMode !== "custom";
 
-      for (const placement of parsed.data.placements) {
+      const insertedUnitsByPlacementIndex = new Map<number, typeof gameUnitsTable.$inferSelect>();
+      for (let index = 0; index < parsed.data.placements.length; index += 1) {
+        const placement = parsed.data.placements[index]!;
         const ship = ships.find(s => s.id === placement.shipId);
         if (!ship) continue;
         const model = placedModelByShipId.get(ship.id);
@@ -4779,7 +5294,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           : isStandardCQ
           ? 4
           : Math.max(1, Math.min(7, Math.trunc(requestedCQ)));
-        await tx.insert(gameUnitsTable).values({
+        const [inserted] = await tx.insert(gameUnitsTable).values({
           gameId: params.data.gameId,
           ownerId: playerUserId,
           shipId: ship.id,
@@ -4810,8 +5325,43 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           maxCrewPoints: model.crew ?? 0,
           crewThreshold: model.crewThreshold ?? (model.crew ? Math.ceil(model.crew / 2) : 0),
           damageState: "normal",
+          carriedFighters: predeployedFighterLinks.has(index)
+            ? []
+            : carriedFightersFromSmallCraft(model.smallCraft, fighterInventoryModels),
+          launchedFromUnitId: null,
           isDestroyed: false,
-        });
+        }).returning();
+        if (inserted) insertedUnitsByPlacementIndex.set(index, inserted);
+      }
+
+      const carrierInventoryByUnitId = new Map<number, CarriedFighterInventoryItem[]>();
+      for (const [fighterIndex, carrierIndex] of predeployedFighterLinks.entries()) {
+        const fighterUnit = insertedUnitsByPlacementIndex.get(fighterIndex);
+        const carrierUnit = insertedUnitsByPlacementIndex.get(carrierIndex);
+        if (!fighterUnit || !carrierUnit) {
+          throw Object.assign(new Error("Failed to link deployed fighter to carrier"), { status: 500 });
+        }
+        const fighterShip = placedShips[fighterIndex];
+        const fighterModel = fighterShip ? placedModelByShipId.get(fighterShip.id) : undefined;
+        if (!fighterModel) throw Object.assign(new Error("Fighter model missing during deploy"), { status: 500 });
+        const currentInventory = carrierInventoryByUnitId.get(carrierUnit.id)
+          ?? (Array.isArray(carrierUnit.carriedFighters) ? carrierUnit.carriedFighters as CarriedFighterInventoryItem[] : []);
+        const itemIndex = currentInventory.findIndex(item => item.shipModelId === fighterModel.id && item.available > 0);
+        if (itemIndex === -1) {
+          throw Object.assign(new Error(`Carrier inventory exhausted for ${fighterModel.name}`), { status: 400 });
+        }
+        const nextInventory = updateFighterInventoryItem(currentInventory, itemIndex, item => ({
+          ...item,
+          available: Math.max(0, item.available - 1),
+          launched: item.launched + 1,
+        }));
+        carrierInventoryByUnitId.set(carrierUnit.id, nextInventory);
+        await tx.update(gameUnitsTable)
+          .set({ carriedFighters: nextInventory })
+          .where(eq(gameUnitsTable.id, carrierUnit.id));
+        await tx.update(gameUnitsTable)
+          .set({ launchedFromUnitId: carrierUnit.id })
+          .where(eq(gameUnitsTable.id, fighterUnit.id));
       }
 
       const deployedUnitIds = (await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
@@ -5171,6 +5721,230 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
 });
 
 // ── Pick up a ship for its activation this round ─────────────────────────────
+router.post("/games/:gameId/units/:unitId/launch-fighter", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = FireWeaponParams.pick({ gameId: true, unitId: true }).safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = (req.body && typeof req.body === "object" && !Array.isArray(req.body)) ? req.body as Record<string, unknown> : {};
+  const shipModelId = Number(body.shipModelId);
+  const hexQ = Number(body.hexQ);
+  const hexR = Number(body.hexR);
+  if (!Number.isInteger(shipModelId)) { res.status(400).json({ error: "shipModelId is required" }); return; }
+  if (!Number.isFinite(hexQ) || !Number.isFinite(hexR)) { res.status(400).json({ error: "hexQ and hexR are required" }); return; }
+  const { gameId, unitId } = params.data;
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      assertEndPhaseFighterBayWindow(game, userId);
+
+      const [carrier] = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
+      if (!carrier) throw Object.assign(new Error("Carrier not found"), { status: 404 });
+      if (carrier.ownerId !== userId) throw Object.assign(new Error("Not your carrier"), { status: 403 });
+      if (carrier.isDestroyed || carrier.damageState === "adrift" || carrier.damageState === "exploding-end-of-next") {
+        throw Object.assign(new Error("This ship cannot launch fighters in its current state"), { status: 400 });
+      }
+      requireNoSpecialActionForFighterBay(carrier, "launch");
+      const carrierModel = await getShipModelForUnit(tx, carrier);
+      if (!carrierModel) throw Object.assign(new Error("Carrier ship model missing"), { status: 500 });
+      if (shipModelIsFighter(carrierModel)) throw Object.assign(new Error("Fighter flights cannot launch fighters"), { status: 400 });
+      const inventory = Array.isArray(carrier.carriedFighters) ? carrier.carriedFighters : [];
+      const bayIndex = inventory.findIndex(item => item.shipModelId === shipModelId);
+      if (bayIndex < 0) throw Object.assign(new Error("This ship does not carry that fighter type"), { status: 400 });
+      const bayItem = inventory[bayIndex]!;
+      if (bayItem.available <= 0) throw Object.assign(new Error(`${bayItem.name} is not available to launch`), { status: 400 });
+      const bayLimit = fighterBayOperationLimit(carrier, carrierModel, "launch");
+      const used = fighterBayOperationsUsedThisRound(carrier, game.currentRound);
+      if (used >= bayLimit) throw Object.assign(new Error(`This ship may launch or recover at most ${bayLimit} fighter flight${bayLimit === 1 ? "" : "s"} this turn`), { status: 400 });
+
+      const [fighterModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, shipModelId));
+      if (!fighterModel) throw Object.assign(new Error("Fighter ship model not found"), { status: 404 });
+      if (!shipModelIsFighter(fighterModel)) throw Object.assign(new Error("Selected ship model is not a fighter flight"), { status: 400 });
+      const finalHexQ = snapBoardCoord(hexQ);
+      const finalHexR = snapBoardCoord(hexR);
+      const launchDistance = centerDistance({ x: carrier.hexQ, z: carrier.hexR }, { x: finalHexQ, z: finalHexR });
+      if (launchDistance > 3 + 1e-6) throw Object.assign(new Error("Fighters must launch within 3 inches of the carrier"), { status: 400 });
+      if (finalHexQ < -24 || finalHexQ > 24 || finalHexR < -36 || finalHexR > 36) throw Object.assign(new Error("Launch position is outside the board"), { status: 400 });
+
+      const otherUnits = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.gameId, gameId), eq(gameUnitsTable.isDestroyed, false)));
+      const otherFootprints: UnitFootprint[] = [];
+      for (const other of otherUnits) {
+        const model = other.id === carrier.id ? carrierModel : await getShipModelForUnit(tx, other);
+        otherFootprints.push({
+          id: other.id,
+          ownerId: other.ownerId,
+          x: other.hexQ,
+          z: other.hexR,
+          baseRadiusInches: rulesBaseRadius(other),
+          isFighter: model ? shipModelIsFighter(model) : false,
+        });
+      }
+      const launchFootprint: UnitFootprint = {
+        id: -1,
+        ownerId: userId,
+        x: finalHexQ,
+        z: finalHexR,
+        baseRadiusInches: rulesBaseRadius({ baseRadiusInches: fighterModel.baseRadiusInches }),
+        isFighter: true,
+      };
+      if (findIllegalBaseOverlap(launchFootprint, otherFootprints)) {
+        throw Object.assign(new Error("Launch position overlaps another base illegally"), { status: 400 });
+      }
+
+      const [carrierShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, carrier.shipId));
+      if (!carrierShip) throw Object.assign(new Error("Carrier ship record missing"), { status: 500 });
+      const [fighterShip] = await tx.insert(shipsTable).values({
+        fleetId: carrierShip.fleetId,
+        shipModelId: fighterModel.id,
+        name: fighterModel.name,
+      }).returning();
+      const fighterTraits = parseShipTraits(fighterModel.traits);
+      const [fighter] = await tx.insert(gameUnitsTable).values({
+        gameId,
+        ownerId: userId,
+        shipId: fighterShip.id,
+        name: fighterModel.name,
+        modelFilename: fighterModel.filename,
+        faction: fighterModel.faction,
+        baseRadiusInches: fighterModel.baseRadiusInches,
+        hullPoints: fighterModel.hullPoints,
+        maxHullPoints: fighterModel.hullPoints,
+        damageThreshold: fighterModel.damageThreshold ?? Math.ceil(fighterModel.hullPoints / 2),
+        hexQ: finalHexQ,
+        hexR: finalHexR,
+        heading: normalizeHeadingInput(body.heading, carrier.heading),
+        speed: fighterModel.speed,
+        turnAngle: fighterModel.turnAngle ?? 45,
+        turns: fighterModel.turns ?? 1,
+        weaponRange: fighterModel.weaponRange,
+        weaponDamage: fighterModel.weaponDamage,
+        crewQuality: carrier.crewQuality,
+        shieldsCurrent: fighterModel.shieldMax ?? 0,
+        interceptorDiceRemaining: fighterTraits.interceptors,
+        interceptorThresholdCurrent: 2,
+        crewPoints: fighterModel.crew ?? 0,
+        maxCrewPoints: fighterModel.crew ?? 0,
+        crewThreshold: fighterModel.crewThreshold ?? (fighterModel.crew ? Math.ceil(fighterModel.crew / 2) : 0),
+        damageState: "normal",
+        carriedFighters: [],
+        launchedFromUnitId: carrier.id,
+        hasMovedThisRound: true,
+        hasFiredThisRound: true,
+        isDestroyed: false,
+      }).returning();
+
+      const nextInventory = updateFighterInventoryItem(inventory, bayIndex, item => ({
+        ...item,
+        available: item.available - 1,
+        launched: item.launched + 1,
+      }));
+      const [updatedCarrier] = await tx.update(gameUnitsTable).set({
+        carriedFighters: nextInventory,
+        fighterBayOperationsRound: game.currentRound,
+        fighterBayOperationsUsed: used + 1,
+      }).where(eq(gameUnitsTable.id, carrier.id)).returning();
+
+      return { carrier: updatedCarrier, fighter };
+    });
+    res.json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/units/:unitId/recover-fighter", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = FireWeaponParams.pick({ gameId: true, unitId: true }).safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+  const body = (req.body && typeof req.body === "object" && !Array.isArray(req.body)) ? req.body as Record<string, unknown> : {};
+  const carrierUnitId = Number(body.carrierUnitId);
+  if (!Number.isInteger(carrierUnitId)) { res.status(400).json({ error: "carrierUnitId is required" }); return; }
+  const { gameId, unitId } = params.data;
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      assertEndPhaseFighterBayWindow(game, userId);
+
+      const [fighter] = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
+      if (!fighter) throw Object.assign(new Error("Fighter not found"), { status: 404 });
+      if (fighter.ownerId !== userId) throw Object.assign(new Error("Not your fighter"), { status: 403 });
+      if (fighter.isDestroyed) throw Object.assign(new Error("Fighter is already removed"), { status: 400 });
+      if (!fighter.launchedFromUnitId) throw Object.assign(new Error("Only launched fighter flights can be recovered into a carrier bay"), { status: 400 });
+      const fighterModel = await getShipModelForUnit(tx, fighter);
+      if (!fighterModel || !shipModelIsFighter(fighterModel)) throw Object.assign(new Error("Selected unit is not a fighter flight"), { status: 400 });
+
+      const [carrier] = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, carrierUnitId), eq(gameUnitsTable.gameId, gameId)));
+      if (!carrier) throw Object.assign(new Error("Carrier not found"), { status: 404 });
+      if (carrier.ownerId !== userId) throw Object.assign(new Error("Not your carrier"), { status: 403 });
+      if (carrier.isDestroyed || carrier.damageState === "adrift" || carrier.damageState === "exploding-end-of-next") {
+        throw Object.assign(new Error("This ship cannot recover fighters in its current state"), { status: 400 });
+      }
+      requireNoSpecialActionForFighterBay(carrier, "recover");
+      const carrierModel = await getShipModelForUnit(tx, carrier);
+      if (!carrierModel) throw Object.assign(new Error("Carrier ship model missing"), { status: 500 });
+      const recoveryLimit = fighterBayOperationLimit(carrier, carrierModel, "recover");
+      const used = fighterBayOperationsUsedThisRound(carrier, game.currentRound);
+      if (used >= recoveryLimit) throw Object.assign(new Error(`This ship may launch or recover at most ${recoveryLimit} fighter flight${recoveryLimit === 1 ? "" : "s"} this turn`), { status: 400 });
+
+      const inventory = Array.isArray(carrier.carriedFighters) ? carrier.carriedFighters : [];
+      const bayIndex = inventory.findIndex(item => item.shipModelId === fighterModel.id || normalizeSmallCraftKey(item.name) === normalizeSmallCraftKey(fighterModel.name));
+      if (bayIndex < 0) throw Object.assign(new Error("This carrier cannot recover that fighter type"), { status: 400 });
+      const bayItem = inventory[bayIndex]!;
+      if (bayItem.available >= bayItem.total) throw Object.assign(new Error("This carrier has no empty bay for that fighter type"), { status: 400 });
+      if (edgeDistance(
+        { x: fighter.hexQ, z: fighter.hexR, baseRadiusInches: rulesBaseRadius(fighter) },
+        { x: carrier.hexQ, z: carrier.hexR, baseRadiusInches: rulesBaseRadius(carrier) },
+      ) > BASE_CONTACT_EPSILON) {
+        throw Object.assign(new Error("Fighter must be in base contact with the recovering carrier"), { status: 400 });
+      }
+
+      const [originCarrier] = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, fighter.launchedFromUnitId), eq(gameUnitsTable.gameId, gameId)));
+      if (!originCarrier) throw Object.assign(new Error("Original launch carrier not found"), { status: 404 });
+      const originInventory = Array.isArray(originCarrier.carriedFighters) ? originCarrier.carriedFighters : [];
+      const originIndex = originInventory.findIndex(item => item.shipModelId === fighterModel.id || normalizeSmallCraftKey(item.name) === normalizeSmallCraftKey(fighterModel.name));
+      const nextOriginInventory = originIndex >= 0
+        ? updateFighterInventoryItem(originInventory, originIndex, item => ({
+          ...item,
+          launched: Math.max(0, item.launched - 1),
+        }))
+        : originInventory;
+      if (originCarrier.id !== carrier.id) {
+        await tx.update(gameUnitsTable).set({ carriedFighters: nextOriginInventory }).where(eq(gameUnitsTable.id, originCarrier.id));
+      }
+
+      const nextCarrierInventory = updateFighterInventoryItem(
+        originCarrier.id === carrier.id ? nextOriginInventory : inventory,
+        bayIndex,
+        item => ({
+          ...item,
+          available: item.available + 1,
+          recovered: item.recovered + 1,
+        }),
+      );
+      const [updatedCarrier] = await tx.update(gameUnitsTable).set({
+        carriedFighters: nextCarrierInventory,
+        fighterBayOperationsRound: game.currentRound,
+        fighterBayOperationsUsed: used + 1,
+      }).where(eq(gameUnitsTable.id, carrier.id)).returning();
+      await tx.delete(gameUnitsTable).where(eq(gameUnitsTable.id, fighter.id));
+
+      return { carrier: updatedCarrier, recoveredUnitId: fighter.id };
+    });
+    res.json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
 router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = ActivateUnitParams.safeParse(req.params);
@@ -5522,17 +6296,24 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
 
       const attackerRoll = rollD6();
       const targetRoll = rollD6();
-      const attackerScore = attackerRoll + attackerTraits.dogfight;
-      const targetScore = targetRoll + targetTraits.dogfight;
+      const attackerFleetCarrierBonus = await fleetCarrierDogfightBonus(tx, game.id, attacker.ownerId);
+      const targetFleetCarrierBonus = await fleetCarrierDogfightBonus(tx, game.id, target.ownerId);
+      const attackerScore = attackerRoll + attackerTraits.dogfight + attackerFleetCarrierBonus;
+      const targetScore = targetRoll + targetTraits.dogfight + targetFleetCarrierBonus;
       const destroyedUnitId =
         attackerScore > targetScore ? target.id :
         targetScore > attackerScore ? attacker.id :
+        null;
+      const destroyedFighterBeforeRecovery =
+        destroyedUnitId === target.id ? target :
+        destroyedUnitId === attacker.id ? attacker :
         null;
 
       await tx.update(gameUnitsTable)
         .set({ hasFiredThisRound: true })
         .where(eq(gameUnitsTable.id, attacker.id));
 
+      let fighterRecovery: DestroyedFighterRecoveryResult | null = null;
       if (destroyedUnitId !== null) {
         await tx.update(gameUnitsTable).set({
           hullPoints: 0,
@@ -5543,6 +6324,18 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
           isDestroyed: true,
           hasFiredThisRound: true,
         }).where(eq(gameUnitsTable.id, destroyedUnitId));
+        if (destroyedFighterBeforeRecovery) {
+          fighterRecovery = await resolveDestroyedFighterRecovery(tx, game, {
+            ...destroyedFighterBeforeRecovery,
+            hullPoints: 0,
+            crewPoints: 0,
+            shieldsCurrent: 0,
+            interceptorDiceRemaining: 0,
+            damageState: "destroyed",
+            isDestroyed: true,
+            hasFiredThisRound: true,
+          }, "dogfight");
+        }
       }
 
       const allUnits = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
@@ -5577,13 +6370,16 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
         attackerName: attacker.name,
         attackerRoll,
         attackerDogfight: attackerTraits.dogfight,
+        attackerFleetCarrierBonus,
         attackerScore,
         targetUnitId: target.id,
         targetName: target.name,
         targetRoll,
         targetDogfight: targetTraits.dogfight,
+        targetFleetCarrierBonus,
         targetScore,
         destroyedUnitId,
+        fighterRecovery,
         tied: destroyedUnitId === null,
       };
       await tx.update(gamesTable).set({
@@ -7023,6 +7819,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const explosionVictims: Array<{
         unitId: number; hitsTaken: number; finalDamage: number;
         finalCrewLost: number; hullAfter: number; destroyed: boolean;
+        fighterRecovery?: DestroyedFighterRecoveryResult | null;
       }> = [];
 
       if (!fighterOneHitDestroyed && targetHullAfter === 0 && target.damageState === "normal" && !target.isDestroyed) {
@@ -7090,9 +7887,19 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
               isDestroyed: vDestroyed,
               damageState: vNextState,
             }).where(eq(gameUnitsTable.id, v.id));
+            const victimRecovery = vDestroyed
+              ? await resolveDestroyedFighterRecovery(tx, game, {
+                ...v,
+                hullPoints: vHullAfter,
+                crewPoints: vCrewAfter,
+                isDestroyed: true,
+                damageState: "destroyed",
+              }, "explosion")
+              : null;
             explosionVictims.push({
               unitId: v.id, hitsTaken, finalDamage: vDmg,
               finalCrewLost: vFinalCrewLost, hullAfter: vHullAfter, destroyed: vDestroyed,
+              fighterRecovery: victimRecovery,
             });
           }
         }
@@ -7123,6 +7930,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         isDestroyed: targetDestroyed,
       }).where(eq(gameUnitsTable.id, target.id)).returning();
       if (!updatedTarget) throw Object.assign(new Error("Target update failed"), { status: 500 });
+      const fighterRecovery = targetDestroyed
+        ? await resolveDestroyedFighterRecovery(tx, game, updatedTarget, "weapon")
+        : null;
 
       // Record that this weapon has fired this activation.
       // Sheet exception: if the stealth check failed AND the weapon is
@@ -7286,6 +8096,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           targetCrewBefore,
           targetCrewAfter,
           targetDestroyed,
+          fighterRecovery,
           damageTable,
           explosionVictims,
           beamExplosions,
@@ -7357,6 +8168,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         targetCrewBefore,
         targetCrewAfter,
         targetDestroyed,
+        fighterRecovery,
         damageTable,
         winnerId,
         explosionVictims,
@@ -7395,6 +8207,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "run-silent": 8,
     "concentrate-fire": 8,
     "all-hands-on-deck": 9,
+    "scramble": 7,
   };
   // All Special Actions — including All Hands on Deck — are declared in
   // the Movement Phase during a ship's activation. All Hands on Deck's
@@ -8050,16 +8863,24 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         scoutCoordConsumed: false,
         hitByUnitIdsThisRound: [],
         oneWeaponThisRound: false,
+        fighterBayOperationsRound: 0,
+        fighterBayOperationsUsed: 0,
       }).where(and(eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false)));
 
       // 2. Resolve delayed catastrophic kills.
-      await tx.update(gameUnitsTable).set({
-        damageState: "destroyed",
-        isDestroyed: true,
-      }).where(and(
+      const delayedKills = await tx.select().from(gameUnitsTable).where(and(
         eq(gameUnitsTable.gameId, game.id),
         eq(gameUnitsTable.damageState, "exploding-end-of-next"),
       ));
+      for (const unit of delayedKills as Array<typeof gameUnitsTable.$inferSelect>) {
+        const [destroyedUnit] = await tx.update(gameUnitsTable).set({
+          damageState: "destroyed",
+          isDestroyed: true,
+        }).where(eq(gameUnitsTable.id, unit.id)).returning();
+        if (destroyedUnit) {
+          await resolveDestroyedFighterRecovery(tx, game, destroyedUnit, "end-phase");
+        }
+      }
 
       await autoRepairRedundantSystemCriticals(tx, game.id);
 

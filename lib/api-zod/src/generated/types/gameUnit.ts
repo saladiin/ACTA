@@ -9,6 +9,25 @@ import type { CriticalEffect } from './criticalEffect';
 import type { GameUnitDamageState } from './gameUnitDamageState';
 import type { GameUnitSlowLoadingWeaponCooldowns } from './gameUnitSlowLoadingWeaponCooldowns';
 
+/**
+ * Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.
+ */
+export interface GameUnitCarriedFighter {
+  name: string;
+  /** Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog. */
+  shipModelId: number | null;
+  /** @minimum 0 */
+  total: number;
+  /** @minimum 0 */
+  available: number;
+  /** @minimum 0 */
+  launched: number;
+  /** @minimum 0 */
+  recovered: number;
+  /** @minimum 0 */
+  destroyed: number;
+}
+
 export interface GameUnit {
   id: number;
   gameId: number;
@@ -29,6 +48,8 @@ export interface GameUnit {
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
   lastDcRound?: number;
+  /** Last round (1-based) this unit resolved Self Repair. 0 = never. */
+  lastSelfRepairRound?: number;
   /** Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew. */
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
@@ -38,6 +59,14 @@ export interface GameUnit {
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
   damageState?: GameUnitDamageState;
   /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  /** Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array. */
+  carriedFighters: GameUnitCarriedFighter[];
+  /** Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters. */
+  launchedFromUnitId?: number | null;
+  /** Round number for the current fighter bay operation counter. */
+  fighterBayOperationsRound?: number;
+  /** Launch/recovery operations used by this unit in fighterBayOperationsRound. */
+  fighterBayOperationsUsed?: number;
   isCrippled?: boolean;
   /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
   isSkeletonCrew?: boolean;

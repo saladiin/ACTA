@@ -34,6 +34,7 @@ export const ListShipModelsResponseItem = zod.object({
   "hullRating": zod.number().describe('Roll-to-hit target (≥) for attacks against this ship\'s class.'),
   "description": zod.string().nullish(),
   "traits": zod.string().nullish().describe('Semicolon-separated trait list (e.g. \'Lumbering; Agile; Interceptors 2\'). Parsed client-side.'),
+  "smallCraft": zod.string().nullish().describe('Printed carried fighter\/small-craft complement, parsed at deployment for carrier bay inventory.'),
   "weapons": zod.array(zod.object({
   "id": zod.number(),
   "shipModelId": zod.number(),
@@ -316,10 +317,23 @@ export const GetGameResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(0),
+  "available": zod.number().min(0),
+  "launched": zod.number().min(0),
+  "recovered": zod.number().min(0),
+  "destroyed": zod.number().min(0)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "criticals": zod.array(zod.object({
@@ -557,7 +571,8 @@ export const DeployFleetBody = zod.object({
   "hexQ": zod.number(),
   "hexR": zod.number(),
   "heading": zod.number(),
-  "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.')
+  "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.'),
+  "launchedFromPlacementIndex": zod.number().min(0).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.')
 })).min(1)
 })
 
@@ -1089,10 +1104,23 @@ export const DamageControlResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(0),
+  "available": zod.number().min(0),
+  "launched": zod.number().min(0),
+  "recovered": zod.number().min(0),
+  "destroyed": zod.number().min(0)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "criticals": zod.array(zod.object({
@@ -1147,7 +1175,7 @@ export const ChooseSpecialActionParams = zod.object({
 })
 
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'all-hands-on-deck']),
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'all-hands-on-deck', 'scramble']),
   "targetUnitId": zod.number().nullish().describe('Required for \'concentrate-fire\' — the nominated enemy unit id.')
 })
 
@@ -1177,10 +1205,23 @@ export const ChooseSpecialActionResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(0),
+  "available": zod.number().min(0),
+  "launched": zod.number().min(0),
+  "recovered": zod.number().min(0),
+  "destroyed": zod.number().min(0)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "criticals": zod.array(zod.object({
@@ -1265,10 +1306,23 @@ export const ChooseScoutActionResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(0),
+  "available": zod.number().min(0),
+  "launched": zod.number().min(0),
+  "recovered": zod.number().min(0),
+  "destroyed": zod.number().min(0)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "criticals": zod.array(zod.object({
@@ -1347,10 +1401,23 @@ export const MoveUnitResponse = zod.object({
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(0),
+  "available": zod.number().min(0),
+  "launched": zod.number().min(0),
+  "recovered": zod.number().min(0),
+  "destroyed": zod.number().min(0)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
   "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
   "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "criticals": zod.array(zod.object({

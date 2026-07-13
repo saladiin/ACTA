@@ -46,6 +46,7 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Sagittarius", priority: "skirmish" },
   { name: "Sagittarius Missile Cruiser", priority: "skirmish" },
   { name: "Nial Fighter Flight", priority: "patrol" },
+  { name: "Sentri Flight", priority: "patrol" },
 ];
 
 const CAPITAL_BASE_RADIUS_INCHES = 0.8;
@@ -529,6 +530,23 @@ const FIGHTER_FLIGHTS = [
       { name: "Light Fusion Cannon", arc: "Turret", range: 2, attackDice: 3, traits: "Mini Beam" },
     ],
   },
+  {
+    name: "Sentri Flight",
+    filename: "sentri.glb",
+    faction: "Centauri Republic",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 4,
+    speed: 12,
+    traits: "Dodge 3+; Dogfight +1; Fighter; Super Maneuverable",
+    weaponRange: 2,
+    weaponDamage: 2,
+    description: "Centauri Republic Sentri fighter flight",
+    aliases: ["Sentri Flight", "Sentri Fighter Flight", "Sentri Wing"],
+    weapons: [
+      { name: "Twin Particle Array", arc: "Turret", range: 2, attackDice: 2, traits: "Twin Linked" },
+    ],
+  },
 ];
 
 type CsvShipSeed = {
@@ -964,6 +982,22 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       ALTER TABLE game_units
       ADD COLUMN IF NOT EXISTS last_self_repair_round integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS carried_fighters jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS launched_from_unit_id integer
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS fighter_bay_operations_round integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS fighter_bay_operations_used integer NOT NULL DEFAULT 0
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS game_attack_audit_logs (

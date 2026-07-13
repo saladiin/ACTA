@@ -20,4 +20,5 @@ export const SpecialActionInputAction = {
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
   'all-hands-on-deck': 'all-hands-on-deck',
+  'scramble': 'scramble',
 } as const;

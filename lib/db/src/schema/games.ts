@@ -2,6 +2,16 @@ import { pgTable, text, serial, integer, real, timestamp, boolean, jsonb } from 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
+export type CarriedFighterInventoryItem = {
+  name: string;
+  shipModelId: number | null;
+  total: number;
+  available: number;
+  launched: number;
+  recovered: number;
+  destroyed: number;
+};
+
 export const gamesTable = pgTable("games", {
   id: serial("id").primaryKey(),
   challengerId: text("challenger_id").notNull(),
@@ -122,6 +132,13 @@ export const gameUnitsTable = pgTable("game_units", {
   //                            end of the following round.
   //   "destroyed"            — gone (also mirrored by `isDestroyed`).
   damageState: text("damage_state").notNull().default("normal"),
+  // Fighter flights carried by this unit, parsed from ship_models.small_craft
+  // at deployment. This is the authoritative carrier bay inventory for future
+  // launch/recovery rules; independently deployed fighters simply have [].
+  carriedFighters: jsonb("carried_fighters").$type<CarriedFighterInventoryItem[]>().notNull().default([]),
+  launchedFromUnitId: integer("launched_from_unit_id"),
+  fighterBayOperationsRound: integer("fighter_bay_operations_round").notNull().default(0),
+  fighterBayOperationsUsed: integer("fighter_bay_operations_used").notNull().default(0),
   hexQ: real("hex_q").notNull().default(0),
   hexR: real("hex_r").notNull().default(0),
   heading: integer("heading").notNull().default(0),
