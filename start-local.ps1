@@ -38,6 +38,26 @@ New-Item -ItemType Directory -Force -Path $logs | Out-Null
 $apiLog = Join-Path $logs "api.log"
 $webLog = Join-Path $logs "web.log"
 
+function Stop-LocalPortProcess {
+  param([int]$Port)
+
+  $connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
+  $processIds = $connections |
+    Where-Object { $_.OwningProcess -and $_.OwningProcess -ne $PID } |
+    Select-Object -ExpandProperty OwningProcess -Unique
+
+  foreach ($processId in $processIds) {
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if ($null -eq $process) { continue }
+    Stop-Process -Id $processId -Force
+  }
+}
+
+Stop-LocalPortProcess -Port 8080
+Stop-LocalPortProcess -Port 21152
+Stop-LocalPortProcess -Port 5173
+Stop-LocalPortProcess -Port 5174
+
 Push-Location $root
 try {
   $env:PORT = "8080"
