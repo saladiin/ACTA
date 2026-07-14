@@ -261,6 +261,10 @@ const fxCounts = weaponRows.reduce((acc, row) => {
 
 const hasLiveMissileTuning = weaponFx.includes("MISSILE_TUNING") && weaponFx.includes("#ff6600");
 const hasTracerColorRouting = weaponFx.includes("tracerColorsFor");
+const weaponInsertCount = (schema.match(/INSERT INTO weapons \(ship_model_id, name, arc, range, attack_dice, traits\)/g) ?? []).length;
+const directShipWeaponDeleteCount = (schema.match(/DELETE FROM weapons WHERE ship_model_id = \$1/g) ?? []).length;
+const hasStableWeaponSync = schema.includes("async function syncWeaponsForShipModel") && schema.includes("Routine maintenance must preserve matching weapon IDs");
+const weaponMaintenanceStable = hasStableWeaponSync && weaponInsertCount === 1 && directShipWeaponDeleteCount === 1;
 
 console.log("ACTA rules hardening audit");
 console.log("==========================");
@@ -295,3 +299,13 @@ console.log(`  missile: ${fxCounts.missile ?? 0}`);
 console.log(`  energy-mine: ${fxCounts["energy-mine"] ?? 0}`);
 console.log(`  missile tuning preset: ${hasLiveMissileTuning ? "OK" : "MISSING"}`);
 console.log(`  tracer color routing: ${hasTracerColorRouting ? "OK" : "MISSING"}`);
+console.log("");
+
+console.log("Seed maintenance ID stability");
+console.log(`  stable weapon sync helper: ${hasStableWeaponSync ? "OK" : "MISSING"}`);
+console.log(`  direct weapon insert sites: ${weaponInsertCount} ${weaponInsertCount === 1 ? "OK" : "CHECK"}`);
+console.log(`  direct ship weapon delete sites: ${directShipWeaponDeleteCount} ${directShipWeaponDeleteCount === 1 ? "OK" : "CHECK"}`);
+if (!weaponMaintenanceStable) {
+  console.log("  FAIL: weapon maintenance must preserve IDs through syncWeaponsForShipModel; do not reintroduce delete/reinsert loops.");
+  process.exitCode = 1;
+}

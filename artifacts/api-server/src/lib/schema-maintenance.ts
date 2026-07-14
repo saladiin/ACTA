@@ -277,8 +277,93 @@ type ShipMaintenanceSeed = {
   weaponRange: number;
   weaponDamage: number;
   description: string;
-  weapons: Array<{ name: string; arc: string; range: number; attackDice: number; traits: string }>;
+  weapons: WeaponMaintenanceSeed[];
 };
+
+type WeaponMaintenanceSeed = {
+  name: string;
+  arc: string;
+  range: number;
+  attackDice: number;
+  traits: string;
+};
+
+function weaponSeedKey(weapon: Pick<WeaponMaintenanceSeed, "name" | "arc">): string {
+  return `${weapon.name.trim().toLowerCase()}|${weapon.arc.trim().toLowerCase()}`;
+}
+
+async function syncWeaponsForShipModel(shipModelId: number, seeds: WeaponMaintenanceSeed[]): Promise<number> {
+  const existing = await pool.query<{
+    id: number;
+    name: string;
+    arc: string;
+  }>(
+    `
+      SELECT id, name, arc
+      FROM weapons
+      WHERE ship_model_id = $1
+      ORDER BY id
+    `,
+    [shipModelId],
+  );
+  const existingByKey = new Map<string, Array<{ id: number }>>();
+  for (const row of existing.rows) {
+    const key = weaponSeedKey(row);
+    existingByKey.set(key, [...(existingByKey.get(key) ?? []), { id: row.id }]);
+  }
+
+  const seenSeedKeys = new Map<string, number>();
+  const retainedIds: number[] = [];
+  let synced = 0;
+
+  // Routine maintenance must preserve matching weapon IDs. Live games and
+  // browser state can legitimately hold those IDs during deploys.
+  for (const seed of seeds) {
+    const key = weaponSeedKey(seed);
+    const occurrence = seenSeedKeys.get(key) ?? 0;
+    seenSeedKeys.set(key, occurrence + 1);
+    const existingId = existingByKey.get(key)?.[occurrence]?.id ?? null;
+
+    if (existingId !== null) {
+      await pool.query(
+        `
+          UPDATE weapons
+          SET name = $2, arc = $3, range = $4, attack_dice = $5, traits = $6
+          WHERE id = $1
+        `,
+        [existingId, seed.name, seed.arc, seed.range, seed.attackDice, seed.traits],
+      );
+      retainedIds.push(existingId);
+    } else {
+      const inserted = await pool.query<{ id: number }>(
+        `
+          INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING id
+        `,
+        [shipModelId, seed.name, seed.arc, seed.range, seed.attackDice, seed.traits],
+      );
+      const insertedId = inserted.rows[0]?.id;
+      if (insertedId) retainedIds.push(insertedId);
+    }
+    synced++;
+  }
+
+  if (retainedIds.length > 0) {
+    await pool.query(
+      `
+        DELETE FROM weapons
+        WHERE ship_model_id = $1
+          AND NOT (id = ANY($2::int[]))
+      `,
+      [shipModelId, retainedIds],
+    );
+  } else {
+    await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [shipModelId]);
+  }
+
+  return synced;
+}
 
 const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
   {
@@ -835,17 +920,7 @@ async function seedActaCsvShips(): Promise<void> {
 
     const weapons = csv.weaponsByShip.get(key) ?? [];
     if (weapons.length === 0) continue;
-    await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [shipId]);
-    for (const weapon of weapons) {
-      await pool.query(
-        `
-          INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-          VALUES ($1, $2, $3, $4, $5, $6)
-        `,
-        [shipId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-      );
-      seededWeapons++;
-    }
+    seededWeapons += await syncWeaponsForShipModel(shipId, weapons);
   }
 
   logger.info(
@@ -1280,16 +1355,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
       const shipId = shipResult.rows[0]?.id;
       if (shipId) {
-        await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [shipId]);
-        for (const weapon of ship.weapons) {
-          await pool.query(
-            `
-              INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-              VALUES ($1, $2, $3, $4, $5, $6)
-            `,
-            [shipId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-          );
-        }
+        await syncWeaponsForShipModel(shipId, ship.weapons);
       }
     }
 
@@ -1373,16 +1439,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
       const fighterId = fighterResult.rows[0]?.id;
       if (fighterId) {
-        await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [fighterId]);
-        for (const weapon of fighter.weapons) {
-          await pool.query(
-            `
-              INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-              VALUES ($1, $2, $3, $4, $5, $6)
-            `,
-            [fighterId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-          );
-        }
+        await syncWeaponsForShipModel(fighterId, fighter.weapons);
       }
     }
 
@@ -1451,16 +1508,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const tethysId = tethys.rows[0]?.id;
     if (tethysId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [tethysId]);
-      for (const weapon of TETHYS_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [tethysId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(tethysId, TETHYS_WEAPONS);
     }
 
     const sagittarius = await pool.query<{ id: number }>(
@@ -1500,16 +1548,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const sagittariusId = sagittarius.rows[0]?.id;
     if (sagittariusId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [sagittariusId]);
-      for (const weapon of SAGITTARIUS_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [sagittariusId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(sagittariusId, SAGITTARIUS_WEAPONS);
     }
 
     const battlecrab = await pool.query<{ id: number }>(
@@ -1550,16 +1589,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const battlecrabId = battlecrab.rows[0]?.id;
     if (battlecrabId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [battlecrabId]);
-      for (const weapon of BATTLECRAB_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [battlecrabId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(battlecrabId, BATTLECRAB_WEAPONS);
     }
 
     const avioki = await pool.query<{ id: number }>(
@@ -1599,16 +1629,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const aviokiId = avioki.rows[0]?.id;
     if (aviokiId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [aviokiId]);
-      for (const weapon of AVIOKI_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [aviokiId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(aviokiId, AVIOKI_WEAPONS);
     }
 
     const gquan = await pool.query<{ id: number }>(
@@ -1676,16 +1697,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const gquanId = gquan.rows[0]?.id;
     if (gquanId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [gquanId]);
-      for (const weapon of GQUAN_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [gquanId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(gquanId, GQUAN_WEAPONS);
     }
 
     const avenger = await pool.query<{ id: number }>(
@@ -1753,16 +1765,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const avengerId = avenger.rows[0]?.id;
     if (avengerId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [avengerId]);
-      for (const weapon of AVENGER_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [avengerId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(avengerId, AVENGER_WEAPONS);
     }
 
     const primus = await pool.query<{ id: number }>(
@@ -1830,16 +1833,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const primusId = primus.rows[0]?.id;
     if (primusId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [primusId]);
-      for (const weapon of PRIMUS_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [primusId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(primusId, PRIMUS_WEAPONS);
     }
 
     const altarian = await pool.query<{ id: number }>(
@@ -1907,16 +1901,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const altarianId = altarian.rows[0]?.id;
     if (altarianId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [altarianId]);
-      for (const weapon of ALTARIAN_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [altarianId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(altarianId, ALTARIAN_WEAPONS);
     }
 
     const corvan = await pool.query<{ id: number }>(
@@ -1984,16 +1969,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const corvanId = corvan.rows[0]?.id;
     if (corvanId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [corvanId]);
-      for (const weapon of CORVAN_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [corvanId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(corvanId, CORVAN_WEAPONS);
     }
 
     const vorchan = await pool.query<{ id: number }>(
@@ -2061,16 +2037,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const vorchanId = vorchan.rows[0]?.id;
     if (vorchanId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [vorchanId]);
-      for (const weapon of VORCHAN_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [vorchanId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(vorchanId, VORCHAN_WEAPONS);
     }
 
     const whiteStar = await pool.query<{ id: number }>(
@@ -2116,16 +2083,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const whiteStarId = whiteStar.rows[0]?.id;
     if (whiteStarId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [whiteStarId]);
-      for (const weapon of WHITE_STAR_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [whiteStarId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(whiteStarId, WHITE_STAR_WEAPONS);
     }
 
     const tigara = await pool.query<{ id: number }>(
@@ -2189,16 +2147,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const tigaraId = tigara.rows[0]?.id;
     if (tigaraId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [tigaraId]);
-      for (const weapon of TIGARA_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [tigaraId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(tigaraId, TIGARA_WEAPONS);
     }
 
     const tinashi = await pool.query<{ id: number }>(
@@ -2238,16 +2187,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const tinashiId = tinashi.rows[0]?.id;
     if (tinashiId) {
-      await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [tinashiId]);
-      for (const weapon of TINASHI_WEAPONS) {
-        await pool.query(
-          `
-            INSERT INTO weapons (ship_model_id, name, arc, range, attack_dice, traits)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `,
-          [tinashiId, weapon.name, weapon.arc, weapon.range, weapon.attackDice, weapon.traits],
-        );
-      }
+      await syncWeaponsForShipModel(tinashiId, TINASHI_WEAPONS);
     }
 
     await removeDuplicateCanonicalShipRows();
