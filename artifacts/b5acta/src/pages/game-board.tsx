@@ -119,6 +119,82 @@ function boardShipNameLabel(name: string, maxChars = BOARD_SHIP_NAME_MAX_CHARS):
   return name.length > maxChars ? `${name.slice(0, Math.max(0, maxChars - 1))}...` : name;
 }
 
+function splitTraitList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[;,]/)
+    .map(trait => trait.trim())
+    .filter(Boolean);
+}
+
+function normalizeHintKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[-_\s]+/g, " ");
+}
+
+function traitHint(trait: string): string {
+  const normalized = normalizeHintKey(trait);
+  if (/^anti fighter/.test(normalized)) return "Defensive guns that can attack enemy fighters. Higher values mean more anti-fighter dice.";
+  if (/^advanced anti fighter/.test(normalized)) return "Improved anti-fighter fire. It is stronger than normal Anti-Fighter when fighters close in.";
+  if (/^command/.test(normalized)) return "Helps the fleet coordinate. The listed bonus applies where Command checks are used.";
+  if (/^carrier/.test(normalized)) return "Carries fighter flights and can launch or recover them. The number is bay capacity.";
+  if (/^interceptors/.test(normalized)) return "Defensive dice that can cancel incoming attack dice. They refresh by the rules each turn.";
+  if (/^dodge/.test(normalized)) return "This unit may avoid hits on the listed roll. Fighters rely on this heavily.";
+  if (/^dogfight/.test(normalized)) return "Bonus used when resolving fighter dogfights. Higher is better.";
+  if (/^stealth/.test(normalized)) return "Attackers must overcome this stealth value before firing. Strong stealth makes long shots unreliable.";
+  if (/^self repair/.test(normalized)) return "Repairs hull during the End Phase. The trait lists the repair dice available.";
+  const hints: Record<string, string> = {
+    accurate: "Improves attack reliability. Use it when checking weapon hit modifiers.",
+    "adaptive armor": "Reduces repeated incoming damage. It makes the ship harder to wear down.",
+    "advanced jump engine": "Scenario and jump-point capability. Advanced engines are stronger than standard jump engines.",
+    agile: "Turns more easily than normal ships. First turns need only a quarter-speed move.",
+    ancient: "Marks exceptionally advanced technology. Rules interactions are handled where implemented.",
+    atmospheric: "Can operate in atmosphere. This mainly matters for scenarios and terrain rules.",
+    "armor piercing": "Better at pushing damage through armor. It improves damage rolls against solid hits.",
+    beam: "Beam weapons can chain extra hits on strong rolls. They cannot split fire.",
+    "double damage": "Successful damage is doubled. Dangerous against both hull and crew.",
+    "energy mine": "Area-effect weapon. It uses special targeting and cannot split fire.",
+    fighter: "This is a fighter flight, not a capital ship. It uses fighter movement, dogfights, and fighter kill rules.",
+    "fleet carrier": "Improves fighter support and recovery. Nearby destroyed friendly flights get better recovery odds.",
+    "flight computer": "Keeps weapons coordinated with reduced crew. It can offset skeleton-crew firing limits.",
+    "jump engine": "Scenario and jump-point capability. It usually matters when jump points are in play.",
+    lumbering: "Poor maneuverability. The ship cannot use some sharp-turn movement options.",
+    "mini beam": "A lighter beam weapon. It follows beam-style restrictions with smaller output.",
+    "one shot": "Can fire only once. After that shot, the weapon is spent.",
+    precise: "Better at causing critical damage. It rewards clean hits on vulnerable targets.",
+    "quad damage": "Successful damage is quadrupled. Extremely punishing when it gets through.",
+    "redundant systems": "Extra backup systems resist critical disruption. The ship is less fragile under crit pressure.",
+    scout: "Can use scout actions. Scouts support target locks and electronic warfare.",
+    shuttles: "Carries utility craft. This is mostly scenario or mission support.",
+    "slow loading": "Must wait before firing again. The UI tracks the reload round.",
+    "stealth penetration": "Helps defeat enemy stealth. Useful against Minbari and other stealthy targets.",
+    "super armor piercing": "Stronger armor penetration. It is better than standard Armor Piercing.",
+    "super maneuverable": "May turn freely without normal turn-distance limits. Fighters commonly have this.",
+    "triple damage": "Successful damage is tripled. High threat against ships that fail defenses.",
+    "twin linked": "Rerolls or improves paired-weapon accuracy. It makes light weapons more dependable.",
+    weak: "Reduced damage performance. Expect fewer solid results from this weapon.",
+  };
+  return hints[normalized] ?? "Special rule for this ship or weapon. The game applies it when the matching situation arises.";
+}
+
+function criticalEffectHint(crit: {
+  name: string;
+  repairable?: boolean | null;
+  damageApplied?: number | null;
+  crewApplied?: number | null;
+  randomArc?: string | null;
+  lostTraits?: string[] | null;
+  effectKey?: string | null;
+}): string {
+  const effects: string[] = [];
+  if ((crit.damageApplied ?? 0) > 0) effects.push(`-${crit.damageApplied} hull`);
+  if ((crit.crewApplied ?? 0) > 0) effects.push(`-${crit.crewApplied} crew`);
+  if (crit.randomArc) effects.push(`${crit.randomArc} arc affected`);
+  if ((crit.lostTraits?.length ?? 0) > 0) effects.push(`lost ${crit.lostTraits!.join(", ")}`);
+  if (effects.length === 0) effects.push("ongoing system damage");
+  const repair = crit.repairable === false ? "Cannot be cleared by Damage Control." : "Damage Control can clear it after the round it was caused.";
+  return `${effects.join(", ")}. ${repair}`;
+}
+
 type AiDiagnostics = {
   status?: string;
   lastStep?: string;
@@ -3777,6 +3853,7 @@ export default function GameBoard() {
   const isTabletDevice = inputProfile.deviceClass === "tablet";
   const mobileGameChrome = inputProfile.layout === "compact" || inputProfile.deviceClass === "phone";
   const touchGameControls = mobileGameChrome || isTabletDevice;
+  const pcHoverHintsEnabled = !isTouchInput && !touchGameControls;
   const [opsPanelOpen, setOpsPanelOpen] = useState(false);
 
   useEffect(() => {
@@ -4813,6 +4890,8 @@ export default function GameBoard() {
     setDamageControlFeedback(null);
   }, [game?.phase, serverActiveUnitId]);
   const selectedUnitData = units.find(u => u.id === selectedUnit);
+  const selectedShipModel = selectedUnitData ? getShipModelForUnit(selectedUnitData) : undefined;
+  const selectedShipTraitList = splitTraitList(selectedShipModel?.traits);
   // The selected ship is only "controllable" if it's the one the server
   // currently has activated for THIS player.
   const isSelectedUnitActive = !!selectedUnitData && selectedUnitData.id === activeUnitId && isMyActivation;
@@ -7801,6 +7880,19 @@ export default function GameBoard() {
                   <span className="flex items-center gap-1"><Zap className="w-3 h-3 text-amber-400" />{selectedUnitData.weaponDamage} dmg</span>
                   <span className="flex items-center gap-1"><Crosshair className="w-3 h-3 text-blue-400" />r{selectedUnitData.weaponRange}</span>
                 </div>
+                {pcHoverHintsEnabled && selectedShipTraitList.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1" data-testid="selected-unit-traits">
+                    {selectedShipTraitList.map(trait => (
+                      <span
+                        key={`${selectedUnitData.id}-${trait}`}
+                        className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[9px] text-cyan-200"
+                        title={traitHint(trait)}
+                      >
+                        {trait}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {/* Slice C: crew + damage-state badges. Crippled/Skeleton are
                     server-derived; damageState exposes adrift / delayed-boom. */}
                 <div className="flex gap-1.5 text-[10px] font-mono mt-1 flex-wrap">
@@ -8552,6 +8644,7 @@ export default function GameBoard() {
                       const splitTotalDice = effectiveUiAttackDice(w);
                       const splitFireReason = splitFireBlockedReason(w, useCoordOnNext);
                       const unavailable = fired || slowLoadingCooling || skeletonBlocked || crippledArcBlocked;
+                      const weaponTraitList = splitTraitList(w.traits);
                       return (
                         <div key={w.id} className="grid grid-cols-[1fr_auto] gap-1">
                         <button
@@ -8575,7 +8668,26 @@ export default function GameBoard() {
                             <span className="text-[10px] opacity-70">{w.attackDice}AD · r{w.range}"</span>
                           </div>
                           <div className="text-[10px] opacity-70 mt-0.5">
-                            {w.arc}{w.traits ? ` · ${w.traits}` : ""}
+                            {pcHoverHintsEnabled ? (
+                              <>
+                                <span>{w.arc}</span>
+                                {weaponTraitList.length > 0 && (
+                                  <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
+                                    {weaponTraitList.map(trait => (
+                                      <span
+                                        key={`${w.id}-${trait}`}
+                                        className="rounded border border-current/20 px-1"
+                                        title={traitHint(trait)}
+                                      >
+                                        {trait}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <>{w.arc}{w.traits ? ` · ${w.traits}` : ""}</>
+                            )}
                           </div>
                           {picking && (
                             <div className="text-[10px] text-amber-200 mt-1 uppercase tracking-wider">
@@ -8932,9 +9044,13 @@ export default function GameBoard() {
                   const canRepair = c.repairable && !isSameRound && !dcLocked && !damageControl.isPending && isMyEndWindow && !myPassedEnd;
                   const dcFormula = `1d6+CQ${cq}${allHandsBonus > 0 ? `+${allHandsBonus}` : ""}≥9`;
                   return (
-                    <div key={c.id} className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200" data-testid={`crit-row-${c.id}`}>
+                    <div
+                      key={c.id}
+                      className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200"
+                      data-testid={`crit-row-${c.id}`}
+                    >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold uppercase">{c.name}</span>
+                        <span className="font-bold uppercase" title={pcHoverHintsEnabled ? criticalEffectHint(c) : undefined}>{c.name}</span>
                         <span className="text-[9px] opacity-70">
                           {c.damageApplied > 0 && `−${c.damageApplied}H `}
                           {c.crewApplied > 0 && `−${c.crewApplied}C`}
@@ -8943,7 +9059,16 @@ export default function GameBoard() {
                       {(c.randomArc || (c.lostTraits?.length ?? 0) > 0) && (
                         <div className="text-[9px] opacity-70 mt-0.5">
                           {c.randomArc && <>arc: {c.randomArc} </>}
-                          {(c.lostTraits?.length ?? 0) > 0 && <>lost: {c.lostTraits.join(", ")}</>}
+                          {(c.lostTraits?.length ?? 0) > 0 && (
+                            <>
+                              lost: {c.lostTraits!.map((trait, index) => (
+                                <React.Fragment key={`${c.id}-lost-${trait}`}>
+                                  {index > 0 ? ", " : ""}
+                                  <span title={pcHoverHintsEnabled ? traitHint(trait) : undefined}>{trait}</span>
+                                </React.Fragment>
+                              ))}
+                            </>
+                          )}
                         </div>
                       )}
                       <button
@@ -9281,6 +9406,7 @@ export default function GameBoard() {
         <DiceRollModal
           modal={diceModal}
           setModal={setDiceModal}
+          pcHoverHintsEnabled={pcHoverHintsEnabled}
           onCommitShot={commitStagedShot}
           onCancelBeforeRoll={(modal) => {
             setFiringWeaponPicking(modal.weapon.id);
@@ -9618,12 +9744,14 @@ function attackTableOutcomeLabel(raw: number, effective: number): string {
 function DiceRollModal({
   modal,
   setModal,
+  pcHoverHintsEnabled,
   onCommitShot,
   onCancelBeforeRoll,
   onClose,
 }: {
   modal: DiceModalState;
   setModal: React.Dispatch<React.SetStateAction<DiceModalState | null>>;
+  pcHoverHintsEnabled: boolean;
   onCommitShot: (modal: DiceModalState) => void;
   onCancelBeforeRoll: (modal: DiceModalState) => void;
   onClose: () => void;
@@ -10204,11 +10332,20 @@ function DiceRollModal({
                     </div>
                     {!rolling && (
                       <>
-                        <div className="font-bold uppercase">{c.name}</div>
+                        <div className="font-bold uppercase" title={pcHoverHintsEnabled ? criticalEffectHint(c) : undefined}>{c.name}</div>
                         {(c.randomArc || c.lostTraits.length > 0) && (
                           <div className="opacity-70 mt-0.5">
                             {c.randomArc && <>arc: {c.randomArc} </>}
-                            {c.lostTraits.length > 0 && <>lost: {c.lostTraits.join(", ")}</>}
+                            {c.lostTraits.length > 0 && (
+                              <>
+                                lost: {c.lostTraits.map((trait, index) => (
+                                  <React.Fragment key={`${c.id}-modal-lost-${trait}`}>
+                                    {index > 0 ? ", " : ""}
+                                    <span title={pcHoverHintsEnabled ? traitHint(trait) : undefined}>{trait}</span>
+                                  </React.Fragment>
+                                ))}
+                              </>
+                            )}
                           </div>
                         )}
                       </>
