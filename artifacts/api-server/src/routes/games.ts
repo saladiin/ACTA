@@ -381,8 +381,8 @@ function effectiveBaseSpeed(unit: {
   maxHullPoints: number;
   damageThreshold?: number | null;
   isDestroyed?: boolean;
-}, crits: { speedReduce: number }): number {
-  const crippledSpeed = isCrippledUnit(unit) ? Math.floor(unit.speed / 2) : unit.speed;
+}, crits: { speedReduce: number }, options: { ignoreCrippled?: boolean } = {}): number {
+  const crippledSpeed = !options.ignoreCrippled && isCrippledUnit(unit) ? Math.floor(unit.speed / 2) : unit.speed;
   return Math.max(0, crippledSpeed - crits.speedReduce);
 }
 
@@ -393,9 +393,9 @@ function movementSpeedCap(unit: {
   damageThreshold?: number | null;
   isDestroyed?: boolean;
   specialAction: string | null;
-}, crits: { speedReduce: number }): number {
+}, crits: { speedReduce: number }, options: { ignoreCrippled?: boolean } = {}): number {
   const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
-  const baseSpeed = effectiveBaseSpeed(unit, crits);
+  const baseSpeed = effectiveBaseSpeed(unit, crits, options);
   if (baseAction === "all-stop-pivot") return 0;
   if (baseAction === "all-stop" || baseAction === "run-silent") return Math.floor(baseSpeed / 2);
   if (baseAction === "all-power-engines") return Math.floor(baseSpeed * 1.5);
@@ -410,9 +410,9 @@ function effectiveTurnProfile(unit: {
   damageThreshold?: number | null;
   isDestroyed?: boolean;
   specialAction: string | null;
-}, traits?: { superManeuverable?: boolean }): { maxTurns: number; turnAngle: number; turnsForbidden: boolean } {
+}, traits?: { superManeuverable?: boolean }, options: { ignoreCrippled?: boolean } = {}): { maxTurns: number; turnAngle: number; turnsForbidden: boolean } {
   const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
-  const crippled = isCrippledUnit(unit);
+  const crippled = !options.ignoreCrippled && isCrippledUnit(unit);
   const baseTurns = traits?.superManeuverable && !crippled
     ? 999
     : traits?.superManeuverable && crippled
@@ -4494,6 +4494,9 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   const shipIds = [...new Set(units.map(u => u.shipId))];
   const unitShips = shipIds.length === 0 ? [] : await db.select().from(shipsTable).where(inArray(shipsTable.id, shipIds));
   const shipModelIdByShipId = new Map(unitShips.map(ship => [ship.id, ship.shipModelId]));
+  const shipModelIds = [...new Set(unitShips.map(ship => ship.shipModelId))];
+  const unitShipModels = shipModelIds.length === 0 ? [] : await db.select().from(shipModelsTable).where(inArray(shipModelsTable.id, shipModelIds));
+  const shipModelById = new Map(unitShipModels.map(model => [model.id, model]));
   // Attach live critical-hit rows to each unit so the UI can render the
   // crit panel and DC button without a second query.
   const unitIds = units.map(u => u.id);
@@ -4507,6 +4510,7 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const unitsWithCrits = units.map(u => {
     const rows = critsByUnit.get(u.id) ?? [];
+    const model = shipModelById.get(shipModelIdByShipId.get(u.shipId) ?? 0);
     return {
       ...u,
       shipModelId: shipModelIdByShipId.get(u.shipId) ?? 0,
@@ -4517,7 +4521,7 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
       criticals: rows,
       // Slice C derived flags — surfaced to the client so badges can render
       // without re-deriving the rule.
-      isCrippled: isCrippledUnit(u),
+      isCrippled: model && shipModelIsFighter(model) ? false : isCrippledUnit(u),
       isSkeletonCrew: isSkeletonCrewUnit(u),
     };
   });
@@ -5545,8 +5549,9 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   const [moveModel] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, moveShip.shipModelId));
   if (!moveModel) { res.status(500).json({ error: "Ship model missing" }); return; }
   const moveTraits = movementTraitsForModel(moveModel, moveCrits);
-  const currentSpeedCap = movementSpeedCap(unit, moveCrits);
-  const turnProfile = effectiveTurnProfile(unit, moveTraits);
+  const isMovingFighter = shipModelIsFighter(moveModel);
+  const currentSpeedCap = movementSpeedCap(unit, moveCrits, { ignoreCrippled: isMovingFighter });
+  const turnProfile = effectiveTurnProfile(unit, moveTraits, { ignoreCrippled: isMovingFighter });
   const isAdriftLike =
     unit.damageState === "adrift"
     || unit.damageState === "exploding-end-of-next"
@@ -5562,7 +5567,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   // hex-Euclidean since hexQ/hexR are stored as world inches.
   const requestedStepDq = body.data.toHexQ - unit.hexQ;
   const requestedStepDr = body.data.toHexR - unit.hexR;
-  const requestedStepInches = snapHalfInch(Math.hypot(requestedStepDq, requestedStepDr));
+  const requestedStepInches = isMovingFighter ? Math.hypot(requestedStepDq, requestedStepDr) : snapHalfInch(Math.hypot(requestedStepDq, requestedStepDr));
   const headingDelta = headingDeltaDegrees(unit.heading, body.data.newHeading);
   const isTurn = headingDelta > 0;
   if (requestedStepInches <= 0 && !isTurn) {
@@ -5576,7 +5581,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     });
     return;
   }
-  if (isTurn) {
+  if (isTurn && !isMovingFighter) {
     if (requestedStepInches > 0) {
       res.status(400).json({ error: "Move forward and turn as separate movement steps" });
       return;
@@ -5612,7 +5617,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     x: body.data.toHexQ,
     z: body.data.toHexR,
     baseRadiusInches: rulesBaseRadius(unit),
-    isFighter: shipModelIsFighter(moveModel),
+    isFighter: isMovingFighter,
   };
   const otherUnits = await db.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, params.data.gameId),
@@ -5651,11 +5656,22 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     x: finalHexQ,
     z: finalHexR,
   };
+  const finalBaseRadius = rulesBaseRadius(finalFootprint);
+  if (
+    isMovingFighter &&
+    (finalHexQ < BOARD_MIN_X + finalBaseRadius ||
+      finalHexQ > BOARD_MAX_X - finalBaseRadius ||
+      finalHexR < BOARD_MIN_Z + finalBaseRadius ||
+      finalHexR > BOARD_MAX_Z - finalBaseRadius)
+  ) {
+    res.status(400).json({ error: "Fighter base must remain inside the board" });
+    return;
+  }
   if (findIllegalBaseOverlap(finalFootprint, otherFootprints)) {
     res.status(400).json({ error: "Move would overlap another base illegally" });
     return;
   }
-  const actualStepInches = snapHalfInch(Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR));
+  const actualStepInches = isMovingFighter ? Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR) : snapHalfInch(Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR));
 
   const nextDistanceSinceLastTurn = isTurn
     ? 0
@@ -5720,7 +5736,13 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     req.log.warn({ err, gameId: game.id, unitId: unit.id }, "movement audit log insert failed");
   }
 
-  res.json({ ...updated, damageState: effectiveDamageState(updated.damageState, moveCritRows) });
+  res.json({
+    ...updated,
+    damageState: effectiveDamageState(updated.damageState, moveCritRows),
+    criticals: moveCritRows,
+    isCrippled: isMovingFighter ? false : isCrippledUnit(updated),
+    isSkeletonCrew: isSkeletonCrewUnit(updated),
+  });
 });
 
 // ── Pick up a ship for its activation this round ─────────────────────────────
