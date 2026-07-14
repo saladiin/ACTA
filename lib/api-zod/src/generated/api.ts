@@ -790,6 +790,7 @@ export const FireWeaponResponse = zod.object({
   "attackRolls": zod.array(zod.number()).describe('All d6 results rolled for AD (including beam-explosions and re-rolls).'),
   "attackRollKinds": zod.array(zod.enum(['normal', 'explosion', 'twin-reroll', 'concentrate-reroll', 'scout-coord-reroll'])).describe('Parallel array to attackRolls labelling each die\'s origin. Same length as attackRolls. Use \'explosion\' dice for the Beam-trait visual highlight.'),
   "hits": zod.number().describe('Raw hits scored before defender pipeline (Dodge\/Interceptors\/Shields).'),
+  "dodgeTarget": zod.number().nullish().describe('Defender Dodge threshold used for dodgeRolls, if a Dodge check was made.'),
   "dodgeRolls": zod.array(zod.number()).describe('Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible.'),
   "dodgesSuccessful": zod.number(),
   "interceptedHits": zod.number().describe('Total hits cancelled by target\'s Interceptors across all per-hit attempts this shot.'),

@@ -662,6 +662,8 @@ export interface FireWeaponResult {
   attackRollKinds: FireWeaponResultAttackRollKindsItem[];
   /** Raw hits scored before defender pipeline (Dodge/Interceptors/Shields). */
   hits: number;
+  /** Defender Dodge threshold used for dodgeRolls, if a Dodge check was made. */
+  dodgeTarget?: number | null;
   /** Per-hit defender d6s when target has a Dodge rating; empty if dodge ineligible. */
   dodgeRolls: number[];
   dodgesSuccessful: number;

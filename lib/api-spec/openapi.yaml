@@ -1153,6 +1153,10 @@ components:
             enum: [normal, explosion, twin-reroll, concentrate-reroll, scout-coord-reroll]
           description: "Parallel array to attackRolls labelling each die's origin. Same length as attackRolls. Use 'explosion' dice for the Beam-trait visual highlight."
         hits:            { type: integer, description: "Raw hits scored before defender pipeline (Dodge/Interceptors/Shields)." }
+        dodgeTarget:
+          type: integer
+          nullable: true
+          description: "Defender Dodge threshold used for dodgeRolls, if a Dodge check was made."
         dodgeRolls:
           type: array
           items: { type: integer }

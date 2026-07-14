@@ -9644,12 +9644,14 @@ function DiceRollModal({
   const critVisible = phase === "crit-rolling" || phase === "crit-shown";
   const crits = result?.criticalsApplied ?? [];
   const hasCrits = crits.length > 0;
+  const damageDiceCount = result?.damageRolls.length ?? 0;
+  const hasDamageDice = damageDiceCount > 0;
   // Final summary only after the entire reveal is done (last crit shown,
-  // or damage-shown with no crits, or attack-shown with no hits).
+  // or damage-shown with no crits, or attack-shown with no damage dice).
   const summaryVisible =
     (phase === "crit-shown" && critIndex !== undefined && critIndex >= crits.length - 1) ||
     (phase === "damage-shown" && !hasCrits) ||
-    (phase === "attack-shown" && result !== undefined && result.hits === 0);
+    (phase === "attack-shown" && result !== undefined && !hasDamageDice);
 
   const rolls = result?.attackRolls ?? Array.from({ length: attackDice }, () => 0);
   const rollKinds = result?.attackRollKinds ?? [];
@@ -9736,13 +9738,13 @@ function DiceRollModal({
       return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-attack", disabled: true };
     }
     if (phase === "attack-shown") {
-      if (result && result.hits > 0) {
-        return { label: `Roll Damage · ${result.hits}D`, onClick: handleProceedToDamage, testid: "button-proceed-damage", disabled: false };
+      if (result && damageDiceCount > 0) {
+        return { label: `Roll Damage · ${damageDiceCount}D`, onClick: handleProceedToDamage, testid: "button-proceed-damage", disabled: false };
       }
       return { label: "Close", onClick: requestClose, testid: "button-close-dice-modal", disabled: false };
     }
     if (phase === "damage-ready") {
-      return { label: `Roll Damage · ${result?.hits ?? 0}D`, onClick: handleRollDamage, testid: "button-roll-damage", disabled: false };
+      return { label: `Roll Damage · ${damageDiceCount}D`, onClick: handleRollDamage, testid: "button-roll-damage", disabled: false };
     }
     if (phase === "damage-rolling") {
       return { label: "Rolling…", onClick: () => {}, testid: "button-rolling-damage", disabled: true };
@@ -10037,6 +10039,40 @@ function DiceRollModal({
         {/* Interceptor reveal — one row per incoming hit, dice rolled at the
             then-current threshold; dice showing 1 burn out of the pool and
             ramp the threshold (2+ → 6+) for subsequent attempts this turn. */}
+        {/* Dodge reveal - defender rolls one d6 per hit. Successful Dodge
+            rolls cancel hits before Interceptors, Shields, or damage dice. */}
+        {attackVisible && result && result.dodgeRolls.length > 0 && (
+          <div className="mt-3 space-y-1.5" data-testid="dodge-reveal">
+            <p className="text-[10px] uppercase tracking-wider text-cyan-300/80 font-mono">
+              Dodge{result.dodgeTarget ? <> · need {result.dodgeTarget}+</> : ""}
+              {!attackRolling && result.dodgesSuccessful > 0 && (
+                <span className="ml-2 text-cyan-300" data-testid="dodge-success-count">
+                  -{result.dodgesSuccessful} hit{result.dodgesSuccessful === 1 ? "" : "s"}
+                </span>
+              )}
+            </p>
+            <div className="flex flex-wrap gap-2" data-testid="dodge-dice">
+              {result.dodgeRolls.map((d, i) => {
+                const saved = result.dodgeTarget != null && d >= result.dodgeTarget;
+                return (
+                  <div
+                    key={i}
+                    className={`relative rounded ${!attackRolling && saved ? "ring-2 ring-cyan-400 ring-offset-2 ring-offset-background shadow-[0_0_8px_rgba(34,211,238,0.55)]" : !attackRolling ? "opacity-70" : ""}`}
+                    data-testid={`dodge-die-${i}`}
+                  >
+                    <DiceFace value={d} rolling={attackRolling} />
+                    {!attackRolling && (
+                      <span className={`absolute -bottom-1 -right-1 rounded bg-black/80 px-1 font-mono text-[8px] ${saved ? "text-cyan-300" : "text-muted-foreground"}`}>
+                        {saved ? "DODGE" : "HIT"}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {phase === "attack-shown" && result && (result.interceptorAttempts?.length ?? 0) > 0 && (
           <div className="mt-3 space-y-1.5" data-testid="interceptor-reveal">
             <p className="text-[10px] uppercase tracking-wider text-cyan-300/80 font-mono">
@@ -10084,16 +10120,16 @@ function DiceRollModal({
         {/* Damage prompt */}
         {phase === "damage-ready" && result && (
           <div className="mt-4 text-sm font-mono text-muted-foreground text-center" data-testid="dice-prompt-damage">
-            Ready to roll <span className="text-amber-300 font-bold">{result.hits}</span> damage
+            Ready to roll <span className="text-amber-300 font-bold">{damageDiceCount}</span> damage
             dice (6 = crit).
           </div>
         )}
 
         {/* Damage dice (during/after damage roll) */}
-        {damageVisible && result && result.hits > 0 && (
+        {damageVisible && result && hasDamageDice && (
           <div className="mt-3 space-y-1">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-              Damage · {result.hits} hit{result.hits === 1 ? "" : "s"}
+              Damage · {damageDiceCount} die{damageDiceCount === 1 ? "" : "s"}
             </p>
             <div className="flex flex-wrap gap-1.5" data-testid="damage-dice">
               {result.damageRolls.map((d, i) => {
@@ -10185,9 +10221,9 @@ function DiceRollModal({
         )}
 
         {/* "All misses" sits in place of the damage section when applicable. */}
-        {phase === "attack-shown" && result && result.hits === 0 && (
+        {phase === "attack-shown" && result && !hasDamageDice && (
           <div className="mt-3 text-sm font-mono text-muted-foreground text-center py-2">
-            All misses — no damage to roll.
+            {result.hits === 0 ? "All misses" : "No damage dice to roll"} — no damage roll.
           </div>
         )}
 

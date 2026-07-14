@@ -3909,6 +3909,78 @@ async function advanceAfterAntiFighter(
   return row;
 }
 
+function chooseAiAntiFighterAllocations(
+  pending: AntiFighterPendingState,
+): Array<{ attackerUnitId: number; targetUnitId: number; dice: number }> {
+  const allocations: Array<{ attackerUnitId: number; targetUnitId: number; dice: number }> = [];
+  for (const attacker of pending.attackers) {
+    if (attacker.ownerId !== AI_OPPONENT_ID || attacker.dice <= 0) continue;
+    const target = attacker.eligibleTargets[0];
+    if (!target) continue;
+    allocations.push({
+      attackerUnitId: attacker.attackerUnitId,
+      targetUnitId: target.targetUnitId,
+      dice: attacker.dice,
+    });
+  }
+  return allocations;
+}
+
+async function resolvePendingAiAntiFighter(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<typeof gamesTable.$inferSelect | null> {
+  const pending = readAntiFighterPending(game.aiState);
+  if (
+    !pending
+    || pending.round !== game.currentRound
+    || pending.currentPlayerId !== AI_OPPONENT_ID
+    || game.activePlayerId !== AI_OPPONENT_ID
+  ) {
+    return null;
+  }
+
+  const allocations = chooseAiAntiFighterAllocations(pending);
+  const result = await resolvePlayerAntiFighterAllocations(tx, game, pending, allocations);
+  const [postResolutionGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, game.id));
+  if (!postResolutionGame) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+  const aiPatch = aiState("acted", "movement.anti-fighter", {
+    message: `AI resolved Anti-Fighter allocation: ${result.destroyedUnitIds.length} fighter flight(s) destroyed.`,
+    lastAntiFighter: result,
+  });
+
+  if (postResolutionGame.status === "completed") {
+    const nextAiState = mergeAiState(postResolutionGame.aiState, aiPatch);
+    delete nextAiState.antiFighter;
+    const [completed] = await tx.update(gamesTable).set({
+      aiState: nextAiState,
+      activePlayerId: null,
+      activeUnitId: null,
+    }).where(eq(gamesTable.id, game.id)).returning();
+    return completed;
+  }
+
+  const completedPlayerIds = [...new Set([...pending.completedPlayerIds, AI_OPPONENT_ID])];
+  const nextPending = await buildAntiFighterPendingState(tx, postResolutionGame, completedPlayerIds, result);
+  if (nextPending) {
+    const [row] = await tx.update(gamesTable).set({
+      aiState: {
+        ...mergeAiState(postResolutionGame.aiState, aiPatch),
+        antiFighter: nextPending,
+      },
+      activePlayerId: nextPending.currentPlayerId,
+      activeUnitId: null,
+    }).where(eq(gamesTable.id, game.id)).returning();
+    return row;
+  }
+
+  return advanceAfterAntiFighter(tx, {
+    ...postResolutionGame,
+    aiState: mergeAiState(postResolutionGame.aiState, aiPatch),
+  }, result);
+}
+
 async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.$inferSelect): Promise<typeof gamesTable.$inferSelect> {
   if (!game.activeUnitId) return activateAiUnitForPhase(tx, game, "firing");
   const [unit] = await tx.select().from(gameUnitsTable).where(and(
@@ -8131,6 +8203,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           attackRolls,
           attackRollKinds,
           hits,
+          dodgeTarget: dodgeRolls.length > 0 ? targetTraits.dodge : null,
           dodgeRolls,
           dodgesSuccessful,
           interceptedHits,
@@ -8193,6 +8266,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         attackRollKinds,
         hits,
         // Defender pipeline
+        dodgeTarget: dodgeRolls.length > 0 ? targetTraits.dodge : null,
         dodgeRolls,
         dodgesSuccessful,
         interceptedHits,
@@ -8702,6 +8776,16 @@ router.post("/games/:gameId/ai/step", requireAuth, async (req, res): Promise<voi
       }
 
       if (game.phase === "movement") {
+        const antiFighterRow = await resolvePendingAiAntiFighter(tx, game);
+        if (antiFighterRow) {
+          req.log.info({
+            gameId,
+            nextPhase: antiFighterRow.phase,
+            nextActivePlayerId: antiFighterRow.activePlayerId,
+          }, "ai debug step resolved pending anti-fighter allocation");
+          return antiFighterRow;
+        }
+
         const row = game.activeUnitId
           ? await moveActiveAiUnit(tx, game)
           : await activateAiUnitForPhase(tx, game, "movement");
