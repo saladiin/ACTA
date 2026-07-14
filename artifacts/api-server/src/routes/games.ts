@@ -5521,9 +5521,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   // "All Stop": ship halts and may not turn this round. Reject any heading
   // change; position changes (½-speed coast) are still allowed because the
   // ledger/UI clamps movement to the SA's speed cap.
+  const finalHeading = normalizeHeadingInput(body.data.newHeading, unit.heading);
   {
     const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
-    if (baseAction === "all-stop" && body.data.newHeading !== unit.heading) {
+    if (baseAction === "all-stop" && finalHeading !== unit.heading) {
       res.status(400).json({ error: "All Stop forbids turning this round" }); return;
     }
   }
@@ -5570,7 +5571,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   const requestedStepDq = finalHexQ - unit.hexQ;
   const requestedStepDr = finalHexR - unit.hexR;
   const requestedStepInches = isMovingFighter ? Math.hypot(requestedStepDq, requestedStepDr) : snapHalfInch(Math.hypot(requestedStepDq, requestedStepDr));
-  const headingDelta = headingDeltaDegrees(unit.heading, body.data.newHeading);
+  const headingDelta = headingDeltaDegrees(unit.heading, finalHeading);
   const isTurn = headingDelta > 0;
   if (requestedStepInches <= 0 && !isTurn) {
     res.status(400).json({ error: "Move did not change position" });
@@ -5681,7 +5682,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     .set({
       hexQ: finalHexQ,
       hexR: finalHexR,
-      heading: body.data.newHeading,
+      heading: finalHeading,
       hasInitiatedMoveThisActivation: true,
       inchesMovedThisActivation: unit.inchesMovedThisActivation + actualStepInches,
       turnsMadeThisActivation: unit.turnsMadeThisActivation + (isTurn ? 1 : 0),
@@ -5699,19 +5700,23 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       actorPlayerId: userId,
       unitBefore: unit,
       unitAfter: updated,
-      movementKind: isTurn ? "turn" : "move",
-      summary: `${unit.name} ${isTurn ? `turned ${headingDelta.toFixed(1)} degrees` : `moved ${actualStepInches.toFixed(1)}"`}.`,
+      movementKind: actualStepInches > 0.001 && isTurn ? "move-and-turn" : isTurn ? "turn" : "move",
+      summary: `${unit.name} ${actualStepInches > 0.001 && isTurn
+        ? `moved ${actualStepInches.toFixed(1)}" and turned ${headingDelta.toFixed(1)} degrees`
+        : isTurn
+          ? `turned ${headingDelta.toFixed(1)} degrees`
+          : `moved ${actualStepInches.toFixed(1)}"`}.`,
       payload: {
         rulesPath: "player-move",
         requested: {
           toHexQ: body.data.toHexQ,
           toHexR: body.data.toHexR,
-          newHeading: body.data.newHeading,
+          newHeading: finalHeading,
         },
         final: {
           hexQ: finalHexQ,
           hexR: finalHexR,
-          heading: body.data.newHeading,
+          heading: finalHeading,
         },
         requestedStepInches,
         actualStepInches,

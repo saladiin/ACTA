@@ -3862,6 +3862,7 @@ export default function GameBoard() {
   const draggedShipRef = useRef<ShipModel | null>(null);
   const boardPointerDownRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastEmptyBoardTapRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const moveConfirmInFlightRef = useRef(false);
   const [stagedUnits, setStagedUnits] = useState<StagedUnitData[]>([]);
   const currentStagedUnits = useMemo(
     () => stagedUnits.filter(u => u.ownerId === myUserId),
@@ -4851,6 +4852,7 @@ export default function GameBoard() {
   }, [gameId, qc]);
 
   const confirmMovePlan = useCallback(() => {
+    if (moveConfirmInFlightRef.current || moveUnit.isPending) return;
     const u = units.find(x => x.id === selectedUnit);
     if (!u || !movePlan) return;
     // Recompute SA-adjusted caps here (don't read selectedSaCaps — this
@@ -4917,7 +4919,7 @@ export default function GameBoard() {
       if (led.distance + requestedDistance > speedCap + 1e-6) { setMovePlan(null); return; }
       toHexQ = snapBoardCoord(movePlan.x);
       toHexR = snapBoardCoord(movePlan.z);
-      newHeading = ((movePlan.heading % 360) + 360) % 360;
+      newHeading = Math.round(((movePlan.heading % 360) + 360) % 360);
       distanceCommitted = requestedDistance;
     } else if (movePlan.kind === "forward") {
       const v = headingForwardVec(u);
@@ -4986,16 +4988,19 @@ export default function GameBoard() {
       };
     });
     // Apply the move immediately (real-time, single-ship). Does NOT end the turn.
+    moveConfirmInFlightRef.current = true;
     moveUnit.mutate(
       { gameId, unitId, data: { toHexQ, toHexR, newHeading } },
       {
         onSuccess: (updatedUnit) => {
+          moveConfirmInFlightRef.current = false;
           setActivationFeedback(null);
           mergeUpdatedUnitIntoGame(updatedUnit);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
         },
         // Roll back the optimistic ledger charge on server rejection.
         onError: (err: any) => {
+          moveConfirmInFlightRef.current = false;
           setActivationFeedback(`Move rejected: ${cleanApiErrorMessage(err)}`);
           setPhaseLedger(prev => ({ ...prev, [unitId]: ledgerBeforeCommit }));
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
@@ -5274,7 +5279,7 @@ export default function GameBoard() {
       kind: "fighter-free",
       x: snapBoardCoord(x),
       z: snapBoardCoord(z),
-      heading: snapBoardCoord(heading),
+      heading: Math.round(((heading % 360) + 360) % 360),
     };
   }, [getLedger, selectedSaCaps, unitsWithFighterFlags]);
 
