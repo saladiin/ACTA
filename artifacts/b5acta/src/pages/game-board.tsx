@@ -287,7 +287,8 @@ type AntiFighterUiState = {
   completedPlayerIds: string[];
   attackers: AntiFighterUiAttacker[];
   lastResult?: {
-    playerId: string;
+    playerId?: string;
+    round?: number;
     attacks: Array<{
       attackerId: number;
       attackerName: string;
@@ -4105,6 +4106,7 @@ export default function GameBoard() {
   const [selfRepairModal, setSelfRepairModal] = useState<SelfRepairModalState | null>(null);
   const [aiWeaponFxReplay, setAiWeaponFxReplay] = useState<AiWeaponFxReplay | null>(null);
   const lastSeenAiWeaponFxKeyRef = useRef<string | null>(null);
+  const lastSeenAntiFighterResultKeyRef = useRef<string | null>(null);
   const antiFighterState = useMemo(() => readAntiFighterUiState(game?.aiState), [game?.aiState]);
   const bugRescueNotice = useMemo(() => readBugRescueNotice(game?.aiState), [game?.aiState]);
   const isMyAntiFighterAllocation =
@@ -4119,6 +4121,25 @@ export default function GameBoard() {
     setAntiFighterAssignments({});
     setAntiFighterError(null);
   }, [antiFighterState?.round, antiFighterState?.currentPlayerId]);
+  useEffect(() => {
+    const result = readAntiFighterLastResult(game?.aiState);
+    if (!result) return;
+    const key = [
+      result.round ?? game?.currentRound ?? "",
+      result.destroyedUnitIds.join(","),
+      result.attacks.map(attack => [
+        attack.attackerId,
+        attack.rolls.map(roll => `${roll.targetId}:${roll.total}:${roll.destroyed ? 1 : 0}`).join("."),
+      ].join("=")).join("|"),
+    ].join("::");
+    if (lastSeenAntiFighterResultKeyRef.current === null) {
+      lastSeenAntiFighterResultKeyRef.current = key;
+      return;
+    }
+    if (lastSeenAntiFighterResultKeyRef.current === key) return;
+    lastSeenAntiFighterResultKeyRef.current = key;
+    setAntiFighterResult(result);
+  }, [game?.aiState, game?.currentRound]);
   const assignAntiFighterDie = useCallback((attacker: AntiFighterUiAttacker, target: AntiFighterUiTarget) => {
     setAntiFighterAssignments(prev => {
       const used = Object.entries(prev)

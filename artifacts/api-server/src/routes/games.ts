@@ -6959,21 +6959,16 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         // start of the firing phase to the opponent. If neither side has
         // ANY firing-eligible ships, skip the firing phase entirely and
         // jump straight to end (the round still gets a repair window).
-        const antiFighterPending = await buildAntiFighterPendingState(tx, game);
-        if (antiFighterPending) {
-          const baseAiState = game.aiState && typeof game.aiState === "object" && !Array.isArray(game.aiState)
-            ? game.aiState as Record<string, unknown>
-            : {};
-          const [row] = await tx.update(gamesTable).set({
-            aiState: {
-              ...baseAiState,
-              antiFighter: antiFighterPending,
-            },
-            activePlayerId: antiFighterPending.currentPlayerId,
+        await resolveEndOfMovementAntiFighter(tx, game);
+        const [postAntiFighterGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, game.id));
+        if (!postAntiFighterGame) throw Object.assign(new Error("Game not found"), { status: 404 });
+        if (postAntiFighterGame.status === "completed") {
+          const [completed] = await tx.update(gamesTable).set({
+            activePlayerId: null,
             activeUnitId: null,
             lastActivatorId: userId,
           }).where(eq(gamesTable.id, game.id)).returning();
-          return row;
+          return completed;
         }
         const firingSegment = await activationSegmentFor(true);
         const firstFiringPlayer = firingSegment
