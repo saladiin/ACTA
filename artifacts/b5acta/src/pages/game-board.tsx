@@ -4898,7 +4898,17 @@ export default function GameBoard() {
         setMovePlan(null);
         return;
       }
-      if (deploymentPlacementOverlaps(candidate, new Set())) {
+      const illegalOverlap = unitsWithFighterFlags.some(other => {
+        if (other.isDestroyed || other.id === u.id) return false;
+        return uiBaseFootprintsIllegallyOverlap(candidate, {
+          id: other.id,
+          x: other.hexQ,
+          z: other.hexR,
+          isFighter: other.isFighter,
+          baseRadiusInches: other.baseRadiusInches,
+        });
+      });
+      if (illegalOverlap) {
         setActivationFeedback("Move rejected: fighter base overlaps another ship.");
         setMovePlan(null);
         return;
@@ -4994,7 +5004,7 @@ export default function GameBoard() {
     );
     setMovePlan(null);
     setMovementGesture(null);
-  }, [units, selectedUnit, movePlan, moveUnit, gameId, getLedger, qc, shipModels, mergeUpdatedUnitIntoGame, isFighterUnit, deploymentPlacementOverlaps]);
+  }, [units, selectedUnit, movePlan, moveUnit, gameId, getLedger, qc, shipModels, mergeUpdatedUnitIntoGame, isFighterUnit, unitsWithFighterFlags]);
 
   const cancelMovePlan = useCallback(() => {
     setMovePlan(null);

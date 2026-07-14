@@ -5565,8 +5565,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   // path segment (the UI sends one per planned step); summing them gives
   // the total travelled distance enforced by /end-activation. We use
   // hex-Euclidean since hexQ/hexR are stored as world inches.
-  const requestedStepDq = body.data.toHexQ - unit.hexQ;
-  const requestedStepDr = body.data.toHexR - unit.hexR;
+  const finalHexQ = snapBoardCoord(body.data.toHexQ);
+  const finalHexR = snapBoardCoord(body.data.toHexR);
+  const requestedStepDq = finalHexQ - unit.hexQ;
+  const requestedStepDr = finalHexR - unit.hexR;
   const requestedStepInches = isMovingFighter ? Math.hypot(requestedStepDq, requestedStepDr) : snapHalfInch(Math.hypot(requestedStepDq, requestedStepDr));
   const headingDelta = headingDeltaDegrees(unit.heading, body.data.newHeading);
   const isTurn = headingDelta > 0;
@@ -5575,7 +5577,8 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     return;
   }
 
-  if (unit.inchesMovedThisActivation + requestedStepInches > currentSpeedCap) {
+  const distanceEpsilon = isMovingFighter ? 0.02 : 1e-6;
+  if (unit.inchesMovedThisActivation + requestedStepInches > currentSpeedCap + distanceEpsilon) {
     res.status(400).json({
       error: `Ship may move at most ${currentSpeedCap}" this activation (would move ${unit.inchesMovedThisActivation + requestedStepInches}")`,
     });
@@ -5649,8 +5652,6 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       return;
     }
   }
-  const finalHexQ = snapBoardCoord(body.data.toHexQ);
-  const finalHexR = snapBoardCoord(body.data.toHexR);
   const finalFootprint: UnitFootprint = {
     ...candidateFootprint,
     x: finalHexQ,
