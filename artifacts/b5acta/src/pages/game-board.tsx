@@ -4886,6 +4886,10 @@ export default function GameBoard() {
   const [optimisticActiveUnitId, setOptimisticActiveUnitId] = useState<number | null>(null);
   const activeUnitId = optimisticActiveUnitId ?? serverActiveUnitId;
   const hasActiveUnit = activeUnitId !== null;
+  const activeUnitReadyForActions =
+    isMyActivation &&
+    serverActiveUnitId !== null &&
+    activeUnitId === serverActiveUnitId;
   useEffect(() => {
     if (!isMyActivation || game?.status !== "active") {
       setOptimisticActiveUnitId(null);
@@ -5942,8 +5946,34 @@ export default function GameBoard() {
       game?.status === "active" &&
       isMyActivation &&
       currentPhase === "firing" &&
-      splitFirePlan !== null &&
       hasActiveUnit &&
+      (firingWeaponPicking !== null || splitFirePlan !== null) &&
+      unit.ownerId === myUserId
+    ) {
+      if (unit.id !== activeUnitId) {
+        setActivationFeedback("Targeting is active. Click an enemy target or cancel the weapon pick before selecting another unit.");
+      }
+      return;
+    }
+
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "firing" &&
+      hasActiveUnit &&
+      !activeUnitReadyForActions &&
+      unit.ownerId !== myUserId
+    ) {
+      setActivationFeedback("Activation is still syncing. Try the target again in a moment.");
+      return;
+    }
+
+    if (
+      game?.status === "active" &&
+      isMyActivation &&
+      currentPhase === "firing" &&
+      splitFirePlan !== null &&
+      activeUnitReadyForActions &&
       unit.ownerId !== myUserId
     ) {
       if (splitFireCommitting || firingInFlightRef.current) return;
@@ -5966,7 +5996,7 @@ export default function GameBoard() {
       currentPhase === "firing" &&
       firingWeaponPicking === null &&
       splitFirePlan === null &&
-      hasActiveUnit &&
+      activeUnitReadyForActions &&
       unit.ownerId !== myUserId
     ) {
       const attacker = unitsWithFighterFlags.find(u => u.id === activeUnitId);
@@ -6020,7 +6050,7 @@ export default function GameBoard() {
       isMyActivation &&
       currentPhase === "firing" &&
       firingWeaponPicking !== null &&
-      hasActiveUnit &&
+      activeUnitReadyForActions &&
       unit.ownerId !== myUserId
     ) {
       // Re-entry guard: a single user click on a ship produces multiple R3F
@@ -8573,7 +8603,7 @@ export default function GameBoard() {
               )}
 
               {/* ── FIRING PHASE: weapon list for the active ship ── */}
-              {currentPhase === "firing" && hasActiveUnit && (() => {
+              {currentPhase === "firing" && activeUnitReadyForActions && (() => {
                 const attacker = units.find(u => u.id === activeUnitId);
                 if (!attacker || attacker.ownerId !== myUserId) return null;
                 const weapons = getWeaponsForUnit(attacker);
