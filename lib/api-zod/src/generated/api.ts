@@ -772,6 +772,11 @@ export const FireWeaponParams = zod.object({
 export const FireWeaponBody = zod.object({
   "weaponId": zod.number(),
   "targetUnitId": zod.number(),
+  "weaponName": zod.string().optional().describe('Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance.'),
+  "weaponArc": zod.string().optional().describe('Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance.'),
+  "weaponRange": zod.number().optional().describe('Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance.'),
+  "weaponAttackDice": zod.number().optional().describe('Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance.'),
+  "weaponTraits": zod.string().optional().describe('Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance.'),
   "useScoutCoordination": zod.boolean().optional().describe('Opt-in: consume an unspent allied Scout \'coord\' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam \/ Mini Beam \/ Energy Mine \/ Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false.')
 })
 

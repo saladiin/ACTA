@@ -32,6 +32,7 @@ import {
   useListFleetShips,
   useListShipModels,
   getGetGameQueryKey,
+  getListShipModelsQueryKey,
   getListTurnsQueryKey,
   getListFleetShipsQueryKey,
   customFetch,
@@ -2237,6 +2238,16 @@ function effectiveUiAttackDice(weapon: Weapon): number {
   return Math.max(1, weapon.attackDice - weakPenalty);
 }
 
+function weaponFingerprint(weapon: Weapon) {
+  return {
+    weaponName: weapon.name ?? "",
+    weaponArc: weapon.arc,
+    weaponRange: weapon.range,
+    weaponAttackDice: weapon.attackDice,
+    weaponTraits: weapon.traits ?? undefined,
+  };
+}
+
 function splitFireBlockedReason(weapon: Weapon, useScoutCoordination: boolean): string | null {
   const traits = weapon.traits ?? "";
   if (effectiveUiAttackDice(weapon) < 2) return "Split fire requires at least 2 effective AD";
@@ -3814,7 +3825,14 @@ export default function GameBoard() {
     !game.opponentDeployed;
   const myUserId = devAiCommanderActive || aiDeploymentControlActive ? AI_OPPONENT_ID : rawMyUserId;
   const { data: fleets } = useListFleets();
-  const { data: shipModels } = useListShipModels();
+  const { data: shipModels } = useListShipModels({
+    query: {
+      queryKey: getListShipModelsQueryKey(),
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchOnWindowFocus: true,
+    },
+  });
   const acceptGame = useAcceptGame();
   const declineGame = useDeclineGame();
   const deployFleet = useDeployFleet();
@@ -3835,6 +3853,10 @@ export default function GameBoard() {
   const [confirmingConcede, setConfirmingConcede] = useState(false);
   const chooseSpecialAction = useChooseSpecialAction();
   const chooseScoutAction = useChooseScoutAction();
+  useEffect(() => {
+    if (!gameId) return;
+    void qc.invalidateQueries({ queryKey: getListShipModelsQueryKey() });
+  }, [gameId, qc]);
   // Transient feedback for the most recent special-action attempt
   // (success/fail + dice roll). Cleared when activation ends.
   const [specialActionFeedback, setSpecialActionFeedback] = useState<
@@ -4153,6 +4175,7 @@ export default function GameBoard() {
         data: {
           weaponId: firedWeaponId,
           targetUnitId: shot.targetId,
+          ...weaponFingerprint(shot.weapon),
           useScoutCoordination: shot.useScoutCoordination || undefined,
         },
       },
@@ -4229,6 +4252,7 @@ export default function GameBoard() {
           body: JSON.stringify({
             weaponId: firedWeaponId,
             targetUnitId: plan.firstTargetId,
+            ...weaponFingerprint(plan.weapon),
             splitFire: { index: 0, total: 2, attackDice: firstDice },
           }),
         },
@@ -4241,6 +4265,7 @@ export default function GameBoard() {
           body: JSON.stringify({
             weaponId: firedWeaponId,
             targetUnitId: secondTarget.id,
+            ...weaponFingerprint(plan.weapon),
             splitFire: { index: 1, total: 2, attackDice: secondDice },
           }),
         },

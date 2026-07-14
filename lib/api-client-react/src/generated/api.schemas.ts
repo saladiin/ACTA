@@ -577,6 +577,16 @@ export interface FireAction {
 export interface FireWeaponInput {
   weaponId: number;
   targetUnitId: number;
+  /** Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance. */
+  weaponName?: string;
+  /** Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance. */
+  weaponArc?: string;
+  /** Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance. */
+  weaponRange?: number;
+  /** Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance. */
+  weaponAttackDice?: number;
+  /** Stable weapon fingerprint used to recover from stale client-side weapon IDs after seed maintenance. */
+  weaponTraits?: string;
   /** Opt-in: consume an unspent allied Scout 'coord' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam / Mini Beam / Energy Mine / Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false. */
   useScoutCoordination?: boolean;
 }

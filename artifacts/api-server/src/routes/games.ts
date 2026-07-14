@@ -6992,6 +6992,10 @@ function parseSplitFireRequest(raw: unknown): SplitFireRequest | null {
   return { index, total, attackDice };
 }
 
+function normalizeWeaponFingerprint(value: string | null | undefined): string {
+  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = FireWeaponParams.safeParse(req.params);
@@ -6999,7 +7003,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
   const body = FireWeaponBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const { gameId, unitId } = params.data;
-  const { weaponId, targetUnitId, useScoutCoordination } = body.data;
+  const { weaponId: requestedWeaponId, targetUnitId, useScoutCoordination } = body.data;
 
   try {
     const splitFire = parseSplitFireRequest((req.body as { splitFire?: unknown })?.splitFire);
@@ -7027,6 +7031,48 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }
       if (attacker.maxCrewPoints > 0 && attacker.crewPoints <= 0) {
         throw Object.assign(new Error("No surviving crew — ship cannot fire"), { status: 400 });
+      }
+      // Weapon IDs can change when seed maintenance deletes/reinserts a
+      // ship's weapons during deploys. Accept the browser's numeric ID when
+      // current, but recover by stable weapon fingerprint when it is stale.
+      const [attackerShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, attacker.shipId));
+      if (!attackerShip) throw Object.assign(new Error("Attacker ship record missing"), { status: 500 });
+      const [attackerModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, attackerShip.shipModelId));
+      if (!attackerModel) throw Object.assign(new Error("Attacker ship model missing"), { status: 500 });
+      let weaponId = requestedWeaponId;
+      let [weapon] = await tx.select().from(weaponsTable).where(eq(weaponsTable.id, requestedWeaponId));
+      const resolveWeaponByFingerprint = async () => {
+        const name = normalizeWeaponFingerprint(body.data.weaponName);
+        const arc = normalizeWeaponFingerprint(body.data.weaponArc);
+        if (!name || !arc) return null;
+        const currentWeapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, attackerShip.shipModelId));
+        const strictTraits = body.data.weaponTraits === undefined
+          ? null
+          : normalizeWeaponFingerprint(body.data.weaponTraits);
+        const matching = currentWeapons.filter(candidate => {
+          if (normalizeWeaponFingerprint(candidate.name) !== name) return false;
+          if (normalizeWeaponFingerprint(candidate.arc) !== arc) return false;
+          if (typeof body.data.weaponRange === "number" && candidate.range !== body.data.weaponRange) return false;
+          if (typeof body.data.weaponAttackDice === "number" && candidate.attackDice !== body.data.weaponAttackDice) return false;
+          if (strictTraits !== null && normalizeWeaponFingerprint(candidate.traits) !== strictTraits) return false;
+          return true;
+        });
+        if (matching.length > 0) return matching[0];
+        return currentWeapons.find(candidate =>
+          normalizeWeaponFingerprint(candidate.name) === name &&
+          normalizeWeaponFingerprint(candidate.arc) === arc
+        ) ?? null;
+      };
+      if (!weapon || weapon.shipModelId !== attackerShip.shipModelId) {
+        const resolved = await resolveWeaponByFingerprint();
+        if (resolved) {
+          weapon = resolved;
+          weaponId = resolved.id;
+        }
+      }
+      if (!weapon) throw Object.assign(new Error("Weapon not found"), { status: 404 });
+      if (weapon.shipModelId !== attackerShip.shipModelId) {
+        throw Object.assign(new Error("Selected weapon is not available on this ship. Refresh the page and choose one of the attacker's listed weapons."), { status: 400 });
       }
       // Server-authoritative one-shot-per-weapon-per-activation guard.
       const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
@@ -7085,16 +7131,6 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (target.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
       if (target.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
 
-      // Weapon must belong to the attacker's ship class.
-      const [attackerShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, attacker.shipId));
-      if (!attackerShip) throw Object.assign(new Error("Attacker ship record missing"), { status: 500 });
-      const [attackerModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, attackerShip.shipModelId));
-      if (!attackerModel) throw Object.assign(new Error("Attacker ship model missing"), { status: 500 });
-      const [weapon] = await tx.select().from(weaponsTable).where(eq(weaponsTable.id, weaponId));
-      if (!weapon) throw Object.assign(new Error("Weapon not found"), { status: 404 });
-      if (weapon.shipModelId !== attackerShip.shipModelId) {
-        throw Object.assign(new Error("Selected weapon is not available on this ship. Refresh the page and choose one of the attacker's listed weapons."), { status: 400 });
-      }
 
       // ── Attacker's live critical-hit effects ─────────────────────────────
       // Loaded once and used to gate weapon eligibility (forbidden arc /
