@@ -6405,13 +6405,16 @@ export default function GameBoard() {
               selectedUnitData.ownerId === myUserId &&
               !draggingId &&
               !movementGesture &&
-              !movePlan
+              (!movePlan || selectedUnitIsFighter)
             ) {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
               if (pos) {
                 const [x, z] = pos;
                 if (selectedUnitIsFighter) {
-                  const plan = buildFighterMovePlan(selectedUnitData, x, z);
+                  const headingFallback = movePlan?.kind === "fighter-free"
+                    ? movePlan.heading
+                    : selectedUnitData.heading;
+                  const plan = buildFighterMovePlan(selectedUnitData, x, z, headingFallback);
                   if (plan) {
                     setMovementGesture({ kind: "fighter-free" });
                     setMovePlan(plan);
