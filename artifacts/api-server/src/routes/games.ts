@@ -1952,6 +1952,72 @@ async function getShipModelForUnit(tx: any, unit: typeof gameUnitsTable.$inferSe
   return model ?? null;
 }
 
+type ActivationSegment = "capital" | "fighter";
+
+async function gameUnitIsFighter(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
+  const model = await getShipModelForUnit(tx, unit);
+  return model ? shipModelIsFighter(model) : false;
+}
+
+async function movementActivationEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
+  if (unit.isDestroyed || unit.hasMovedThisRound) return false;
+  const critRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+  const state = effectiveDamageState(unit.damageState, critRows);
+  return state !== "adrift" && state !== "exploding-end-of-next";
+}
+
+function firingActivationEligible(unit: typeof gameUnitsTable.$inferSelect): boolean {
+  return !unit.isDestroyed
+    && !unit.hasFiredThisRound
+    && unit.hullPoints > 0
+    && (unit.maxCrewPoints === 0 || unit.crewPoints > 0);
+}
+
+async function activationEligibleRowsForGame(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  phase: "movement" | "firing",
+  ownerId: string | null = null,
+  segment: ActivationSegment | null = null,
+): Promise<Array<typeof gameUnitsTable.$inferSelect>> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(phase === "movement" ? gameUnitsTable.hasMovedThisRound : gameUnitsTable.hasFiredThisRound, false),
+  ));
+  const eligible: Array<typeof gameUnitsTable.$inferSelect> = [];
+  for (const row of rows) {
+    if (ownerId !== null && row.ownerId !== ownerId) continue;
+    if (phase === "movement" && !(await movementActivationEligible(tx, row))) continue;
+    if (phase === "firing" && !firingActivationEligible(row)) continue;
+    if (segment) {
+      const fighter = await gameUnitIsFighter(tx, row);
+      if (segment === "fighter" && !fighter) continue;
+      if (segment === "capital" && fighter) continue;
+    }
+    eligible.push(row);
+  }
+  return eligible;
+}
+
+async function activationSegmentForGame(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  phase: "movement" | "firing",
+): Promise<ActivationSegment | null> {
+  const rows = await activationEligibleRowsForGame(tx, game, phase);
+  let hasCapital = false;
+  let hasFighter = false;
+  for (const row of rows) {
+    if (await gameUnitIsFighter(tx, row)) hasFighter = true;
+    else hasCapital = true;
+  }
+  return phase === "movement"
+    ? hasCapital ? "capital" : hasFighter ? "fighter" : null
+    : hasFighter ? "fighter" : hasCapital ? "capital" : null;
+}
+
 async function fleetCarrierDogfightBonus(
   tx: any,
   gameId: number,
@@ -1981,18 +2047,11 @@ async function fleetCarrierDogfightBonus(
 }
 
 async function aiMovementEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
-  if (unit.isDestroyed || unit.hasMovedThisRound) return false;
-  const critRows = await tx.select().from(unitCriticalEffectsTable)
-    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
-  const state = effectiveDamageState(unit.damageState, critRows);
-  return state !== "adrift" && state !== "exploding-end-of-next";
+  return movementActivationEligible(tx, unit);
 }
 
 function aiFiringEligible(unit: typeof gameUnitsTable.$inferSelect): boolean {
-  return !unit.isDestroyed
-    && !unit.hasFiredThisRound
-    && unit.hullPoints > 0
-    && (unit.maxCrewPoints === 0 || unit.crewPoints > 0);
+  return firingActivationEligible(unit);
 }
 
 async function firstAiEligibleUnit(
@@ -2000,12 +2059,9 @@ async function firstAiEligibleUnit(
   game: typeof gamesTable.$inferSelect,
   phase: "movement" | "firing",
 ): Promise<typeof gameUnitsTable.$inferSelect | null> {
-  const rows = await tx.select().from(gameUnitsTable).where(and(
-    eq(gameUnitsTable.gameId, game.id),
-    eq(gameUnitsTable.ownerId, AI_OPPONENT_ID),
-    eq(gameUnitsTable.isDestroyed, false),
-    eq(phase === "movement" ? gameUnitsTable.hasMovedThisRound : gameUnitsTable.hasFiredThisRound, false),
-  ));
+  const segment = await activationSegmentForGame(tx, game, phase);
+  if (!segment) return null;
+  const rows = await activationEligibleRowsForGame(tx, game, phase, AI_OPPONENT_ID, segment);
   for (const row of rows) {
     if (phase === "movement" && await aiMovementEligible(tx, row)) return row;
     if (phase === "firing" && aiFiringEligible(row)) return row;
@@ -2018,13 +2074,9 @@ async function countEligibleForAiStep(
   game: typeof gamesTable.$inferSelect,
   ownerId: string,
   phase: "movement" | "firing",
+  segment: ActivationSegment | null = null,
 ): Promise<number> {
-  const rows = await tx.select().from(gameUnitsTable).where(and(
-    eq(gameUnitsTable.gameId, game.id),
-    eq(gameUnitsTable.ownerId, ownerId),
-    eq(gameUnitsTable.isDestroyed, false),
-    eq(phase === "movement" ? gameUnitsTable.hasMovedThisRound : gameUnitsTable.hasFiredThisRound, false),
-  ));
+  const rows = await activationEligibleRowsForGame(tx, game, phase, ownerId, segment);
   let count = 0;
   for (const row of rows) {
     if (phase === "movement" && await aiMovementEligible(tx, row)) count++;
@@ -2045,8 +2097,9 @@ async function finishAiActivation(
     .where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id)));
 
   const humanId = game.challengerId;
-  const humanRemaining = await countEligibleForAiStep(tx, game, humanId, phase);
-  const aiRemaining = await countEligibleForAiStep(tx, game, AI_OPPONENT_ID, phase);
+  const segment = await activationSegmentForGame(tx, game, phase);
+  const humanRemaining = segment ? await countEligibleForAiStep(tx, game, humanId, phase, segment) : 0;
+  const aiRemaining = segment ? await countEligibleForAiStep(tx, game, AI_OPPONENT_ID, phase, segment) : 0;
   let nextPhase: "initiative" | "movement" | "firing" | "end" = phase;
   let nextActivePlayerId: string | null = null;
 
@@ -2090,11 +2143,25 @@ async function activateAiUnitForPhase(
   game: typeof gamesTable.$inferSelect,
   phase: "movement" | "firing",
 ): Promise<typeof gamesTable.$inferSelect> {
+  const segment = await activationSegmentForGame(tx, game, phase);
   const unit = await firstAiEligibleUnit(tx, game, phase);
   if (!unit) {
+    if (segment && game.challengerId && await countEligibleForAiStep(tx, game, game.challengerId, phase, segment) > 0) {
+      const [row] = await tx.update(gamesTable).set({
+        activePlayerId: game.challengerId,
+        activeUnitId: null,
+        lastActivatorId: AI_OPPONENT_ID,
+        aiState: mergeAiState(game.aiState, aiState("acted", `${phase}.pass-no-eligible-${segment}`, {
+          message: `AI has no eligible ${segment} ${phase} activations; handing control to the human commander.`,
+        })),
+      }).where(eq(gamesTable.id, game.id)).returning();
+      return row;
+    }
     const [row] = await tx.update(gamesTable).set({
       aiState: mergeAiState(game.aiState, aiState("idle", `${phase}.no-eligible-unit`, {
-        message: `AI has no eligible ${phase} activations.`,
+        message: segment
+          ? `AI has no eligible ${segment} ${phase} activations.`
+          : `AI has no eligible ${phase} activations.`,
       })),
     }).where(eq(gamesTable.id, game.id)).returning();
     return row;
@@ -6111,58 +6178,9 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Unit is destroyed"), { status: 400 });
 
-      const fighterCache = new Map<number, boolean>();
-      const isFighterUnit = async (unitRow: typeof gameUnitsTable.$inferSelect): Promise<boolean> => {
-        const cached = fighterCache.get(unitRow.id);
-        if (cached !== undefined) return cached;
-        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unitRow.shipId));
-        if (!ship) {
-          fighterCache.set(unitRow.id, false);
-          return false;
-        }
-        const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-        const fighter = model ? shipModelIsFighter(model) : false;
-        fighterCache.set(unitRow.id, fighter);
-        return fighter;
-      };
-      const eligibleRows = async (): Promise<Array<typeof gameUnitsTable.$inferSelect>> => {
-        const rows = await tx.select().from(gameUnitsTable).where(and(
-          eq(gameUnitsTable.gameId, game.id),
-          eq(gameUnitsTable.ownerId, userId),
-          eq(gameUnitsTable.isDestroyed, false),
-          eq(game.phase === "firing" ? gameUnitsTable.hasFiredThisRound : gameUnitsTable.hasMovedThisRound, false),
-        ));
-        const eligible: Array<typeof gameUnitsTable.$inferSelect> = [];
-        for (const row of rows) {
-          if (game.phase === "firing") {
-            if (row.hullPoints <= 0) continue;
-            if (row.maxCrewPoints > 0 && row.crewPoints <= 0) continue;
-          } else {
-            const critRows = await tx.select().from(unitCriticalEffectsTable)
-              .where(eq(unitCriticalEffectsTable.gameUnitId, row.id));
-            const state = effectiveDamageState(row.damageState, critRows);
-            if (state === "adrift" || state === "exploding-end-of-next") continue;
-          }
-          eligible.push(row);
-        }
-        return eligible;
-      };
-      const activationSegment = async (): Promise<"capital" | "fighter" | null> => {
-        const rows = await eligibleRows();
-        let hasCapital = false;
-        let hasFighter = false;
-        for (const row of rows) {
-          if (await isFighterUnit(row)) hasFighter = true;
-          else hasCapital = true;
-        }
-        if (game.phase === "movement") {
-          return hasCapital ? "capital" : hasFighter ? "fighter" : null;
-        }
-        return hasFighter ? "fighter" : hasCapital ? "capital" : null;
-      };
-
-      const segment = await activationSegment();
-      const unitIsFighter = await isFighterUnit(unit);
+      const activationPhase: "movement" | "firing" = game.phase === "movement" ? "movement" : "firing";
+      const segment = await activationSegmentForGame(tx, game, activationPhase);
+      const unitIsFighter = await gameUnitIsFighter(tx, unit);
       if (segment === "capital" && unitIsFighter) {
         throw Object.assign(new Error(
           game.phase === "movement"
