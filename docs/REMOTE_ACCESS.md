@@ -31,6 +31,24 @@ powershell -ExecutionPolicy Bypass -File .\start-remote.ps1 `
 
 If `B5_ALLOWED_USERS` is empty, any signed-in Clerk user can access the app.
 
+### Adding A Third Tester
+
+For a closed test, `B5_ALLOWED_USERS` is the account restriction. Add the new
+tester's email to the existing value and keep the current testers in the same
+list.
+
+Example Render value:
+
+```text
+current-one@example.com,current-two@example.com,new-tester@example.com
+```
+
+Do not replace the value with only the new tester unless the intended result is
+to remove access for everyone else. Email matching is case-insensitive.
+
+`B5_ALLOWED_ORIGINS` is only for browser/CORS origins, such as the Render URL or
+custom domain. It does not grant or deny accounts.
+
 ## Start Remote Host Mode
 
 From the repository root:

@@ -40,8 +40,11 @@ services:
         sync: false
       - key: VITE_CLERK_PUBLISHABLE_KEY
         sync: false
+      # Closed-alpha account allowlist. Add every permitted tester here.
+      # Leave empty only when any signed-in Clerk user should be allowed.
       - key: B5_ALLOWED_USERS
         sync: false
+      # Browser/CORS origin allowlist. This is not an account access list.
       - key: B5_ALLOWED_ORIGINS
         sync: false
 

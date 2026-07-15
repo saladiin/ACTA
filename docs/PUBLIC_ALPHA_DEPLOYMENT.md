@@ -66,13 +66,35 @@ The included `render.yaml` pins those values to `"false"`.
 Required before sharing the URL:
 
 1. Use Clerk production keys, not test keys.
-2. Set `B5_ALLOWED_USERS` for a closed alpha.
+2. Set `B5_ALLOWED_USERS` for a closed alpha. Include every permitted tester's
+   Clerk user ID, username, or email address.
 3. Set `B5_ALLOWED_ORIGINS` after the Render URL or custom domain is known.
 4. Keep Render Postgres `ipAllowList: []`, meaning private-network access only.
 5. Do not expose local Windows services or local Postgres to the internet.
 6. Do not commit real `.env` files, database URLs, Clerk secrets, or local Postgres passwords.
 7. Confirm `NODE_ENV=production`.
 8. Confirm `/api/healthz` works on the deployed URL.
+
+## Closed alpha tester changes
+
+To add a new tester without opening the game broadly:
+
+1. Confirm the tester has a Clerk account using the email they will use to sign
+   in.
+2. In Render, open the web service environment settings.
+3. Update `B5_ALLOWED_USERS` by appending the new tester to the existing list.
+4. Keep the current tester emails in the value.
+5. Save the environment change and redeploy/restart the service if Render does
+   not do so automatically.
+
+Example:
+
+```text
+current-one@example.com,current-two@example.com,new-tester@example.com
+```
+
+Do not use `B5_ALLOWED_ORIGINS` for this purpose. `B5_ALLOWED_ORIGINS` restricts
+which browser origins may call the API; it is not an account allowlist.
 
 ## Render setup
 
