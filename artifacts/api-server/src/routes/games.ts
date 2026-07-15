@@ -2090,6 +2090,208 @@ async function fleetCarrierDogfightBonus(
   return 0;
 }
 
+type DogfightResolutionLog = {
+  kind: "dogfight";
+  round: number;
+  attackerUnitId: number;
+  attackerName: string;
+  attackerRoll: number;
+  attackerDogfight: number;
+  attackerFleetCarrierBonus: number;
+  attackerSupportBonus: number;
+  attackerSupporters: Array<{ id: number; name: string }>;
+  attackerScore: number;
+  targetUnitId: number;
+  targetName: string;
+  targetRoll: number;
+  targetDogfight: number;
+  targetFleetCarrierBonus: number;
+  targetSupportBonus: number;
+  targetSupporters: Array<{ id: number; name: string }>;
+  targetScore: number;
+  destroyedUnitId: number | null;
+  fighterRecovery: DestroyedFighterRecoveryResult | null;
+  tied: boolean;
+  gameCompleted: boolean;
+  winnerId: string | null;
+};
+
+async function resolveDogfightBetweenUnits(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  attacker: typeof gameUnitsTable.$inferSelect,
+  target: typeof gameUnitsTable.$inferSelect,
+): Promise<DogfightResolutionLog> {
+  if (attacker.isDestroyed) throw Object.assign(new Error("Attacking fighter is destroyed"), { status: 400 });
+  if (attacker.hasFiredThisRound) throw Object.assign(new Error("Fighter has already attacked this firing phase"), { status: 400 });
+  if (target.ownerId === attacker.ownerId) throw Object.assign(new Error("Dogfight target must be an enemy fighter"), { status: 400 });
+  if (target.isDestroyed) throw Object.assign(new Error("Target fighter already destroyed"), { status: 400 });
+
+  const [attackerShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, attacker.shipId));
+  const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
+  if (!attackerShip || !targetShip) throw Object.assign(new Error("Fighter ship record missing"), { status: 500 });
+  const [attackerModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, attackerShip.shipModelId));
+  const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
+  if (!attackerModel || !targetModel) throw Object.assign(new Error("Fighter model missing"), { status: 500 });
+  const attackerTraits = parseShipTraits(attackerModel.traits);
+  const targetTraits = parseShipTraits(targetModel.traits);
+  if (!shipModelIsFighter(attackerModel) || !shipModelIsFighter(targetModel)) {
+    throw Object.assign(new Error("Dogfights can only be resolved between fighter flights"), { status: 400 });
+  }
+
+  const attackerFootprint: UnitFootprint = {
+    id: attacker.id,
+    ownerId: attacker.ownerId,
+    x: attacker.hexQ,
+    z: attacker.hexR,
+    baseRadiusInches: rulesBaseRadius(attacker),
+    isFighter: true,
+  };
+  const targetFootprint: UnitFootprint = {
+    id: target.id,
+    ownerId: target.ownerId,
+    x: target.hexQ,
+    z: target.hexR,
+    baseRadiusInches: rulesBaseRadius(target),
+    isFighter: true,
+  };
+  if (enemyFighterContacts(attackerFootprint, [targetFootprint]).length === 0) {
+    throw Object.assign(new Error("Fighter flights must be in base contact to dogfight"), { status: 400 });
+  }
+
+  const liveRows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const attackerSupporters: Array<{ id: number; name: string }> = [];
+  const targetSupporters: Array<{ id: number; name: string }> = [];
+  for (const row of liveRows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (row.id === attacker.id || row.id === target.id) continue;
+    const rowModel = await getShipModelForUnit(tx, row);
+    if (!rowModel || !shipModelIsFighter(rowModel)) continue;
+    const footprint: UnitFootprint = {
+      id: row.id,
+      ownerId: row.ownerId,
+      x: row.hexQ,
+      z: row.hexR,
+      baseRadiusInches: rulesBaseRadius(row),
+      isFighter: true,
+    };
+    if (row.ownerId === attacker.ownerId && basesInContact(footprint, targetFootprint)) {
+      attackerSupporters.push({ id: row.id, name: row.name });
+    } else if (row.ownerId === target.ownerId && basesInContact(footprint, attackerFootprint)) {
+      targetSupporters.push({ id: row.id, name: row.name });
+    }
+  }
+
+  const attackerSupportBonus = attackerSupporters.length;
+  const targetSupportBonus = targetSupporters.length;
+  const attackerRoll = rollD6();
+  const targetRoll = rollD6();
+  const attackerFleetCarrierBonus = await fleetCarrierDogfightBonus(tx, game.id, attacker.ownerId);
+  const targetFleetCarrierBonus = await fleetCarrierDogfightBonus(tx, game.id, target.ownerId);
+  const attackerScore = attackerRoll + attackerTraits.dogfight + attackerFleetCarrierBonus + attackerSupportBonus;
+  const targetScore = targetRoll + targetTraits.dogfight + targetFleetCarrierBonus + targetSupportBonus;
+  const destroyedUnitId =
+    attackerScore > targetScore ? target.id :
+    targetScore > attackerScore ? attacker.id :
+    null;
+  const destroyedFighterBeforeRecovery =
+    destroyedUnitId === target.id ? target :
+    destroyedUnitId === attacker.id ? attacker :
+    null;
+
+  await tx.update(gameUnitsTable)
+    .set({ hasFiredThisRound: true })
+    .where(eq(gameUnitsTable.id, attacker.id));
+
+  let fighterRecovery: DestroyedFighterRecoveryResult | null = null;
+  if (destroyedUnitId !== null) {
+    await tx.update(gameUnitsTable).set({
+      hullPoints: 0,
+      crewPoints: 0,
+      shieldsCurrent: 0,
+      interceptorDiceRemaining: 0,
+      damageState: "destroyed",
+      isDestroyed: true,
+      hasFiredThisRound: true,
+    }).where(eq(gameUnitsTable.id, destroyedUnitId));
+    if (destroyedFighterBeforeRecovery) {
+      fighterRecovery = await resolveDestroyedFighterRecovery(tx, game, {
+        ...destroyedFighterBeforeRecovery,
+        hullPoints: 0,
+        crewPoints: 0,
+        shieldsCurrent: 0,
+        interceptorDiceRemaining: 0,
+        damageState: "destroyed",
+        isDestroyed: true,
+        hasFiredThisRound: true,
+      }, "dogfight");
+    }
+  }
+
+  const allUnits = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
+  const aliveByOwner = new Map<string, number>();
+  for (const row of allUnits) {
+    const destroyed = row.id === destroyedUnitId ? true : row.isDestroyed;
+    if (!destroyed) aliveByOwner.set(row.ownerId, (aliveByOwner.get(row.ownerId) ?? 0) + 1);
+  }
+  const challengerAlive = aliveByOwner.get(game.challengerId) ?? 0;
+  const opponentAlive = game.opponentId ? (aliveByOwner.get(game.opponentId) ?? 0) : 0;
+  let winnerId: string | null = null;
+  let gameCompleted = false;
+  if (game.opponentId && challengerAlive === 0 && opponentAlive > 0) {
+    winnerId = game.opponentId;
+    gameCompleted = true;
+  } else if (game.opponentId && opponentAlive === 0 && challengerAlive > 0) {
+    winnerId = game.challengerId;
+    gameCompleted = true;
+  } else if (game.opponentId && challengerAlive === 0 && opponentAlive === 0) {
+    gameCompleted = true;
+  }
+  if (gameCompleted) {
+    await tx.update(gamesTable)
+      .set({ status: "completed", winnerId, activePlayerId: null, activeUnitId: null })
+      .where(eq(gamesTable.id, game.id));
+  }
+
+  const log: DogfightResolutionLog = {
+    kind: "dogfight",
+    round: game.currentRound,
+    attackerUnitId: attacker.id,
+    attackerName: attacker.name,
+    attackerRoll,
+    attackerDogfight: attackerTraits.dogfight,
+    attackerFleetCarrierBonus,
+    attackerSupportBonus,
+    attackerSupporters,
+    attackerScore,
+    targetUnitId: target.id,
+    targetName: target.name,
+    targetRoll,
+    targetDogfight: targetTraits.dogfight,
+    targetFleetCarrierBonus,
+    targetSupportBonus,
+    targetSupporters,
+    targetScore,
+    destroyedUnitId,
+    fighterRecovery,
+    tied: destroyedUnitId === null,
+    gameCompleted,
+    winnerId,
+  };
+  await tx.update(gamesTable).set({
+    aiState: mergeAiState(game.aiState, aiState("acted", "rules.dogfight", {
+      message: destroyedUnitId === null
+        ? "Dogfight tied; fighters remain locked."
+        : `Dogfight destroyed fighter unit ${destroyedUnitId}.`,
+      lastDogfight: log,
+    })),
+  }).where(eq(gamesTable.id, game.id));
+
+  return log;
+}
+
 async function aiMovementEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
   return movementActivationEligible(tx, unit);
 }
@@ -2827,6 +3029,10 @@ async function chooseAiFirePlan(
         rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: "target-model-record-missing" });
         continue;
       }
+      if (shipModelIsFighter(targetModel) && await fighterIsLockedInDogfight(tx, game.id, target)) {
+        rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: "target-locked-in-dogfight" });
+        continue;
+      }
       const targetWeapons = attackerAiProfile === "apex-predator"
         ? await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, targetModel.id))
         : [];
@@ -2995,6 +3201,9 @@ async function resolveBasicAiWeaponFire(
   if (!targetShip) throw new Error("AI target ship record missing");
   const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
   if (!targetModel) throw new Error("AI target ship model missing");
+  if (shipModelIsFighter(targetModel) && await fighterIsLockedInDogfight(tx, game.id, target)) {
+    throw new Error("AI target fighter is locked in a dogfight and cannot be attacked by normal weapons");
+  }
 
   const attackerCritRows = await tx.select().from(unitCriticalEffectsTable)
     .where(eq(unitCriticalEffectsTable.gameUnitId, attacker.id));
@@ -3470,6 +3679,187 @@ type AntiFighterEntry = {
   footprint: UnitFootprint;
 };
 
+type FighterAntiFighterInterruptResult = {
+  attacks: AntiFighterAttackLog[];
+  destroyedUnitIds: number[];
+  fighterRecoveries: DestroyedFighterRecoveryResult[];
+  movingUnitDestroyed: boolean;
+};
+
+async function antiFighterEntryForUnit(
+  tx: any,
+  unit: typeof gameUnitsTable.$inferSelect,
+  footprintOverride?: Partial<UnitFootprint>,
+): Promise<AntiFighterEntry | null> {
+  const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+  if (!ship) return null;
+  const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
+  if (!model) return null;
+  const critRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+  const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+    effectKey: r.effectKey,
+    randomArc: r.randomArc,
+    randomWeaponId: r.randomWeaponId,
+    lostTraits: r.lostTraits ?? [],
+  })));
+  return {
+    unit,
+    model,
+    traits: parseShipTraits(filterLostTraits(model.traits, crits.lostTraitNames)),
+    footprint: {
+      id: unit.id,
+      ownerId: unit.ownerId,
+      x: unit.hexQ,
+      z: unit.hexR,
+      baseRadiusInches: rulesBaseRadius(unit),
+      isFighter: shipModelIsFighter(model),
+      ...footprintOverride,
+    },
+  };
+}
+
+function antiFighterDiceForEntry(entry: AntiFighterEntry): { dice: number; bonus: number; trait: "Anti-Fighter" | "Advanced Anti-Fighter" } | null {
+  const advancedDice = Math.max(0, entry.traits.advancedAntiFighter);
+  const standardDice = Math.max(0, entry.traits.antiFighter);
+  const dice = advancedDice > 0 ? advancedDice : standardDice;
+  if (dice <= 0) return null;
+  return {
+    dice,
+    bonus: advancedDice > 0 ? 1 : 0,
+    trait: advancedDice > 0 ? "Advanced Anti-Fighter" : "Anti-Fighter",
+  };
+}
+
+async function resolveFighterAntiFighterDogfightInterrupt(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  movingUnit: typeof gameUnitsTable.$inferSelect,
+  finalFootprint: UnitFootprint,
+  contactedEnemyIds: number[],
+  movingFinal: { hexQ: number; hexR: number; heading: number; actualStepInches: number },
+): Promise<FighterAntiFighterInterruptResult | null> {
+  const movingEntry = await antiFighterEntryForUnit(tx, movingUnit, finalFootprint);
+  if (!movingEntry?.footprint.isFighter || contactedEnemyIds.length === 0) return null;
+
+  const contactedRows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    inArray(gameUnitsTable.id, contactedEnemyIds),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const contactedEntries: AntiFighterEntry[] = [];
+  for (const row of contactedRows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (row.ownerId === movingUnit.ownerId) continue;
+    const entry = await antiFighterEntryForUnit(tx, row);
+    if (!entry?.footprint.isFighter) continue;
+    if (!basesInContact(finalFootprint, entry.footprint)) continue;
+    contactedEntries.push(entry);
+  }
+  if (contactedEntries.length === 0) return null;
+
+  const attacks: AntiFighterAttackLog[] = [];
+  const addAttack = (attackerEntry: AntiFighterEntry, targetEntry: AntiFighterEntry) => {
+    const af = antiFighterDiceForEntry(attackerEntry);
+    if (!af) return;
+    const targetHull = targetEntry.model.hullRating ?? targetEntry.model.hull ?? targetEntry.unit.maxHullPoints;
+    const rolls: AntiFighterRollLog[] = [];
+    for (let i = 0; i < af.dice; i++) {
+      const die = rollD6();
+      const total = die + af.bonus;
+      rolls.push({
+        attackerId: attackerEntry.unit.id,
+        attackerName: attackerEntry.unit.name,
+        targetId: targetEntry.unit.id,
+        targetName: targetEntry.unit.name,
+        die,
+        bonus: af.bonus,
+        total,
+        targetHull,
+        destroyed: total >= targetHull,
+      });
+    }
+    attacks.push({
+      attackerId: attackerEntry.unit.id,
+      attackerName: attackerEntry.unit.name,
+      trait: af.trait,
+      dice: af.dice,
+      bonus: af.bonus,
+      eligibleTargetIds: [targetEntry.unit.id],
+      rolls,
+      destroyedTargetIds: rolls.some(roll => roll.destroyed) ? [targetEntry.unit.id] : [],
+    });
+  };
+
+  for (const defenderEntry of contactedEntries) {
+    addAttack(defenderEntry, movingEntry);
+  }
+  const movingTarget = [...contactedEntries].sort((a, b) =>
+    (a.model.hullRating ?? a.model.hull ?? a.unit.maxHullPoints) - (b.model.hullRating ?? b.model.hull ?? b.unit.maxHullPoints)
+    || a.unit.id - b.unit.id
+  )[0];
+  if (movingTarget) addAttack(movingEntry, movingTarget);
+  if (attacks.length === 0) return null;
+
+  const destroyedUnitIds = [...new Set(attacks.flatMap(attack => attack.destroyedTargetIds))];
+  const fighterRecoveries: DestroyedFighterRecoveryResult[] = [];
+  for (const targetId of destroyedUnitIds) {
+    const targetEntry = targetId === movingUnit.id
+      ? movingEntry
+      : contactedEntries.find(entry => entry.unit.id === targetId);
+    if (!targetEntry) continue;
+    const destroyedPatch = targetId === movingUnit.id
+      ? {
+          hexQ: movingFinal.hexQ,
+          hexR: movingFinal.hexR,
+          heading: movingFinal.heading,
+          hasInitiatedMoveThisActivation: true,
+          inchesMovedThisActivation: movingUnit.inchesMovedThisActivation + movingFinal.actualStepInches,
+          allStopReady: false,
+        }
+      : {};
+    await tx.update(gameUnitsTable).set({
+      ...destroyedPatch,
+      hullPoints: 0,
+      crewPoints: 0,
+      shieldsCurrent: 0,
+      interceptorDiceRemaining: 0,
+      damageState: "destroyed",
+      isDestroyed: true,
+    }).where(eq(gameUnitsTable.id, targetId));
+    const recovery = await resolveDestroyedFighterRecovery(tx, game, {
+      ...targetEntry.unit,
+      ...destroyedPatch,
+      hullPoints: 0,
+      crewPoints: 0,
+      shieldsCurrent: 0,
+      interceptorDiceRemaining: 0,
+      damageState: "destroyed",
+      isDestroyed: true,
+    }, "anti-fighter");
+    if (recovery) fighterRecoveries.push(recovery);
+  }
+
+  const result: FighterAntiFighterInterruptResult = {
+    attacks,
+    destroyedUnitIds,
+    fighterRecoveries,
+    movingUnitDestroyed: destroyedUnitIds.includes(movingUnit.id),
+  };
+  await tx.update(gamesTable).set({
+    aiState: mergeAiState(game.aiState, aiState("acted", "rules.fighter-anti-fighter-interrupt", {
+      message: `Pre-dogfight fighter Anti-Fighter resolved: ${destroyedUnitIds.length} fighter flight(s) destroyed.`,
+      lastAntiFighter: {
+        playerId: movingUnit.ownerId,
+        attacks,
+        destroyedUnitIds,
+        fighterRecoveries,
+      },
+    })),
+  }).where(eq(gamesTable.id, game.id));
+
+  return result;
+}
+
 function isMinbariEntry(entry: AntiFighterEntry): boolean {
   return /minbari/i.test(entry.model.faction ?? "")
     || /minbari/i.test(entry.unit.faction ?? "");
@@ -3615,6 +4005,7 @@ async function buildAntiFighterPendingState(
 
   const attackers: AntiFighterPendingAttacker[] = [];
   for (const attackerEntry of entries) {
+    if (attackerEntry.footprint.isFighter) continue;
     const advancedDice = Math.max(0, attackerEntry.traits.advancedAntiFighter);
     const standardDice = Math.max(0, attackerEntry.traits.antiFighter);
     const dice = advancedDice > 0 ? advancedDice : standardDice;
@@ -3723,6 +4114,7 @@ async function resolveEndOfMovementAntiFighter(
 
   for (const attackerEntry of byId.values()) {
     if (!liveIds.has(attackerEntry.unit.id)) continue;
+    if (attackerEntry.footprint.isFighter) continue;
     const advancedDice = Math.max(0, attackerEntry.traits.advancedAntiFighter);
     const standardDice = Math.max(0, attackerEntry.traits.antiFighter);
     const dice = advancedDice > 0 ? advancedDice : standardDice;
@@ -4100,6 +4492,63 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
     eq(gameUnitsTable.ownerId, AI_OPPONENT_ID),
   ));
   if (!unit) throw new Error("AI active firing unit not found");
+  const dogfightContacts = await fighterDogfightContacts(tx, game.id, unit);
+  if (dogfightContacts.length > 0) {
+    const targetIds = dogfightContacts.map(contact => contact.id);
+    const contactedTargets = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.gameId, game.id),
+      inArray(gameUnitsTable.id, targetIds),
+    ));
+    const target = (contactedTargets as Array<typeof gameUnitsTable.$inferSelect>)
+      .filter(row => !row.isDestroyed && row.ownerId !== unit.ownerId)
+      .sort((a, b) => a.hullPoints - b.hullPoints || a.id - b.id)[0];
+    if (target) {
+      const result = await resolveDogfightBetweenUnits(tx, game, unit, target);
+      const message = result.tied
+        ? `AI dogfight ${unit.name} vs ${target.name}: tied; fighters remain locked.`
+        : result.destroyedUnitId === target.id
+          ? `AI dogfight ${unit.name} destroyed ${target.name}.`
+          : `AI dogfight ${unit.name} was destroyed by ${target.name}.`;
+      const decision = aiDecision(
+        result.gameCompleted ? "firing.dogfight-game-over" : "firing.dogfight",
+        "firing",
+        `AI resolved ${unit.name}'s dogfight against ${target.name}.`,
+        {
+          chosenAction: "dogfight",
+          targetId: target.id,
+          targetName: target.name,
+          result: {
+            attackerRoll: result.attackerRoll,
+            attackerDogfight: result.attackerDogfight,
+            attackerFleetCarrierBonus: result.attackerFleetCarrierBonus,
+            attackerSupportBonus: result.attackerSupportBonus,
+            attackerScore: result.attackerScore,
+            targetRoll: result.targetRoll,
+            targetDogfight: result.targetDogfight,
+            targetFleetCarrierBonus: result.targetFleetCarrierBonus,
+            targetSupportBonus: result.targetSupportBonus,
+            targetScore: result.targetScore,
+            destroyedUnitId: result.destroyedUnitId,
+            tied: result.tied,
+            gameCompleted: result.gameCompleted,
+          },
+        },
+        unit,
+      );
+      const patch = withAiDecisionLog(game.aiState, aiState("acted", decision.step, {
+        message,
+        unitIds: [unit.id, target.id],
+        lastDogfight: result,
+      }), decision);
+      if (result.gameCompleted) {
+        const [row] = await tx.update(gamesTable).set({
+          aiState: mergeAiState(game.aiState, patch),
+        }).where(eq(gamesTable.id, game.id)).returning();
+        return row;
+      }
+      return finishAiActivation(tx, game, unit, "firing", patch);
+    }
+  }
   const plan = await chooseAiFirePlan(tx, game, unit);
   if (plan) {
     const result = await resolveBasicAiWeaponFire(tx, game, unit, plan.weapon, plan.target);
@@ -5850,6 +6299,24 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     return;
   }
   const actualStepInches = isMovingFighter ? Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR) : snapHalfInch(Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR));
+  if (isMovingFighter) {
+    const contactedEnemyFighterIds = otherFootprints
+      .filter(other => other.isFighter && other.ownerId !== unit.ownerId && basesInContact(finalFootprint, other))
+      .map(other => other.id);
+    const interrupt = await resolveFighterAntiFighterDogfightInterrupt(db, game, unit, finalFootprint, contactedEnemyFighterIds, {
+      hexQ: finalHexQ,
+      hexR: finalHexR,
+      heading: finalHeading,
+      actualStepInches,
+    });
+    if (interrupt?.movingUnitDestroyed) {
+      const [destroyedMover] = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.id, unit.id));
+      if (destroyedMover) {
+        res.json(destroyedMover);
+        return;
+      }
+    }
+  }
 
   const nextDistanceSinceLastTurn = isTurn
     ? 0
@@ -7318,6 +7785,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (!targetShipForRange) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
       const [targetModelForRange] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShipForRange.shipModelId));
       if (!targetModelForRange) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
+      if (shipModelIsFighter(targetModelForRange) && await fighterIsLockedInDogfight(tx, gameId, target)) {
+        throw Object.assign(new Error("Target fighter is locked in a dogfight and cannot be attacked by normal weapons"), { status: 400 });
+      }
       const attackerIsFighter = shipModelIsFighter(attackerModel);
       if (attackerIsFighter) {
         const liveUnits = await tx.select().from(gameUnitsTable).where(and(

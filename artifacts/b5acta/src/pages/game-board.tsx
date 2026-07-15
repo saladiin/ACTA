@@ -2614,23 +2614,51 @@ function MovementPlanner({ unit, plan, flip, remainingMove, minRequired, committ
 }
 
 // ── Staged (drag-placed) units ────────────────────────────────────────────────
-function FighterMovementPlanner({ unit, plan, remainingMove }: {
+function FighterMovementPlanner({ unit, plan, remainingMove, dogfightWarning = false }: {
   unit: { hexQ: number; hexR: number; heading: number; baseRadiusInches?: number | null };
   plan: MovePlan;
   remainingMove: number;
+  dogfightWarning?: boolean;
 }) {
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
   const baseRadius = rulesBaseRadius(unit);
   const planned = plan?.kind === "fighter-free" ? plan : null;
+  const [pulse, setPulse] = useState(0);
+  useFrame(({ clock }) => {
+    if (!dogfightWarning) {
+      if (pulse !== 0) setPulse(0);
+      return;
+    }
+    setPulse((Math.sin(clock.elapsedTime * 8) + 1) / 2);
+  });
+  const radiusColor = dogfightWarning ? "#a855f7" : "#22d3ee";
+  const ringColor = dogfightWarning ? "#e879f9" : "#67e8f9";
+  const fillOpacity = dogfightWarning ? 0.12 + pulse * 0.12 : 0.075;
+  const ringOpacity = dogfightWarning ? 0.58 + pulse * 0.38 : 0.72;
+  const emissiveIntensity = dogfightWarning ? 0.75 + pulse * 1.35 : 0;
   return (
     <group position={[x, 0, z]}>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.017, 0]} renderOrder={2}>
         <circleGeometry args={[Math.max(0.01, remainingMove), 96]} />
-        <meshBasicMaterial color="#22d3ee" transparent opacity={0.075} depthWrite={false} />
+        <meshStandardMaterial
+          color={radiusColor}
+          emissive={radiusColor}
+          emissiveIntensity={emissiveIntensity}
+          transparent
+          opacity={fillOpacity}
+          depthWrite={false}
+        />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} renderOrder={3}>
         <ringGeometry args={[Math.max(0.05, remainingMove - 0.045), remainingMove + 0.045, 128]} />
-        <meshBasicMaterial color="#67e8f9" transparent opacity={0.72} depthWrite={false} />
+        <meshStandardMaterial
+          color={ringColor}
+          emissive={ringColor}
+          emissiveIntensity={emissiveIntensity}
+          transparent
+          opacity={ringOpacity}
+          depthWrite={false}
+        />
       </mesh>
       {planned && (
         <group position={[planned.x - unit.hexQ, 0, planned.z - unit.hexR]}>
@@ -4235,7 +4263,7 @@ export default function GameBoard() {
   }, [game?.aiState, game?.opponentKind]);
 
   const commitAntiFighterAllocations = useCallback(async () => {
-    if (!antiFighterState || antiFighterCommitting) return;
+    if (!antiFighterState || antiFighterCommitting || game?.phase !== "movement") return;
     setAntiFighterCommitting(true);
     setAntiFighterError(null);
     const allocations = Object.entries(antiFighterAssignments)
@@ -4258,7 +4286,7 @@ export default function GameBoard() {
     } finally {
       setAntiFighterCommitting(false);
     }
-  }, [antiFighterAssignments, antiFighterCommitting, antiFighterState, gameId, qc]);
+  }, [antiFighterAssignments, antiFighterCommitting, antiFighterState, game?.phase, gameId, qc]);
   // Keep the polling-pause flag in sync with the dice modal: while the staged
   // dice reveal is open we must not let a background refetch replace game state
   // mid-sequence. Pausing the interval alone isn't enough — a poll already in
@@ -4266,7 +4294,7 @@ export default function GameBoard() {
   // reveal, so we also cancel any outstanding game fetch on open. Re-enables
   // polling as soon as the modal closes.
   useEffect(() => {
-    const open = diceModal !== null || selfRepairModal !== null;
+    const open = diceModal !== null || dogfightModal !== null || selfRepairModal !== null;
     pausePollingRef.current = open;
     if (open) {
       void qc.cancelQueries({ queryKey: getGetGameQueryKey(gameId) }).catch(() => {
@@ -4275,7 +4303,7 @@ export default function GameBoard() {
         // consumed here.
       });
     }
-  }, [diceModal, selfRepairModal, qc, gameId]);
+  }, [diceModal, dogfightModal, selfRepairModal, qc, gameId]);
   const [turnMoves, setTurnMoves] = useState<Array<{ unitId: number; toHexQ: number; toHexR: number; newHeading: number }>>([]);
   const [turnAttacks, setTurnAttacks] = useState<Array<{ attackerUnitId: number; targetUnitId: number }>>([]);
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
@@ -4502,6 +4530,25 @@ export default function GameBoard() {
   const unitsWithFighterFlags = useMemo(() => (
     units.map(unit => ({ ...unit, isFighter: isFighterUnit(unit) }))
   ), [isFighterUnit, units]);
+  const enemyFighterContactsForUnit = useCallback((
+    unit: BoardUnit & { isFighter?: boolean },
+    position?: { hexQ: number; hexR: number },
+  ) => {
+    const fighter = unit.isFighter ?? isFighterUnit(unit);
+    if (!fighter) return [] as Array<BoardUnit & { isFighter: boolean }>;
+    const probe = {
+      ...unit,
+      hexQ: position?.hexQ ?? unit.hexQ,
+      hexR: position?.hexR ?? unit.hexR,
+    };
+    return unitsWithFighterFlags.filter(other =>
+      other.id !== unit.id &&
+      !other.isDestroyed &&
+      other.isFighter &&
+      other.ownerId !== unit.ownerId &&
+      uiBasesInContact(probe, other)
+    );
+  }, [isFighterUnit, unitsWithFighterFlags]);
   const serverMovementLedgerByUnit = useMemo<Record<number, MovementLedger>>(() => {
     const map: Record<number, MovementLedger> = {};
     for (const unit of units as RuntimeMovementUnit[]) {
@@ -5199,6 +5246,8 @@ export default function GameBoard() {
         setEndActivationConfirmOpen(true);
         return;
       }
+      const phase = (game?.phase as "initiative" | "movement" | "firing" | "end" | undefined) ?? "movement";
+      if (phase !== "movement") return;
       const u = selectedUnitData;
       const movementModel = getShipModelForUnit(u);
       const movementTraits = uiMovementTraitsForModel(movementModel, u);
@@ -5295,7 +5344,7 @@ export default function GameBoard() {
     // Capture on document so we get the keydown regardless of which element has focus.
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [game?.status, isSelectedUnitActive, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending, endActivation, gameId, qc, shipModels, isFighterUnit, unitsWithFighterFlags]);
+  }, [game?.status, game?.phase, isSelectedUnitActive, selectedUnitData, myUserId, confirmMovePlan, cancelMovePlan, getLedger, movePlan, moveUnit.isPending, endActivation, gameId, qc, shipModels, isFighterUnit, unitsWithFighterFlags]);
 
   // Special-Action-adjusted caps for the selected unit. Single source of truth
   // shared by keyboard gating, drag clamp, confirmMovePlan re-validation, and
@@ -5447,6 +5496,18 @@ export default function GameBoard() {
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
     (game?.phase as "initiative" | "movement" | "firing" | "end") ?? "movement";
+  const activeDogfightEnemies = useMemo(() => {
+    if (currentPhase !== "firing" || !activeUnitId) return [] as Array<BoardUnit & { isFighter: boolean }>;
+    const active = unitsWithFighterFlags.find(u => u.id === activeUnitId);
+    if (!active?.isFighter || active.ownerId !== myUserId || active.isDestroyed) return [] as Array<BoardUnit & { isFighter: boolean }>;
+    return enemyFighterContactsForUnit(active);
+  }, [activeUnitId, currentPhase, enemyFighterContactsForUnit, myUserId, unitsWithFighterFlags]);
+  const activeFighterLockedInDogfight = activeDogfightEnemies.length > 0;
+  const plannedFighterDogfightContact = useMemo(() => {
+    if (currentPhase !== "movement" || !selectedUnitData || !isFighterUnit(selectedUnitData)) return false;
+    if (movePlan?.kind !== "fighter-free") return false;
+    return enemyFighterContactsForUnit(selectedUnitData, { hexQ: movePlan.x, hexR: movePlan.z }).length > 0;
+  }, [currentPhase, enemyFighterContactsForUnit, isFighterUnit, movePlan, selectedUnitData]);
   const isMyEndPhaseWindow = game?.status === "active" && currentPhase === "end" && game.activePlayerId === myUserId;
   const mergeFighterBayResultIntoGame = useCallback((result: FighterBayActionResult) => {
     qc.setQueryData<GameDetail | undefined>(getGetGameQueryKey(gameId), old => {
@@ -5609,9 +5670,10 @@ export default function GameBoard() {
       if (maxCrew > 0 && crew <= 0) return false;
     } else {
       if (u.damageState === "adrift" || u.damageState === "exploding-end-of-next") return false;
+      if (isFighterUnit(u) && enemyFighterContactsForUnit({ ...u, isFighter: true }).length > 0) return false;
     }
     return true;
-  }, [currentPhase]);
+  }, [currentPhase, enemyFighterContactsForUnit, isFighterUnit]);
   const activationSegment = useMemo<"capital" | "fighter" | null>(() => {
     if (currentPhase !== "movement" && currentPhase !== "firing") return null;
     const activeOwnerId = game?.activePlayerId;
@@ -5816,6 +5878,12 @@ export default function GameBoard() {
     // activation mid-roll) can't permanently block firing on the next ship.
     firingInFlightRef.current = false;
   }, [activeUnitId, currentPhase]);
+
+  useEffect(() => {
+    if (!activeFighterLockedInDogfight) return;
+    setFiringWeaponPicking(null);
+    setSplitFirePlan(null);
+  }, [activeFighterLockedInDogfight, activeUnitId]);
 
   // Wipe per-activation Special Action UI state when the active unit changes
   // (handoff, end-activation, or round rollover). The server still owns the
@@ -6027,6 +6095,7 @@ export default function GameBoard() {
       game?.status === "active" &&
       isMyActivation &&
       currentPhase === "firing" &&
+      dogfightTargetPicking &&
       firingWeaponPicking === null &&
       splitFirePlan === null &&
       activeUnitReadyForActions &&
@@ -6035,45 +6104,7 @@ export default function GameBoard() {
       const attacker = unitsWithFighterFlags.find(u => u.id === activeUnitId);
       const target = unitsWithFighterFlags.find(u => u.id === unitId);
       if (attacker?.isFighter && target?.isFighter && uiBasesInContact(attacker, target)) {
-        if (firingInFlightRef.current) return;
-        firingInFlightRef.current = true;
-        customFetch<{
-          attackerRoll: number;
-          attackerDogfight: number;
-          attackerFleetCarrierBonus?: number;
-          attackerScore: number;
-          targetRoll: number;
-          targetDogfight: number;
-          targetFleetCarrierBonus?: number;
-          targetScore: number;
-          destroyedUnitId: number | null;
-          tied: boolean;
-        }>(`/api/games/${gameId}/units/${attacker.id}/dogfight`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ targetUnitId: target.id }),
-        })
-          .then(result => {
-            const outcome = result.tied
-              ? "Dogfight tied; fighters remain locked."
-              : result.destroyedUnitId === target.id
-                ? `${target.name} destroyed in dogfight.`
-                : `${attacker.name} destroyed in dogfight.`;
-            const attackerMods = result.attackerDogfight + (result.attackerFleetCarrierBonus ?? 0);
-            const targetMods = result.targetDogfight + (result.targetFleetCarrierBonus ?? 0);
-            const attackerFc = result.attackerFleetCarrierBonus ? " incl. Fleet Carrier" : "";
-            const targetFc = result.targetFleetCarrierBonus ? " incl. Fleet Carrier" : "";
-            setActivationFeedback(
-              `${outcome} ${attacker.name}: ${result.attackerRoll}+${attackerMods}=${result.attackerScore}${attackerFc}; ${target.name}: ${result.targetRoll}+${targetMods}=${result.targetScore}${targetFc}.`,
-            );
-            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-          })
-          .catch(err => {
-            setActivationFeedback(cleanApiErrorMessage(err, "Dogfight failed"));
-          })
-          .finally(() => {
-            firingInFlightRef.current = false;
-          });
+        void resolveDogfight(target.id);
         return;
       }
     }
@@ -6097,6 +6128,15 @@ export default function GameBoard() {
         ? getWeaponsForUnit(attacker).find(w => w.id === firingWeaponPicking)
         : undefined;
       if (!attacker || !weapon) return;
+      if (isFighterUnit(attacker) && enemyFighterContactsForUnit({ ...attacker, isFighter: true }).length > 0) {
+        setFiringWeaponPicking(null);
+        setActivationFeedback("This fighter is locked in a dogfight; use the Dogfight action instead.");
+        return;
+      }
+      if (isFighterUnit(unit) && enemyFighterContactsForUnit({ ...unit, isFighter: true }).length > 0) {
+        setActivationFeedback("Target fighter is locked in a dogfight and cannot be attacked by normal weapons.");
+        return;
+      }
       const firingUnitId = attacker.id;
       setFiringWeaponPicking(null);
       setSplitFirePlan(null);
@@ -6283,10 +6323,10 @@ export default function GameBoard() {
   }, [hasActiveUnit, canPassPhase, endActivation, gameId, mergeActiveUnitIntoGame, qc]);
 
   const handleRequestPassAllFiring = useCallback(() => {
-    if (!canPassAllFiring || passAllFiringPending || antiFighterCommitting || diceModal !== null) return;
+    if (!canPassAllFiring || passAllFiringPending || antiFighterCommitting || diceModal !== null || dogfightModal !== null) return;
     setActivationFeedback(null);
     setPassAllFiringConfirmOpen(true);
-  }, [antiFighterCommitting, canPassAllFiring, diceModal, passAllFiringPending]);
+  }, [antiFighterCommitting, canPassAllFiring, diceModal, dogfightModal, passAllFiringPending]);
 
   const handlePassAllFiring = useCallback(async () => {
     if (currentPhase !== "firing" || !isMyActivation || passAllFiringPending || antiFighterState) return;
@@ -6299,6 +6339,7 @@ export default function GameBoard() {
       setSelectedUnit(null);
       setFiringWeaponPicking(null);
       setDiceModal(null);
+      setDogfightModal(null);
       setUseCoordOnNext(false);
       setOptimisticActiveUnitId(null);
       qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
@@ -6308,6 +6349,57 @@ export default function GameBoard() {
       setPassAllFiringPending(false);
     }
   }, [antiFighterState, currentPhase, gameId, isMyActivation, mergeActiveUnitIntoGame, passAllFiringPending, qc]);
+
+  const resolveDogfight = useCallback(async (targetUnitId?: number) => {
+    const attacker = activeUnitId ? unitsWithFighterFlags.find(u => u.id === activeUnitId) : undefined;
+    if (!attacker?.isFighter || attacker.ownerId !== myUserId) return;
+    const legalTargets = activeDogfightEnemies;
+    if (legalTargets.length === 0) {
+      setActivationFeedback("This fighter is not in base contact with an enemy fighter.");
+      return;
+    }
+    if (targetUnitId === undefined && legalTargets.length > 1) {
+      setDogfightTargetPicking(true);
+      setActivationFeedback("Dogfight: pick one contacted enemy fighter.");
+      return;
+    }
+    const target = targetUnitId !== undefined
+      ? legalTargets.find(enemy => enemy.id === targetUnitId)
+      : legalTargets[0];
+    if (!target) {
+      setActivationFeedback("Dogfight target must be an enemy fighter in base contact.");
+      return;
+    }
+    if (firingInFlightRef.current) return;
+    firingInFlightRef.current = true;
+    setDogfightTargetPicking(false);
+    setFiringWeaponPicking(null);
+    setSplitFirePlan(null);
+    setActivationFeedback(null);
+    try {
+      const result = await customFetch<DogfightResult>(`/api/games/${gameId}/units/${attacker.id}/dogfight`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetUnitId: target.id }),
+      });
+      setDogfightModal({ phase: "rolling", result });
+      setTimeout(() => {
+        setDogfightModal(modal => modal && modal.result.attackerUnitId === result.attackerUnitId && modal.result.targetUnitId === result.targetUnitId
+          ? { ...modal, phase: "shown" }
+          : modal);
+      }, 700);
+      const outcome = result.tied
+        ? "Dogfight tied; fighters remain locked."
+        : result.destroyedUnitId === result.targetUnitId
+          ? `${result.targetName} destroyed in dogfight.`
+          : `${result.attackerName} destroyed in dogfight.`;
+      setActivationFeedback(outcome);
+    } catch (err) {
+      setActivationFeedback(cleanApiErrorMessage(err, "Dogfight failed"));
+    } finally {
+      firingInFlightRef.current = false;
+    }
+  }, [activeDogfightEnemies, activeUnitId, gameId, myUserId, unitsWithFighterFlags]);
 
   const handleSubmitBugReport = useCallback(async () => {
     const message = bugReportMessage.trim();
@@ -6771,7 +6863,7 @@ export default function GameBoard() {
               data-testid="anti-fighter-allocation-panel"
             >
               <div className="mb-2 text-[10px] font-mono uppercase tracking-wider text-emerald-200">
-                assign anti-fighter dice to targets
+                end-of-movement anti-fighter - assign dice
               </div>
               <div className="max-h-[46vh] space-y-2 overflow-y-auto pr-1">
                 {antiFighterState.attackers.map(attacker => {
@@ -6837,7 +6929,7 @@ export default function GameBoard() {
               data-testid="anti-fighter-result-panel"
             >
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-200">Anti-Fighter rolls</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-200">End-of-Movement / Pre-Dogfight Anti-Fighter rolls</span>
                 <Button type="button" size="sm" variant="outline" onClick={() => setAntiFighterResult(null)}>Close</Button>
               </div>
               <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
@@ -6947,7 +7039,7 @@ export default function GameBoard() {
                 />
               );
             })}
-            {game.status === "active" && isSelectedUnitActive && selectedUnitData && !selectedUnitData.isDestroyed && selectedUnitData.damageState !== "adrift" && selectedUnitData.damageState !== "exploding-end-of-next" && (() => {
+            {game.status === "active" && currentPhase === "movement" && isSelectedUnitActive && selectedUnitData && !selectedUnitData.isDestroyed && selectedUnitData.damageState !== "adrift" && selectedUnitData.damageState !== "exploding-end-of-next" && (() => {
               // Per sheet: every ship MUST move at least half its base speed
               // each activation UNLESS it has declared All Stop / All Stop &
               // Pivot, or is under mandatory-move status (adrift / about to
@@ -6965,6 +7057,7 @@ export default function GameBoard() {
                     unit={selectedUnitData}
                     plan={movePlan}
                     remainingMove={selectedRemainingMove}
+                    dogfightWarning={plannedFighterDogfightContact}
                   />
                 );
               }
@@ -8344,6 +8437,19 @@ export default function GameBoard() {
                   <div>{lastOpponentAttackSummary}</div>
                 </div>
               )}
+              {currentPhase === "firing" && activeUnitReadyForActions && activeFighterLockedInDogfight && (
+                <Button
+                  size="sm"
+                  data-testid="button-dogfight"
+                  className="w-full gap-1.5 border border-fuchsia-400/70 bg-fuchsia-500/20 font-mono text-xs font-bold uppercase tracking-widest text-fuchsia-100 hover:bg-fuchsia-500/30"
+                  onClick={() => void resolveDogfight()}
+                  disabled={dogfightModal !== null || fireWeapon.isPending || passAllFiringPending}
+                  title={activeDogfightEnemies.length > 1 ? "Pick which contacted enemy fighter to dogfight" : "Resolve this fighter dogfight"}
+                >
+                  <Swords className="h-3.5 w-3.5" />
+                  {dogfightTargetPicking ? "Pick Dogfight Target" : "Dogfight"}
+                </Button>
+              )}
               <Button
                 size="sm"
                 data-testid="button-end-activation"
@@ -8364,7 +8470,7 @@ export default function GameBoard() {
                   data-testid="button-pass-all-firing"
                   className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
                   onClick={handleRequestPassAllFiring}
-                  disabled={!canPassAllFiring || passAllFiringPending || antiFighterCommitting || diceModal !== null}
+                  disabled={!canPassAllFiring || passAllFiringPending || antiFighterCommitting || diceModal !== null || dogfightModal !== null}
                   title={antiFighterState ? "Resolve pending Anti-Fighter allocation first" : undefined}
                 >
                   {passAllFiringPending ? "Passing All..." : "Pass All Firing"}
@@ -8651,8 +8757,17 @@ export default function GameBoard() {
                 ]);
                 const attackerTraits = getShipModelForUnit(attacker)?.traits ?? "";
                 const skeletonFiringLimited = attacker.isSkeletonCrew && !/\bflight\s+computer\b/i.test(attackerTraits);
+                const attackerLockedInDogfight = isFighterUnit(attacker) && activeFighterLockedInDogfight;
                 return (
                   <div className="space-y-1.5" data-testid="firing-panel">
+                    {attackerLockedInDogfight && (
+                      <div
+                        className="rounded border border-fuchsia-400/60 bg-fuchsia-500/10 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fuchsia-100"
+                        data-testid="dogfight-locked-note"
+                      >
+                        Locked in dogfight - use the Dogfight action. Normal fighter attacks are unavailable.
+                      </div>
+                    )}
                     <div className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
                       Weapons · {attacker.name}
                     </div>
@@ -8730,7 +8845,7 @@ export default function GameBoard() {
                       const splitActive = splitFirePlan?.attackerUnitId === attacker.id && splitFirePlan.weapon.id === w.id;
                       const splitTotalDice = effectiveUiAttackDice(w);
                       const splitFireReason = splitFireBlockedReason(w, useCoordOnNext);
-                      const unavailable = fired || slowLoadingCooling || skeletonBlocked || crippledArcBlocked;
+                      const unavailable = attackerLockedInDogfight || fired || slowLoadingCooling || skeletonBlocked || crippledArcBlocked;
                       const weaponTraitList = splitTraitList(w.traits);
                       return (
                         <div key={w.id} className="grid grid-cols-[1fr_auto] gap-1">
@@ -9509,6 +9624,16 @@ export default function GameBoard() {
           }}
         />
       )}
+      {dogfightModal && (
+        <DogfightResultModal
+          modal={dogfightModal}
+          setModal={setDogfightModal}
+          onClose={() => {
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            setDogfightModal(null);
+          }}
+        />
+      )}
       {splitFireResultModal && (
         <SplitFireResultModal
           modal={splitFireResultModal}
@@ -9573,6 +9698,132 @@ function DiceFace({
     <span className={`inline-flex items-center justify-center w-9 h-9 rounded border bg-black/60 font-mono text-lg font-bold tabular-nums ${toneClass}`}>
       {display}
     </span>
+  );
+}
+
+function DogfightResultModal({
+  modal,
+  setModal,
+  onClose,
+}: {
+  modal: DogfightModalState;
+  setModal: React.Dispatch<React.SetStateAction<DogfightModalState | null>>;
+  onClose: () => void;
+}) {
+  const { result, phase, confirmingClose } = modal;
+  const rolling = phase === "rolling";
+  const requestClose = () => setModal(m => (m ? { ...m, confirmingClose: true } : null));
+  const cancelClose = () => setModal(m => (m ? { ...m, confirmingClose: false } : null));
+  const winnerName = result.tied
+    ? null
+    : result.destroyedUnitId === result.targetUnitId
+      ? result.attackerName
+      : result.targetName;
+  const loserName = result.tied
+    ? null
+    : result.destroyedUnitId === result.targetUnitId
+      ? result.targetName
+      : result.attackerName;
+  const formatSupport = (supporters?: Array<{ id: number; name: string }>) =>
+    supporters && supporters.length > 0 ? supporters.map(s => s.name).join(", ") : "None";
+  const scoreLine = (
+    roll: number,
+    dogfight: number,
+    fleetCarrier = 0,
+    support = 0,
+    total: number,
+  ) => {
+    const parts = [`roll ${roll}`, `dogfight ${dogfight}`];
+    if (fleetCarrier) parts.push(`fleet carrier +${fleetCarrier}`);
+    if (support) parts.push(`support +${support}`);
+    return `${parts.join(" + ")} = ${total}`;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 px-4" role="dialog" aria-modal="true">
+      <div className="relative w-full max-w-lg rounded border border-fuchsia-400/60 bg-slate-950/95 p-4 shadow-2xl shadow-fuchsia-950/40">
+        <button
+          type="button"
+          onClick={requestClose}
+          className="absolute right-3 top-3 rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-mono text-xs text-slate-200 hover:bg-slate-800"
+          aria-label="Close dogfight result"
+        >
+          X
+        </button>
+        <div className="pr-8">
+          <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-fuchsia-300/80">Fighter Combat</div>
+          <div className="mt-1 font-mono text-lg font-black uppercase text-fuchsia-100">Dogfight</div>
+          <p className="mt-1 font-mono text-xs text-slate-300">
+            {result.attackerName} vs {result.targetName}
+          </p>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded border border-fuchsia-400/30 bg-black/45 p-3">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-fuchsia-200/80">{result.attackerName}</div>
+            <div className="mt-2 flex items-center gap-3">
+              <DiceFace value={result.attackerRoll} rolling={rolling} />
+              <div className="font-mono text-sm font-bold text-fuchsia-100">{rolling ? "Rolling..." : result.attackerScore}</div>
+            </div>
+            <div className="mt-2 font-mono text-[10px] text-slate-300">
+              {scoreLine(result.attackerRoll, result.attackerDogfight, result.attackerFleetCarrierBonus ?? 0, result.attackerSupportBonus ?? 0, result.attackerScore)}
+            </div>
+            <div className="mt-1 font-mono text-[10px] text-slate-500">
+              Support: {formatSupport(result.attackerSupporters)}
+            </div>
+          </div>
+          <div className="rounded border border-red-400/30 bg-black/45 p-3">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-red-200/80">{result.targetName}</div>
+            <div className="mt-2 flex items-center gap-3">
+              <DiceFace value={result.targetRoll} rolling={rolling} />
+              <div className="font-mono text-sm font-bold text-red-100">{rolling ? "Rolling..." : result.targetScore}</div>
+            </div>
+            <div className="mt-2 font-mono text-[10px] text-slate-300">
+              {scoreLine(result.targetRoll, result.targetDogfight, result.targetFleetCarrierBonus ?? 0, result.targetSupportBonus ?? 0, result.targetScore)}
+            </div>
+            <div className="mt-1 font-mono text-[10px] text-slate-500">
+              Support: {formatSupport(result.targetSupporters)}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded border border-slate-700 bg-slate-900/70 px-3 py-2 font-mono text-xs text-slate-200">
+          {rolling
+            ? "Resolving dogfight..."
+            : result.tied
+              ? "Tie. Fighters remain locked in dogfight."
+              : `${winnerName} wins. ${loserName} is destroyed.`}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button
+            size="sm"
+            onClick={requestClose}
+            disabled={rolling}
+            className="bg-fuchsia-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-fuchsia-200"
+            data-testid="button-close-dogfight-modal"
+          >
+            Close
+          </Button>
+        </div>
+
+        {confirmingClose && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded bg-black/70 p-4">
+            <div className="w-full max-w-sm rounded border border-slate-600 bg-slate-950 p-4 text-center shadow-xl">
+              <div className="font-mono text-sm font-bold uppercase text-fuchsia-100">Close dogfight result?</div>
+              <div className="mt-1 font-mono text-xs text-slate-300">The dogfight has already been applied.</div>
+              <div className="mt-3 flex justify-center gap-2">
+                <Button variant="outline" size="sm" onClick={cancelClose} className="border-slate-600 bg-slate-900 font-mono text-xs uppercase text-slate-100 hover:bg-slate-800">
+                  Keep Open
+                </Button>
+                <Button size="sm" onClick={onClose} className="bg-fuchsia-300 font-mono text-xs font-black uppercase text-black hover:bg-fuchsia-200">
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
