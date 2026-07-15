@@ -2109,6 +2109,37 @@ type DiceModalState = {
   critIndex?: number;
 };
 
+type DogfightResult = {
+  kind: "dogfight";
+  round: number;
+  attackerUnitId: number;
+  attackerName: string;
+  attackerRoll: number;
+  attackerDogfight: number;
+  attackerFleetCarrierBonus?: number;
+  attackerSupportBonus?: number;
+  attackerSupporters?: Array<{ id: number; name: string }>;
+  attackerScore: number;
+  targetUnitId: number;
+  targetName: string;
+  targetRoll: number;
+  targetDogfight: number;
+  targetFleetCarrierBonus?: number;
+  targetSupportBonus?: number;
+  targetSupporters?: Array<{ id: number; name: string }>;
+  targetScore: number;
+  destroyedUnitId: number | null;
+  tied: boolean;
+  gameCompleted?: boolean;
+  winnerId?: string | null;
+};
+
+type DogfightModalState = {
+  phase: "rolling" | "shown";
+  result: DogfightResult;
+  confirmingClose?: boolean;
+};
+
 type SplitFirePlan = {
   weapon: Weapon;
   attackerUnitId: number;
@@ -4103,6 +4134,8 @@ export default function GameBoard() {
   // damage-ready → damage-rolling → damage-shown → close (confirmed). The
   // server returns the full result in one shot; the staging is purely UX.
   const [diceModal, setDiceModal] = useState<DiceModalState | null>(null);
+  const [dogfightModal, setDogfightModal] = useState<DogfightModalState | null>(null);
+  const [dogfightTargetPicking, setDogfightTargetPicking] = useState(false);
   const [selfRepairModal, setSelfRepairModal] = useState<SelfRepairModalState | null>(null);
   const [aiWeaponFxReplay, setAiWeaponFxReplay] = useState<AiWeaponFxReplay | null>(null);
   const lastSeenAiWeaponFxKeyRef = useRef<string | null>(null);

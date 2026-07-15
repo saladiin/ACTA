@@ -6458,12 +6458,38 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
         throw Object.assign(new Error("Fighter flights must be in base contact to dogfight"), { status: 400 });
       }
 
+      const liveRows = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, game.id),
+        eq(gameUnitsTable.isDestroyed, false),
+      ));
+      const attackerSupporters: Array<{ id: number; name: string }> = [];
+      const targetSupporters: Array<{ id: number; name: string }> = [];
+      for (const row of liveRows as Array<typeof gameUnitsTable.$inferSelect>) {
+        if (row.id === attacker.id || row.id === target.id) continue;
+        const rowModel = await getShipModelForUnit(tx, row);
+        if (!rowModel || !shipModelIsFighter(rowModel)) continue;
+        const footprint: UnitFootprint = {
+          id: row.id,
+          ownerId: row.ownerId,
+          x: row.hexQ,
+          z: row.hexR,
+          baseRadiusInches: rulesBaseRadius(row),
+          isFighter: true,
+        };
+        if (row.ownerId === attacker.ownerId && basesInContact(footprint, targetFootprint)) {
+          attackerSupporters.push({ id: row.id, name: row.name });
+        } else if (row.ownerId === target.ownerId && basesInContact(footprint, attackerFootprint)) {
+          targetSupporters.push({ id: row.id, name: row.name });
+        }
+      }
+      const attackerSupportBonus = attackerSupporters.length;
+      const targetSupportBonus = targetSupporters.length;
       const attackerRoll = rollD6();
       const targetRoll = rollD6();
       const attackerFleetCarrierBonus = await fleetCarrierDogfightBonus(tx, game.id, attacker.ownerId);
       const targetFleetCarrierBonus = await fleetCarrierDogfightBonus(tx, game.id, target.ownerId);
-      const attackerScore = attackerRoll + attackerTraits.dogfight + attackerFleetCarrierBonus;
-      const targetScore = targetRoll + targetTraits.dogfight + targetFleetCarrierBonus;
+      const attackerScore = attackerRoll + attackerTraits.dogfight + attackerFleetCarrierBonus + attackerSupportBonus;
+      const targetScore = targetRoll + targetTraits.dogfight + targetFleetCarrierBonus + targetSupportBonus;
       const destroyedUnitId =
         attackerScore > targetScore ? target.id :
         targetScore > attackerScore ? attacker.id :
@@ -6535,12 +6561,16 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
         attackerRoll,
         attackerDogfight: attackerTraits.dogfight,
         attackerFleetCarrierBonus,
+        attackerSupportBonus,
+        attackerSupporters,
         attackerScore,
         targetUnitId: target.id,
         targetName: target.name,
         targetRoll,
         targetDogfight: targetTraits.dogfight,
         targetFleetCarrierBonus,
+        targetSupportBonus,
+        targetSupporters,
         targetScore,
         destroyedUnitId,
         fighterRecovery,
