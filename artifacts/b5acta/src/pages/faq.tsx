@@ -15,21 +15,13 @@ const FAQ_SECTIONS = [
       },
       {
         q: "What should I do first?",
-        a: "Sign in, create or edit a fleet, start a new engagement from the lobby, pick an opponent or AI opponent, deploy your ships, then play through initiative, movement, firing, and end phase.",
+        a: "Head to the Lobby and join an open match, or start one with another player or the AI. Create new fleets in the Fleets menu to reuse in the future; fleet reuse is still in development. You can review your current games in Active Ops.",
       },
     ],
   },
   {
     title: "Fleets And Games",
     items: [
-      {
-        q: "How do I make a fleet?",
-        a: "Open Fleets, create a named fleet, then add ships from the available ship list. Each ship becomes a unit you can deploy in a game.",
-      },
-      {
-        q: "Do I need a perfect fleet list?",
-        a: "No. For public testing, build something fun that helps test different ship sizes, weapon types, factions, and edge cases.",
-      },
       {
         q: "How do I start a game?",
         a: "Open New Engagement, choose the setup, select a fleet if desired, and create the game. Depending on setup, another player may need to join and deploy before the engagement begins.",
@@ -53,7 +45,7 @@ const FAQ_SECTIONS = [
       },
       {
         q: "What do the colored rings and arcs mean?",
-        a: "The base and arc overlays show orientation, weapon coverage, selected status, and current phase availability. Weapon arcs rotate with ship heading.",
+        a: "The base and arc overlays show orientation, weapon arcs, selected status, and current phase availability. Green means available; white means unavailable.",
       },
       {
         q: "Can I pre-measure?",
@@ -87,7 +79,7 @@ const FAQ_SECTIONS = [
     items: [
       {
         q: "How do I deploy ships?",
-        a: "During deployment, place your ships inside your deployment zone. Once both sides are deployed, the game can begin.",
+        a: "In the right sidebar, under Fleet Yards, drag the desired ship onto the board within your marked amber deployment area. Placement is committed only when you select Commit and Engage.",
       },
       {
         q: "What is deployment depth?",
@@ -95,7 +87,7 @@ const FAQ_SECTIONS = [
       },
       {
         q: "How does movement work?",
-        a: "Activate an eligible ship, choose how far it moves, set any allowed turn, then confirm the move. The app tracks committed movement.",
+        a: "Select an eligible ship; by default, eligible ships display a flashing green ring. On PC, press F to command the ship to move. Use Q and E to turn to port or starboard, respectively, once the ship is eligible to turn. Press Spacebar to commit the movement segment. Be sure to select any desired Special Actions before committing to movement. Once you are done moving, press N or click End Activation.",
       },
       {
         q: "Do ships have to move?",
@@ -141,7 +133,7 @@ const FAQ_SECTIONS = [
     items: [
       {
         q: "Who rolls the dice?",
-        a: "The app rolls dice for attacks, damage, criticals, and automated checks. The dice modal shows the sequence so players can follow what happened.",
+        a: "The app rolls dice for attacks, damage, criticals, and automated checks. The dice UI shows the sequence so players can follow what happened.",
       },
       {
         q: "What does to hit mean?",

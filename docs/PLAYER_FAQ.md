@@ -22,22 +22,9 @@ It helps, but you can learn by playing. The main things to understand are:
 
 ### What should I do first?
 
-1. Sign in.
-2. Create or edit a fleet.
-3. Start a new engagement from the lobby.
-4. Pick an opponent or AI opponent.
-5. Deploy your ships.
-6. Play through initiative, movement, firing, and end phase.
+Head to the Lobby and join an open match, or start one with another player or the AI. Create new fleets in the Fleets menu to reuse in the future; fleet reuse is still in development. You can review your current games in Active Ops.
 
 ## Fleets And Games
-
-### How do I make a fleet?
-
-Open **Fleets**, create a named fleet, then add ships from the available ship list. Each ship in the fleet becomes a unit you can deploy in a game.
-
-### Do I need a perfect fleet list?
-
-For public testing, no. Build something that looks fun and helps test different ship sizes, weapon types, and factions.
 
 ### How do I start a game?
 
@@ -59,7 +46,7 @@ Click a ship or its base. The selected ship is highlighted and its available con
 
 ### What do the colored rings and arcs mean?
 
-The base and arc overlays show orientation, weapon coverage, selected status, and current phase availability. Weapon arcs rotate with the ship heading, so they are the main visual cue for whether a target is in arc.
+The base and arc overlays show orientation, weapon arcs, selected status, and current phase availability. Green means available; white means unavailable.
 
 ### Can I pre-measure?
 
@@ -94,7 +81,7 @@ Use the available pass/end controls. In some phases, the app may let you pass be
 
 ### How do I deploy ships?
 
-During deployment, place your ships inside your deployment zone. Once both sides are deployed, the game can begin.
+In the right sidebar, under Fleet Yards, drag the desired ship onto the board within your marked amber deployment area. Placement is committed only when you select Commit and Engage.
 
 ### What is deployment depth?
 
@@ -108,7 +95,7 @@ No. You only place your own fleet.
 
 ### How does movement work?
 
-During the Movement phase, activate an eligible ship, choose how far it moves, set any allowed turn, then confirm the move. The app tracks how much movement has been committed.
+Select an eligible ship; by default, eligible ships display a flashing green ring. On PC, press F to command the ship to move. Use Q and E to turn to port or starboard, respectively, once the ship is eligible to turn. Press Spacebar to commit the movement segment. Be sure to select any desired Special Actions before committing to movement. Once you are done moving, press N or click End Activation.
 
 ### Do ships have to move?
 
@@ -170,7 +157,7 @@ Energy Mines are area-style weapons. In the app, the mine projectile travels str
 
 ### Who rolls the dice?
 
-The app rolls dice for attacks, damage, criticals, and other automated checks. The dice modal shows the sequence so players can follow what happened.
+The app rolls dice for attacks, damage, criticals, and automated checks. The dice UI shows the sequence so players can follow what happened.
 
 ### What does "to hit" mean?
 

@@ -1959,12 +1959,56 @@ async function gameUnitIsFighter(tx: any, unit: typeof gameUnitsTable.$inferSele
   return model ? shipModelIsFighter(model) : false;
 }
 
+async function fighterDogfightContacts(
+  tx: any,
+  gameId: number,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<UnitFootprint[]> {
+  if (!(await gameUnitIsFighter(tx, unit))) return [];
+  const fighterFootprint: UnitFootprint = {
+    id: unit.id,
+    ownerId: unit.ownerId,
+    x: unit.hexQ,
+    z: unit.hexR,
+    baseRadiusInches: rulesBaseRadius(unit),
+    isFighter: true,
+  };
+  const others = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const enemyFighters: UnitFootprint[] = [];
+  for (const other of others as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (other.id === unit.id || other.ownerId === unit.ownerId) continue;
+    if (!(await gameUnitIsFighter(tx, other))) continue;
+    enemyFighters.push({
+      id: other.id,
+      ownerId: other.ownerId,
+      x: other.hexQ,
+      z: other.hexR,
+      baseRadiusInches: rulesBaseRadius(other),
+      isFighter: true,
+    });
+  }
+  return enemyFighterContacts(fighterFootprint, enemyFighters);
+}
+
+async function fighterIsLockedInDogfight(
+  tx: any,
+  gameId: number,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<boolean> {
+  return (await fighterDogfightContacts(tx, gameId, unit)).length > 0;
+}
+
 async function movementActivationEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
   if (unit.isDestroyed || unit.hasMovedThisRound) return false;
   const critRows = await tx.select().from(unitCriticalEffectsTable)
     .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
   const state = effectiveDamageState(unit.damageState, critRows);
-  return state !== "adrift" && state !== "exploding-end-of-next";
+  if (state === "adrift" || state === "exploding-end-of-next") return false;
+  if (await fighterIsLockedInDogfight(tx, unit.gameId, unit)) return false;
+  return true;
 }
 
 function firingActivationEligible(unit: typeof gameUnitsTable.$inferSelect): boolean {
@@ -5781,16 +5825,9 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
     });
   }
-  if (candidateFootprint.isFighter) {
-    const currentFootprint: UnitFootprint = {
-      ...candidateFootprint,
-      x: unit.hexQ,
-      z: unit.hexR,
-    };
-    if (enemyFighterContacts(currentFootprint, otherFootprints).length > 0) {
-      res.status(400).json({ error: "Fighter is locked in a dogfight and cannot move" });
-      return;
-    }
+  if (candidateFootprint.isFighter && await fighterIsLockedInDogfight(db, params.data.gameId, unit)) {
+    res.status(400).json({ error: "Fighter is locked in a dogfight and cannot move" });
+    return;
   }
   const finalFootprint: UnitFootprint = {
     ...candidateFootprint,
@@ -6219,6 +6256,9 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
         const moveDamageState = effectiveDamageState(unit.damageState, moveCritRows);
         if (moveDamageState === "adrift" || moveDamageState === "exploding-end-of-next") {
           throw Object.assign(new Error("Adrift ships drift automatically in the End Phase"), { status: 400 });
+        }
+        if (unitIsFighter && await fighterIsLockedInDogfight(tx, gameId, unit)) {
+          throw Object.assign(new Error("Fighter is locked in a dogfight and cannot move"), { status: 400 });
         }
       }
 
@@ -6753,10 +6793,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         return fighter;
       };
       const isMovementActivationEligible = async (unitRow: typeof gameUnitsTable.$inferSelect): Promise<boolean> => {
-        const critRows = await tx.select().from(unitCriticalEffectsTable)
-          .where(eq(unitCriticalEffectsTable.gameUnitId, unitRow.id));
-        const state = effectiveDamageState(unitRow.damageState, critRows);
-        return state !== "adrift" && state !== "exploding-end-of-next";
+        return movementActivationEligible(tx, unitRow);
       };
       const eligibleRowsFor = async (
         pid: string | null,
