@@ -10,6 +10,7 @@ const PEOPLE = [
   "Amras-Arfeiniel",
   "BadQueenCreations",
   "Premier Valle / Premier Valleweb",
+  "Tyrellohr",
 ];
 
 export default function Credits() {
