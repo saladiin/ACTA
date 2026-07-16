@@ -1,10 +1,36 @@
-import { Gamepad2, Palette, PanelLeft, PanelRight, Rotate3D, Ship, SlidersHorizontal, ZoomIn } from "lucide-react";
+import {
+  Camera,
+  Crosshair,
+  Gamepad2,
+  Image,
+  Palette,
+  PanelLeft,
+  PanelRight,
+  Rotate3D,
+  Ship,
+  SlidersHorizontal,
+  ZoomIn,
+} from "lucide-react";
 import { Layout } from "@/components/layout";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { useUiArcColorScheme, useUiAttackPhasePulseOpacity, useUiAttackPhasePulseStrength, useUiBoardOpacity, useUiControlMode, useUiShipHullNames, useUiShipMeshTints, type UiArcColorScheme, type UiControlMode } from "@/hooks/use-ui-settings";
+import {
+  useUiArcColorScheme,
+  useUiAttackPhasePulseOpacity,
+  useUiAttackPhasePulseStrength,
+  useUiBoardBackgroundMode,
+  useUiBoardOpacity,
+  useUiControlMode,
+  useUiIsoCameraControls,
+  useUiShipHullNames,
+  useUiShipMeshTints,
+  useUiWeaponArcProjection,
+  type UiArcColorScheme,
+  type UiBoardBackgroundMode,
+  type UiControlMode,
+} from "@/hooks/use-ui-settings";
 
 const CONTROL_MODES: Array<{
   id: UiControlMode;
@@ -60,13 +86,47 @@ const ARC_COLOR_SCHEMES: Array<{
     id: "classic",
     name: "Classic",
     summary: "Current forward, side, aft, boresight, and turret colors.",
-    swatches: ["#ffb000", "rgba(0, 255, 222, 1)", "#ff2f4f", "#fff75a", "#b86cff"],
+    swatches: [
+      "#ffb000",
+      "rgba(0, 255, 222, 1)",
+      "#ff2f4f",
+      "#fff75a",
+      "#b86cff",
+    ],
   },
   {
     id: "side",
     name: "Side colors",
     summary: "Friendly arcs use green shades; enemy arcs use red shades.",
-    swatches: ["#34eb52", "#00d46a", "#0f9f4a", "#b7ff7a", "#ff0004", "#ff4f57", "#a90012"],
+    swatches: [
+      "#34eb52",
+      "#00d46a",
+      "#0f9f4a",
+      "#b7ff7a",
+      "#ff0004",
+      "#ff4f57",
+      "#a90012",
+    ],
+  },
+];
+
+const BOARD_BACKGROUND_MODES: Array<{
+  id: UiBoardBackgroundMode;
+  name: string;
+  summary: string;
+  swatch: string;
+}> = [
+  {
+    id: "skybox",
+    name: "Skybox",
+    summary: "Use the current deep-space background image.",
+    swatch: "linear-gradient(135deg, #120816, #2f1f5f 42%, #07111f)",
+  },
+  {
+    id: "black",
+    name: "Pure black",
+    summary: "Remove the image backdrop for maximum board visibility.",
+    swatch: "#000000",
   },
 ];
 
@@ -76,8 +136,16 @@ export default function Settings() {
   const [shipMeshTintsEnabled, setShipMeshTintsEnabled] = useUiShipMeshTints();
   const [shipHullNamesEnabled, setShipHullNamesEnabled] = useUiShipHullNames();
   const [boardOpacity, setBoardOpacity] = useUiBoardOpacity();
-  const [attackPulseOpacity, setAttackPulseOpacity] = useUiAttackPhasePulseOpacity();
-  const [attackPulseStrength, setAttackPulseStrength] = useUiAttackPhasePulseStrength();
+  const [attackPulseOpacity, setAttackPulseOpacity] =
+    useUiAttackPhasePulseOpacity();
+  const [attackPulseStrength, setAttackPulseStrength] =
+    useUiAttackPhasePulseStrength();
+  const [boardBackgroundMode, setBoardBackgroundMode] =
+    useUiBoardBackgroundMode();
+  const [weaponArcProjectionEnabled, setWeaponArcProjectionEnabled] =
+    useUiWeaponArcProjection();
+  const [isoCameraControlsEnabled, setIsoCameraControlsEnabled] =
+    useUiIsoCameraControls();
 
   return (
     <Layout title="Settings">
@@ -86,8 +154,12 @@ export default function Settings() {
           <div className="flex items-center gap-3">
             <Gamepad2 className="h-5 w-5 text-primary" />
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">UI Control Method</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Stored on this device.</p>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                UI Control Method
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
             </div>
           </div>
         </section>
@@ -98,7 +170,7 @@ export default function Settings() {
           className="grid gap-3 md:grid-cols-2"
           data-testid="ui-control-mode-radio-group"
         >
-          {CONTROL_MODES.map(mode => (
+          {CONTROL_MODES.map((mode) => (
             <Label
               key={mode.id}
               htmlFor={`control-${mode.id}`}
@@ -112,9 +184,13 @@ export default function Settings() {
                 <div>
                   <div className="flex items-center gap-2">
                     <RadioGroupItem id={`control-${mode.id}`} value={mode.id} />
-                    <span className="font-mono text-sm font-bold uppercase tracking-widest">{mode.name}</span>
+                    <span className="font-mono text-sm font-bold uppercase tracking-widest">
+                      {mode.name}
+                    </span>
                   </div>
-                  <p className="mt-2 text-base font-semibold text-foreground">{mode.summary}</p>
+                  <p className="mt-2 text-base font-semibold text-foreground">
+                    {mode.summary}
+                  </p>
                 </div>
                 {mode.id === "mode-b" ? (
                   <div className="flex items-center gap-1 text-cyan-300">
@@ -128,7 +204,11 @@ export default function Settings() {
               <div className="mt-4 grid gap-2 text-xs uppercase tracking-wider">
                 {mode.details.map((detail, index) => (
                   <div key={detail} className="flex items-center gap-2">
-                    {index === 2 ? <ZoomIn className="h-3.5 w-3.5 text-primary" /> : <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+                    {index === 2 ? (
+                      <ZoomIn className="h-3.5 w-3.5 text-primary" />
+                    ) : (
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                    )}
                     <span>{detail}</span>
                   </div>
                 ))}
@@ -141,19 +221,25 @@ export default function Settings() {
           <div className="flex items-center gap-3">
             <Palette className="h-5 w-5 text-primary" />
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">Arc Colors</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Stored on this device.</p>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Arc Colors
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
             </div>
           </div>
         </section>
 
         <RadioGroup
           value={arcColorScheme}
-          onValueChange={(value) => setArcColorScheme(value as UiArcColorScheme)}
+          onValueChange={(value) =>
+            setArcColorScheme(value as UiArcColorScheme)
+          }
           className="grid gap-3 md:grid-cols-2"
           data-testid="ui-arc-color-scheme-radio-group"
         >
-          {ARC_COLOR_SCHEMES.map(scheme => (
+          {ARC_COLOR_SCHEMES.map((scheme) => (
             <Label
               key={scheme.id}
               htmlFor={`arc-color-${scheme.id}`}
@@ -165,11 +251,16 @@ export default function Settings() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <RadioGroupItem id={`arc-color-${scheme.id}`} value={scheme.id} />
-                  <span className="font-mono text-sm font-bold uppercase tracking-widest">{scheme.name}</span>
+                  <RadioGroupItem
+                    id={`arc-color-${scheme.id}`}
+                    value={scheme.id}
+                  />
+                  <span className="font-mono text-sm font-bold uppercase tracking-widest">
+                    {scheme.name}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {scheme.swatches.map(color => (
+                  {scheme.swatches.map((color) => (
                     <span
                       key={color}
                       className="h-4 w-4 rounded-sm border border-black/70"
@@ -178,17 +269,77 @@ export default function Settings() {
                   ))}
                 </div>
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">{scheme.summary}</p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {scheme.summary}
+              </p>
             </Label>
           ))}
         </RadioGroup>
 
         <section className="mt-3 border-t border-border pt-5">
           <div className="flex items-center gap-3">
-            <Ship className="h-5 w-5 text-primary" />
+            <Image className="h-5 w-5 text-primary" />
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">Ship Mesh Colors</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Stored on this device.</p>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Board Background
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <RadioGroup
+          value={boardBackgroundMode}
+          onValueChange={(value) =>
+            setBoardBackgroundMode(value as UiBoardBackgroundMode)
+          }
+          className="grid gap-3 md:grid-cols-2"
+          data-testid="ui-board-background-radio-group"
+        >
+          {BOARD_BACKGROUND_MODES.map((mode) => (
+            <Label
+              key={mode.id}
+              htmlFor={`board-background-${mode.id}`}
+              className={`block cursor-pointer rounded border p-4 transition-colors ${
+                boardBackgroundMode === mode.id
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-card/65 text-muted-foreground hover:border-primary/50 hover:bg-card"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem
+                    id={`board-background-${mode.id}`}
+                    value={mode.id}
+                  />
+                  <span className="font-mono text-sm font-bold uppercase tracking-widest">
+                    {mode.name}
+                  </span>
+                </div>
+                <span
+                  className="h-9 w-14 rounded-sm border border-black/70"
+                  style={{ background: mode.swatch }}
+                />
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {mode.summary}
+              </p>
+            </Label>
+          ))}
+        </RadioGroup>
+
+        <section className="mt-3 border-t border-border pt-5">
+          <div className="flex items-center gap-3">
+            <Crosshair className="h-5 w-5 text-primary" />
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Weapon Arc Projection
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
             </div>
           </div>
         </section>
@@ -196,11 +347,89 @@ export default function Settings() {
         <div className="rounded border border-border bg-card/65 p-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <Label htmlFor="original-mesh-colors" className="font-mono text-sm font-bold uppercase tracking-widest">
+              <Label
+                htmlFor="weapon-arc-projection"
+                className="font-mono text-sm font-bold uppercase tracking-widest"
+              >
+                Project selected ship weapon arcs
+              </Label>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Shows each selected ship weapon arc out to that arc's maximum
+                weapon range.
+              </p>
+            </div>
+            <Switch
+              id="weapon-arc-projection"
+              checked={weaponArcProjectionEnabled}
+              onCheckedChange={setWeaponArcProjectionEnabled}
+              data-testid="switch-weapon-arc-projection"
+            />
+          </div>
+        </div>
+
+        <section className="mt-3 border-t border-border pt-5">
+          <div className="flex items-center gap-3">
+            <Camera className="h-5 w-5 text-primary" />
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Camera Presets
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <div className="rounded border border-border bg-card/65 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label
+                htmlFor="iso-camera-controls"
+                className="font-mono text-sm font-bold uppercase tracking-widest"
+              >
+                Show tactical camera controls
+              </Label>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Adds board, active, selected, top, isometric, and
+                orientation-lock controls during games.
+              </p>
+            </div>
+            <Switch
+              id="iso-camera-controls"
+              checked={isoCameraControlsEnabled}
+              onCheckedChange={setIsoCameraControlsEnabled}
+              data-testid="switch-iso-camera-controls"
+            />
+          </div>
+        </div>
+
+        <section className="mt-3 border-t border-border pt-5">
+          <div className="flex items-center gap-3">
+            <Ship className="h-5 w-5 text-primary" />
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Ship Mesh Colors
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <div className="rounded border border-border bg-card/65 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label
+                htmlFor="original-mesh-colors"
+                className="font-mono text-sm font-bold uppercase tracking-widest"
+              >
                 Original mesh colors only
               </Label>
               <p className="mt-2 text-sm text-muted-foreground">
-                Removes friend/enemy tinting from ship meshes. Bases, halos, arcs, and UI status colors remain unchanged.
+                Removes friend/enemy tinting from ship meshes. Bases, halos,
+                arcs, and UI status colors remain unchanged.
               </p>
             </div>
             <Switch
@@ -213,11 +442,15 @@ export default function Settings() {
           <div className="mt-4 border-t border-border pt-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <Label htmlFor="hide-ship-hull-names" className="font-mono text-sm font-bold uppercase tracking-widest">
+                <Label
+                  htmlFor="hide-ship-hull-names"
+                  className="font-mono text-sm font-bold uppercase tracking-widest"
+                >
                   Hide ship hull names
                 </Label>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Removes floating ship names above hull meshes on the board. Health bars and tactical overlays remain visible.
+                  Removes floating ship names above hull meshes on the board.
+                  Health bars and tactical overlays remain visible.
                 </p>
               </div>
               <Switch
@@ -234,18 +467,30 @@ export default function Settings() {
           <div className="flex items-center gap-3">
             <SlidersHorizontal className="h-5 w-5 text-primary" />
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">Board Opacity</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Stored on this device.</p>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Board Opacity
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
             </div>
           </div>
         </section>
 
         <div className="rounded border border-border bg-card/65 p-4">
           <div className="mb-4 flex items-center justify-between gap-4">
-            <Label htmlFor="board-opacity" className="font-mono text-sm font-bold uppercase tracking-widest">
+            <Label
+              htmlFor="board-opacity"
+              className="font-mono text-sm font-bold uppercase tracking-widest"
+            >
               Game board plane
             </Label>
-            <span className="font-mono text-sm text-primary" data-testid="board-opacity-value">{boardOpacity}%</span>
+            <span
+              className="font-mono text-sm text-primary"
+              data-testid="board-opacity-value"
+            >
+              {boardOpacity}%
+            </span>
           </div>
           <Slider
             id="board-opacity"
@@ -262,18 +507,30 @@ export default function Settings() {
           <div className="flex items-center gap-3">
             <SlidersHorizontal className="h-5 w-5 text-primary" />
             <div>
-              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">Attack Phase Pulse</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Stored on this device.</p>
+              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                Attack Phase Pulse
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stored on this device.
+              </p>
             </div>
           </div>
         </section>
 
         <div className="rounded border border-border bg-card/65 p-4">
           <div className="mb-4 flex items-center justify-between gap-4">
-            <Label htmlFor="attack-pulse-opacity" className="font-mono text-sm font-bold uppercase tracking-widest">
+            <Label
+              htmlFor="attack-pulse-opacity"
+              className="font-mono text-sm font-bold uppercase tracking-widest"
+            >
               Red overlay opacity
             </Label>
-            <span className="font-mono text-sm text-primary" data-testid="attack-pulse-opacity-value">{attackPulseOpacity}%</span>
+            <span
+              className="font-mono text-sm text-primary"
+              data-testid="attack-pulse-opacity-value"
+            >
+              {attackPulseOpacity}%
+            </span>
           </div>
           <Slider
             id="attack-pulse-opacity"
@@ -286,10 +543,18 @@ export default function Settings() {
           />
 
           <div className="mb-4 mt-6 flex items-center justify-between gap-4">
-            <Label htmlFor="attack-pulse-strength" className="font-mono text-sm font-bold uppercase tracking-widest">
+            <Label
+              htmlFor="attack-pulse-strength"
+              className="font-mono text-sm font-bold uppercase tracking-widest"
+            >
               Emissive strength
             </Label>
-            <span className="font-mono text-sm text-primary" data-testid="attack-pulse-strength-value">{attackPulseStrength}%</span>
+            <span
+              className="font-mono text-sm text-primary"
+              data-testid="attack-pulse-strength-value"
+            >
+              {attackPulseStrength}%
+            </span>
           </div>
           <Slider
             id="attack-pulse-strength"
