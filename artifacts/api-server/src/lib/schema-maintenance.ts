@@ -55,7 +55,7 @@ const CAPITAL_BASE_RADIUS_INCHES = 0.8;
 const FIGHTER_BASE_RADIUS_INCHES = CAPITAL_BASE_RADIUS_INCHES;
 
 const SHIP_PRIORITY_BY_NAME = new Map(
-  SHIP_PRIORITY_SEEDS.map(seed => [seed.name.toLowerCase(), seed.priority]),
+  SHIP_PRIORITY_SEEDS.map((seed) => [seed.name.toLowerCase(), seed.priority]),
 );
 
 const POINT_COST_BY_PRIORITY: Record<string, number> = {
@@ -157,100 +157,448 @@ League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Port,12,8,Armor Pier
 League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Starboard,12,8,Armor Piercing,,,,,,,,,,`;
 
 const SAGITTARIUS_WEAPONS = [
-  { name: "Missile Rack", arc: "Forward", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
-  { name: "Missile Rack", arc: "Aft", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
-  { name: "Missile Rack", arc: "Port", range: 30, attackDice: 6, traits: "Precise; Slow Loading; Super Armor Piercing" },
-  { name: "Missile Rack", arc: "Starboard", range: 30, attackDice: 6, traits: "Precise; Slow Loading; Super Armor Piercing" },
+  {
+    name: "Missile Rack",
+    arc: "Forward",
+    range: 30,
+    attackDice: 2,
+    traits: "Precise; Slow Loading; Super Armor Piercing",
+  },
+  {
+    name: "Missile Rack",
+    arc: "Aft",
+    range: 30,
+    attackDice: 2,
+    traits: "Precise; Slow Loading; Super Armor Piercing",
+  },
+  {
+    name: "Missile Rack",
+    arc: "Port",
+    range: 30,
+    attackDice: 6,
+    traits: "Precise; Slow Loading; Super Armor Piercing",
+  },
+  {
+    name: "Missile Rack",
+    arc: "Starboard",
+    range: 30,
+    attackDice: 6,
+    traits: "Precise; Slow Loading; Super Armor Piercing",
+  },
 ];
 
 const TETHYS_WEAPONS = [
-  { name: "Plasma Cannon", arc: "Forward", range: 8, attackDice: 4, traits: "Armor Piercing" },
-  { name: "Light Plasma Cannon", arc: "Forward", range: 6, attackDice: 2, traits: "Armor Piercing" },
-  { name: "Light Plasma Cannon", arc: "Port", range: 6, attackDice: 1, traits: "Armor Piercing" },
-  { name: "Light Plasma Cannon", arc: "Starboard", range: 6, attackDice: 1, traits: "Armor Piercing" },
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Forward",
+    range: 6,
+    attackDice: 2,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Port",
+    range: 6,
+    attackDice: 1,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Starboard",
+    range: 6,
+    attackDice: 1,
+    traits: "Armor Piercing",
+  },
 ];
 
 const BATTLECRAB_WEAPONS = [
-  { name: "Molecular Slicer Beam", arc: "Forward", range: 24, attackDice: 6, traits: "Beam; Precise; Quad Damage" },
+  {
+    name: "Molecular Slicer Beam",
+    arc: "Forward",
+    range: 24,
+    attackDice: 6,
+    traits: "Beam; Precise; Quad Damage",
+  },
 ];
 
 const AVIOKI_WEAPONS = [
-  { name: "Particle Beam", arc: "Forward", range: 18, attackDice: 8, traits: "Beam; Double Damage; Slow Loading" },
-  { name: "Ion Cannon", arc: "Forward", range: 12, attackDice: 10, traits: "Armor Piercing" },
-  { name: "Ion Cannon", arc: "Aft", range: 12, attackDice: 4, traits: "Armor Piercing" },
-  { name: "Ion Cannon", arc: "Port", range: 12, attackDice: 8, traits: "Armor Piercing" },
-  { name: "Ion Cannon", arc: "Starboard", range: 12, attackDice: 8, traits: "Armor Piercing" },
+  {
+    name: "Particle Beam",
+    arc: "Forward",
+    range: 18,
+    attackDice: 8,
+    traits: "Beam; Double Damage; Slow Loading",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 10,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 4,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 8,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 8,
+    traits: "Armor Piercing",
+  },
 ];
 
 const GQUAN_WEAPONS = [
-  { name: "Heavy Laser Cannon", arc: "Boresight Forward", range: 30, attackDice: 4, traits: "Beam; Double Damage" },
-  { name: "Energy Mine", arc: "Forward", range: 30, attackDice: 6, traits: "Armor Piercing; Energy Mine; One-Shot; Triple Damage" },
-  { name: "Light Ion Cannon", arc: "Forward", range: 8, attackDice: 10, traits: "Twin-Linked" },
-  { name: "Light Ion Cannon", arc: "Aft", range: 8, attackDice: 10, traits: "Twin-Linked" },
-  { name: "Light Ion Cannon", arc: "Port", range: 8, attackDice: 10, traits: "Twin-Linked" },
-  { name: "Light Ion Cannon", arc: "Starboard", range: 8, attackDice: 10, traits: "Twin-Linked" },
-  { name: "Light Pulse Cannon", arc: "Forward", range: 8, attackDice: 6, traits: "" },
-  { name: "Light Pulse Cannon", arc: "Aft", range: 8, attackDice: 6, traits: "" },
-  { name: "Light Pulse Cannon", arc: "Port", range: 8, attackDice: 6, traits: "" },
-  { name: "Light Pulse Cannon", arc: "Starboard", range: 8, attackDice: 6, traits: "" },
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Forward",
+    range: 30,
+    attackDice: 4,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Energy Mine",
+    arc: "Forward",
+    range: 30,
+    attackDice: 6,
+    traits: "Armor Piercing; Energy Mine; One-Shot; Triple Damage",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 10,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 10,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 10,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 10,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 6,
+    traits: "",
+  },
 ];
 
 const AVENGER_WEAPONS = [
-  { name: "Plasma Cannon", arc: "Forward", range: 8, attackDice: 6, traits: "Armor Piercing" },
-  { name: "Light Pulse Cannon", arc: "Forward", range: 8, attackDice: 4, traits: "" },
-  { name: "Light Pulse Cannon", arc: "Aft", range: 8, attackDice: 4, traits: "" },
-  { name: "Light Pulse Cannon", arc: "Port", range: 8, attackDice: 4, traits: "" },
-  { name: "Light Pulse Cannon", arc: "Starboard", range: 8, attackDice: 4, traits: "" },
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 4,
+    traits: "",
+  },
 ];
 
 const PRIMUS_WEAPONS = [
-  { name: "Battle Laser", arc: "Forward", range: 18, attackDice: 6, traits: "Beam; Precise" },
-  { name: "Ion Cannon", arc: "Forward", range: 12, attackDice: 12, traits: "Double Damage; Twin Linked" },
-  { name: "Ion Cannon", arc: "Aft", range: 12, attackDice: 6, traits: "Double Damage; Twin Linked" },
-  { name: "Ion Cannon", arc: "Port", range: 12, attackDice: 10, traits: "Double Damage; Twin Linked" },
-  { name: "Ion Cannon", arc: "Starboard", range: 12, attackDice: 10, traits: "Double Damage; Twin Linked" },
+  {
+    name: "Battle Laser",
+    arc: "Forward",
+    range: 18,
+    attackDice: 6,
+    traits: "Beam; Precise",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 12,
+    traits: "Double Damage; Twin Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 6,
+    traits: "Double Damage; Twin Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 10,
+    traits: "Double Damage; Twin Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 10,
+    traits: "Double Damage; Twin Linked",
+  },
 ];
 
 const ALTARIAN_WEAPONS = [
-  { name: "Matter Cannon", arc: "Forward", range: 15, attackDice: 6, traits: "Armor Piercing; Double Damage" },
-  { name: "Ion Cannon", arc: "Forward", range: 12, attackDice: 8, traits: "Double Damage; Twin-Linked" },
-  { name: "Ion Cannon", arc: "Aft", range: 12, attackDice: 4, traits: "Double Damage; Twin-Linked" },
-  { name: "Ion Cannon", arc: "Port", range: 12, attackDice: 4, traits: "Double Damage; Twin-Linked" },
-  { name: "Ion Cannon", arc: "Starboard", range: 12, attackDice: 4, traits: "Double Damage; Twin-Linked" },
+  {
+    name: "Matter Cannon",
+    arc: "Forward",
+    range: 15,
+    attackDice: 6,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
 ];
 
 const VORCHAN_WEAPONS = [
-  { name: "Plasma Accelerator", arc: "Forward", range: 12, attackDice: 4, traits: "Double Damage; Super Armor Piercing" },
-  { name: "Ion Cannon", arc: "Forward", range: 12, attackDice: 8, traits: "Double Damage; Twin Linked" },
+  {
+    name: "Plasma Accelerator",
+    arc: "Forward",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Super Armor Piercing",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
+    traits: "Double Damage; Twin Linked",
+  },
 ];
 
 const CORVAN_WEAPONS = [
-  { name: "Battle Laser", arc: "Forward", range: 12, attackDice: 2, traits: "Beam; Precise" },
+  {
+    name: "Battle Laser",
+    arc: "Forward",
+    range: 12,
+    attackDice: 2,
+    traits: "Beam; Precise",
+  },
 ];
 
 const WHITE_STAR_WEAPONS = [
-  { name: "Improved Neutron Laser", arc: "Forward", range: 18, attackDice: 2, traits: "Beam; Precise; Triple Damage" },
-  { name: "Molecular Pulsar", arc: "Forward", range: 10, attackDice: 4, traits: "Accurate; Armor Piercing; Double Damage" },
+  {
+    name: "Improved Neutron Laser",
+    arc: "Forward",
+    range: 18,
+    attackDice: 2,
+    traits: "Beam; Precise; Triple Damage",
+  },
+  {
+    name: "Molecular Pulsar",
+    arc: "Forward",
+    range: 10,
+    attackDice: 4,
+    traits: "Accurate; Armor Piercing; Double Damage",
+  },
 ];
 
 const TIGARA_WEAPONS = [
-  { name: "Molecular Disruptor", arc: "Forward", range: 8, attackDice: 6, traits: "Armor Piercing; Double Damage; Precise" },
-  { name: "Molecular Disruptor", arc: "Aft", range: 8, attackDice: 4, traits: "Armor Piercing; Double Damage; Precise" },
-  { name: "Molecular Disruptor", arc: "Port", range: 8, attackDice: 4, traits: "Armor Piercing; Double Damage; Precise" },
-  { name: "Molecular Disruptor", arc: "Starboard", range: 8, attackDice: 4, traits: "Armor Piercing; Double Damage; Precise" },
-  { name: "Antimatter Converter", arc: "Forward", range: 4, attackDice: 6, traits: "Double Damage; Super Armor Piercing" },
-  { name: "Fusion Cannon", arc: "Forward", range: 18, attackDice: 4, traits: "Mini Beam" },
-  { name: "Fusion Cannon", arc: "Aft", range: 18, attackDice: 4, traits: "Mini Beam" },
-  { name: "Fusion Cannon", arc: "Port", range: 18, attackDice: 4, traits: "Mini Beam" },
-  { name: "Fusion Cannon", arc: "Starboard", range: 18, attackDice: 4, traits: "Mini Beam" },
+  {
+    name: "Molecular Disruptor",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing; Double Damage; Precise",
+  },
+  {
+    name: "Molecular Disruptor",
+    arc: "Aft",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage; Precise",
+  },
+  {
+    name: "Molecular Disruptor",
+    arc: "Port",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage; Precise",
+  },
+  {
+    name: "Molecular Disruptor",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage; Precise",
+  },
+  {
+    name: "Antimatter Converter",
+    arc: "Forward",
+    range: 4,
+    attackDice: 6,
+    traits: "Double Damage; Super Armor Piercing",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Forward",
+    range: 18,
+    attackDice: 4,
+    traits: "Mini Beam",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Aft",
+    range: 18,
+    attackDice: 4,
+    traits: "Mini Beam",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Port",
+    range: 18,
+    attackDice: 4,
+    traits: "Mini Beam",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Starboard",
+    range: 18,
+    attackDice: 4,
+    traits: "Mini Beam",
+  },
 ];
 
 const TINASHI_WEAPONS = [
-  { name: "Neutron Laser", arc: "Forward", range: 25, attackDice: 4, traits: "Beam; Double Damage; Precise" },
-  { name: "Fusion Cannon", arc: "Forward", range: 18, attackDice: 8, traits: "Mini Beam; Twin Linked" },
-  { name: "Fusion Cannon", arc: "Aft", range: 18, attackDice: 6, traits: "Mini Beam; Twin Linked" },
-  { name: "Fusion Cannon", arc: "Port", range: 18, attackDice: 6, traits: "Mini Beam; Twin Linked" },
-  { name: "Fusion Cannon", arc: "Starboard", range: 18, attackDice: 6, traits: "Mini Beam; Twin Linked" },
+  {
+    name: "Neutron Laser",
+    arc: "Forward",
+    range: 25,
+    attackDice: 4,
+    traits: "Beam; Double Damage; Precise",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Forward",
+    range: 18,
+    attackDice: 8,
+    traits: "Mini Beam; Twin Linked",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Aft",
+    range: 18,
+    attackDice: 6,
+    traits: "Mini Beam; Twin Linked",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Port",
+    range: 18,
+    attackDice: 6,
+    traits: "Mini Beam; Twin Linked",
+  },
+  {
+    name: "Fusion Cannon",
+    arc: "Starboard",
+    range: 18,
+    attackDice: 6,
+    traits: "Mini Beam; Twin Linked",
+  },
 ];
 
 type ShipMaintenanceSeed = {
@@ -288,11 +636,16 @@ type WeaponMaintenanceSeed = {
   traits: string;
 };
 
-function weaponSeedKey(weapon: Pick<WeaponMaintenanceSeed, "name" | "arc">): string {
+function weaponSeedKey(
+  weapon: Pick<WeaponMaintenanceSeed, "name" | "arc">,
+): string {
   return `${weapon.name.trim().toLowerCase()}|${weapon.arc.trim().toLowerCase()}`;
 }
 
-async function syncWeaponsForShipModel(shipModelId: number, seeds: WeaponMaintenanceSeed[]): Promise<number> {
+async function syncWeaponsForShipModel(
+  shipModelId: number,
+  seeds: WeaponMaintenanceSeed[],
+): Promise<number> {
   const existing = await pool.query<{
     id: number;
     name: string;
@@ -331,7 +684,14 @@ async function syncWeaponsForShipModel(shipModelId: number, seeds: WeaponMainten
           SET name = $2, arc = $3, range = $4, attack_dice = $5, traits = $6
           WHERE id = $1
         `,
-        [existingId, seed.name, seed.arc, seed.range, seed.attackDice, seed.traits],
+        [
+          existingId,
+          seed.name,
+          seed.arc,
+          seed.range,
+          seed.attackDice,
+          seed.traits,
+        ],
       );
       retainedIds.push(existingId);
     } else {
@@ -341,7 +701,14 @@ async function syncWeaponsForShipModel(shipModelId: number, seeds: WeaponMainten
           VALUES ($1, $2, $3, $4, $5, $6)
           RETURNING id
         `,
-        [shipModelId, seed.name, seed.arc, seed.range, seed.attackDice, seed.traits],
+        [
+          shipModelId,
+          seed.name,
+          seed.arc,
+          seed.range,
+          seed.attackDice,
+          seed.traits,
+        ],
       );
       const insertedId = inserted.rows[0]?.id;
       if (insertedId) retainedIds.push(insertedId);
@@ -359,7 +726,9 @@ async function syncWeaponsForShipModel(shipModelId: number, seeds: WeaponMainten
       [shipModelId, retainedIds],
     );
   } else {
-    await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [shipModelId]);
+    await pool.query("DELETE FROM weapons WHERE ship_model_id = $1", [
+      shipModelId,
+    ]);
   }
 
   return synced;
@@ -368,7 +737,12 @@ async function syncWeaponsForShipModel(shipModelId: number, seeds: WeaponMainten
 const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Heavy Cruiser",
-    aliases: ["Hyperion Cruiser", "Hyperion Heavy Cruiser", "Hyperion-class Cruiser", "Hyperion-class Heavy Cruiser"],
+    aliases: [
+      "Hyperion Cruiser",
+      "Hyperion Heavy Cruiser",
+      "Hyperion-class Cruiser",
+      "Hyperion-class Heavy Cruiser",
+    ],
     filename: "hyperion.glb",
     faction: "Earth Alliance",
     pointCost: 200,
@@ -389,15 +763,58 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
     smallCraft: "Aurora Starfury Flight (1)",
     weaponRange: 18,
     weaponDamage: 4,
-    description: "Earth Alliance Hyperion-class heavy cruiser, baseline Raid-level laser and pulse platform",
+    description:
+      "Earth Alliance Hyperion-class heavy cruiser, baseline Raid-level laser and pulse platform",
     weapons: [
-      { name: "Heavy Laser Cannon", arc: "Boresight Forward", range: 18, attackDice: 4, traits: "Beam; Double Damage" },
-      { name: "Heavy Laser Cannon", arc: "Boresight Aft", range: 18, attackDice: 2, traits: "Beam; Double Damage" },
-      { name: "Medium Pulse Cannon", arc: "Forward", range: 10, attackDice: 4, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Aft", range: 10, attackDice: 2, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Port", range: 10, attackDice: 8, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Starboard", range: 10, attackDice: 8, traits: "" },
-      { name: "Plasma Cannon", arc: "Forward", range: 8, attackDice: 4, traits: "Armor Piercing; Twin Linked" },
+      {
+        name: "Heavy Laser Cannon",
+        arc: "Boresight Forward",
+        range: 18,
+        attackDice: 4,
+        traits: "Beam; Double Damage",
+      },
+      {
+        name: "Heavy Laser Cannon",
+        arc: "Boresight Aft",
+        range: 18,
+        attackDice: 2,
+        traits: "Beam; Double Damage",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Forward",
+        range: 10,
+        attackDice: 4,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Aft",
+        range: 10,
+        attackDice: 2,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Port",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Starboard",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Forward",
+        range: 8,
+        attackDice: 4,
+        traits: "Armor Piercing; Twin Linked",
+      },
     ],
   },
   {
@@ -423,13 +840,44 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
     smallCraft: null,
     weaponRange: 10,
     weaponDamage: 8,
-    description: "Earth Alliance Hyperion assault variant with troop capacity and close-range pulse/plasma batteries",
+    description:
+      "Earth Alliance Hyperion assault variant with troop capacity and close-range pulse/plasma batteries",
     weapons: [
-      { name: "Medium Pulse Cannon", arc: "Forward", range: 10, attackDice: 4, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Aft", range: 10, attackDice: 2, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Port", range: 10, attackDice: 8, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Starboard", range: 10, attackDice: 8, traits: "" },
-      { name: "Plasma Cannon", arc: "Forward", range: 8, attackDice: 6, traits: "Armor Piercing; Twin Linked" },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Forward",
+        range: 10,
+        attackDice: 4,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Aft",
+        range: 10,
+        attackDice: 2,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Port",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Starboard",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Forward",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing; Twin Linked",
+      },
     ],
   },
   {
@@ -455,13 +903,44 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
     smallCraft: "Aurora Starfury Flight (1)",
     weaponRange: 18,
     weaponDamage: 4,
-    description: "Earth Alliance Hyperion command variant with improved command arrays and defensive systems",
+    description:
+      "Earth Alliance Hyperion command variant with improved command arrays and defensive systems",
     weapons: [
-      { name: "Heavy Laser Cannon", arc: "Boresight Forward", range: 18, attackDice: 4, traits: "Beam; Double Damage" },
-      { name: "Medium Pulse Cannon", arc: "Forward", range: 10, attackDice: 4, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Aft", range: 10, attackDice: 2, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Port", range: 10, attackDice: 8, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Starboard", range: 10, attackDice: 8, traits: "" },
+      {
+        name: "Heavy Laser Cannon",
+        arc: "Boresight Forward",
+        range: 18,
+        attackDice: 4,
+        traits: "Beam; Double Damage",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Forward",
+        range: 10,
+        attackDice: 4,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Aft",
+        range: 10,
+        attackDice: 2,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Port",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Starboard",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
     ],
   },
   {
@@ -487,14 +966,51 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
     smallCraft: null,
     weaponRange: 30,
     weaponDamage: 4,
-    description: "Earth Alliance Hyperion missile variant with long-range slow-loading missile racks",
+    description:
+      "Earth Alliance Hyperion missile variant with long-range slow-loading missile racks",
     weapons: [
-      { name: "Laser Cannon", arc: "Boresight Forward", range: 12, attackDice: 4, traits: "Beam; Double Damage" },
-      { name: "Missile Racks", arc: "Forward", range: 30, attackDice: 2, traits: "Precise; Slow Loading; Super Armor Piercing" },
-      { name: "Missile Racks", arc: "Port", range: 30, attackDice: 4, traits: "Precise; Slow Loading; Super Armor Piercing" },
-      { name: "Missile Racks", arc: "Starboard", range: 30, attackDice: 4, traits: "Precise; Slow Loading; Super Armor Piercing" },
-      { name: "Plasma Cannon", arc: "Port", range: 8, attackDice: 6, traits: "Armor Piercing" },
-      { name: "Plasma Cannon", arc: "Starboard", range: 8, attackDice: 6, traits: "Armor Piercing" },
+      {
+        name: "Laser Cannon",
+        arc: "Boresight Forward",
+        range: 12,
+        attackDice: 4,
+        traits: "Beam; Double Damage",
+      },
+      {
+        name: "Missile Racks",
+        arc: "Forward",
+        range: 30,
+        attackDice: 2,
+        traits: "Precise; Slow Loading; Super Armor Piercing",
+      },
+      {
+        name: "Missile Racks",
+        arc: "Port",
+        range: 30,
+        attackDice: 4,
+        traits: "Precise; Slow Loading; Super Armor Piercing",
+      },
+      {
+        name: "Missile Racks",
+        arc: "Starboard",
+        range: 30,
+        attackDice: 4,
+        traits: "Precise; Slow Loading; Super Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Port",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Starboard",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
+      },
     ],
   },
   {
@@ -520,15 +1036,58 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
     smallCraft: "Aurora Starfury Flight (1)",
     weaponRange: 12,
     weaponDamage: 10,
-    description: "Earth Alliance Hyperion pulse variant focused on sustained pulse firepower",
+    description:
+      "Earth Alliance Hyperion pulse variant focused on sustained pulse firepower",
     weapons: [
-      { name: "Heavy Pulse Cannon", arc: "Forward", range: 12, attackDice: 10, traits: "Twin Linked" },
-      { name: "Heavy Pulse Cannon", arc: "Aft", range: 12, attackDice: 6, traits: "Twin Linked" },
-      { name: "Medium Pulse Cannon", arc: "Forward", range: 10, attackDice: 4, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Aft", range: 10, attackDice: 2, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Port", range: 10, attackDice: 8, traits: "" },
-      { name: "Medium Pulse Cannon", arc: "Starboard", range: 10, attackDice: 8, traits: "" },
-      { name: "Plasma Cannon", arc: "Forward", range: 8, attackDice: 4, traits: "Armor Piercing; Twin Linked" },
+      {
+        name: "Heavy Pulse Cannon",
+        arc: "Forward",
+        range: 12,
+        attackDice: 10,
+        traits: "Twin Linked",
+      },
+      {
+        name: "Heavy Pulse Cannon",
+        arc: "Aft",
+        range: 12,
+        attackDice: 6,
+        traits: "Twin Linked",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Forward",
+        range: 10,
+        attackDice: 4,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Aft",
+        range: 10,
+        attackDice: 2,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Port",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Starboard",
+        range: 10,
+        attackDice: 8,
+        traits: "",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Forward",
+        range: 8,
+        attackDice: 4,
+        traits: "Armor Piercing; Twin Linked",
+      },
     ],
   },
   {
@@ -554,12 +1113,37 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
     smallCraft: "Aurora Starfury Flight (1)",
     weaponRange: 12,
     weaponDamage: 6,
-    description: "Earth Alliance Hyperion rail variant built around armor-piercing railguns",
+    description:
+      "Earth Alliance Hyperion rail variant built around armor-piercing railguns",
     weapons: [
-      { name: "Railguns", arc: "Forward", range: 12, attackDice: 6, traits: "Armor Piercing; Double Damage" },
-      { name: "Railguns", arc: "Aft", range: 12, attackDice: 4, traits: "Armor Piercing; Double Damage" },
-      { name: "Plasma Cannon", arc: "Port", range: 8, attackDice: 6, traits: "Armor Piercing" },
-      { name: "Plasma Cannon", arc: "Starboard", range: 8, attackDice: 6, traits: "Armor Piercing" },
+      {
+        name: "Railguns",
+        arc: "Forward",
+        range: 12,
+        attackDice: 6,
+        traits: "Armor Piercing; Double Damage",
+      },
+      {
+        name: "Railguns",
+        arc: "Aft",
+        range: 12,
+        attackDice: 4,
+        traits: "Armor Piercing; Double Damage",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Port",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Starboard",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
+      },
     ],
   },
 ];
@@ -577,9 +1161,19 @@ const FIGHTER_FLIGHTS = [
     weaponRange: 2,
     weaponDamage: 2,
     description: "Earth Alliance Aurora Starfury fighter flight",
-    aliases: ["Aurora Starfury Flight", "Aurora Starfury Wing", "Starfury Flight"],
+    aliases: [
+      "Aurora Starfury Flight",
+      "Aurora Starfury Wing",
+      "Starfury Flight",
+    ],
     weapons: [
-      { name: "Uni-Pulse Cannon", arc: "Turret", range: 2, attackDice: 2, traits: "Twin Linked" },
+      {
+        name: "Uni-Pulse Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "Twin Linked",
+      },
     ],
   },
   {
@@ -594,10 +1188,26 @@ const FIGHTER_FLIGHTS = [
     weaponRange: 4,
     weaponDamage: 2,
     description: "Earth Alliance Thunderbolt Starfury fighter flight",
-    aliases: ["Thunderbolt Starfury Flight", "Thunderbolt Starfury Wing", "Thunderbolt Flight"],
+    aliases: [
+      "Thunderbolt Starfury Flight",
+      "Thunderbolt Starfury Wing",
+      "Thunderbolt Flight",
+    ],
     weapons: [
-      { name: "Gatling Pulse Cannon", arc: "Turret", range: 2, attackDice: 2, traits: "" },
-      { name: "Missile Rack", arc: "Turret", range: 4, attackDice: 2, traits: "Armor Piercing" },
+      {
+        name: "Gatling Pulse Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "",
+      },
+      {
+        name: "Missile Rack",
+        arc: "Turret",
+        range: 4,
+        attackDice: 2,
+        traits: "Armor Piercing",
+      },
     ],
   },
   {
@@ -614,8 +1224,20 @@ const FIGHTER_FLIGHTS = [
     description: "Earth Alliance early-years Tiger Starfury fighter flight",
     aliases: ["Tiger Starfury Flight", "Tiger Starfury Wing", "Tiger Flight"],
     weapons: [
-      { name: "Burst Plasma Cannon", arc: "Turret", range: 2, attackDice: 1, traits: "Weak" },
-      { name: "Missile Rack", arc: "Turret", range: 4, attackDice: 1, traits: "Armor Piercing" },
+      {
+        name: "Burst Plasma Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 1,
+        traits: "Weak",
+      },
+      {
+        name: "Missile Rack",
+        arc: "Turret",
+        range: 4,
+        attackDice: 1,
+        traits: "Armor Piercing",
+      },
     ],
   },
   {
@@ -626,13 +1248,25 @@ const FIGHTER_FLIGHTS = [
     shipClass: "Fighter Flight",
     hull: 4,
     speed: 15,
-    traits: "Atmospheric; Dodge 2+; Dogfight +3; Fighter; Stealth +5; Super Maneuverable",
+    traits:
+      "Atmospheric; Dodge 2+; Dogfight +3; Fighter; Stealth +5; Super Maneuverable",
     weaponRange: 2,
     weaponDamage: 3,
     description: "Minbari Nial heavy fighter flight",
-    aliases: ["Nial Heavy Fighter Flight", "Nial Fighter Flight", "Nial Flight", "Nial Wing"],
+    aliases: [
+      "Nial Heavy Fighter Flight",
+      "Nial Fighter Flight",
+      "Nial Flight",
+      "Nial Wing",
+    ],
     weapons: [
-      { name: "Light Fusion Cannon", arc: "Turret", range: 2, attackDice: 3, traits: "Mini Beam" },
+      {
+        name: "Light Fusion Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 3,
+        traits: "Mini Beam",
+      },
     ],
   },
   {
@@ -643,13 +1277,25 @@ const FIGHTER_FLIGHTS = [
     shipClass: "Fighter Flight",
     hull: 4,
     speed: 12,
-    traits: "Atmospheric; Dodge 4+; Dogfight +1; Fighter; Stealth +5; Super Maneuverable",
+    traits:
+      "Atmospheric; Dodge 4+; Dogfight +1; Fighter; Stealth +5; Super Maneuverable",
     weaponRange: 2,
     weaponDamage: 2,
     description: "Minbari Flyer light fighter flight",
-    aliases: ["Flyer Flight", "Minbari Flyer Flight", "Flyer Wing", "Minbari Flyer Wing"],
+    aliases: [
+      "Flyer Flight",
+      "Minbari Flyer Flight",
+      "Flyer Wing",
+      "Minbari Flyer Wing",
+    ],
     weapons: [
-      { name: "Light Fusion Cannon", arc: "Turret", range: 2, attackDice: 2, traits: "Mini Beam" },
+      {
+        name: "Light Fusion Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "Mini Beam",
+      },
     ],
   },
   {
@@ -666,7 +1312,13 @@ const FIGHTER_FLIGHTS = [
     description: "Centauri Republic Sentri fighter flight",
     aliases: ["Sentri Flight", "Sentri Fighter Flight", "Sentri Wing"],
     weapons: [
-      { name: "Twin Particle Array", arc: "Turret", range: 2, attackDice: 2, traits: "Twin Linked" },
+      {
+        name: "Twin Particle Array",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "Twin Linked",
+      },
     ],
   },
 ];
@@ -708,9 +1360,9 @@ function parseCsvLine(line: string): string[] {
 
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
-    if (ch === "\"") {
-      if (quoted && line[i + 1] === "\"") {
-        current += "\"";
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') {
+        current += '"';
         i++;
       } else {
         quoted = !quoted;
@@ -743,16 +1395,37 @@ function nullableIntCell(value: string | undefined): number | null {
 
 function resolveActaShipCsv(): string | null {
   const candidates = [
-    path.resolve(process.cwd(), "attached_assets", "acta_ships_12APR26_1779321905109.csv"),
-    path.resolve(process.cwd(), "..", "..", "attached_assets", "acta_ships_12APR26_1779321905109.csv"),
-    path.resolve(process.cwd(), "..", "attached_assets", "acta_ships_12APR26_1779321905109.csv"),
+    path.resolve(
+      process.cwd(),
+      "attached_assets",
+      "acta_ships_12APR26_1779321905109.csv",
+    ),
+    path.resolve(
+      process.cwd(),
+      "..",
+      "..",
+      "attached_assets",
+      "acta_ships_12APR26_1779321905109.csv",
+    ),
+    path.resolve(
+      process.cwd(),
+      "..",
+      "attached_assets",
+      "acta_ships_12APR26_1779321905109.csv",
+    ),
   ];
-  return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
 
-function readActaShipCsv(): { ships: CsvShipSeed[]; weaponsByShip: Map<string, CsvWeaponSeed[]>; source: string } {
+function readActaShipCsv(): {
+  ships: CsvShipSeed[];
+  weaponsByShip: Map<string, CsvWeaponSeed[]>;
+  source: string;
+} {
   const csvPath = resolveActaShipCsv();
-  const csvText = csvPath ? fs.readFileSync(csvPath, "utf8") : FALLBACK_ACTA_SHIP_CSV;
+  const csvText = csvPath
+    ? fs.readFileSync(csvPath, "utf8")
+    : FALLBACK_ACTA_SHIP_CSV;
   const source = csvPath ?? "embedded-fallback";
 
   const ships: CsvShipSeed[] = [];
@@ -826,7 +1499,9 @@ async function seedActaCsvShips(): Promise<void> {
     const key = ship.name.toLowerCase();
     const priority = SHIP_PRIORITY_BY_NAME.get(key) ?? "raid";
     const pointCost = POINT_COST_BY_PRIORITY[priority] ?? 100;
-    const filename = CSV_MODEL_FILENAMES[key] ?? `${key.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.glb`;
+    const filename =
+      CSV_MODEL_FILENAMES[key] ??
+      `${key.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.glb`;
     const primaryWeapon = csv.weaponsByShip.get(key)?.[0];
     const shipResult = await pool.query<{ id: number }>(
       `
@@ -967,7 +1642,10 @@ async function removeStaleHyperionBaseRows(): Promise<void> {
 
   const deletedCount = result.rows[0]?.deleted_count ?? 0;
   if (deletedCount > 0) {
-    logger.info({ deletedCount }, "Removed stale duplicate Hyperion Cruiser ship-model rows");
+    logger.info(
+      { deletedCount },
+      "Removed stale duplicate Hyperion Cruiser ship-model rows",
+    );
   }
 }
 
@@ -1040,7 +1718,10 @@ async function removeDuplicateCanonicalShipRows(): Promise<void> {
   );
 
   if (result.rows.length > 0) {
-    logger.info({ removedShipModelDuplicates: result.rows }, "Removed duplicate canonical ship-model rows");
+    logger.info(
+      { removedShipModelDuplicates: result.rows },
+      "Removed duplicate canonical ship-model rows",
+    );
   }
 }
 
@@ -1187,8 +1868,18 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         rescue_requested boolean NOT NULL DEFAULT false,
         rescue_applied boolean NOT NULL DEFAULT false,
         snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+        resolved_at timestamptz,
+        resolved_by_admin_id text,
         created_at timestamptz NOT NULL DEFAULT now()
       )
+    `);
+    await pool.query(`
+      ALTER TABLE bug_reports
+      ADD COLUMN IF NOT EXISTS resolved_at timestamptz
+    `);
+    await pool.query(`
+      ALTER TABLE bug_reports
+      ADD COLUMN IF NOT EXISTS resolved_by_admin_id text
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS bug_reports_game_created_idx
@@ -1349,7 +2040,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
           ship.weaponRange,
           ship.weaponDamage,
           ship.description,
-          ship.aliases.map(alias => alias.toLowerCase()),
+          ship.aliases.map((alias) => alias.toLowerCase()),
         ],
       );
 
@@ -1432,7 +2123,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
           fighter.weaponRange,
           fighter.weaponDamage,
           fighter.description,
-          fighter.aliases.map(alias => alias.toLowerCase()),
+          fighter.aliases.map((alias) => alias.toLowerCase()),
           FIGHTER_BASE_RADIUS_INCHES,
         ],
       );

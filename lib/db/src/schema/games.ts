@@ -1,4 +1,13 @@
-import { pgTable, text, serial, integer, real, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  real,
+  timestamp,
+  boolean,
+  jsonb,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -48,8 +57,12 @@ export const gamesTable = pgTable("games", {
   initiativeOpponentRoll: integer("initiative_opponent_roll"),
   // Per-player "I've passed the end phase" latches. Cleared at the start
   // of every end phase. When both are true, the round advances.
-  endPhaseChallengerPassed: boolean("end_phase_challenger_passed").notNull().default(false),
-  endPhaseOpponentPassed: boolean("end_phase_opponent_passed").notNull().default(false),
+  endPhaseChallengerPassed: boolean("end_phase_challenger_passed")
+    .notNull()
+    .default(false),
+  endPhaseOpponentPassed: boolean("end_phase_opponent_passed")
+    .notNull()
+    .default(false),
   pointLimit: integer("point_limit").notNull().default(500),
   priorityLevel: text("priority_level").notNull().default("raid"),
   allocationPoints: integer("allocation_points").notNull().default(5),
@@ -67,15 +80,23 @@ export const gamesTable = pgTable("games", {
   // deploy (1=Rookie … 6=Special Ops); the value is stored on each gameUnit.
   crewQualityMode: text("crew_quality_mode").notNull().default("standard"),
   aiProfile: text("ai_profile"),
-  aiState: jsonb("ai_state").$type<Record<string, unknown>>().notNull().default({}),
+  aiState: jsonb("ai_state")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   challengerFleetId: integer("challenger_fleet_id"),
   opponentFleetId: integer("opponent_fleet_id"),
   challengerDeployed: boolean("challenger_deployed").notNull().default(false),
   opponentDeployed: boolean("opponent_deployed").notNull().default(false),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   archiveExpiresAt: timestamp("archive_expires_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
 
 export const gameUnitsTable = pgTable("game_units", {
@@ -106,8 +127,12 @@ export const gameUnitsTable = pgTable("game_units", {
   // (2+ → 3+ → 4+ → 5+ → 6+) as dice are burned. The final remaining die
   // always intercepts on 6+. Both fields persist across attacks within a
   // turn and are refreshed at end-of-round (max dice, threshold 2).
-  interceptorDiceRemaining: integer("interceptor_dice_remaining").notNull().default(0),
-  interceptorThresholdCurrent: integer("interceptor_threshold_current").notNull().default(2),
+  interceptorDiceRemaining: integer("interceptor_dice_remaining")
+    .notNull()
+    .default(0),
+  interceptorThresholdCurrent: integer("interceptor_threshold_current")
+    .notNull()
+    .default(2),
   // Last round in which this unit attempted Damage Control (Slice B). Used
   // to enforce the once-per-end-phase-per-unit cap. 0 means never.
   lastDcRound: integer("last_dc_round").notNull().default(0),
@@ -137,10 +162,17 @@ export const gameUnitsTable = pgTable("game_units", {
   // Fighter flights carried by this unit, parsed from ship_models.small_craft
   // at deployment. This is the authoritative carrier bay inventory for future
   // launch/recovery rules; independently deployed fighters simply have [].
-  carriedFighters: jsonb("carried_fighters").$type<CarriedFighterInventoryItem[]>().notNull().default([]),
+  carriedFighters: jsonb("carried_fighters")
+    .$type<CarriedFighterInventoryItem[]>()
+    .notNull()
+    .default([]),
   launchedFromUnitId: integer("launched_from_unit_id"),
-  fighterBayOperationsRound: integer("fighter_bay_operations_round").notNull().default(0),
-  fighterBayOperationsUsed: integer("fighter_bay_operations_used").notNull().default(0),
+  fighterBayOperationsRound: integer("fighter_bay_operations_round")
+    .notNull()
+    .default(0),
+  fighterBayOperationsUsed: integer("fighter_bay_operations_used")
+    .notNull()
+    .default(0),
   hexQ: real("hex_q").notNull().default(0),
   hexR: real("hex_r").notNull().default(0),
   heading: integer("heading").notNull().default(0),
@@ -194,21 +226,31 @@ export const gameUnitsTable = pgTable("game_units", {
   // declarations after a ship has already committed any movement this
   // activation — closes the bypass where /move could be called first to
   // change heading, then /special-action all-stop could arm allStopReady.
-  hasInitiatedMoveThisActivation: boolean("has_initiated_move_this_activation").notNull().default(false),
+  hasInitiatedMoveThisActivation: boolean("has_initiated_move_this_activation")
+    .notNull()
+    .default(false),
   // Total inches travelled in the CURRENT movement activation (sum of
   // each /move step's hex-distance). Reset to 0 on /activate-unit. Read
   // by /end-activation to enforce the ACTA minimum-speed rule (a ship
   // must move at least ceil(effectiveMaxSpeed/2) inches each round
   // unless it declares All Stop / All Stop and Pivot, or is adrift).
-  inchesMovedThisActivation: real("inches_moved_this_activation").notNull().default(0),
+  inchesMovedThisActivation: real("inches_moved_this_activation")
+    .notNull()
+    .default(0),
   // Number of heading-change turns committed in the current movement
   // activation. Reset on /activate-unit. This lets the server enforce the
   // printed Turns value, including the Crippled one-fewer-turn penalty.
-  turnsMadeThisActivation: integer("turns_made_this_activation").notNull().default(0),
+  turnsMadeThisActivation: integer("turns_made_this_activation")
+    .notNull()
+    .default(0),
   // Distance moved in a straight line since the most recent committed turn
   // in the current movement activation. Reset on /activate-unit and after
   // each turn. Used to enforce ACTA's "2 inches after turning" rule.
-  distanceSinceLastTurnThisActivation: real("distance_since_last_turn_this_activation").notNull().default(0),
+  distanceSinceLastTurnThisActivation: real(
+    "distance_since_last_turn_this_activation",
+  )
+    .notNull()
+    .default(0),
   // Last round in which the server applied automatic End Phase adrift drift.
   // Prevents double-drift if End Phase bookkeeping is retried or a ship was
   // already marked adrift before the current round.
@@ -223,18 +265,27 @@ export const gameUnitsTable = pgTable("game_units", {
   // activation. Reset to [] each time the ship is picked up for activation so
   // the server can authoritatively enforce one-shot-per-weapon. (Per the
   // rules, each weapon can fire at one target per firing activation.)
-  firedWeaponIds: jsonb("fired_weapon_ids").$type<number[]>().notNull().default([]),
+  firedWeaponIds: jsonb("fired_weapon_ids")
+    .$type<number[]>()
+    .notNull()
+    .default([]),
   // Slow-Loading weapon cooldowns, keyed by weapons.id. Value is the first
   // round in which that weapon may fire again. Example: fired in round 2 →
   // blocked in round 3 → usable again in round 4.
-  slowLoadingWeaponCooldowns: jsonb("slow_loading_weapon_cooldowns").$type<Record<string, number>>().notNull().default({}),
+  slowLoadingWeaponCooldowns: jsonb("slow_loading_weapon_cooldowns")
+    .$type<Record<string, number>>()
+    .notNull()
+    .default({}),
   // Allied attacker unit IDs that have landed at least one to-hit on THIS
   // unit during the current round. Used to apply the Stealth "fleet support"
   // -1 modifier per the sheet: if another fleet member (still on the table,
   // not adrift or destroyed) has already successfully attacked this target
   // this round, every subsequent attacker drops the target's Stealth by an
   // additional -1. Cleared at round rollover.
-  hitByUnitIdsThisRound: jsonb("hit_by_unit_ids_this_round").$type<number[]>().notNull().default([]),
+  hitByUnitIdsThisRound: jsonb("hit_by_unit_ids_this_round")
+    .$type<number[]>()
+    .notNull()
+    .default([]),
 });
 
 export const turnsTable = pgTable("turns", {
@@ -258,8 +309,13 @@ export const gameAttackAuditLogsTable = pgTable("game_attack_audit_logs", {
   targetUnitId: integer("target_unit_id").notNull(),
   weaponId: integer("weapon_id").notNull(),
   summary: text("summary").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  payload: jsonb("payload")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const gameMovementAuditLogsTable = pgTable("game_movement_audit_logs", {
@@ -272,28 +328,41 @@ export const gameMovementAuditLogsTable = pgTable("game_movement_audit_logs", {
   unitId: integer("unit_id").notNull(),
   movementKind: text("movement_kind").notNull().default("move"),
   summary: text("summary").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  payload: jsonb("payload")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
-export const gameSpecialActionAuditLogsTable = pgTable("game_special_action_audit_logs", {
-  id: serial("id").primaryKey(),
-  gameId: integer("game_id").notNull(),
-  round: integer("round").notNull(),
-  phase: text("phase").notNull(),
-  actorKind: text("actor_kind").notNull().default("player"),
-  actorPlayerId: text("actor_player_id"),
-  unitId: integer("unit_id").notNull(),
-  action: text("action").notNull(),
-  success: boolean("success").notNull(),
-  cqRequired: integer("cq_required"),
-  cqRoll: integer("cq_roll"),
-  cqTotal: integer("cq_total"),
-  targetUnitId: integer("target_unit_id"),
-  summary: text("summary").notNull(),
-  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const gameSpecialActionAuditLogsTable = pgTable(
+  "game_special_action_audit_logs",
+  {
+    id: serial("id").primaryKey(),
+    gameId: integer("game_id").notNull(),
+    round: integer("round").notNull(),
+    phase: text("phase").notNull(),
+    actorKind: text("actor_kind").notNull().default("player"),
+    actorPlayerId: text("actor_player_id"),
+    unitId: integer("unit_id").notNull(),
+    action: text("action").notNull(),
+    success: boolean("success").notNull(),
+    cqRequired: integer("cq_required"),
+    cqRoll: integer("cq_roll"),
+    cqTotal: integer("cq_total"),
+    targetUnitId: integer("target_unit_id"),
+    summary: text("summary").notNull(),
+    payload: jsonb("payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+);
 
 export const bugReportsTable = pgTable("bug_reports", {
   id: serial("id").primaryKey(),
@@ -306,8 +375,15 @@ export const bugReportsTable = pgTable("bug_reports", {
   message: text("message").notNull(),
   rescueRequested: boolean("rescue_requested").notNull().default(false),
   rescueApplied: boolean("rescue_applied").notNull().default(false),
-  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  snapshot: jsonb("snapshot")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  resolvedByAdminId: text("resolved_by_admin_id"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const gameChatMessagesTable = pgTable("game_chat_messages", {
@@ -316,23 +392,41 @@ export const gameChatMessagesTable = pgTable("game_chat_messages", {
   senderPlayerId: text("sender_player_id").notNull(),
   senderName: text("sender_name"),
   message: text("message").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
-export const insertGameSchema = createInsertSchema(gamesTable).omit({ id: true, status: true, winnerId: true, currentTurn: true, challengerDeployed: true, opponentDeployed: true, createdAt: true, updatedAt: true });
+export const insertGameSchema = createInsertSchema(gamesTable).omit({
+  id: true,
+  status: true,
+  winnerId: true,
+  currentTurn: true,
+  challengerDeployed: true,
+  opponentDeployed: true,
+  createdAt: true,
+  updatedAt: true,
+});
 export type InsertGame = z.infer<typeof insertGameSchema>;
 export type Game = typeof gamesTable.$inferSelect;
 
-export const insertGameUnitSchema = createInsertSchema(gameUnitsTable).omit({ id: true });
+export const insertGameUnitSchema = createInsertSchema(gameUnitsTable).omit({
+  id: true,
+});
 export type InsertGameUnit = z.infer<typeof insertGameUnitSchema>;
 export type GameUnit = typeof gameUnitsTable.$inferSelect;
 
-export const insertTurnSchema = createInsertSchema(turnsTable).omit({ id: true, resolvedAt: true });
+export const insertTurnSchema = createInsertSchema(turnsTable).omit({
+  id: true,
+  resolvedAt: true,
+});
 export type InsertTurn = z.infer<typeof insertTurnSchema>;
 export type Turn = typeof turnsTable.$inferSelect;
 
 export type GameAttackAuditLog = typeof gameAttackAuditLogsTable.$inferSelect;
-export type GameMovementAuditLog = typeof gameMovementAuditLogsTable.$inferSelect;
-export type GameSpecialActionAuditLog = typeof gameSpecialActionAuditLogsTable.$inferSelect;
+export type GameMovementAuditLog =
+  typeof gameMovementAuditLogsTable.$inferSelect;
+export type GameSpecialActionAuditLog =
+  typeof gameSpecialActionAuditLogsTable.$inferSelect;
 export type BugReport = typeof bugReportsTable.$inferSelect;
 export type GameChatMessage = typeof gameChatMessagesTable.$inferSelect;

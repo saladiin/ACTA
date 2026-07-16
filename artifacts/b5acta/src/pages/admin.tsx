@@ -1,7 +1,15 @@
 import { Link } from "wouter";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { customFetch } from "@workspace/api-client-react";
-import { Archive, RefreshCw, ShieldCheck, Trash2, Users } from "lucide-react";
+import {
+  Archive,
+  CheckCircle,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,6 +62,34 @@ type AdminUsersResponse = {
   users: AdminAccount[];
 };
 
+type AdminBugReport = {
+  id: number;
+  gameId: number;
+  reporterPlayerId: string;
+  round: number;
+  phase: string;
+  activePlayerId: string | null;
+  activeUnitId: number | null;
+  message: string;
+  rescueRequested: boolean;
+  rescueApplied: boolean;
+  snapshot: Record<string, unknown>;
+  resolvedAt: string | null;
+  resolvedByAdminId: string | null;
+  createdAt: string;
+  challengerName: string | null;
+  opponentName: string | null;
+  opponentKind: string | null;
+  gameStatus: string | null;
+  gamePhase: string | null;
+  gameRound: number | null;
+};
+
+type AdminBugReportsResponse = {
+  count: number;
+  reports: AdminBugReport[];
+};
+
 type AdminMeResponse = {
   isAdmin: boolean;
 };
@@ -91,7 +127,9 @@ function StatusBadge({ status }: { status: string }) {
     declined: "border-red-500/50 bg-red-500/10 text-red-300",
   };
   return (
-    <span className={`inline-flex rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ${variants[status] ?? variants.pending}`}>
+    <span
+      className={`inline-flex rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ${variants[status] ?? variants.pending}`}
+    >
       {status}
     </span>
   );
@@ -99,40 +137,69 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function AdminPage() {
   const qc = useQueryClient();
+  const [includeResolvedReports, setIncludeResolvedReports] = useState(false);
   const adminMe = useQuery({
     queryKey: ["admin-me"],
-    queryFn: () => customFetch<AdminMeResponse>("/api/admin/me", { responseType: "json" }),
+    queryFn: () =>
+      customFetch<AdminMeResponse>("/api/admin/me", { responseType: "json" }),
     retry: false,
     staleTime: 60_000,
   });
   const gamesQuery = useQuery({
     queryKey: ["admin-games"],
-    queryFn: () => customFetch<AdminGamesResponse>("/api/admin/games", { responseType: "json" }),
+    queryFn: () =>
+      customFetch<AdminGamesResponse>("/api/admin/games", {
+        responseType: "json",
+      }),
     enabled: adminMe.data?.isAdmin === true,
     retry: false,
   });
   const usersQuery = useQuery({
     queryKey: ["admin-users"],
-    queryFn: () => customFetch<AdminUsersResponse>("/api/admin/users", { responseType: "json" }),
+    queryFn: () =>
+      customFetch<AdminUsersResponse>("/api/admin/users", {
+        responseType: "json",
+      }),
+    enabled: adminMe.data?.isAdmin === true,
+    retry: false,
+  });
+  const bugReportsQuery = useQuery({
+    queryKey: ["admin-bug-reports", includeResolvedReports],
+    queryFn: () =>
+      customFetch<AdminBugReportsResponse>(
+        `/api/admin/bug-reports?limit=100&includeResolved=${includeResolvedReports ? "true" : "false"}`,
+        { responseType: "json" },
+      ),
     enabled: adminMe.data?.isAdmin === true,
     retry: false,
   });
 
   const archiveGame = useMutation({
-    mutationFn: (gameId: number) => customFetch(`/api/admin/games/${gameId}/archive`, {
-      method: "POST",
-      responseType: "json",
-      body: JSON.stringify({ days: 14 }),
-    }),
+    mutationFn: (gameId: number) =>
+      customFetch(`/api/admin/games/${gameId}/archive`, {
+        method: "POST",
+        responseType: "json",
+        body: JSON.stringify({ days: 14 }),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-games"] }),
   });
 
   const deleteGame = useMutation({
-    mutationFn: (gameId: number) => customFetch(`/api/admin/games/${gameId}`, {
-      method: "DELETE",
-      responseType: "text",
-    }),
+    mutationFn: (gameId: number) =>
+      customFetch(`/api/admin/games/${gameId}`, {
+        method: "DELETE",
+        responseType: "text",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-games"] }),
+  });
+
+  const resolveBugReport = useMutation({
+    mutationFn: (reportId: number) =>
+      customFetch(`/api/admin/bug-reports/${reportId}/resolve`, {
+        method: "POST",
+        responseType: "json",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-bug-reports"] }),
   });
 
   const isAdmin = adminMe.data?.isAdmin === true;
@@ -158,8 +225,14 @@ export default function AdminPage() {
             onClick={() => {
               usersQuery.refetch();
               gamesQuery.refetch();
+              bugReportsQuery.refetch();
             }}
-            disabled={!isAdmin || gamesQuery.isFetching || usersQuery.isFetching}
+            disabled={
+              !isAdmin ||
+              gamesQuery.isFetching ||
+              usersQuery.isFetching ||
+              bugReportsQuery.isFetching
+            }
             data-testid="button-admin-refresh"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -174,7 +247,9 @@ export default function AdminPage() {
           </div>
         ) : !isAdmin ? (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 p-5">
-            <div className="font-mono text-sm uppercase tracking-widest text-destructive">Admin access required</div>
+            <div className="font-mono text-sm uppercase tracking-widest text-destructive">
+              Admin access required
+            </div>
             <p className="mt-2 text-sm text-muted-foreground">
               This account is not included in the server-side admin allowlist.
             </p>
@@ -185,9 +260,18 @@ export default function AdminPage() {
             gamesLoading={gamesQuery.isLoading}
             users={usersQuery.data}
             usersLoading={usersQuery.isLoading}
+            bugReports={bugReportsQuery.data}
+            bugReportsLoading={bugReportsQuery.isLoading}
+            includeResolvedReports={includeResolvedReports}
+            setIncludeResolvedReports={setIncludeResolvedReports}
+            resolveBugReportId={(reportId) => resolveBugReport.mutate(reportId)}
             archiveGameId={(gameId) => archiveGame.mutate(gameId)}
             deleteGameId={(gameId) => deleteGame.mutate(gameId)}
-            actionsDisabled={archiveGame.isPending || deleteGame.isPending}
+            actionsDisabled={
+              archiveGame.isPending ||
+              deleteGame.isPending ||
+              resolveBugReport.isPending
+            }
             now={now}
           />
         ) : (
@@ -196,9 +280,18 @@ export default function AdminPage() {
             gamesLoading={gamesQuery.isLoading}
             users={usersQuery.data}
             usersLoading={usersQuery.isLoading}
+            bugReports={bugReportsQuery.data}
+            bugReportsLoading={bugReportsQuery.isLoading}
+            includeResolvedReports={includeResolvedReports}
+            setIncludeResolvedReports={setIncludeResolvedReports}
+            resolveBugReportId={(reportId) => resolveBugReport.mutate(reportId)}
             archiveGameId={(gameId) => archiveGame.mutate(gameId)}
             deleteGameId={(gameId) => deleteGame.mutate(gameId)}
-            actionsDisabled={archiveGame.isPending || deleteGame.isPending}
+            actionsDisabled={
+              archiveGame.isPending ||
+              deleteGame.isPending ||
+              resolveBugReport.isPending
+            }
             now={now}
           />
         )}
@@ -209,11 +302,13 @@ export default function AdminPage() {
 
 function FlagBadge({ active, label }: { active: boolean; label: string }) {
   return (
-    <span className={`inline-flex rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ${
-      active
-        ? "border-green-500/50 bg-green-500/10 text-green-300"
-        : "border-zinc-500/40 bg-zinc-500/10 text-zinc-400"
-    }`}>
+    <span
+      className={`inline-flex rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ${
+        active
+          ? "border-green-500/50 bg-green-500/10 text-green-300"
+          : "border-zinc-500/40 bg-zinc-500/10 text-zinc-400"
+      }`}
+    >
       {label}
     </span>
   );
@@ -224,6 +319,11 @@ function AdminContent({
   gamesLoading,
   users,
   usersLoading,
+  bugReports,
+  bugReportsLoading,
+  includeResolvedReports,
+  setIncludeResolvedReports,
+  resolveBugReportId,
   archiveGameId,
   deleteGameId,
   actionsDisabled,
@@ -233,6 +333,11 @@ function AdminContent({
   gamesLoading: boolean;
   users?: AdminUsersResponse;
   usersLoading: boolean;
+  bugReports?: AdminBugReportsResponse;
+  bugReportsLoading: boolean;
+  includeResolvedReports: boolean;
+  setIncludeResolvedReports: (value: boolean) => void;
+  resolveBugReportId: (reportId: number) => void;
   archiveGameId: (gameId: number) => void;
   deleteGameId: (gameId: number) => void;
   actionsDisabled: boolean;
@@ -264,15 +369,28 @@ function AdminContent({
         ) : (
           <div className="space-y-2">
             {users.users.map((user) => (
-              <div key={user.id} className="rounded-md border border-border bg-card px-4 py-3" data-testid={`admin-user-${user.id}`}>
+              <div
+                key={user.id}
+                className="rounded-md border border-border bg-card px-4 py-3"
+                data-testid={`admin-user-${user.id}`}
+              >
                 <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm font-semibold">{user.primaryEmail ?? user.username ?? user.id}</span>
-                      <FlagBadge active={user.gameAllowed} label={user.gameAllowed ? "allowed" : "not allowed"} />
+                      <span className="truncate text-sm font-semibold">
+                        {user.primaryEmail ?? user.username ?? user.id}
+                      </span>
+                      <FlagBadge
+                        active={user.gameAllowed}
+                        label={user.gameAllowed ? "allowed" : "not allowed"}
+                      />
                       <FlagBadge active={user.adminAllowed} label="admin" />
-                      {user.banned && <FlagBadge active={false} label="banned" />}
-                      {user.locked && <FlagBadge active={false} label="locked" />}
+                      {user.banned && (
+                        <FlagBadge active={false} label="banned" />
+                      )}
+                      {user.locked && (
+                        <FlagBadge active={false} label="locked" />
+                      )}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono text-muted-foreground">
                       <span>{user.id}</span>
@@ -280,19 +398,182 @@ function AdminContent({
                       {user.name && <span>{user.name}</span>}
                     </div>
                     <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
-                      <span>Joined: <span className="font-mono text-foreground">{formatDateTime(user.createdAt)}</span></span>
-                      <span>Last sign-in: <span className="font-mono text-foreground">{formatDateTime(user.lastSignInAt)}</span></span>
-                      <span>Email: <span className="font-mono text-foreground">{user.primaryEmailVerificationStatus ?? "unknown"}</span></span>
+                      <span>
+                        Joined:{" "}
+                        <span className="font-mono text-foreground">
+                          {formatDateTime(user.createdAt)}
+                        </span>
+                      </span>
+                      <span>
+                        Last sign-in:{" "}
+                        <span className="font-mono text-foreground">
+                          {formatDateTime(user.lastSignInAt)}
+                        </span>
+                      </span>
+                      <span>
+                        Email:{" "}
+                        <span className="font-mono text-foreground">
+                          {user.primaryEmailVerificationStatus ?? "unknown"}
+                        </span>
+                      </span>
                     </div>
                     {user.emails.length > 1 && (
                       <div className="mt-2 text-xs text-muted-foreground">
-                        {user.emails.map((email) => `${email.emailAddress} (${email.verificationStatus ?? "unknown"})`).join(", ")}
+                        {user.emails
+                          .map(
+                            (email) =>
+                              `${email.emailAddress} (${email.verificationStatus ?? "unknown"})`,
+                          )
+                          .join(", ")}
                       </div>
                     )}
                   </div>
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <CheckCircle className="h-4 w-4" />
+            Bug Reports
+          </div>
+          <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={includeResolvedReports}
+              onChange={(event) =>
+                setIncludeResolvedReports(event.target.checked)
+              }
+              data-testid="checkbox-admin-bug-reports-resolved"
+            />
+            include resolved
+          </label>
+        </div>
+        {bugReportsLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : !bugReports || bugReports.reports.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
+            {includeResolvedReports
+              ? "No bug reports found."
+              : "No unresolved bug reports."}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {bugReports.reports.map((report) => {
+              const gameTitle = `${report.challengerName ?? "Unknown"} vs ${report.opponentName ?? (report.opponentKind === "ai" ? "AI" : "Open Slot")}`;
+              const resolved = Boolean(report.resolvedAt);
+              return (
+                <div
+                  key={report.id}
+                  className={`rounded-md border px-4 py-3 ${
+                    resolved
+                      ? "border-zinc-600/40 bg-zinc-900/20 opacity-75"
+                      : "border-amber-500/35 bg-amber-500/5"
+                  }`}
+                  data-testid={`admin-bug-report-${report.id}`}
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                          Report {report.id}
+                        </span>
+                        {resolved ? (
+                          <FlagBadge active label="resolved" />
+                        ) : (
+                          <FlagBadge active={false} label="open" />
+                        )}
+                        {report.rescueRequested && (
+                          <FlagBadge
+                            active={report.rescueApplied}
+                            label={
+                              report.rescueApplied
+                                ? "rescue used"
+                                : "rescue requested"
+                            }
+                          />
+                        )}
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap rounded border border-border/60 bg-black/20 px-3 py-2 text-sm leading-relaxed text-foreground">
+                        {report.message}
+                      </p>
+                      <div className="mt-2 grid gap-1 text-xs text-muted-foreground md:grid-cols-2">
+                        <span>
+                          Game:{" "}
+                          <Link
+                            href={`/games/${report.gameId}`}
+                            className="font-mono text-primary hover:underline"
+                          >
+                            {report.gameId} · {gameTitle}
+                          </Link>
+                        </span>
+                        <span>
+                          Submitted:{" "}
+                          <span className="font-mono text-foreground">
+                            {formatDateTime(report.createdAt)}
+                          </span>
+                        </span>
+                        <span>
+                          Reported at:{" "}
+                          <span className="font-mono text-foreground">
+                            Round {report.round} · {report.phase}
+                          </span>
+                        </span>
+                        <span>
+                          Current game:{" "}
+                          <span className="font-mono text-foreground">
+                            Round {report.gameRound ?? "?"} ·{" "}
+                            {report.gamePhase ?? "?"} ·{" "}
+                            {report.gameStatus ?? "?"}
+                          </span>
+                        </span>
+                        <span>
+                          Reporter:{" "}
+                          <span className="font-mono text-foreground">
+                            {report.reporterPlayerId}
+                          </span>
+                        </span>
+                        <span>
+                          Active unit:{" "}
+                          <span className="font-mono text-foreground">
+                            {report.activeUnitId ?? "none"}
+                          </span>
+                        </span>
+                        {resolved && (
+                          <span>
+                            Resolved:{" "}
+                            <span className="font-mono text-foreground">
+                              {formatDateTime(report.resolvedAt)} by{" "}
+                              {report.resolvedByAdminId ?? "admin"}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {!resolved && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 gap-2 font-mono text-xs uppercase tracking-widest"
+                        disabled={actionsDisabled}
+                        onClick={() => resolveBugReportId(report.id)}
+                        data-testid={`button-admin-resolve-bug-report-${report.id}`}
+                      >
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        Resolve
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
@@ -316,7 +597,9 @@ function AdminContent({
           <div className="space-y-2">
             {games.map((game) => {
               const title = `${game.challengerName ?? "Unknown"} vs ${game.opponentName ?? (game.opponentKind === "ai" ? "AI" : "Open Slot")}`;
-              const archiveUntil = game.archiveExpiresAt ? new Date(game.archiveExpiresAt).getTime() : 0;
+              const archiveUntil = game.archiveExpiresAt
+                ? new Date(game.archiveExpiresAt).getTime()
+                : 0;
               const isArchived = archiveUntil > now;
               return (
                 <div
@@ -328,9 +611,14 @@ function AdminContent({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         {isArchived ? (
-                          <span className="truncate text-sm font-semibold">{title}</span>
+                          <span className="truncate text-sm font-semibold">
+                            {title}
+                          </span>
                         ) : (
-                          <Link href={`/games/${game.id}`} className="truncate text-sm font-semibold hover:text-primary">
+                          <Link
+                            href={`/games/${game.id}`}
+                            className="truncate text-sm font-semibold hover:text-primary"
+                          >
                             {title}
                           </Link>
                         )}
@@ -348,9 +636,24 @@ function AdminContent({
                         <span>{game.phase}</span>
                       </div>
                       <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
-                        <span>Idle: <span className="font-mono text-foreground">{formatIdle(game.idleSeconds)}</span></span>
-                        <span>Last activity: <span className="font-mono text-foreground">{formatDateTime(game.lastActivityAt)}</span></span>
-                        <span>Archive until: <span className="font-mono text-foreground">{formatDateTime(game.archiveExpiresAt)}</span></span>
+                        <span>
+                          Idle:{" "}
+                          <span className="font-mono text-foreground">
+                            {formatIdle(game.idleSeconds)}
+                          </span>
+                        </span>
+                        <span>
+                          Last activity:{" "}
+                          <span className="font-mono text-foreground">
+                            {formatDateTime(game.lastActivityAt)}
+                          </span>
+                        </span>
+                        <span>
+                          Archive until:{" "}
+                          <span className="font-mono text-foreground">
+                            {formatDateTime(game.archiveExpiresAt)}
+                          </span>
+                        </span>
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
@@ -360,7 +663,11 @@ function AdminContent({
                         className="gap-2 font-mono text-xs uppercase tracking-widest"
                         disabled={actionsDisabled || isArchived}
                         onClick={() => {
-                          if (window.confirm(`Archive game ${game.id} for 14 days? Players will no longer see it in normal game lists.`)) {
+                          if (
+                            window.confirm(
+                              `Archive game ${game.id} for 14 days? Players will no longer see it in normal game lists.`,
+                            )
+                          ) {
                             archiveGameId(game.id);
                           }
                         }}
@@ -375,7 +682,11 @@ function AdminContent({
                         className="gap-2 font-mono text-xs uppercase tracking-widest"
                         disabled={actionsDisabled}
                         onClick={() => {
-                          if (window.confirm(`Delete game ${game.id} outright? This removes units, turns, logs, chat, bug reports, and the game record.`)) {
+                          if (
+                            window.confirm(
+                              `Delete game ${game.id} outright? This removes units, turns, logs, chat, bug reports, and the game record.`,
+                            )
+                          ) {
                             deleteGameId(game.id);
                           }
                         }}
