@@ -976,6 +976,7 @@ async function resolveDestroyedFighterRecovery(
 
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
 const BASE_CONTACT_EPSILON = 0.05;
+const DOGFIGHT_SUPPORT_RANGE_INCHES = 0.25;
 
 type UnitFootprint = {
   id: number;
@@ -6950,9 +6951,15 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
           baseRadiusInches: rulesBaseRadius(row),
           isFighter: true,
         };
-        if (row.ownerId === attacker.ownerId && basesInContact(footprint, targetFootprint)) {
+        if (
+          row.ownerId === attacker.ownerId
+          && edgeDistance(footprint, targetFootprint) <= DOGFIGHT_SUPPORT_RANGE_INCHES
+        ) {
           attackerSupporters.push({ id: row.id, name: row.name });
-        } else if (row.ownerId === target.ownerId && basesInContact(footprint, attackerFootprint)) {
+        } else if (
+          row.ownerId === target.ownerId
+          && edgeDistance(footprint, attackerFootprint) <= DOGFIGHT_SUPPORT_RANGE_INCHES
+        ) {
           targetSupporters.push({ id: row.id, name: row.name });
         }
       }
@@ -7030,6 +7037,7 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
       const log = {
         kind: "dogfight",
         round: game.currentRound,
+        supportRangeInches: DOGFIGHT_SUPPORT_RANGE_INCHES,
         attackerUnitId: attacker.id,
         attackerName: attacker.name,
         attackerRoll,
