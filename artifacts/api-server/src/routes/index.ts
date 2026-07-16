@@ -5,6 +5,7 @@ import playersRouter from "./players";
 import fleetsRouter from "./fleets";
 import gamesRouter from "./games";
 import lobbyRouter from "./lobby";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(playersRouter);
 router.use(fleetsRouter);
 router.use(gamesRouter);
 router.use(lobbyRouter);
+router.use(adminRouter);
 
 export default router;

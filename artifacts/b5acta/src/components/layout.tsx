@@ -1,10 +1,16 @@
 import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles } from "lucide-react";
+import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { customFetch } from "@workspace/api-client-react";
 import { useInputProfile } from "@/hooks/use-input-profile";
 import { clearTemporaryUsername, temporaryUsernameAuthEnabled } from "@/lib/temporary-user";
+
+type AdminMeResponse = {
+  isAdmin: boolean;
+};
 
 export function Layout({ children, title }: { children: ReactNode; title?: string }) {
   const { signOut } = useClerk();
@@ -13,6 +19,13 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
   const inputProfile = useInputProfile();
   const mobileChrome = inputProfile.layout === "compact" || inputProfile.input === "touch";
   const [navOpen, setNavOpen] = useState(false);
+  const { data: adminMe } = useQuery({
+    queryKey: ["admin-me"],
+    queryFn: () => customFetch<AdminMeResponse>("/api/admin/me", { responseType: "json" }),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const showAdminNav = adminMe?.isAdmin === true;
 
   useEffect(() => {
     setNavOpen(!mobileChrome);
@@ -100,6 +113,12 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
             <Settings className="w-4 h-4" />
             <span className="text-sm font-medium tracking-wide uppercase">Settings</span>
           </Link>
+          {showAdminNav && (
+            <Link onClick={() => mobileChrome && setNavOpen(false)} href="/admin" className="flex items-center gap-3 px-3 py-2 rounded-md border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary transition-colors shrink-0">
+              <ShieldCheck className="w-4 h-4" />
+              <span className="text-sm font-medium tracking-wide uppercase">Admin</span>
+            </Link>
+          )}
         </nav>
         <div className={`p-4 border-t border-border mt-auto ${mobileChrome ? "block safe-bottom" : "hidden md:block"}`}>
           <Button 

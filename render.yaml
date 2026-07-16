@@ -44,6 +44,9 @@ services:
       # Leave empty only when any signed-in Clerk user should be allowed.
       - key: B5_ALLOWED_USERS
         sync: false
+      # Admin-only account allowlist for operations tools.
+      - key: B5_ADMIN_USERS
+        sync: false
       # Browser/CORS origin allowlist. This is not an account access list.
       - key: B5_ALLOWED_ORIGINS
         sync: false

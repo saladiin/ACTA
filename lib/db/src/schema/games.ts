@@ -72,6 +72,8 @@ export const gamesTable = pgTable("games", {
   opponentFleetId: integer("opponent_fleet_id"),
   challengerDeployed: boolean("challenger_deployed").notNull().default(false),
   opponentDeployed: boolean("opponent_deployed").notNull().default(false),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archiveExpiresAt: timestamp("archive_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

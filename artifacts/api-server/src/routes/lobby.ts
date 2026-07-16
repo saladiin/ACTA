@@ -20,10 +20,14 @@ function isDevBuiltinCommander(userId: string): boolean {
   return process.env.NODE_ENV !== "production" && (userId === "test-user-1" || userId === "test-user-2");
 }
 
+function isTemporarilyArchived(game: { archiveExpiresAt: Date | null }): boolean {
+  return Boolean(game.archiveExpiresAt && game.archiveExpiresAt > new Date());
+}
+
 router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
 
-  const myGames = await db
+  const myGames = (await db
     .select()
     .from(gamesTable)
     .where(or(
@@ -33,16 +37,18 @@ router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
         ? [and(eq(gamesTable.opponentId, AI_OPPONENT_ID), ne(gamesTable.challengerId, userId))]
         : []),
     ))
-    .orderBy(gamesTable.updatedAt);
+    .orderBy(gamesTable.updatedAt))
+    .filter((game) => !isTemporarilyArchived(game));
 
   // Open challenges from other commanders are directly joinable. The current
   // user's own open challenges are also returned below so DEV testers can
   // switch commander and claim them from the lobby without visiting the board.
-  const openChallenges = await db
+  const openChallenges = (await db
     .select()
     .from(gamesTable)
     .where(and(eq(gamesTable.status, "open"), ne(gamesTable.challengerId, userId)))
-    .orderBy(gamesTable.updatedAt);
+    .orderBy(gamesTable.updatedAt))
+    .filter((game) => !isTemporarilyArchived(game));
 
   const pendingChallenges = [
     ...myGames.filter(g => g.status === "pending" || g.status === "open"),

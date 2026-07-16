@@ -4995,7 +4995,10 @@ router.get("/games", requireAuth, async (req, res): Promise<void> => {
     .from(gamesTable)
     .where(or(eq(gamesTable.challengerId, userId), eq(gamesTable.opponentId, userId)))
     .orderBy(gamesTable.updatedAt);
-  res.json(ListGamesResponse.parse(games.map(toGameDto)));
+  const now = new Date();
+  res.json(ListGamesResponse.parse(games
+    .filter((game) => !game.archiveExpiresAt || game.archiveExpiresAt <= now)
+    .map(toGameDto)));
 });
 
 router.post("/games", requireAuth, async (req, res): Promise<void> => {
@@ -5109,6 +5112,10 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     .from(gamesTable)
     .where(eq(gamesTable.id, params.data.gameId));
   if (!game) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+  if (game.archiveExpiresAt && game.archiveExpiresAt > new Date()) {
     res.status(404).json({ error: "Game not found" });
     return;
   }

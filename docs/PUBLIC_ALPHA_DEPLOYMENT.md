@@ -68,12 +68,14 @@ Required before sharing the URL:
 1. Use Clerk production keys, not test keys.
 2. Set `B5_ALLOWED_USERS` for a closed alpha. Include every permitted tester's
    Clerk user ID, username, or email address.
-3. Set `B5_ALLOWED_ORIGINS` after the Render URL or custom domain is known.
-4. Keep Render Postgres `ipAllowList: []`, meaning private-network access only.
-5. Do not expose local Windows services or local Postgres to the internet.
-6. Do not commit real `.env` files, database URLs, Clerk secrets, or local Postgres passwords.
-7. Confirm `NODE_ENV=production`.
-8. Confirm `/api/healthz` works on the deployed URL.
+3. Set `B5_ADMIN_USERS` to the account email, username, or Clerk user ID that
+   may use the admin cleanup menu.
+4. Set `B5_ALLOWED_ORIGINS` after the Render URL or custom domain is known.
+5. Keep Render Postgres `ipAllowList: []`, meaning private-network access only.
+6. Do not expose local Windows services or local Postgres to the internet.
+7. Do not commit real `.env` files, database URLs, Clerk secrets, or local Postgres passwords.
+8. Confirm `NODE_ENV=production`.
+9. Confirm `/api/healthz` works on the deployed URL.
 
 ## Closed alpha tester changes
 
@@ -106,6 +108,7 @@ which browser origins may call the API; it is not an account allowlist.
    - `CLERK_PUBLISHABLE_KEY`
    - `VITE_CLERK_PUBLISHABLE_KEY`
    - `B5_ALLOWED_USERS`
+   - `B5_ADMIN_USERS`
    - `B5_ALLOWED_ORIGINS`
 5. Deploy.
 6. Add the Render URL in Clerk as an allowed origin/redirect URL.

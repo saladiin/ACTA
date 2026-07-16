@@ -49,6 +49,21 @@ to remove access for everyone else. Email matching is case-insensitive.
 `B5_ALLOWED_ORIGINS` is only for browser/CORS origins, such as the Render URL or
 custom domain. It does not grant or deny accounts.
 
+## Admin Access
+
+Set `B5_ADMIN_USERS` to the Clerk account email, username, or user ID that may
+use the admin cleanup menu. Keep this narrower than `B5_ALLOWED_USERS`.
+
+Example:
+
+```text
+B5_ADMIN_USERS=owner@example.com
+```
+
+Admin users can view all games, see idle time from the last recorded game
+activity, archive games for a short retention window, or delete game records
+outright.
+
 ## Start Remote Host Mode
 
 From the repository root:

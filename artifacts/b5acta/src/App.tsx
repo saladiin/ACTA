@@ -21,6 +21,7 @@ import Settings from "@/pages/settings";
 import Credits from "@/pages/credits";
 import Faq from "@/pages/faq";
 import VfxShowcase from "@/pages/vfx-showcase";
+import AdminPage from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 import { DevModeToggle } from "@/components/dev-mode-toggle";
 import { getDevUserId } from "@/lib/dev-user";
@@ -205,6 +206,7 @@ function ClerkProviderWithRoutes() {
             <Route path="/credits"><ProtectedRoute component={Credits} /></Route>
             <Route path="/faq"><ProtectedRoute component={Faq} /></Route>
             <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
+            <Route path="/admin"><ProtectedRoute component={AdminPage} /></Route>
             <Route component={NotFound} />
           </Switch>
           <Toaster />
