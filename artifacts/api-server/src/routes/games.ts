@@ -342,6 +342,17 @@ function isSkeletonCrewUnit(unit: {
   return !unit.isDestroyed && threshold > 0 && unit.crewPoints <= threshold;
 }
 
+function unitCountsForVictory(unit: {
+  hullPoints: number;
+  crewPoints: number;
+  maxCrewPoints: number;
+  isDestroyed?: boolean;
+}): boolean {
+  return !unit.isDestroyed
+    && unit.hullPoints > 0
+    && (unit.maxCrewPoints <= 0 || unit.crewPoints > 0);
+}
+
 function comparableTraitName(raw: string): string {
   return raw
     .toLowerCase()
@@ -2242,7 +2253,9 @@ async function resolveDogfightBetweenUnits(
   const aliveByOwner = new Map<string, number>();
   for (const row of allUnits) {
     const destroyed = row.id === destroyedUnitId ? true : row.isDestroyed;
-    if (!destroyed) aliveByOwner.set(row.ownerId, (aliveByOwner.get(row.ownerId) ?? 0) + 1);
+    if (unitCountsForVictory({ ...row, isDestroyed: destroyed })) {
+      aliveByOwner.set(row.ownerId, (aliveByOwner.get(row.ownerId) ?? 0) + 1);
+    }
   }
   const challengerAlive = aliveByOwner.get(game.challengerId) ?? 0;
   const opponentAlive = game.opponentId ? (aliveByOwner.get(game.opponentId) ?? 0) : 0;
@@ -3540,7 +3553,7 @@ async function resolveBasicAiWeaponFire(
   let challengerAlive = 0;
   let opponentAlive = 0;
   for (const u of allUnits as Array<typeof gameUnitsTable.$inferSelect>) {
-    if (u.isDestroyed) continue;
+    if (!unitCountsForVictory(u)) continue;
     if (u.ownerId === game.challengerId) challengerAlive++;
     else if (u.ownerId === game.opponentId) opponentAlive++;
   }
@@ -4239,7 +4252,7 @@ async function resolveEndOfMovementAntiFighter(
   let challengerAlive = 0;
   let opponentAlive = 0;
   for (const unit of survivors as Array<typeof gameUnitsTable.$inferSelect>) {
-    if (unit.isDestroyed) continue;
+    if (!unitCountsForVictory(unit)) continue;
     if (unit.ownerId === game.challengerId) challengerAlive++;
     else if (unit.ownerId === game.opponentId) opponentAlive++;
   }
@@ -4361,7 +4374,7 @@ async function resolvePlayerAntiFighterAllocations(
   let challengerAlive = 0;
   let opponentAlive = 0;
   for (const unit of survivors as Array<typeof gameUnitsTable.$inferSelect>) {
-    if (unit.isDestroyed) continue;
+    if (!unitCountsForVictory(unit)) continue;
     if (unit.ownerId === game.challengerId) challengerAlive++;
     else if (unit.ownerId === game.opponentId) opponentAlive++;
   }
@@ -4860,7 +4873,7 @@ async function rollOverRoundAfterEndPhase(
     .where(eq(gameUnitsTable.gameId, game.id));
   let cAlive = 0, oAlive = 0;
   for (const u of postExplosion) {
-    if (u.isDestroyed) continue;
+    if (!unitCountsForVictory(u)) continue;
     if (u.ownerId === game.challengerId) cAlive++;
     else if (u.ownerId === game.opponentId) oAlive++;
   }
@@ -7039,7 +7052,9 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
       const aliveByOwner = new Map<string, number>();
       for (const row of allUnits) {
         const destroyed = row.id === destroyedUnitId ? true : row.isDestroyed;
-        if (!destroyed) aliveByOwner.set(row.ownerId, (aliveByOwner.get(row.ownerId) ?? 0) + 1);
+        if (unitCountsForVictory({ ...row, isDestroyed: destroyed })) {
+          aliveByOwner.set(row.ownerId, (aliveByOwner.get(row.ownerId) ?? 0) + 1);
+        }
       }
       const challengerAlive = aliveByOwner.get(game.challengerId) ?? 0;
       const opponentAlive = game.opponentId ? (aliveByOwner.get(game.opponentId) ?? 0) : 0;
@@ -8719,7 +8734,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         .where(eq(gameUnitsTable.gameId, game.id));
       const aliveByOwner = new Map<string, number>();
       for (const u of allUnits) {
-        if (!u.isDestroyed) {
+        if (unitCountsForVictory(u)) {
           aliveByOwner.set(u.ownerId, (aliveByOwner.get(u.ownerId) ?? 0) + 1);
         }
       }
@@ -9645,7 +9660,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         .where(eq(gameUnitsTable.gameId, game.id));
       let cAlive = 0, oAlive = 0;
       for (const u of postExplosion) {
-        if (u.isDestroyed) continue;
+        if (!unitCountsForVictory(u)) continue;
         if (u.ownerId === game.challengerId) cAlive++;
         else if (u.ownerId === game.opponentId) oAlive++;
       }

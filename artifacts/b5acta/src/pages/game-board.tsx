@@ -1329,6 +1329,19 @@ function visualModelFilenameForUnit(unit: {
   return unit.modelFilename;
 }
 
+function unitIsCombatEffective(unit: {
+  isDestroyed: boolean;
+  hullPoints: number;
+  crewPoints?: number | null;
+  maxCrewPoints?: number | null;
+}): boolean {
+  return (
+    !unit.isDestroyed &&
+    unit.hullPoints > 0 &&
+    ((unit.maxCrewPoints ?? 0) <= 0 || (unit.crewPoints ?? 0) > 0)
+  );
+}
+
 function GlbModel({
   url,
   tint,
@@ -2041,15 +2054,16 @@ function GameUnit3D({
   const arcSide = isMine ? "friendly" : "enemy";
   const sideColor = isMine ? "#34eb52" : "#ff0004";
   const destroyedGrey = "#7f8794";
-  const haloColor = unit.isDestroyed
+  const visuallyDestroyed = !unitIsCombatEffective(unit);
+  const haloColor = visuallyDestroyed
     ? destroyedGrey
     : phaseViable
       ? sideColor
       : "#ffffff";
-  const selectionColor = unit.isDestroyed ? "#8a93a1" : "#f59e0b";
-  const modelTint = unit.isDestroyed ? "#6b7280" : sideColor;
+  const selectionColor = visuallyDestroyed ? "#8a93a1" : "#f59e0b";
+  const modelTint = visuallyDestroyed ? "#6b7280" : sideColor;
   const baseColor = "#000000";
-  const baseEdgeColor = unit.isDestroyed ? "#6b7280" : "#94a3b8";
+  const baseEdgeColor = visuallyDestroyed ? "#6b7280" : "#94a3b8";
   const hpPct =
     unit.maxHullPoints > 0
       ? Math.max(0, Math.min(1, unit.hullPoints / unit.maxHullPoints))
@@ -2072,7 +2086,10 @@ function GameUnit3D({
   const hasPreview =
     Boolean(dragOffset) || Math.abs(previewHeadingDelta) > 0.001;
   const useShadowDamageVfx = !isFighter && isShadowCodedDamageVessel(unit);
-  const visualModelFilename = visualModelFilenameForUnit(unit);
+  const visualModelFilename = visualModelFilenameForUnit({
+    modelFilename: unit.modelFilename,
+    isDestroyed: visuallyDestroyed,
+  });
   const headingRad = (unit.heading * Math.PI) / 180;
   const previewHeadingRad =
     ((unit.heading + previewHeadingDelta) * Math.PI) / 180;
@@ -2083,13 +2100,13 @@ function GameUnit3D({
   const pulseInner = baseRadius + 0.18;
   const pulseOuter = baseRadius + 0.28;
   const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
-  const pulseHalo = Boolean(phaseViable && !unit.isDestroyed);
+  const pulseHalo = Boolean(phaseViable && !visuallyDestroyed);
 
   useFrame(({ clock }) => {
     const mat = haloMaterialRef.current;
     if (!mat) return;
     if (!pulseHalo) {
-      mat.emissiveIntensity = unit.isDestroyed ? 0.1 : 0.48;
+      mat.emissiveIntensity = visuallyDestroyed ? 0.1 : 0.48;
       return;
     }
     const flashOn = clock.getElapsedTime() % 1 < 0.2;
@@ -2111,7 +2128,7 @@ function GameUnit3D({
             flip={FLIP_MODELS.has(unit.modelFilename)}
             baseRadius={baseRadius}
             opacityScale={isSelected ? 1 : 0.82}
-            muted={unit.isDestroyed}
+            muted={visuallyDestroyed}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
           />
@@ -2145,9 +2162,9 @@ function GameUnit3D({
             ref={haloMaterialRef}
             color={haloColor}
             transparent
-            opacity={unit.isDestroyed ? 0.34 : 0.82}
+            opacity={visuallyDestroyed ? 0.34 : 0.82}
             emissive={haloColor}
-            emissiveIntensity={unit.isDestroyed ? 0.1 : 0.48}
+            emissiveIntensity={visuallyDestroyed ? 0.1 : 0.48}
             depthWrite={false}
           />
         </mesh>
@@ -2159,9 +2176,9 @@ function GameUnit3D({
           <meshStandardMaterial
             color={selectionColor}
             emissive={selectionColor}
-            emissiveIntensity={unit.isDestroyed ? 0.25 : 0.8}
+            emissiveIntensity={visuallyDestroyed ? 0.25 : 0.8}
             transparent
-            opacity={unit.isDestroyed ? 0.46 : 0.7}
+            opacity={visuallyDestroyed ? 0.46 : 0.7}
           />
         </mesh>
       )}
@@ -2172,7 +2189,7 @@ function GameUnit3D({
             weapons={weapons}
             flip={FLIP_MODELS.has(unit.modelFilename)}
             baseRadius={baseRadius}
-            muted={unit.isDestroyed}
+            muted={visuallyDestroyed}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
           />
@@ -2190,7 +2207,7 @@ function GameUnit3D({
           />
         </group>
       )}
-      {projectedWeaponArcs.length > 0 && !hasPreview && !unit.isDestroyed && (
+      {projectedWeaponArcs.length > 0 && !hasPreview && !visuallyDestroyed && (
         <group rotation={[0, headingRad, 0]}>
           <WeaponRangeProjectionDisplay
             arcs={projectedWeaponArcs}
@@ -2217,18 +2234,18 @@ function GameUnit3D({
           (useShadowDamageVfx ? (
             <ShadowDamageParticleSpray
               level={fireLevel}
-              destroyed={unit.isDestroyed}
+              destroyed={visuallyDestroyed}
             />
           ) : (
-            <ShipDamageFire level={fireLevel} destroyed={unit.isDestroyed} />
+            <ShipDamageFire level={fireLevel} destroyed={visuallyDestroyed} />
           ))}
         {!useShadowDamageVfx &&
           !hasPreview &&
-          (unit.isDestroyed || fireLevel >= 0.7) && (
+          (visuallyDestroyed || fireLevel >= 0.7) && (
             <DestroyedSmoke
-              intensity={unit.isDestroyed ? 1 : 0.45}
-              puffCount={unit.isDestroyed ? 12 : 5}
-              spread={unit.isDestroyed ? 1 : 0.45}
+              intensity={visuallyDestroyed ? 1 : 0.45}
+              puffCount={visuallyDestroyed ? 12 : 5}
+              spread={visuallyDestroyed ? 1 : 0.45}
             />
           )}
       </group>
@@ -2239,7 +2256,7 @@ function GameUnit3D({
               flip={FLIP_MODELS.has(unit.modelFilename)}
               baseRadius={baseRadius}
               opacityScale={0.75}
-              muted={unit.isDestroyed}
+              muted={visuallyDestroyed}
               arcColorScheme={arcColorScheme}
               arcSide={arcSide}
             />
@@ -2269,7 +2286,7 @@ function GameUnit3D({
                 weapons={weapons}
                 flip={FLIP_MODELS.has(unit.modelFilename)}
                 baseRadius={baseRadius}
-                muted={unit.isDestroyed}
+                muted={visuallyDestroyed}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
               />
@@ -2286,7 +2303,7 @@ function GameUnit3D({
               />
             </group>
           )}
-          {projectedWeaponArcs.length > 0 && !unit.isDestroyed && (
+          {projectedWeaponArcs.length > 0 && !visuallyDestroyed && (
             <group rotation={[0, previewHeadingRad, 0]}>
               <WeaponRangeProjectionDisplay
                 arcs={projectedWeaponArcs}
@@ -13613,8 +13630,9 @@ export default function GameBoard() {
               </p>
               <span className="text-[10px] font-mono text-muted-foreground">
                 {
-                  units.filter((u) => u.ownerId !== myUserId && !u.isDestroyed)
-                    .length
+                  units.filter(
+                    (u) => u.ownerId !== myUserId && unitIsCombatEffective(u),
+                  ).length
                 }
                 /{units.filter((u) => u.ownerId !== myUserId).length}
               </span>
@@ -13630,15 +13648,16 @@ export default function GameBoard() {
                     .filter((u) => u.ownerId !== myUserId)
                     .map((unit) => {
                       const selected = selectedUnit === unit.id;
+                      const combatEffective = unitIsCombatEffective(unit);
                       return (
                         <div
                           key={unit.id}
                           data-testid={`unit-${unit.id}`}
-                          className={`flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors ${selected ? "border border-yellow-400/60 bg-yellow-400/10" : "border border-red-500/30 bg-red-500/5 hover:bg-red-500/10"} ${unit.isDestroyed ? "opacity-40 line-through" : ""}`}
+                          className={`flex items-center justify-between text-xs rounded px-2 py-1 cursor-pointer transition-colors ${selected ? "border border-yellow-400/60 bg-yellow-400/10" : combatEffective ? "border border-red-500/30 bg-red-500/5 hover:bg-red-500/10" : "border border-slate-500/30 bg-slate-500/5 hover:bg-slate-500/10"} ${combatEffective ? "" : "opacity-40 line-through"}`}
                           onClick={() => handleUnitClick(unit.id)}
                         >
                           <span
-                            className={`font-mono truncate max-w-[110px] ${selected ? "text-yellow-300" : "text-red-300"}`}
+                            className={`font-mono truncate max-w-[110px] ${selected ? "text-yellow-300" : combatEffective ? "text-red-300" : "text-slate-300"}`}
                           >
                             {unit.name}
                           </span>
@@ -13661,8 +13680,9 @@ export default function GameBoard() {
               </p>
               <span className="text-[10px] font-mono text-muted-foreground">
                 {
-                  units.filter((u) => u.ownerId === myUserId && !u.isDestroyed)
-                    .length
+                  units.filter(
+                    (u) => u.ownerId === myUserId && unitIsCombatEffective(u),
+                  ).length
                 }
                 /{units.filter((u) => u.ownerId === myUserId).length}
               </span>
@@ -13679,6 +13699,7 @@ export default function GameBoard() {
                     .map((unit) => {
                       const selected = selectedUnit === unit.id;
                       const active = activeUnitId === unit.id;
+                      const combatEffective = unitIsCombatEffective(unit);
                       const unavailableDuringCommittedActivation =
                         game.status === "active" &&
                         isMyActivation &&
@@ -13699,7 +13720,7 @@ export default function GameBoard() {
                         <div
                           key={unit.id}
                           data-testid={`unit-${unit.id}`}
-                          className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-colors ${active ? "border border-amber-300/80 bg-amber-300/15" : selected ? "border border-blue-400/60 bg-blue-400/10" : "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"} ${unit.isDestroyed ? "opacity-40 line-through cursor-not-allowed" : firingInert || unavailableDuringCommittedActivation ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                          className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-colors ${active ? "border border-amber-300/80 bg-amber-300/15" : selected ? "border border-blue-400/60 bg-blue-400/10" : combatEffective ? "border border-green-500/30 bg-green-500/5 hover:bg-green-500/10" : "border border-slate-500/30 bg-slate-500/5 hover:bg-slate-500/10"} ${combatEffective ? firingInert || unavailableDuringCommittedActivation ? "opacity-50 cursor-not-allowed" : "cursor-pointer" : "opacity-40 line-through cursor-not-allowed"}`}
                           onClick={() => handleUnitClick(unit.id)}
                           title={
                             firingInert
@@ -13710,7 +13731,7 @@ export default function GameBoard() {
                           }
                         >
                           <span
-                            className={`font-mono truncate max-w-[110px] ${active ? "text-amber-200" : selected ? "text-blue-300" : "text-green-300"}`}
+                            className={`font-mono truncate max-w-[110px] ${active ? "text-amber-200" : selected ? "text-blue-300" : combatEffective ? "text-green-300" : "text-slate-300"}`}
                           >
                             {unit.name}
                           </span>
