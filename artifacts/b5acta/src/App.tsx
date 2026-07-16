@@ -4,7 +4,7 @@ import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
 import { Switch, Route, useLocation, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { setExtraHeaders } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setExtraHeaders } from "@workspace/api-client-react";
 
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -175,6 +175,25 @@ function TemporaryUsernameHeaders() {
   return null;
 }
 
+function ClerkApiAuthToken() {
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+
+  useEffect(() => {
+    if (temporaryUsernameAuthEnabled || import.meta.env.DEV) {
+      setAuthTokenGetter(null);
+      return;
+    }
+    if (!isLoaded || !isSignedIn) {
+      setAuthTokenGetter(null);
+      return;
+    }
+    setAuthTokenGetter(() => getToken());
+    return () => setAuthTokenGetter(null);
+  }, [getToken, isLoaded, isSignedIn]);
+
+  return null;
+}
+
 function ClerkProviderWithRoutes() {
   const [, setLocation] = useLocation();
 
@@ -193,6 +212,7 @@ function ClerkProviderWithRoutes() {
         <TooltipProvider>
           <ClerkQueryClientCacheInvalidator />
           <TemporaryUsernameHeaders />
+          <ClerkApiAuthToken />
           <Switch>
             <Route path="/" component={HomeRedirect} />
             <Route path="/sign-in/*?" component={SignInPage} />

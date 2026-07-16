@@ -77,6 +77,20 @@ Required before sharing the URL:
 8. Confirm `NODE_ENV=production`.
 9. Confirm `/api/healthz` works on the deployed URL.
 
+## Clerk session lifetime
+
+If testers are asked to validate repeatedly during the same day, check the
+Clerk/Auth session settings before changing app code. In Clerk, session expiry
+is governed by:
+
+- **Maximum lifetime**: hard cap on how long a sign-in can last.
+- **Inactivity timeout**: how long a user can be away before signing in again.
+
+For public alpha testing, prefer a generous maximum lifetime such as 30-90 days
+and either disable inactivity timeout or set it to several days. Browser cookie
+clearing, private browsing, and device security settings can still force a new
+sign-in earlier than Clerk's configured lifetime.
+
 ## Closed alpha tester changes
 
 To add a new tester without opening the game broadly:
