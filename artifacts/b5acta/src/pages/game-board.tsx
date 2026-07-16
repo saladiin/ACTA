@@ -11821,6 +11821,16 @@ export default function GameBoard() {
                       Skeleton
                     </span>
                   )}
+                  {!unitIsCombatEffective(selectedUnitData) && (
+                    <span
+                      data-testid="badge-hulked"
+                      className="px-1.5 py-0.5 rounded border border-slate-400/70 text-slate-200 bg-slate-500/15 uppercase tracking-wider"
+                    >
+                      {selectedUnitData.hullPoints <= 0
+                        ? "Hulked"
+                        : "Derelict"}
+                    </span>
+                  )}
                   {selectedUnitData.damageState === "adrift" && (
                     <span
                       data-testid="badge-adrift"
@@ -13377,8 +13387,23 @@ export default function GameBoard() {
               const selfRepairBusy =
                 selfRepairModal?.unitId === selectedUnitData.id &&
                 selfRepairModal.phase === "rolling";
+              const selfRepairBlockedReason =
+                selectedUnitData.hullPoints <= 0
+                  ? "Hulked ships cannot use Self Repair"
+                  : (selectedUnitData.maxCrewPoints ?? 0) > 0 &&
+                      (selectedUnitData.crewPoints ?? 0) <= 0
+                    ? "Crewless ships cannot use Self Repair"
+                    : null;
+              const damageControlBlockedReason =
+                selectedUnitData.hullPoints <= 0
+                  ? "Hulked ships cannot perform Damage Control"
+                  : (selectedUnitData.maxCrewPoints ?? 0) > 0 &&
+                      (selectedUnitData.crewPoints ?? 0) <= 0
+                    ? "Crewless ships cannot perform Damage Control"
+                    : null;
               const canSelfRepair =
                 selfRepairDice > 0 &&
+                selfRepairBlockedReason === null &&
                 selectedUnitData.hullPoints < selectedUnitData.maxHullPoints &&
                 !selfRepairUsedThisRound &&
                 !selfRepairBusy &&
@@ -13483,7 +13508,9 @@ export default function GameBoard() {
                       >
                         {selfRepairBusy
                           ? "Rolling..."
-                          : selectedUnitData.hullPoints >=
+                          : selfRepairBlockedReason
+                            ? selfRepairBlockedReason
+                            : selectedUnitData.hullPoints >=
                               selectedUnitData.maxHullPoints
                             ? "Hull fully repaired"
                             : selfRepairUsedThisRound
@@ -13503,6 +13530,7 @@ export default function GameBoard() {
                     const dcLocked = dcAttemptedThisRound && !allHandsActive;
                     const canRepair =
                       c.repairable &&
+                      damageControlBlockedReason === null &&
                       !isSameRound &&
                       !dcLocked &&
                       !damageControl.isPending &&
@@ -13603,7 +13631,9 @@ export default function GameBoard() {
                           }}
                           className="mt-1 w-full rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          {!c.repairable
+                          {damageControlBlockedReason
+                            ? damageControlBlockedReason
+                            : !c.repairable
                             ? "Unrepairable (Vital Systems)"
                             : isSameRound
                               ? "Wait until next round"

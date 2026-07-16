@@ -4696,6 +4696,10 @@ async function resolveSelfRepairForUnit(
     return null;
   };
   if (unit.isDestroyed) return fail("Ship destroyed");
+  if (unit.hullPoints <= 0) return fail("Hulked ships cannot use Self Repair");
+  if (unit.maxCrewPoints > 0 && unit.crewPoints <= 0) {
+    return fail("Crewless ships cannot use Self Repair");
+  }
   if (unit.lastSelfRepairRound === game.currentRound) return fail("Self Repair already resolved this round");
   if (unit.hullPoints >= unit.maxHullPoints) return fail("Hull is already fully repaired");
 
@@ -9843,6 +9847,10 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.hullPoints <= 0) throw Object.assign(new Error("Hulked ships cannot perform Damage Control"), { status: 400 });
+      if (unit.maxCrewPoints > 0 && unit.crewPoints <= 0) {
+        throw Object.assign(new Error("Crewless ships cannot perform Damage Control"), { status: 400 });
+      }
       // All Hands on Deck (success) lifts the once-per-round-per-ship DC
       // cap — the ship may repair any number of criticals this End Phase.
       const allHandsActive = unit.specialAction === "all-hands-on-deck";
