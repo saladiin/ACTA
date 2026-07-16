@@ -245,10 +245,10 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(7, "Prefab Fleet (optional)")}
+          {sectionHeader(7, "Your Starting Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
-              <SelectValue placeholder="Choose later in the deployment screen..." />
+              <SelectValue placeholder="Choose your fleet now, or place ships later..." />
             </SelectTrigger>
             <SelectContent className="bg-card border-border">
               {fleets?.length === 0 && <SelectItem value="none" disabled>No fleets; create one first</SelectItem>}
@@ -259,6 +259,9 @@ export default function NewGame() {
               ))}
             </SelectContent>
           </Select>
+          <p className="mt-1 text-[11px] text-muted-foreground font-mono">
+            This selection is for your fleet. {opponentKind === "ai" ? "The AI fleet is assembled separately on the deployment screen." : "Your opponent chooses their own fleet when they join."}
+          </p>
           {selectedFleet && (
             <button
               type="button"

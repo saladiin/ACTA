@@ -6655,6 +6655,12 @@ export default function GameBoard() {
       : myUserId === game.opponentId
         ? "opponent"
         : null;
+  const deploymentFleetOwnerLabel = aiDeploymentControlActive
+    ? "AI opponent fleet"
+    : "your fleet";
+  const deploymentFleetOwnerDetail = aiDeploymentControlActive
+    ? "You are currently assembling and placing the AI opponent's fleet."
+    : "You are currently assembling and placing your own fleet.";
   const canDevRedeployAiOpponent =
     devAiCommanderActive && game?.status === "deploying";
   const myDeploymentLocked = Boolean(
@@ -8195,10 +8201,7 @@ export default function GameBoard() {
   );
   const activationSegment = useMemo<"capital" | "fighter" | null>(() => {
     if (currentPhase !== "movement" && currentPhase !== "firing") return null;
-    const activeOwnerId = game?.activePlayerId;
-    const eligible = units.filter(
-      (u) => u.ownerId === activeOwnerId && unitEligibleForCurrentPhase(u),
-    );
+    const eligible = units.filter(unitEligibleForCurrentPhase);
     const hasFighter = eligible.some(isFighterUnit);
     const hasCapital = eligible.some((u) => !isFighterUnit(u));
     if (currentPhase === "firing") {
@@ -8207,7 +8210,6 @@ export default function GameBoard() {
     return hasCapital ? "capital" : hasFighter ? "fighter" : null;
   }, [
     currentPhase,
-    game?.activePlayerId,
     isFighterUnit,
     unitEligibleForCurrentPhase,
     units,
@@ -8233,6 +8235,12 @@ export default function GameBoard() {
     isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
   const canPassAllFiring =
     isMyActivation && currentPhase === "firing" && !antiFighterState;
+  const activationPickLabel =
+    activationSegment === "fighter" ? "Pick a Fighter Flight" : "Pick a Ship";
+  const activationPassLabel =
+    activationSegment === "fighter"
+      ? "No eligible fighter flights - pass to opponent"
+      : "No eligible ships - pass the phase";
   const { data: attackAuditData } = useQuery<AttackAuditLogResponse>({
     queryKey: ["attack-audit-log", gameId],
     queryFn: () =>
@@ -9518,6 +9526,29 @@ export default function GameBoard() {
     );
   }
 
+  const completedWinnerName =
+    game.winnerId === game.challengerId
+      ? (game.challengerName ?? "Challenger")
+      : game.winnerId === game.opponentId
+        ? (game.opponentName ?? "Opponent")
+        : null;
+  const completedResultTitle =
+    game.status !== "completed"
+      ? null
+      : !game.winnerId
+        ? "Engagement Complete"
+        : game.winnerId === myUserId
+          ? "Victory"
+          : mySide
+            ? "Defeat"
+            : "Engagement Complete";
+  const completedResultDetail =
+    game.status !== "completed"
+      ? null
+      : completedWinnerName
+        ? `${completedWinnerName} wins.`
+        : "Both fleets have been eliminated.";
+
   return (
     <Layout
       title={`${game.challengerName ?? "?"} vs ${game.opponentName ?? "?"}`}
@@ -10095,6 +10126,29 @@ export default function GameBoard() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+          {game.status === "completed" && completedResultTitle && (
+            <div
+              className="pointer-events-auto absolute left-1/2 top-1/2 z-50 w-[min(420px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded border border-yellow-300/60 bg-black/88 px-5 py-4 text-center shadow-2xl shadow-yellow-950/40 backdrop-blur-md"
+              data-testid="game-complete-banner"
+            >
+              <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-yellow-200/80">
+                Game Over
+              </p>
+              <p className="mt-2 text-2xl font-bold uppercase tracking-[0.18em] text-yellow-200">
+                {completedResultTitle}
+              </p>
+              <p className="mt-2 text-sm font-mono text-muted-foreground">
+                {completedResultDetail}
+              </p>
+              <Link
+                href="/lobby"
+                className="mt-4 inline-flex h-9 items-center justify-center rounded border border-yellow-300/50 bg-yellow-300/10 px-3 font-mono text-[11px] uppercase tracking-widest text-yellow-100 transition-colors hover:bg-yellow-300/20"
+                data-testid="link-game-complete-lobby"
+              >
+                Return to Lobby
+              </Link>
             </div>
           )}
           {isoCameraControlsEnabled && (
@@ -10892,8 +10946,14 @@ export default function GameBoard() {
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">
                 {aiDeploymentControlActive
-                  ? "Deploy AI Opponent"
-                  : "Fleet Yards"}
+                  ? "Deploy AI Opponent Fleet"
+                  : "Deploy Your Fleet"}
+              </p>
+              <p
+                className="rounded border border-primary/25 bg-primary/5 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-primary"
+                data-testid="text-deployment-fleet-owner"
+              >
+                Assembling {deploymentFleetOwnerLabel}
               </p>
               {!aiDeploymentControlActive &&
                 ((mySide === "challenger" && game.opponentDeployed) ||
@@ -10911,7 +10971,8 @@ export default function GameBoard() {
               >
                 {aiDeploymentControlActive
                   ? "Place the AI fleet on the opponent edge, then commit deployment to begin the engagement."
-                  : "Drag ships from the roster below straight onto the board, or quick-load a saved fleet."}
+                  : "Drag ships from the roster below straight onto the board, or quick-load one of your saved fleets."}{" "}
+                {deploymentFleetOwnerDetail}
                 {fleets && fleets.length === 0 && (
                   <>
                     {" "}
@@ -11003,7 +11064,13 @@ export default function GameBoard() {
                   data-testid="select-yards-fleet"
                   className="bg-background text-xs h-8"
                 >
-                  <SelectValue placeholder="Quick-load a saved fleet (optional)" />
+                  <SelectValue
+                    placeholder={
+                      aiDeploymentControlActive
+                        ? "Quick-load a saved fleet for the AI (optional)"
+                        : "Quick-load one of your saved fleets (optional)"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
                   <SelectItem value="__none__">
@@ -12186,8 +12253,8 @@ export default function GameBoard() {
                   {hasActiveUnit
                     ? `Activating ${units.find((u) => u.id === activeUnitId)?.name ?? "—"}`
                     : canPassPhase
-                      ? "No eligible ships — pass the phase"
-                      : "Pick a Ship"}
+                      ? activationPassLabel
+                      : activationPickLabel}
                 </p>
                 {currentPhase === "firing" && lastOpponentAttackSummary && (
                   <div
@@ -15506,6 +15573,15 @@ function DiceRollModal({
                 {result.targetDestroyed && " · DESTROYED"}
               </span>
             </div>
+            {(result as FireWeaponResult & { gameCompleted?: boolean })
+              .gameCompleted && (
+              <div
+                className="mt-3 rounded border border-yellow-300/55 bg-yellow-300/10 px-3 py-2 text-center text-[11px] uppercase tracking-widest text-yellow-200"
+                data-testid="dice-game-complete"
+              >
+                This shot ended the game. Close to view the final result.
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1930,12 +1930,19 @@ async function chooseHumanFirstAfterAiInitiative(
     return game;
   }
 
+  const preferredPlayerId = game.challengerId;
+  const fallbackPlayerId = game.opponentId ?? AI_OPPONENT_ID;
+  const activePlayerId =
+    await firstEligiblePlayerForAiPhase(tx, game, "movement", [preferredPlayerId, fallbackPlayerId])
+    ?? preferredPlayerId;
   const [row] = await tx.update(gamesTable).set({
     phase: "movement",
-    activePlayerId: game.challengerId,
+    activePlayerId,
     activeUnitId: null,
     aiState: mergeAiState(game.aiState, aiState("acted", "initiative.choose-first-activator", {
-      message: "AI won initiative and chose the human commander to activate first.",
+      message: activePlayerId === preferredPlayerId
+        ? "AI won initiative and chose the human commander to activate first."
+        : "AI won initiative, but the human commander has no eligible opening activation.",
     })),
   }).where(eq(gamesTable.id, game.id)).returning();
   return row;
@@ -2330,6 +2337,25 @@ async function countEligibleForAiStep(
     if (phase === "firing" && aiFiringEligible(row)) count++;
   }
   return count;
+}
+
+async function firstEligiblePlayerForAiPhase(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  phase: "movement" | "firing",
+  preferredOrder: string[],
+): Promise<string | null> {
+  const segment = await activationSegmentForGame(tx, game, phase);
+  if (!segment) return null;
+  const seen = new Set<string>();
+  for (const playerId of preferredOrder) {
+    if (!playerId || seen.has(playerId)) continue;
+    seen.add(playerId);
+    if (await countEligibleForAiStep(tx, game, playerId, phase, segment) > 0) {
+      return playerId;
+    }
+  }
+  return null;
 }
 
 async function finishAiActivation(
@@ -8711,7 +8737,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }
       if (gameCompleted) {
         await tx.update(gamesTable)
-          .set({ status: "completed", winnerId })
+          .set({ status: "completed", winnerId, activePlayerId: null, activeUnitId: null })
           .where(eq(gamesTable.id, game.id));
       }
 
@@ -9449,9 +9475,18 @@ router.post("/games/:gameId/choose-first-activator", requireAuth, async (req, re
       if (activatorUserId !== game.challengerId && activatorUserId !== game.opponentId) {
         throw Object.assign(new Error("activatorUserId must be a participant in this game"), { status: 400 });
       }
+      const otherActivatorId = activatorUserId === game.challengerId ? game.opponentId : game.challengerId;
+      const activePlayerId =
+        await firstEligiblePlayerForAiPhase(
+          tx,
+          game,
+          "movement",
+          [activatorUserId, otherActivatorId ?? ""],
+        )
+        ?? activatorUserId;
       const [row] = await tx.update(gamesTable).set({
         phase: "movement",
-        activePlayerId: activatorUserId,
+        activePlayerId,
         activeUnitId: null,
       }).where(eq(gamesTable.id, gameId)).returning();
       return row;
