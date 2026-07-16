@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { customFetch } from "@workspace/api-client-react";
+import { APP_BUILD_SHA } from "@/lib/build-version";
 import { useInputProfile } from "@/hooks/use-input-profile";
 import { clearTemporaryUsername, temporaryUsernameAuthEnabled } from "@/lib/temporary-user";
 
@@ -12,7 +13,11 @@ type AdminMeResponse = {
   isAdmin: boolean;
 };
 
-export function Layout({ children, title }: { children: ReactNode; title?: string }) {
+type AppVersionResponse = {
+  buildSha: string;
+};
+
+export function Layout({ children, title, sidebarBottom }: { children: ReactNode; title?: string; sidebarBottom?: ReactNode }) {
   const { signOut } = useClerk();
   const [, setLocation] = useLocation();
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -25,7 +30,16 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
     retry: false,
     staleTime: 60_000,
   });
+  const { data: appVersion } = useQuery({
+    queryKey: ["app-version"],
+    queryFn: () => customFetch<AppVersionResponse>("/api/version", { responseType: "json" }),
+    retry: false,
+    staleTime: 0,
+    refetchInterval: 180_000,
+    refetchOnWindowFocus: true,
+  });
   const showAdminNav = adminMe?.isAdmin === true;
+  const updateAvailable = Boolean(appVersion?.buildSha && appVersion.buildSha !== APP_BUILD_SHA);
 
   useEffect(() => {
     setNavOpen(!mobileChrome);
@@ -120,7 +134,15 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
             </Link>
           )}
         </nav>
-        <div className={`p-4 border-t border-border mt-auto ${mobileChrome ? "block safe-bottom" : "hidden md:block"}`}>
+        {sidebarBottom && (
+          <div className="hidden border-t border-border md:block">
+            {sidebarBottom}
+          </div>
+        )}
+        <div className={`p-4 border-t border-border mt-auto space-y-2 ${mobileChrome ? "block safe-bottom" : "hidden md:block"}`}>
+          <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70" data-testid="text-app-build">
+            Build {APP_BUILD_SHA}
+          </div>
           <Button 
             variant="ghost" 
             className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 uppercase tracking-widest text-xs"
@@ -141,6 +163,21 @@ export function Layout({ children, title }: { children: ReactNode; title?: strin
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden relative">
+        {updateAvailable && (
+          <div className="z-20 border-b border-amber-400/50 bg-amber-400/10 px-4 py-2 font-mono text-[11px] text-amber-100 md:px-6" data-testid="banner-update-available">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>New build available. Refresh before continuing.</span>
+              <button
+                type="button"
+                className="rounded border border-amber-300/60 bg-amber-300 px-2 py-0.5 font-bold text-black hover:bg-amber-200"
+                onClick={() => window.location.reload()}
+                data-testid="button-refresh-build"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        )}
         {title && (
           <header className="min-h-16 border-b border-border bg-background/80 backdrop-blur flex items-center px-4 md:px-6 py-3 shrink-0 sticky top-0 z-10">
             <h1 className="text-base md:text-lg font-bold tracking-widest uppercase text-primary/90 flex items-center gap-2 min-w-0">

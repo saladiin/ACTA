@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import { execFileSync } from "node:child_process";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 const rawPort = process.env.PORT;
@@ -26,8 +27,34 @@ if (!basePath) {
   );
 }
 
+function shortBuildSha(): string {
+  const raw =
+    process.env.VITE_BUILD_SHA ||
+    process.env.B5_BUILD_SHA ||
+    process.env.RENDER_GIT_COMMIT ||
+    process.env.RENDER_GIT_COMMIT_SHA ||
+    process.env.COMMIT_SHA ||
+    process.env.GIT_COMMIT;
+  if (raw) return raw.trim().slice(0, 7);
+
+  try {
+    return execFileSync("git", ["rev-parse", "--short=7", "HEAD"], {
+      cwd: path.resolve(import.meta.dirname, "..", ".."),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "dev";
+  }
+}
+
+const buildSha = shortBuildSha();
+
 export default defineConfig({
   base: basePath,
+  define: {
+    "import.meta.env.VITE_BUILD_SHA": JSON.stringify(buildSha),
+  },
   plugins: [
     react(),
     tailwindcss(),

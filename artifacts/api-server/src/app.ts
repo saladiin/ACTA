@@ -37,6 +37,19 @@ function findWebDist(): string | null {
   return candidates.find((candidate) => fs.existsSync(path.join(candidate, "index.html"))) ?? null;
 }
 
+function setWebCacheHeaders(res: express.Response, filePath: string) {
+  const normalized = filePath.replace(/\\/g, "/");
+  if (path.basename(filePath) === "index.html") {
+    res.setHeader("Cache-Control", "no-store");
+    return;
+  }
+  if (normalized.includes("/assets/")) {
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return;
+  }
+  res.setHeader("Cache-Control", "public, max-age=3600");
+}
+
 app.use(
   pinoHttp({
     logger,
@@ -72,13 +85,17 @@ app.use(
   })),
 );
 
-app.use("/api", router);
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+}, router);
 
 if (process.env.B5_SERVE_WEB === "true" || process.env.NODE_ENV === "production") {
   const webDist = findWebDist();
   if (webDist) {
-    app.use(express.static(webDist));
+    app.use(express.static(webDist, { setHeaders: setWebCacheHeaders }));
     app.get(/^\/(?!api\/).*/, (_req, res) => {
+      res.set("Cache-Control", "no-store");
       res.sendFile(path.join(webDist, "index.html"));
     });
     logger.info({ webDist }, "Serving built web client");

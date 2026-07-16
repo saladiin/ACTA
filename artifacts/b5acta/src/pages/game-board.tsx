@@ -44,6 +44,7 @@ import { useDevUserId } from "@/lib/dev-user";
 import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
 import { useInputProfile } from "@/hooks/use-input-profile";
 import { useUiArcColorScheme, useUiAttackPhasePulseOpacity, useUiAttackPhasePulseStrength, useUiBoardOpacity, useUiControlMode, useUiShipHullNames, useUiShipMeshTints, type UiArcColorScheme, type UiControlMode } from "@/hooks/use-ui-settings";
+import { APP_BUILD_SHA } from "@/lib/build-version";
 import {
   ALLOCATION_TICKS_PER_FAP,
   PRIORITY_LEVELS,
@@ -80,7 +81,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag, PanelRightClose, PanelRightOpen, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Check, X, Cpu, AlertTriangle, MessageCircle, Send, ChevronDown, ChevronUp } from "lucide-react";
+import { Swords, Shield, Target, CheckCircle, XCircle, Crosshair, Move, Zap, Flag, PanelRightClose, PanelRightOpen, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw, Check, X, Cpu, AlertTriangle, MessageCircle, Send, ChevronDown, ChevronUp, ScrollText } from "lucide-react";
 
 // Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
 // names are historical). Render coordinates are 1:1 with storage, so this
@@ -424,15 +425,19 @@ function AiDiagnosticsPanel({
   game,
   onRunStep,
   onRunUntilHuman,
+  onToggleAuto,
   isRunning,
   isAutoRunning,
+  autoEnabled,
   runError,
 }: {
   game: GameDetail["game"];
   onRunStep: () => void;
   onRunUntilHuman: () => void;
+  onToggleAuto: () => void;
   isRunning: boolean;
   isAutoRunning: boolean;
+  autoEnabled: boolean;
   runError: string | null;
 }) {
   if (game.opponentKind !== "ai") return null;
@@ -521,16 +526,100 @@ function AiDiagnosticsPanel({
         </Button>
         <Button
           size="sm"
-          variant="outline"
-          className="h-8 gap-1.5 border-cyan-500/35 text-[10px] uppercase tracking-widest text-cyan-100 hover:bg-cyan-500/10"
-          onClick={onRunUntilHuman}
-          disabled={isRunning || isAutoRunning}
-          data-testid="button-run-ai-until-human"
+          variant={autoEnabled ? "default" : "outline"}
+          className={`h-8 gap-1.5 text-[10px] uppercase tracking-widest ${
+            autoEnabled
+              ? "bg-cyan-300 text-black hover:bg-cyan-200"
+              : "border-cyan-500/35 text-cyan-100 hover:bg-cyan-500/10"
+          }`}
+          onClick={onToggleAuto}
+          disabled={isRunning && !autoEnabled}
+          data-testid="button-toggle-ai-auto"
         >
           <Cpu className="h-3.5 w-3.5" />
-          {isAutoRunning ? "Auto..." : "Auto"}
+          {autoEnabled ? "Auto On" : "Auto Off"}
         </Button>
       </div>
+      {!autoEnabled && (
+        <button
+          type="button"
+          onClick={onRunUntilHuman}
+          disabled={isRunning || isAutoRunning}
+          className="mt-2 w-full rounded border border-cyan-500/25 bg-black/20 px-2 py-1 text-[10px] uppercase tracking-widest text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-50"
+          data-testid="button-run-ai-until-human"
+        >
+          {isAutoRunning ? "Auto running..." : "Run until human"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function battleLogSourceLabel(source: BattleLogEntry["source"]): string {
+  if (source === "firing") return "Fire";
+  if (source === "special") return "SA";
+  return "Move";
+}
+
+function BattleLogPanel({
+  entries,
+  collapsible = false,
+  defaultOpen = true,
+}: {
+  entries: BattleLogEntry[];
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const content = (
+    <div className="max-h-72 overflow-y-auto px-3 pb-3">
+      {entries.length === 0 ? (
+        <p className="py-3 font-mono text-[10px] text-muted-foreground">No recorded actions yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {entries.map(entry => (
+            <div key={entry.id} className="rounded border border-border/60 bg-black/20 px-2 py-1.5 font-mono">
+              <div className="mb-0.5 flex items-center gap-1.5 text-[8px] uppercase tracking-wider text-muted-foreground">
+                <span>R{entry.round}</span>
+                <span>{entry.phase}</span>
+                <span>{battleLogSourceLabel(entry.source)}</span>
+                {entry.actorKind === "ai" && <span className="text-cyan-300">AI</span>}
+              </div>
+              <p className="text-[10px] leading-snug text-foreground/85">{entry.summary}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  if (collapsible) {
+    return (
+      <div className="border-b border-border" data-testid="battle-log-panel">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-secondary/30"
+          onClick={() => setOpen(value => !value)}
+          aria-expanded={open}
+          data-testid="button-toggle-battle-log"
+        >
+          <ScrollText className="h-4 w-4 text-primary" />
+          <span className="flex-1 text-xs font-mono font-bold uppercase tracking-widest text-primary">Battle Log</span>
+          <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-mono">{entries.length}</Badge>
+          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </button>
+        {open && content}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-card" data-testid="battle-log-panel">
+      <div className="flex items-center justify-between gap-2 px-3 py-2">
+        <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary">Battle Log</span>
+        <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-mono">{entries.length}</Badge>
+      </div>
+      {content}
     </div>
   );
 }
@@ -924,7 +1013,7 @@ function useModelExists(url: string): boolean | null {
 
 function ShipModel3D({ filename, tint, opacity = 1, meshTintsEnabled = true }: { filename: string; tint: string; opacity?: number; meshTintsEnabled?: boolean }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const url = `${basePath}/api/models/${filename}`;
+  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(APP_BUILD_SHA)}`;
   const isGlb = filename.toLowerCase().endsWith(".glb") || filename.toLowerCase().endsWith(".gltf");
   const exists = useModelExists(url);
   // null = check in-flight; false = file missing — both show fallback box
@@ -2245,6 +2334,52 @@ type AttackAuditLogResponse = {
   gameId: number;
   count: number;
   logs: AttackAuditLogEntry[];
+};
+type MovementAuditLogEntry = {
+  id: number;
+  gameId: number;
+  round: number;
+  phase: string;
+  actorKind: "player" | "ai" | "system" | string;
+  actorPlayerId: string | null;
+  unitId: number;
+  movementKind: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+type SpecialActionAuditLogEntry = {
+  id: number;
+  gameId: number;
+  round: number;
+  phase: string;
+  actorKind: "player" | "ai" | string;
+  actorPlayerId: string | null;
+  unitId: number;
+  action: string;
+  success: boolean;
+  cqRequired: number | null;
+  cqRoll: number | null;
+  cqTotal: number | null;
+  targetUnitId: number | null;
+  summary: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+type AuditLogResponse<T> = {
+  gameId: number;
+  count: number;
+  logs: T[];
+};
+type BattleLogEntry = {
+  id: string;
+  source: "movement" | "firing" | "special";
+  round: number;
+  phase: string;
+  actorKind: string;
+  actorPlayerId: string | null;
+  summary: string;
+  createdAt: string;
 };
 const EMPTY_MOVEMENT_LEDGER: MovementLedger = { distance: 0, turns: 0, distSinceLastTurn: 0 };
 const TABLET_MOVEMENT_CONTROLLER_POSITION_KEY = "b5acta.ui.tabletMovementControllerPosition";
@@ -4496,14 +4631,20 @@ export default function GameBoard() {
   });
 
   const [autoAiRunning, setAutoAiRunning] = useState(false);
+  const [aiAutoRunEnabled, setAiAutoRunEnabled] = useState(false);
+  const aiAutoRunEnabledRef = useRef(false);
   const [autoAiError, setAutoAiError] = useState<string | null>(null);
-  const runAiUntilHuman = useCallback(async () => {
+  useEffect(() => {
+    aiAutoRunEnabledRef.current = aiAutoRunEnabled;
+  }, [aiAutoRunEnabled]);
+  const runAiUntilHuman = useCallback(async (respectToggle = false) => {
     if (!game || autoAiRunning) return;
     setAutoAiRunning(true);
     setAutoAiError(null);
     let lastSignature = aiProgressSignature(game);
     try {
       for (let step = 0; step < AI_AUTO_STEP_LIMIT; step++) {
+        if (respectToggle && !aiAutoRunEnabledRef.current) break;
         if (step === 0 && shouldStopAiAutoRun(game, myUserId)) break;
         const next = await runAiStep.mutateAsync({ gameId });
         await qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
@@ -4511,14 +4652,25 @@ export default function GameBoard() {
         if (nextSignature === lastSignature) break;
         lastSignature = nextSignature;
         if (shouldStopAiAutoRun(next, myUserId)) break;
+        if (respectToggle && !aiAutoRunEnabledRef.current) break;
         await new Promise(resolve => setTimeout(resolve, 150));
       }
     } catch (err) {
       setAutoAiError((err as Error).message || "AI auto-run failed");
+      setAiAutoRunEnabled(false);
     } finally {
       setAutoAiRunning(false);
     }
   }, [autoAiRunning, game, gameId, myUserId, qc, runAiStep]);
+  useEffect(() => {
+    if (!game || game.opponentKind !== "ai" || game.status !== "active") {
+      setAiAutoRunEnabled(false);
+      return;
+    }
+    if (!aiAutoRunEnabled || autoAiRunning || runAiStep.isPending) return;
+    if (shouldStopAiAutoRun(game, myUserId)) return;
+    void runAiUntilHuman(true);
+  }, [aiAutoRunEnabled, autoAiRunning, game, myUserId, runAiStep.isPending, runAiUntilHuman]);
   type BoardUnit = (typeof units)[number];
   const isFighterUnit = useCallback((unit: BoardUnit): boolean => {
     return shipModelHasFighterTrait(getShipModelForUnit(unit))
@@ -5700,11 +5852,68 @@ export default function GameBoard() {
   const { data: attackAuditData } = useQuery<AttackAuditLogResponse>({
     queryKey: ["attack-audit-log", gameId],
     queryFn: () => customFetch<AttackAuditLogResponse>(`/api/games/${gameId}/attack-audit-log?limit=80`),
-    enabled: !!gameId && game?.status === "active" && currentPhase === "firing",
-    refetchInterval: game?.status === "active" && currentPhase === "firing" && !pausePollingRef.current
+    enabled: !!gameId && game?.status === "active",
+    refetchInterval: game?.status === "active" && !pausePollingRef.current
       ? POLL_INTERVAL_MS
       : false,
   });
+  const { data: movementAuditData } = useQuery<AuditLogResponse<MovementAuditLogEntry>>({
+    queryKey: ["movement-audit-log", gameId],
+    queryFn: () => customFetch<AuditLogResponse<MovementAuditLogEntry>>(`/api/games/${gameId}/movement-audit-log?limit=80`),
+    enabled: !!gameId && game?.status === "active",
+    refetchInterval: game?.status === "active" && !pausePollingRef.current
+      ? POLL_INTERVAL_MS
+      : false,
+  });
+  const { data: specialActionAuditData } = useQuery<AuditLogResponse<SpecialActionAuditLogEntry>>({
+    queryKey: ["special-action-audit-log", gameId],
+    queryFn: () => customFetch<AuditLogResponse<SpecialActionAuditLogEntry>>(`/api/games/${gameId}/special-action-audit-log?limit=80`),
+    enabled: !!gameId && game?.status === "active",
+    refetchInterval: game?.status === "active" && !pausePollingRef.current
+      ? POLL_INTERVAL_MS
+      : false,
+  });
+  const battleLogEntries = useMemo<BattleLogEntry[]>(() => {
+    const entries: BattleLogEntry[] = [
+      ...(movementAuditData?.logs ?? []).map(log => ({
+        id: `movement-${log.id}`,
+        source: "movement" as const,
+        round: log.round,
+        phase: log.phase,
+        actorKind: log.actorKind,
+        actorPlayerId: log.actorPlayerId,
+        summary: log.summary,
+        createdAt: log.createdAt,
+      })),
+      ...(specialActionAuditData?.logs ?? []).map(log => ({
+        id: `special-${log.id}`,
+        source: "special" as const,
+        round: log.round,
+        phase: log.phase,
+        actorKind: log.actorKind,
+        actorPlayerId: log.actorPlayerId,
+        summary: log.summary,
+        createdAt: log.createdAt,
+      })),
+      ...(attackAuditData?.logs ?? []).map(log => ({
+        id: `firing-${log.id}`,
+        source: "firing" as const,
+        round: log.round,
+        phase: log.phase,
+        actorKind: log.actorKind,
+        actorPlayerId: log.actorPlayerId,
+        summary: log.summary,
+        createdAt: log.createdAt,
+      })),
+    ];
+    return entries
+      .sort((a, b) => {
+        const timeDelta = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        if (timeDelta !== 0) return timeDelta;
+        return b.id.localeCompare(a.id);
+      })
+      .slice(0, 80);
+  }, [attackAuditData?.logs, movementAuditData?.logs, specialActionAuditData?.logs]);
   const lastOpponentAttackSummary = useMemo(() => {
     if (!game || currentPhase !== "firing") return null;
     const logs = attackAuditData?.logs ?? [];
@@ -6553,7 +6762,10 @@ export default function GameBoard() {
   }
 
   return (
-    <Layout title={`${game.challengerName ?? "?"} vs ${game.opponentName ?? "?"}`}>
+    <Layout
+      title={`${game.challengerName ?? "?"} vs ${game.opponentName ?? "?"}`}
+      sidebarBottom={!mobileGameChrome ? <BattleLogPanel entries={battleLogEntries} /> : undefined}
+    >
       <div
         className="game-board-shell flex flex-col lg:flex-row h-full min-h-[calc(100dvh-4rem)] lg:h-[calc(100dvh-4rem)] lg:min-h-0 lg:overflow-hidden"
         data-input={inputProfile.input}
@@ -7407,10 +7619,19 @@ export default function GameBoard() {
               { onSettled: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }) },
             )}
             onRunUntilHuman={runAiUntilHuman}
+            onToggleAuto={() => {
+              setAutoAiError(null);
+              setAiAutoRunEnabled(enabled => !enabled);
+            }}
             isRunning={runAiStep.isPending}
             isAutoRunning={autoAiRunning}
+            autoEnabled={aiAutoRunEnabled}
             runError={autoAiError ?? (runAiStep.isError ? ((runAiStep.error as Error).message || "AI step failed") : null)}
           />
+
+          {mobileGameChrome && (
+            <BattleLogPanel entries={battleLogEntries} collapsible defaultOpen={false} />
+          )}
 
           {canUseGameChat && (
             <div className="border-b border-border" data-testid="game-chat-panel">

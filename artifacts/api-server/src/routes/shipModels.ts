@@ -27,6 +27,11 @@ router.get("/models/:filename", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Model file not found" });
     return;
   }
+  if (typeof req.query.v === "string" && req.query.v.length > 0) {
+    res.set("Cache-Control", "public, max-age=31536000, immutable");
+  } else {
+    res.set("Cache-Control", "public, max-age=3600");
+  }
   res.sendFile(filePath);
 });
 
