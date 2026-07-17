@@ -9,11 +9,13 @@ export type UiControlMode =
   | "mode-f";
 export type UiArcColorScheme = "classic" | "side";
 export type UiBoardBackgroundMode = "skybox" | "black";
+export type UiShipStatusDisplayMode = "bar" | "text";
 
 const CONTROL_MODE_STORAGE_KEY = "b5acta.ui.controlMode";
 const ARC_COLOR_SCHEME_STORAGE_KEY = "b5acta.ui.arcColorScheme";
 const SHIP_MESH_TINTS_STORAGE_KEY = "b5acta.ui.shipMeshTints";
 const SHIP_HULL_NAMES_STORAGE_KEY = "b5acta.ui.shipHullNames";
+const SHIP_STATUS_DISPLAY_MODE_STORAGE_KEY = "b5acta.ui.shipStatusDisplayMode";
 const BOARD_OPACITY_STORAGE_KEY = "b5acta.ui.boardOpacity";
 const ATTACK_PHASE_PULSE_OPACITY_STORAGE_KEY =
   "b5acta.ui.attackPhasePulseOpacity";
@@ -51,6 +53,14 @@ function readShipMeshTintsEnabled(): boolean {
 function readShipHullNamesEnabled(): boolean {
   if (typeof window === "undefined") return true;
   return window.localStorage.getItem(SHIP_HULL_NAMES_STORAGE_KEY) !== "false";
+}
+
+function readShipStatusDisplayMode(): UiShipStatusDisplayMode {
+  if (typeof window === "undefined") return "bar";
+  return window.localStorage.getItem(SHIP_STATUS_DISPLAY_MODE_STORAGE_KEY) ===
+    "text"
+    ? "text"
+    : "bar";
 }
 
 function readBoardOpacity(): number {
@@ -207,6 +217,36 @@ export function useUiShipHullNames(): [boolean, (enabled: boolean) => void] {
   }, []);
 
   return [enabled, setEnabled];
+}
+
+export function useUiShipStatusDisplayMode(): [
+  UiShipStatusDisplayMode,
+  (mode: UiShipStatusDisplayMode) => void,
+] {
+  const [mode, setModeState] = useState<UiShipStatusDisplayMode>(() =>
+    readShipStatusDisplayMode(),
+  );
+
+  useEffect(() => {
+    const sync = () => setModeState(readShipStatusDisplayMode());
+    window.addEventListener("storage", sync);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, sync);
+    };
+  }, []);
+
+  const setMode = useCallback((nextMode: UiShipStatusDisplayMode) => {
+    window.localStorage.setItem(
+      SHIP_STATUS_DISPLAY_MODE_STORAGE_KEY,
+      nextMode,
+    );
+    setModeState(nextMode);
+    window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT));
+  }, []);
+
+  return [mode, setMode];
 }
 
 export function useUiBoardOpacity(): [number, (opacity: number) => void] {

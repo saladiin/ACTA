@@ -245,6 +245,63 @@ async function recordSpecialActionAuditLog(
   });
 }
 
+async function recordAntiFighterAuditLog(
+  tx: any,
+  args: {
+    game: typeof gamesTable.$inferSelect;
+    actorKind: "player" | "ai" | "system";
+    actorPlayerId: string | null;
+    context: string;
+    attacks: AntiFighterAttackLog[];
+    destroyedUnitIds: number[];
+    fighterRecoveries?: DestroyedFighterRecoveryResult[];
+    playerId?: string | null;
+    summary?: string;
+  },
+): Promise<void> {
+  if (args.attacks.length === 0) return;
+  const firstAttack = args.attacks[0];
+  const firstRoll = firstAttack?.rolls[0];
+  const rollCount = args.attacks.reduce(
+    (sum, attack) => sum + attack.rolls.length,
+    0,
+  );
+  const attackerNames = args.attacks
+    .map((attack) => attack.attackerName)
+    .slice(0, 2)
+    .join(", ");
+  const extraAttackers =
+    args.attacks.length > 2 ? ` +${args.attacks.length - 2} more` : "";
+  const summary =
+    args.summary ??
+    `${attackerNames}${extraAttackers} resolved Anti-Fighter: ${rollCount} dice, ${args.destroyedUnitIds.length} fighter flight(s) destroyed.`;
+
+  await tx.insert(gameSpecialActionAuditLogsTable).values({
+    gameId: args.game.id,
+    round: args.game.currentRound,
+    phase: args.game.phase,
+    actorKind: args.actorKind,
+    actorPlayerId: args.actorPlayerId,
+    unitId: firstAttack.attackerId,
+    action: "anti-fighter",
+    success: true,
+    cqRequired: null,
+    cqRoll: null,
+    cqTotal: null,
+    targetUnitId: firstRoll?.targetId ?? null,
+    summary,
+    payload: {
+      storedAction: "anti-fighter",
+      context: args.context,
+      playerId: args.playerId ?? args.actorPlayerId,
+      rollCount,
+      destroyedUnitIds: args.destroyedUnitIds,
+      fighterRecoveries: args.fighterRecoveries ?? [],
+      attacks: args.attacks,
+    },
+  });
+}
+
 type SlowLoadingCooldowns = Record<string, number>;
 
 type ParsedShipTraits = ReturnType<typeof parseShipTraits>;
@@ -3885,6 +3942,17 @@ async function resolveFighterAntiFighterDogfightInterrupt(
     fighterRecoveries,
     movingUnitDestroyed: destroyedUnitIds.includes(movingUnit.id),
   };
+  await recordAntiFighterAuditLog(tx, {
+    game,
+    actorKind: "system",
+    actorPlayerId: null,
+    playerId: movingUnit.ownerId,
+    context: "fighter-anti-fighter-interrupt",
+    attacks,
+    destroyedUnitIds,
+    fighterRecoveries,
+    summary: `Pre-dogfight Anti-Fighter resolved: ${attacks.reduce((sum, attack) => sum + attack.rolls.length, 0)} dice, ${destroyedUnitIds.length} fighter flight(s) destroyed.`,
+  });
   await tx.update(gamesTable).set({
     aiState: mergeAiState(game.aiState, aiState("acted", "rules.fighter-anti-fighter-interrupt", {
       message: `Pre-dogfight fighter Anti-Fighter resolved: ${destroyedUnitIds.length} fighter flight(s) destroyed.`,
@@ -4233,9 +4301,20 @@ async function resolveEndOfMovementAntiFighter(
   }
 
   if (attacks.length > 0) {
+    const destroyedArray = [...destroyedUnitIds];
+    await recordAntiFighterAuditLog(tx, {
+      game,
+      actorKind: "system",
+      actorPlayerId: null,
+      context: "end-of-movement-auto",
+      attacks,
+      destroyedUnitIds: destroyedArray,
+      fighterRecoveries,
+      summary: `End-of-Movement Anti-Fighter resolved: ${attacks.reduce((sum, attack) => sum + attack.rolls.length, 0)} dice, ${destroyedArray.length} fighter flight(s) destroyed.`,
+    });
     const summary = {
       round: game.currentRound,
-      destroyedUnitIds: [...destroyedUnitIds],
+      destroyedUnitIds: destroyedArray,
       fighterRecoveries,
       dogfightingUnitIdsSkipped: [...dogfightingIds],
       attacks,
@@ -4389,7 +4468,20 @@ async function resolvePlayerAntiFighterAllocations(
       .where(eq(gamesTable.id, game.id));
   }
 
-  return { playerId: pending.currentPlayerId, attacks, destroyedUnitIds: [...destroyedUnitIds], fighterRecoveries };
+  const destroyedArray = [...destroyedUnitIds];
+  await recordAntiFighterAuditLog(tx, {
+    game,
+    actorKind: pending.currentPlayerId === AI_OPPONENT_ID ? "ai" : "player",
+    actorPlayerId: pending.currentPlayerId,
+    playerId: pending.currentPlayerId,
+    context: "player-allocation",
+    attacks,
+    destroyedUnitIds: destroyedArray,
+    fighterRecoveries,
+    summary: `${pending.currentPlayerId === AI_OPPONENT_ID ? "AI " : ""}Anti-Fighter allocation resolved: ${attacks.reduce((sum, attack) => sum + attack.rolls.length, 0)} dice, ${destroyedArray.length} fighter flight(s) destroyed.`,
+  });
+
+  return { playerId: pending.currentPlayerId, attacks, destroyedUnitIds: destroyedArray, fighterRecoveries };
 }
 
 async function advanceAfterAntiFighter(

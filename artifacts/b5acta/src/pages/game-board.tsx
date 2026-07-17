@@ -71,9 +71,11 @@ import {
   useUiIsoCameraControls,
   useUiShipHullNames,
   useUiShipMeshTints,
+  useUiShipStatusDisplayMode,
   useUiWeaponArcProjection,
   type UiArcColorScheme,
   type UiControlMode,
+  type UiShipStatusDisplayMode,
 } from "@/hooks/use-ui-settings";
 import { APP_BUILD_SHA } from "@/lib/build-version";
 import {
@@ -591,182 +593,42 @@ function shouldStopAiAutoRun(
 
 function AiDiagnosticsPanel({
   game,
-  onRunStep,
-  onRunUntilHuman,
   onToggleAuto,
   isRunning,
-  isAutoRunning,
   autoEnabled,
-  runError,
 }: {
   game: GameDetail["game"];
-  onRunStep: () => void;
-  onRunUntilHuman: () => void;
   onToggleAuto: () => void;
   isRunning: boolean;
-  isAutoRunning: boolean;
   autoEnabled: boolean;
-  runError: string | null;
 }) {
   if (game.opponentKind !== "ai") return null;
-  const state = readAiDiagnostics(game.aiState);
-  const hasError =
-    state.status === "error" || Boolean(state.lastError?.message);
-  const latestDecision =
-    state.decisionLog && state.decisionLog.length > 0
-      ? state.decisionLog[state.decisionLog.length - 1]
-      : null;
-  const decisionDetails = latestDecision?.details;
-  const clamped =
-    decisionDetails?.clamped &&
-    typeof decisionDetails.clamped === "object" &&
-    !Array.isArray(decisionDetails.clamped)
-      ? (decisionDetails.clamped as Record<string, unknown>)
-      : null;
-  const chosen =
-    decisionDetails?.chosen &&
-    typeof decisionDetails.chosen === "object" &&
-    !Array.isArray(decisionDetails.chosen)
-      ? (decisionDetails.chosen as Record<string, unknown>)
-      : null;
-  const topCandidates = Array.isArray(decisionDetails?.topCandidates)
-    ? decisionDetails.topCandidates
-        .slice(0, 3)
-        .filter((item): item is Record<string, unknown> =>
-          Boolean(item && typeof item === "object" && !Array.isArray(item)),
-        )
-    : [];
   return (
     <div
-      className={`border-b px-4 py-3 font-mono text-xs ${
-        hasError
-          ? "border-red-500/30 bg-red-500/10 text-red-200"
-          : "border-cyan-500/25 bg-cyan-500/10 text-cyan-100"
-      }`}
-      data-testid="panel-ai-diagnostics"
+      className="border-b border-cyan-500/20 px-4 py-3"
+      data-testid="panel-ai-control"
     >
-      <div className="mb-1 flex items-center justify-between gap-2 uppercase tracking-widest">
-        <span className="flex items-center gap-1.5">
-          {hasError ? (
-            <AlertTriangle className="h-3.5 w-3.5" />
-          ) : (
-            <Cpu className="h-3.5 w-3.5" />
-          )}
-          AI
-        </span>
-        <span>{state.status ?? "idle"}</span>
-      </div>
-      <div className="space-y-0.5 text-[10px] text-muted-foreground">
-        {state.lastStep && <p>Step: {state.lastStep}</p>}
-        {state.message && <p>{state.message}</p>}
-        {state.lastError?.message && (
-          <p className="text-red-300">Error: {state.lastError.message}</p>
-        )}
-        {latestDecision?.summary && (
-          <div
-            className="mt-1 rounded border border-cyan-500/20 bg-black/25 px-2 py-1"
-            data-testid="ai-latest-decision"
-          >
-            <p className="text-cyan-100">Decision: {latestDecision.summary}</p>
-            {decisionDetails && (
-              <p>
-                {typeof decisionDetails.chosenAction === "string" && (
-                  <>Action: {decisionDetails.chosenAction}</>
-                )}
-                {typeof decisionDetails.minMove === "number" && (
-                  <> · Min: {decisionDetails.minMove}"</>
-                )}
-                {clamped && typeof clamped.moved === "number" && (
-                  <> · Moved: {clamped.moved}"</>
-                )}
-              </p>
-            )}
-            {chosen && (
-              <p>
-                {typeof chosen.weaponName === "string" && (
-                  <>Weapon: {chosen.weaponName}</>
-                )}
-                {typeof chosen.targetName === "string" && (
-                  <> · Target: {chosen.targetName}</>
-                )}
-                {typeof chosen.score === "number" && (
-                  <> · Score: {chosen.score}</>
-                )}
-              </p>
-            )}
-            {topCandidates.length > 0 && (
-              <div className="mt-1 space-y-0.5">
-                {topCandidates.map((candidate, index) => (
-                  <p
-                    key={`${candidate.weaponId ?? index}-${candidate.targetId ?? index}`}
-                  >
-                    #{index + 1}{" "}
-                    {typeof candidate.weaponName === "string"
-                      ? candidate.weaponName
-                      : "weapon"}
-                    {" -> "}
-                    {typeof candidate.targetName === "string"
-                      ? candidate.targetName
-                      : "target"}
-                    {typeof candidate.score === "number"
-                      ? ` (${candidate.score})`
-                      : ""}
-                  </p>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {runError && <p className="text-red-300">Run failed: {runError}</p>}
-        {state.lastActionAt && (
-          <p>{new Date(state.lastActionAt).toLocaleString()}</p>
-        )}
-      </div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 gap-1.5 border-cyan-500/35 text-[10px] uppercase tracking-widest text-cyan-100 hover:bg-cyan-500/10"
-          onClick={onRunStep}
-          disabled={isRunning || isAutoRunning}
-          data-testid="button-run-ai-step"
-        >
-          <Cpu className="h-3.5 w-3.5" />
-          {isRunning && !isAutoRunning ? "Running..." : "Step"}
-        </Button>
-        <Button
-          size="sm"
-          variant={autoEnabled ? "default" : "outline"}
-          className={`h-8 gap-1.5 text-[10px] uppercase tracking-widest ${
-            autoEnabled
-              ? "bg-cyan-300 text-black hover:bg-cyan-200"
-              : "border-cyan-500/35 text-cyan-100 hover:bg-cyan-500/10"
-          }`}
-          onClick={onToggleAuto}
-          disabled={isRunning && !autoEnabled}
-          data-testid="button-toggle-ai-auto"
-        >
-          <Cpu className="h-3.5 w-3.5" />
-          {autoEnabled ? "Auto On" : "Auto Off"}
-        </Button>
-      </div>
-      {!autoEnabled && (
-        <button
-          type="button"
-          onClick={onRunUntilHuman}
-          disabled={isRunning || isAutoRunning}
-          className="mt-2 w-full rounded border border-cyan-500/25 bg-black/20 px-2 py-1 text-[10px] uppercase tracking-widest text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-50"
-          data-testid="button-run-ai-until-human"
-        >
-          {isAutoRunning ? "Auto running..." : "Run until human"}
-        </button>
-      )}
+      <Button
+        size="sm"
+        variant={autoEnabled ? "default" : "outline"}
+        className={`h-8 w-full gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest ${
+          autoEnabled
+            ? "border-orange-300/70 bg-orange-400/20 text-orange-100 hover:bg-orange-400/30"
+            : "border-cyan-500/35 text-cyan-100 hover:bg-cyan-500/10"
+        }`}
+        onClick={onToggleAuto}
+        disabled={isRunning && !autoEnabled}
+        data-testid="button-toggle-ai-auto"
+      >
+        <Cpu className="h-3.5 w-3.5" />
+        {autoEnabled ? "AI Pause" : "AI Play"}
+      </Button>
     </div>
   );
 }
-
 function battleLogSourceLabel(source: BattleLogEntry["source"]): string {
   if (source === "firing") return "Fire";
+  if (source === "anti-fighter") return "AF";
   if (source === "special") return "SA";
   return "Move";
 }
@@ -1142,6 +1004,79 @@ function CarriedFighterDeploymentGuide({
           depthWrite={false}
         />
       </mesh>
+    </group>
+  );
+}
+
+function EndPhaseFighterLaunchPreview({
+  fighterModel,
+  x,
+  z,
+  heading,
+  legal,
+  shipMeshTintsEnabled = true,
+}: {
+  fighterModel: ShipModel;
+  x: number;
+  z: number;
+  heading: number;
+  legal: boolean;
+  shipMeshTintsEnabled?: boolean;
+}) {
+  const color = legal ? "#67e8f9" : "#fb7185";
+  const baseRadius = rulesBaseRadius({
+    baseRadiusInches: fighterModel.baseRadiusInches,
+  });
+  const ringInner = Math.max(0.05, baseRadius - 0.05);
+  const headingRad = (heading * Math.PI) / 180;
+
+  return (
+    <group position={[x, 0, z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+        <circleGeometry args={[baseRadius, 48]} />
+        <meshStandardMaterial
+          color="#020617"
+          transparent
+          opacity={0.42}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}>
+        <ringGeometry args={[ringInner, baseRadius + 0.1, 48]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={legal ? 0.75 : 0.55}
+          transparent
+          opacity={0.85}
+          depthWrite={false}
+        />
+      </mesh>
+      <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
+        <ModelErrorBoundary color={color}>
+          <Suspense
+            fallback={<ShipModelFallback color={color} opacity={0.55} />}
+          >
+            <BoardModelVisual
+              filename={fighterModel.filename}
+              tint={color}
+              opacity={0.55}
+              meshTintsEnabled={shipMeshTintsEnabled}
+            />
+          </Suspense>
+        </ModelErrorBoundary>
+      </group>
+      <CameraFacingText
+        position={[0, 3.25, 0]}
+        fontSize={0.26}
+        color={legal ? "#bae6fd" : "#fecdd3"}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.03}
+        outlineColor="black"
+      >
+        {legal ? "Place launch" : "Illegal"}
+      </CameraFacingText>
     </group>
   );
 }
@@ -1725,6 +1660,43 @@ function uiPrebattleFighterDeploymentLimit(carrier: {
     : 1;
 }
 
+function parseUiCarrierRating(raw: string | null | undefined): number {
+  const match = /\bcarrier\s+(\d+)\b/i.exec(raw ?? "");
+  return match ? Math.max(0, Number(match[1]) || 0) : 0;
+}
+
+function uiFighterBayOperationLimit(carrier: {
+  carriedFighters?: Array<{ total: number }> | null;
+  specialAction?: string | null;
+}, carrierModel?: { traits?: string | null }): number {
+  const inventory = carrier.carriedFighters ?? [];
+  if (inventory.length === 0) return 0;
+  const carrierRating = parseUiCarrierRating(carrierModel?.traits);
+  const base = Math.max(1, carrierRating || 0);
+  return carrier.specialAction === "scramble"
+    ? carrierRating
+      ? carrierRating + 2
+      : 2
+    : base;
+}
+
+function uiFighterBayOperationsUsedThisRound(unit: {
+  fighterBayOperationsRound?: number | null;
+  fighterBayOperationsUsed?: number | null;
+}, round: number): number {
+  return unit.fighterBayOperationsRound === round
+    ? Math.max(0, unit.fighterBayOperationsUsed ?? 0)
+    : 0;
+}
+
+function hasLostCarrierCapability(unit: {
+  criticals?: Array<{ lostTraits?: string[] | null }>;
+}): boolean {
+  return (unit.criticals ?? []).some((crit) =>
+    (crit.lostTraits ?? []).some((trait) => /^carrier(?:\s+\d+)?$/i.test(normalizeHintKey(trait))),
+  );
+}
+
 function isShadowCodedDamageVessel(unit: {
   faction?: string | null;
   name?: string | null;
@@ -1976,24 +1948,59 @@ function BoardModelVisual({
 }
 
 function UnitHealthBar({
-  hpPct,
+  hullPct,
+  crewPct,
+  hasCrewTrack,
   faceCamera = false,
 }: {
-  hpPct: number;
+  hullPct: number;
+  crewPct?: number;
+  hasCrewTrack?: boolean;
   faceCamera?: boolean;
 }) {
+  const hullWidth = hasCrewTrack ? 0.98 : 2;
+  const crewWidth = 0.98;
+  const hullColor = statusHullColor(hullPct);
+  const crewFillPct = hasCrewTrack ? Math.max(0, Math.min(1, crewPct ?? 0)) : 0;
+  const crewColor = statusCrewColor(crewFillPct);
   const content = (
     <>
       <mesh>
         <planeGeometry args={[2, 0.18]} />
         <meshBasicMaterial color="#1f2937" transparent opacity={0.9} />
       </mesh>
-      <mesh position={[-1 * (1 - hpPct), 0, 0.001]} scale={[hpPct, 1, 1]}>
-        <planeGeometry args={[2, 0.15]} />
-        <meshBasicMaterial
-          color={hpPct > 0.5 ? "#22c55e" : hpPct > 0.25 ? "#f59e0b" : "#ef4444"}
-        />
+      <mesh
+        position={[
+          hasCrewTrack
+            ? -1 + (hullWidth * hullPct) / 2
+            : -1 + hullPct,
+          0,
+          0.001,
+        ]}
+        scale={[hullPct, 1, 1]}
+      >
+        <planeGeometry args={[hullWidth, 0.15]} />
+        <meshBasicMaterial color={hullColor} />
       </mesh>
+      {hasCrewTrack && (
+        <>
+          <mesh position={[0, 0, 0.002]}>
+            <planeGeometry args={[0.035, 0.18]} />
+            <meshBasicMaterial color="#020617" transparent opacity={0.95} />
+          </mesh>
+          <mesh
+            position={[
+              0.02 + (crewWidth * crewFillPct) / 2,
+              0,
+              0.001,
+            ]}
+            scale={[crewFillPct, 1, 1]}
+          >
+            <planeGeometry args={[crewWidth, 0.15]} />
+            <meshBasicMaterial color={crewColor} />
+          </mesh>
+        </>
+      )}
     </>
   );
 
@@ -2001,6 +2008,104 @@ function UnitHealthBar({
     <CameraFacingGroup position={[0, 3.2, 0]}>{content}</CameraFacingGroup>
   ) : (
     <group position={[0, 3.2, 0]}>{content}</group>
+  );
+}
+
+function statusHullColor(value: number): string {
+  return value > 0.5 ? "#22c55e" : value > 0.25 ? "#f59e0b" : "#ef4444";
+}
+
+function statusCrewColor(value: number): string {
+  return value > 0.5 ? "#38bdf8" : value > 0.25 ? "#a855f7" : "#ec4899";
+}
+
+function UnitStatusText({
+  hullPoints,
+  hullPct,
+  crewPoints,
+  crewPct,
+  hasCrewTrack,
+  nameVisible,
+}: {
+  hullPoints: number;
+  hullPct: number;
+  crewPoints?: number | null;
+  crewPct: number;
+  hasCrewTrack: boolean;
+  nameVisible: boolean;
+}) {
+  const y = nameVisible ? 3.42 : 3.62;
+  const fontSize = 0.24;
+  const outlineWidth = 0.03;
+  const labelColor = "#e5e7eb";
+  const hullLabelX = hasCrewTrack ? -0.68 : -0.18;
+  const hullValueX = hasCrewTrack ? -0.33 : 0.2;
+  const separatorX = -0.02;
+  const crewLabelX = 0.3;
+  const crewValueX = 0.66;
+
+  return (
+    <CameraFacingGroup position={[0, y, 0]}>
+      <Text
+        position={[hullLabelX, 0, 0]}
+        fontSize={fontSize}
+        color={labelColor}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={outlineWidth}
+        outlineColor="black"
+      >
+        Hull
+      </Text>
+      <Text
+        position={[hullValueX, 0, 0]}
+        fontSize={fontSize}
+        color={statusHullColor(hullPct)}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={outlineWidth}
+        outlineColor="black"
+      >
+        {Math.max(0, Math.round(hullPoints))}
+      </Text>
+      {hasCrewTrack && (
+        <>
+          <Text
+            position={[separatorX, 0, 0]}
+            fontSize={fontSize}
+            color="#94a3b8"
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={outlineWidth}
+            outlineColor="black"
+          >
+            |
+          </Text>
+          <Text
+            position={[crewLabelX, 0, 0]}
+            fontSize={fontSize}
+            color={labelColor}
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={outlineWidth}
+            outlineColor="black"
+          >
+            Crew
+          </Text>
+          <Text
+            position={[crewValueX, 0, 0]}
+            fontSize={fontSize}
+            color={statusCrewColor(crewPct)}
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={outlineWidth}
+            outlineColor="black"
+          >
+            {Math.max(0, Math.round(crewPoints ?? 0))}
+          </Text>
+        </>
+      )}
+    </CameraFacingGroup>
   );
 }
 
@@ -2016,10 +2121,13 @@ function GameUnit3D({
   phaseViable,
   firingArc,
   projectedWeaponArcs = [],
+  targetingPreview = null,
+  launchHighlight = false,
   arcColorScheme = "classic",
   healthBarFacesCamera = false,
   shipMeshTintsEnabled = true,
   shipHullNamesEnabled = true,
+  shipStatusDisplayMode = "bar",
   isFighter = false,
 }: {
   unit: {
@@ -2032,6 +2140,8 @@ function GameUnit3D({
     ownerId: string;
     hullPoints: number;
     maxHullPoints: number;
+    crewPoints?: number | null;
+    maxCrewPoints?: number | null;
     isDestroyed: boolean;
     faction: string;
     speed: number;
@@ -2051,12 +2161,15 @@ function GameUnit3D({
   healthBarFacesCamera?: boolean;
   shipMeshTintsEnabled?: boolean;
   shipHullNamesEnabled?: boolean;
+  shipStatusDisplayMode?: UiShipStatusDisplayMode;
   isFighter?: boolean;
   // When set, draws a translucent "weapon coverage" sector at full range for
   // the currently-selected firing weapon so the player can see eligible
   // targets. Only rendered for the active firing ship.
   firingArc?: { arc: string; range: number } | null;
   projectedWeaponArcs?: Array<{ arc: string; range: number }>;
+  targetingPreview?: TargetingPreviewState | null;
+  launchHighlight?: boolean;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
@@ -2064,19 +2177,41 @@ function GameUnit3D({
   const sideColor = isMine ? "#34eb52" : "#ff0004";
   const destroyedGrey = "#7f8794";
   const visuallyDestroyed = !unitIsCombatEffective(unit);
+  const targetEligible = targetingPreview === "eligible" && !visuallyDestroyed;
+  const targetIneligible = targetingPreview === "ineligible" && !visuallyDestroyed;
+  const launchHighlighted = launchHighlight && !visuallyDestroyed;
+  const lightBlueHighlight = targetEligible || launchHighlighted;
   const haloColor = visuallyDestroyed
     ? destroyedGrey
+    : lightBlueHighlight
+      ? "#7dd3fc"
+      : targetIneligible
+        ? "#334155"
     : phaseViable
       ? sideColor
       : "#ffffff";
   const selectionColor = visuallyDestroyed ? "#8a93a1" : "#f59e0b";
-  const modelTint = visuallyDestroyed ? "#6b7280" : sideColor;
-  const baseColor = "#000000";
-  const baseEdgeColor = visuallyDestroyed ? "#6b7280" : "#94a3b8";
+  const modelTint = visuallyDestroyed ? "#6b7280" : lightBlueHighlight ? "#93c5fd" : sideColor;
+  const baseColor = targetIneligible ? "#030712" : "#000000";
+  const baseEdgeColor = visuallyDestroyed
+    ? "#6b7280"
+    : targetEligible
+      ? "#7dd3fc"
+      : targetIneligible
+        ? "#1e293b"
+        : "#94a3b8";
   const hpPct =
     unit.maxHullPoints > 0
       ? Math.max(0, Math.min(1, unit.hullPoints / unit.maxHullPoints))
       : 0;
+  const crewPct =
+    (unit.maxCrewPoints ?? 0) > 0
+      ? Math.max(
+          0,
+          Math.min(1, (unit.crewPoints ?? 0) / (unit.maxCrewPoints ?? 1)),
+        )
+      : 0;
+  const hasCrewTrack = (unit.maxCrewPoints ?? 0) > 0;
   const nonNormalDamageState = Boolean(
     unit.damageState && unit.damageState !== "normal",
   );
@@ -2108,18 +2243,32 @@ function GameUnit3D({
   const haloRingOuter = baseRadius + 0.14;
   const pulseInner = baseRadius + 0.18;
   const pulseOuter = baseRadius + 0.28;
+  const targetRingInner = baseRadius + 0.32;
+  const targetRingOuter = baseRadius + 0.48;
   const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
-  const pulseHalo = Boolean(phaseViable && !visuallyDestroyed);
+  const targetMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const pulseHalo = Boolean((phaseViable || lightBlueHighlight) && !visuallyDestroyed);
+  const dimOpacityScale = targetIneligible ? 0.38 : 1;
+  const modelOpacity = hasPreview ? 0.28 : targetIneligible ? 0.24 : 1;
 
   useFrame(({ clock }) => {
     const mat = haloMaterialRef.current;
-    if (!mat) return;
-    if (!pulseHalo) {
-      mat.emissiveIntensity = visuallyDestroyed ? 0.1 : 0.48;
-      return;
+    if (mat) {
+      if (!pulseHalo) {
+        mat.emissiveIntensity = visuallyDestroyed ? 0.1 : targetIneligible ? 0.02 : 0.48;
+      } else {
+        const flashOn = clock.getElapsedTime() % 1 < 0.2;
+        mat.emissiveIntensity = lightBlueHighlight
+          ? (flashOn ? 1.8 : 0.55)
+          : (flashOn ? 1.35 : 0.28);
+      }
     }
-    const flashOn = clock.getElapsedTime() % 1 < 0.2;
-    mat.emissiveIntensity = flashOn ? 1.35 : 0.28;
+    const targetMat = targetMaterialRef.current;
+    if (targetMat) {
+      const t = (Math.sin(clock.getElapsedTime() * 4.5) + 1) / 2;
+      targetMat.opacity = 0.58 + t * 0.24;
+      targetMat.emissiveIntensity = 0.7 + t * 0.55;
+    }
   });
 
   return (
@@ -2136,8 +2285,8 @@ function GameUnit3D({
           <BaseOrientationDisplay
             flip={FLIP_MODELS.has(unit.modelFilename)}
             baseRadius={baseRadius}
-            opacityScale={isSelected ? 1 : 0.82}
-            muted={visuallyDestroyed}
+            opacityScale={(isSelected ? 1 : 0.82) * dimOpacityScale}
+            muted={visuallyDestroyed || targetIneligible}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
           />
@@ -2148,9 +2297,9 @@ function GameUnit3D({
         <circleGeometry args={[baseRadius, 48]} />
         <meshStandardMaterial
           color={baseColor}
-          transparent={hasPreview}
-          opacity={hasPreview ? 0.28 : 1}
-          depthWrite={!hasPreview}
+          transparent={hasPreview || targetIneligible}
+          opacity={hasPreview ? 0.28 : targetIneligible ? 0.78 : 1}
+          depthWrite={!hasPreview && !targetIneligible}
         />
       </mesh>
       {/* Base ring edge */}
@@ -2159,9 +2308,9 @@ function GameUnit3D({
         <meshStandardMaterial
           color={baseEdgeColor}
           transparent
-          opacity={(isSelected ? 0.72 : 0.42) * (hasPreview ? 0.35 : 1)}
+          opacity={(isSelected ? 0.72 : lightBlueHighlight ? 0.72 : 0.42) * (hasPreview ? 0.35 : dimOpacityScale)}
           emissive={baseEdgeColor}
-          emissiveIntensity={isSelected ? 0.25 : 0.08}
+          emissiveIntensity={lightBlueHighlight ? 0.5 : isSelected ? 0.25 : targetIneligible ? 0.02 : 0.08}
         />
       </mesh>
       {!hasPreview && (
@@ -2171,9 +2320,23 @@ function GameUnit3D({
             ref={haloMaterialRef}
             color={haloColor}
             transparent
-            opacity={visuallyDestroyed ? 0.34 : 0.82}
+            opacity={visuallyDestroyed ? 0.34 : targetIneligible ? 0.16 : lightBlueHighlight ? 0.92 : 0.82}
             emissive={haloColor}
-            emissiveIntensity={visuallyDestroyed ? 0.1 : 0.48}
+            emissiveIntensity={visuallyDestroyed ? 0.1 : targetIneligible ? 0.02 : 0.48}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+      {lightBlueHighlight && !hasPreview && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.055, 0]}>
+          <ringGeometry args={[targetRingInner, targetRingOuter, 64]} />
+          <meshStandardMaterial
+            ref={targetMaterialRef}
+            color="#7dd3fc"
+            emissive="#38bdf8"
+            emissiveIntensity={0.9}
+            transparent
+            opacity={0.72}
             depthWrite={false}
           />
         </mesh>
@@ -2233,7 +2396,7 @@ function GameUnit3D({
             <BoardModelVisual
               filename={visualModelFilename}
               tint={modelTint}
-              opacity={hasPreview ? 0.28 : 1}
+              opacity={modelOpacity}
               meshTintsEnabled={shipMeshTintsEnabled}
             />
           </Suspense>
@@ -2350,8 +2513,23 @@ function GameUnit3D({
       )}
       {!hasPreview && (
         <>
-          {/* HP bar above ship */}
-          <UnitHealthBar hpPct={hpPct} faceCamera={healthBarFacesCamera} />
+          {shipStatusDisplayMode === "bar" ? (
+            <UnitHealthBar
+              hullPct={hpPct}
+              crewPct={crewPct}
+              hasCrewTrack={hasCrewTrack}
+              faceCamera={healthBarFacesCamera}
+            />
+          ) : (
+            <UnitStatusText
+              hullPoints={unit.hullPoints}
+              hullPct={hpPct}
+              crewPoints={unit.crewPoints}
+              crewPct={crewPct}
+              hasCrewTrack={hasCrewTrack}
+              nameVisible={shipHullNamesEnabled}
+            />
+          )}
           {shipHullNamesEnabled && (
             <CameraFacingText
               position={[0, 3.7, 0]}
@@ -2812,6 +2990,8 @@ const BASE_ORIENTATION_ARCS = [
   "Boresight Aft",
 ];
 
+type TargetingPreviewState = "eligible" | "ineligible";
+
 const SIDE_ARC_COLORS: Record<"friendly" | "enemy", Record<string, string>> = {
   friendly: {
     Forward: "#34eb52",
@@ -2841,6 +3021,49 @@ function arcDisplayColor(
   if (scheme === "side" && side)
     return SIDE_ARC_COLORS[side][arc] ?? ARC_DEFS[arc]?.color ?? "#ffffff";
   return ARC_DEFS[arc]?.color ?? "#ffffff";
+}
+
+function angleDeltaRadians(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d <= -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
+function isTargetInWeaponArc(
+  attacker: {
+    hexQ: number;
+    hexR: number;
+    heading: number;
+    modelFilename: string;
+  },
+  target: { hexQ: number; hexR: number },
+  arcName: string,
+): boolean {
+  const arc = ARC_DEFS[arcName];
+  if (!arc) return false;
+  const dx = target.hexQ - attacker.hexQ;
+  const dz = target.hexR - attacker.hexR;
+  const effectiveHeading =
+    attacker.heading + (FLIP_MODELS.has(attacker.modelFilename) ? 180 : 0);
+  const headingRad = (effectiveHeading * Math.PI) / 180;
+  const localX = dx * Math.cos(headingRad) - dz * Math.sin(headingRad);
+  const localZ = dx * Math.sin(headingRad) + dz * Math.cos(headingRad);
+  if (localX === 0 && localZ === 0) return true;
+  const bearing = Math.atan2(localZ, localX);
+  return Math.abs(angleDeltaRadians(bearing, arc.centerAngle)) <= arc.halfAngle + 1e-6;
+}
+
+function weaponRangeDistanceForPreview(
+  attacker: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+  target: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+  attackerIsFighter: boolean,
+  targetIsFighter: boolean,
+): number {
+  let distance = Math.hypot(target.hexQ - attacker.hexQ, target.hexR - attacker.hexR);
+  if (attackerIsFighter) distance -= rulesBaseRadius(attacker);
+  if (targetIsFighter) distance -= rulesBaseRadius(target);
+  return Math.max(0, distance);
 }
 
 function ArcSector({
@@ -3421,7 +3644,7 @@ type AuditLogResponse<T> = {
 };
 type BattleLogEntry = {
   id: string;
-  source: "movement" | "firing" | "special";
+  source: "movement" | "firing" | "special" | "anti-fighter";
   round: number;
   phase: string;
   actorKind: string;
@@ -5544,6 +5767,25 @@ function screenToBoard(
   ];
 }
 
+function boardToScreen(
+  x: number,
+  z: number,
+  refs: React.MutableRefObject<{
+    camera: THREE.Camera;
+    gl: THREE.WebGLRenderer;
+  } | null>,
+): { x: number; y: number } | null {
+  if (!refs.current) return null;
+  const { camera, gl } = refs.current;
+  const canvas = (gl as any).domElement as HTMLCanvasElement;
+  const rect = canvas.getBoundingClientRect();
+  const projected = new THREE.Vector3(x, 2.8, z).project(camera);
+  return {
+    x: ((projected.x + 1) / 2) * rect.width,
+    y: ((1 - projected.y) / 2) * rect.height,
+  };
+}
+
 function TacticalCameraControls({
   selectedDisabled,
   activeDisabled,
@@ -5686,6 +5928,7 @@ export default function GameBoard() {
   const [uiArcColorScheme] = useUiArcColorScheme();
   const [shipMeshTintsEnabled] = useUiShipMeshTints();
   const [shipHullNamesEnabled] = useUiShipHullNames();
+  const [shipStatusDisplayMode] = useUiShipStatusDisplayMode();
   const [boardOpacity] = useUiBoardOpacity();
   const [attackPulseOpacity] = useUiAttackPhasePulseOpacity();
   const [attackPulseStrength] = useUiAttackPhasePulseStrength();
@@ -5832,6 +6075,15 @@ export default function GameBoard() {
   const [fighterBayBusyKey, setFighterBayBusyKey] = useState<string | null>(
     null,
   );
+  const [pendingFighterLaunchPlacement, setPendingFighterLaunchPlacement] =
+    useState<{
+      carrierId: number;
+      shipModelId: number;
+      itemName: string;
+      x: number;
+      z: number;
+      heading: number;
+    } | null>(null);
   // For "Concentrate All Fire-power" we need a target picker before sending.
   const [concentratePicking, setConcentratePicking] = useState(false);
 
@@ -6267,6 +6519,14 @@ export default function GameBoard() {
   >([]);
   const [movePlan, setMovePlan] = useState<MovePlan>(null);
   const [movementGesture, setMovementGesture] = useState<MovementGesture>(null);
+  const [moveConfirmPopover, setMoveConfirmPopover] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [endPhaseLaunchPrompt, setEndPhaseLaunchPrompt] = useState<{
+    key: string;
+    mode: "prompt" | "highlight" | "skipped";
+  } | null>(null);
   const commitStagedShot = useCallback(
     (shot: DiceModalState) => {
       if (firingInFlightRef.current) return;
@@ -6694,12 +6954,9 @@ export default function GameBoard() {
       : myUserId === game.opponentId
         ? "opponent"
         : null;
-  const deploymentFleetOwnerLabel = aiDeploymentControlActive
-    ? "AI opponent fleet"
-    : "your fleet";
-  const deploymentFleetOwnerDetail = aiDeploymentControlActive
-    ? "You are currently assembling and placing the AI opponent's fleet."
-    : "You are currently assembling and placing your own fleet.";
+  const deploymentBoardTitle = aiDeploymentControlActive
+    ? "Deploy AI fleet"
+    : "Deploy your fleet";
   const canDevRedeployAiOpponent =
     devAiCommanderActive && game?.status === "deploying";
   const myDeploymentLocked = Boolean(
@@ -7309,6 +7566,7 @@ export default function GameBoard() {
     if (moveConfirmInFlightRef.current || moveUnit.isPending) return;
     const u = units.find((x) => x.id === selectedUnit);
     if (!u || !movePlan) return;
+    setMoveConfirmPopover(null);
     // Recompute SA-adjusted caps here (don't read selectedSaCaps — this
     // callback's deps would otherwise need it, and we want the authoritative
     // commit path to be self-contained).
@@ -7551,6 +7809,7 @@ export default function GameBoard() {
   const cancelMovePlan = useCallback(() => {
     setMovePlan(null);
     setMovementGesture(null);
+    setMoveConfirmPopover(null);
   }, []);
 
   // Keyboard controls for movement planning:
@@ -8096,17 +8355,193 @@ export default function GameBoard() {
     },
     [unitsWithFighterFlags],
   );
-  const launchFighterFromCarrier = useCallback(
-    async (carrier: GameUnit, item: GameUnit["carriedFighters"][number]) => {
+  const canLaunchFightersFromCarrier = useCallback(
+    (carrier: GameUnit): boolean => {
+      if (!game || !isMyEndPhaseWindow) return false;
+      if (carrier.ownerId !== myUserId) return false;
+      if (carrier.isDestroyed || !unitIsCombatEffective(carrier)) return false;
+      if (
+        carrier.damageState === "adrift" ||
+        carrier.damageState === "exploding-end-of-next"
+      ) return false;
+      if (isFighterUnit(carrier)) return false;
+      if (carrier.isCrippled || carrier.isSkeletonCrew) return false;
+      if (hasLostCarrierCapability(carrier)) return false;
+      if (carrier.specialAction && carrier.specialAction !== "scramble") return false;
+      const inventory = carrier.carriedFighters ?? [];
+      if (!inventory.some((item) => item.available > 0 && !!item.shipModelId)) {
+        return false;
+      }
+      const carrierModel = getShipModelForUnit(carrier);
+      const limit = uiFighterBayOperationLimit(carrier, carrierModel);
+      const used = uiFighterBayOperationsUsedThisRound(
+        carrier,
+        game.currentRound ?? 0,
+      );
+      if (used >= limit) return false;
+      return findAutoLaunchSpot(carrier) !== null;
+    },
+    [
+      findAutoLaunchSpot,
+      game,
+      getShipModelForUnit,
+      isFighterUnit,
+      isMyEndPhaseWindow,
+      myUserId,
+    ],
+  );
+  const eligibleLaunchCarrierIds = useMemo(() => {
+    if (!isMyEndPhaseWindow) return new Set<number>();
+    return new Set(
+      units
+        .filter((unit) => canLaunchFightersFromCarrier(unit))
+        .map((unit) => unit.id),
+    );
+  }, [canLaunchFightersFromCarrier, isMyEndPhaseWindow, units]);
+  const endPhaseLaunchPromptKey =
+    game?.status === "active" && currentPhase === "end" && game.activePlayerId
+      ? `${game.id}:${game.currentRound}:${game.activePlayerId}`
+      : null;
+  useEffect(() => {
+    if (!endPhaseLaunchPromptKey || !isMyEndPhaseWindow || eligibleLaunchCarrierIds.size === 0) {
+      setEndPhaseLaunchPrompt(null);
+      return;
+    }
+    setEndPhaseLaunchPrompt((prev) =>
+      prev?.key === endPhaseLaunchPromptKey
+        ? prev
+        : { key: endPhaseLaunchPromptKey, mode: "prompt" },
+    );
+  }, [eligibleLaunchCarrierIds.size, endPhaseLaunchPromptKey, isMyEndPhaseWindow]);
+  const selectedLaunchCarrier = useMemo(() => {
+    if (
+      endPhaseLaunchPrompt?.mode !== "highlight" ||
+      selectedUnit == null ||
+      !eligibleLaunchCarrierIds.has(selectedUnit)
+    ) {
+      return null;
+    }
+    return units.find((unit) => unit.id === selectedUnit) ?? null;
+  }, [eligibleLaunchCarrierIds, endPhaseLaunchPrompt?.mode, selectedUnit, units]);
+  const selectedLaunchCarrierItems = useMemo(
+    () =>
+      (selectedLaunchCarrier?.carriedFighters ?? []).filter(
+        (item) => item.available > 0 && !!item.shipModelId,
+      ),
+    [selectedLaunchCarrier?.carriedFighters],
+  );
+  const pendingLaunchCarrier = useMemo(
+    () =>
+      pendingFighterLaunchPlacement
+        ? (units.find(
+            (unit) => unit.id === pendingFighterLaunchPlacement.carrierId,
+          ) ?? null)
+        : null,
+    [pendingFighterLaunchPlacement, units],
+  );
+  const pendingLaunchFighterModel =
+    pendingFighterLaunchPlacement?.shipModelId != null
+      ? (shipModelById[pendingFighterLaunchPlacement.shipModelId] ?? null)
+      : null;
+  const clampEndPhaseLaunchPoint = useCallback(
+    (
+      rawX: number,
+      rawZ: number,
+      carrier: GameUnit,
+      fighterModel: Pick<ShipModel, "baseRadiusInches">,
+    ): [number, number] => {
+      const radius = carriedFighterDeployCenterRadius(carrier, fighterModel);
+      let x = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, rawX));
+      let z = Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, rawZ));
+      for (let i = 0; i < 4; i += 1) {
+        const dx = x - carrier.hexQ;
+        const dz = z - carrier.hexR;
+        const dist = Math.hypot(dx, dz);
+        if (dist > radius && dist > 1e-6) {
+          x = carrier.hexQ + (dx / dist) * radius;
+          z = carrier.hexR + (dz / dist) * radius;
+        }
+        x = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, x));
+        z = Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z));
+      }
+      return [snapBoardCoord(x), snapBoardCoord(z)];
+    },
+    [],
+  );
+  const isEndPhaseLaunchPointLegal = useCallback(
+    (
+      x: number,
+      z: number,
+      carrier: GameUnit,
+      fighterModel: Pick<ShipModel, "baseRadiusInches">,
+    ): boolean => {
+      if (
+        x < -BOARD_W / 2 ||
+        x > BOARD_W / 2 ||
+        z < -BOARD_D / 2 ||
+        z > BOARD_D / 2
+      ) {
+        return false;
+      }
+      const candidate: UiBaseFootprint = {
+        id: "pending-end-phase-launch",
+        x,
+        z,
+        isFighter: true,
+        baseRadiusInches: fighterModel.baseRadiusInches,
+      };
+      const carrierFootprint: UiBaseFootprint = {
+        id: carrier.id,
+        x: carrier.hexQ,
+        z: carrier.hexR,
+        isFighter: false,
+        baseRadiusInches: carrier.baseRadiusInches,
+      };
+      if (
+        uiBaseFootprintEdgeDistance(candidate, carrierFootprint) >
+        CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES + 1e-6
+      ) {
+        return false;
+      }
+      return !unitsWithFighterFlags.some((other) => {
+        if (other.isDestroyed) return false;
+        return uiBaseFootprintsIllegallyOverlap(candidate, {
+          id: other.id,
+          x: other.hexQ,
+          z: other.hexR,
+          isFighter: other.isFighter,
+          baseRadiusInches: other.baseRadiusInches,
+        });
+      });
+    },
+    [unitsWithFighterFlags],
+  );
+  const pendingLaunchPlacementLegal =
+    !!pendingFighterLaunchPlacement &&
+    !!pendingLaunchCarrier &&
+    !!pendingLaunchFighterModel &&
+    isEndPhaseLaunchPointLegal(
+      pendingFighterLaunchPlacement.x,
+      pendingFighterLaunchPlacement.z,
+      pendingLaunchCarrier,
+      pendingLaunchFighterModel,
+    );
+  useEffect(() => {
+    if (endPhaseLaunchPrompt?.mode !== "highlight") {
+      setPendingFighterLaunchPlacement(null);
+    }
+  }, [endPhaseLaunchPrompt?.mode]);
+  const launchFighterFromCarrierAtPoint = useCallback(
+    async (
+      carrier: GameUnit,
+      item: GameUnit["carriedFighters"][number],
+      spot: { hexQ: number; hexR: number; heading: number },
+      options?: { keepCarrierSelected?: boolean },
+    ) => {
       if (!item.shipModelId) {
         setFighterBayFeedback(
           `${item.name} is not linked to a fighter model yet.`,
         );
-        return;
-      }
-      const spot = findAutoLaunchSpot(carrier);
-      if (!spot) {
-        setFighterBayFeedback("No legal launch position within 3 inches.");
         return;
       }
       const key = `launch:${carrier.id}:${item.shipModelId}`;
@@ -8127,7 +8562,12 @@ export default function GameBoard() {
           },
         );
         mergeFighterBayResultIntoGame(result);
-        if (result.fighter) setSelectedUnit(result.fighter.id);
+        setPendingFighterLaunchPlacement(null);
+        if (options?.keepCarrierSelected) {
+          setSelectedUnit(carrier.id);
+        } else if (result.fighter) {
+          setSelectedUnit(result.fighter.id);
+        }
         setFighterBayFeedback(`${item.name} launched.`);
       } catch (err) {
         setFighterBayFeedback(cleanApiErrorMessage(err, "Launch failed"));
@@ -8136,7 +8576,57 @@ export default function GameBoard() {
         void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
       }
     },
-    [findAutoLaunchSpot, gameId, mergeFighterBayResultIntoGame, qc],
+    [
+      gameId,
+      mergeFighterBayResultIntoGame,
+      qc,
+    ],
+  );
+  const launchFighterFromCarrier = useCallback(
+    async (carrier: GameUnit, item: GameUnit["carriedFighters"][number]) => {
+      const spot = findAutoLaunchSpot(carrier);
+      if (!spot) {
+        setFighterBayFeedback("No legal launch position within 3 inches.");
+        return;
+      }
+      await launchFighterFromCarrierAtPoint(carrier, item, spot);
+    },
+    [findAutoLaunchSpot, launchFighterFromCarrierAtPoint],
+  );
+  const beginFighterLaunchPlacement = useCallback(
+    (carrier: GameUnit, item: GameUnit["carriedFighters"][number]) => {
+      if (!item.shipModelId) {
+        setFighterBayFeedback(
+          `${item.name} is not linked to a fighter model yet.`,
+        );
+        return;
+      }
+      const fighterModel = shipModelById[item.shipModelId];
+      if (!fighterModel) {
+        setFighterBayFeedback(`${item.name} fighter model is not loaded yet.`);
+        return;
+      }
+      const initial = findAutoLaunchSpot(carrier);
+      const [x, z] = initial
+        ? [initial.hexQ, initial.hexR]
+        : clampEndPhaseLaunchPoint(
+            carrier.hexQ,
+            carrier.hexR + carriedFighterDeployCenterRadius(carrier, fighterModel),
+            carrier,
+            fighterModel,
+          );
+      setPendingFighterLaunchPlacement({
+        carrierId: carrier.id,
+        shipModelId: item.shipModelId,
+        itemName: item.name,
+        x,
+        z,
+        heading: initial?.heading ?? carrier.heading,
+      });
+      setSelectedUnit(carrier.id);
+      setFighterBayFeedback(`Place ${item.name} within 3 inches.`);
+    },
+    [clampEndPhaseLaunchPoint, findAutoLaunchSpot, shipModelById],
   );
   const recoverFighterToCarrier = useCallback(
     async (fighter: GameUnit, carrier: GameUnit) => {
@@ -8291,7 +8781,7 @@ export default function GameBoard() {
       customFetch<AttackAuditLogResponse>(
         `/api/games/${gameId}/attack-audit-log?limit=80`,
       ),
-    enabled: !!gameId && game?.status === "active",
+    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
     refetchInterval:
       game?.status === "active" && !pausePollingRef.current
         ? POLL_INTERVAL_MS
@@ -8305,7 +8795,7 @@ export default function GameBoard() {
       customFetch<AuditLogResponse<MovementAuditLogEntry>>(
         `/api/games/${gameId}/movement-audit-log?limit=80`,
       ),
-    enabled: !!gameId && game?.status === "active",
+    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
     refetchInterval:
       game?.status === "active" && !pausePollingRef.current
         ? POLL_INTERVAL_MS
@@ -8319,7 +8809,7 @@ export default function GameBoard() {
       customFetch<AuditLogResponse<SpecialActionAuditLogEntry>>(
         `/api/games/${gameId}/special-action-audit-log?limit=80`,
       ),
-    enabled: !!gameId && game?.status === "active",
+    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
     refetchInterval:
       game?.status === "active" && !pausePollingRef.current
         ? POLL_INTERVAL_MS
@@ -8339,7 +8829,10 @@ export default function GameBoard() {
       })),
       ...(specialActionAuditData?.logs ?? []).map((log) => ({
         id: `special-${log.id}`,
-        source: "special" as const,
+        source:
+          log.action === "anti-fighter"
+            ? ("anti-fighter" as const)
+            : ("special" as const),
         round: log.round,
         phase: log.phase,
         actorKind: log.actorKind,
@@ -8392,6 +8885,36 @@ export default function GameBoard() {
   const activeUnitData = hasActiveUnit
     ? (units.find((u) => u.id === activeUnitId) ?? null)
     : null;
+  const activeTargetingPreview = useMemo(() => {
+    if (
+      !activeUnitReadyForActions ||
+      currentPhase !== "firing" ||
+      activeUnitId === null
+    ) {
+      return null;
+    }
+    const attacker = unitsWithFighterFlags.find((u) => u.id === activeUnitId);
+    if (!attacker || attacker.ownerId !== myUserId || attacker.isDestroyed) {
+      return null;
+    }
+    const weapon =
+      splitFirePlan?.attackerUnitId === attacker.id
+        ? splitFirePlan.weapon
+        : firingWeaponPicking !== null
+          ? getWeaponsForUnit(attacker).find((w) => w.id === firingWeaponPicking)
+          : undefined;
+    if (!weapon) return null;
+    return { attacker, weapon };
+  }, [
+    activeUnitId,
+    activeUnitReadyForActions,
+    currentPhase,
+    firingWeaponPicking,
+    getWeaponsForUnit,
+    myUserId,
+    splitFirePlan,
+    unitsWithFighterFlags,
+  ]);
   const minMoveGate = useMemo(() => {
     if (!activeUnitData || currentPhase !== "movement") {
       return { blocked: false, required: 0, moved: 0 };
@@ -8447,6 +8970,15 @@ export default function GameBoard() {
             ) > 0.001 ||
             headingDeltaDegrees(selectedUnitData.heading, movePlan.heading) > 0
           : false);
+  const canUsePcMoveConfirmPopover =
+    !isTouchInput &&
+    !mobileGameChrome &&
+    currentPhase === "movement" &&
+    isSelectedUnitActive &&
+    canConfirmMovePlan;
+  useEffect(() => {
+    if (!canUsePcMoveConfirmPopover) setMoveConfirmPopover(null);
+  }, [canUsePcMoveConfirmPopover]);
   const tabletMoveHint = useMemo(() => {
     if (!selectedMovementUi) return "";
     if (activateUnit.isPending) return "Activating ship...";
@@ -8781,6 +9313,12 @@ export default function GameBoard() {
   const handleUnitClick = (unitId: number) => {
     const unit = units.find((u) => u.id === unitId);
     if (!unit || unit.isDestroyed) return;
+    if (pendingFighterLaunchPlacement) {
+      setFighterBayFeedback(
+        "Tap a legal board point within the launch ring, or cancel placement.",
+      );
+      return;
+    }
 
     // ── MOVEMENT-PHASE: Concentrate All Fire-power target picker ──
     // Clicking an enemy ship while picking a target submits the action.
@@ -9618,7 +10156,25 @@ export default function GameBoard() {
             isTouchInput ? "min-h-[360px]" : ""
           }`}
           data-input={inputProfile.input}
+          onContextMenu={(e) => {
+            if (!canUsePcMoveConfirmPopover) return;
+            e.preventDefault();
+            const start = boardPointerDownRef.current;
+            if (start) {
+              const dx = e.clientX - start.x;
+              const dy = e.clientY - start.y;
+              if (dx * dx + dy * dy > 100) return;
+            }
+            const rect = e.currentTarget.getBoundingClientRect();
+            const width = 92;
+            const height = 48;
+            setMoveConfirmPopover({
+              x: Math.max(8, Math.min(rect.width - width - 8, e.clientX - rect.left)),
+              y: Math.max(8, Math.min(rect.height - height - 8, e.clientY - rect.top)),
+            });
+          }}
           onPointerDown={(e) => {
+            if (e.button !== 2) setMoveConfirmPopover(null);
             boardPointerDownRef.current = {
               x: e.clientX,
               y: e.clientY,
@@ -9713,6 +10269,26 @@ export default function GameBoard() {
                   return unit;
                 });
               });
+              return;
+            }
+            if (
+              pendingFighterLaunchPlacement &&
+              pendingLaunchCarrier &&
+              pendingLaunchFighterModel &&
+              !movementGesture
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const [rx, rz] = pos;
+              const [x, z] = clampEndPhaseLaunchPoint(
+                rx,
+                rz,
+                pendingLaunchCarrier,
+                pendingLaunchFighterModel,
+              );
+              setPendingFighterLaunchPlacement((prev) =>
+                prev ? { ...prev, x, z } : prev,
+              );
               return;
             }
             if (
@@ -9827,6 +10403,70 @@ export default function GameBoard() {
             }
           }}
           onPointerUp={(e) => {
+            if (
+              pendingFighterLaunchPlacement &&
+              pendingLaunchCarrier &&
+              pendingLaunchFighterModel
+            ) {
+              const target = e.target as HTMLElement | null;
+              const boardTap = target?.tagName?.toLowerCase() === "canvas";
+              if (boardTap) {
+                const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+                if (pos) {
+                  const [rx, rz] = pos;
+                  const [x, z] = clampEndPhaseLaunchPoint(
+                    rx,
+                    rz,
+                    pendingLaunchCarrier,
+                    pendingLaunchFighterModel,
+                  );
+                  setPendingFighterLaunchPlacement((prev) =>
+                    prev ? { ...prev, x, z } : prev,
+                  );
+                  const legal = isEndPhaseLaunchPointLegal(
+                    x,
+                    z,
+                    pendingLaunchCarrier,
+                    pendingLaunchFighterModel,
+                  );
+                  if (!legal) {
+                    setFighterBayFeedback(
+                      "Choose a legal launch point within 3 inches that does not overlap another base.",
+                    );
+                    boardPointerDownRef.current = null;
+                    return;
+                  }
+                  const item = (
+                    pendingLaunchCarrier.carriedFighters ?? []
+                  ).find(
+                    (candidate) =>
+                      candidate.shipModelId ===
+                        pendingFighterLaunchPlacement.shipModelId &&
+                      candidate.available > 0,
+                  );
+                  if (!item) {
+                    setFighterBayFeedback(
+                      `${pendingFighterLaunchPlacement.itemName} is no longer available to launch.`,
+                    );
+                    setPendingFighterLaunchPlacement(null);
+                    boardPointerDownRef.current = null;
+                    return;
+                  }
+                  void launchFighterFromCarrierAtPoint(
+                    pendingLaunchCarrier,
+                    item,
+                    {
+                      hexQ: x,
+                      hexR: z,
+                      heading: pendingFighterLaunchPlacement.heading,
+                    },
+                    { keepCarrierSelected: true },
+                  );
+                  boardPointerDownRef.current = null;
+                  return;
+                }
+              }
+            }
             if (
               tapPlacementShip &&
               game.status === "deploying" &&
@@ -9999,6 +10639,27 @@ export default function GameBoard() {
                 data-testid="button-cancel-tap-placement"
               >
                 ×
+              </button>
+            </div>
+          )}
+          {pendingFighterLaunchPlacement && (
+            <div className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded border border-sky-300/55 bg-black/88 px-2 py-1.5 shadow-lg shadow-sky-500/15 backdrop-blur-sm">
+              <span className="min-w-0 truncate text-[10px] font-mono uppercase tracking-wider text-sky-100">
+                Place launch - {pendingFighterLaunchPlacement.itemName}
+              </span>
+              <span
+                className={`shrink-0 text-[9px] font-mono uppercase tracking-widest ${pendingLaunchPlacementLegal ? "text-emerald-300" : "text-red-300"}`}
+              >
+                {pendingLaunchPlacementLegal ? "legal" : "illegal"}
+              </span>
+              <button
+                type="button"
+                aria-label="Cancel fighter launch placement"
+                onClick={() => setPendingFighterLaunchPlacement(null)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
+                data-testid="button-cancel-fighter-launch-placement"
+              >
+                x
               </button>
             </div>
           )}
@@ -10260,6 +10921,30 @@ export default function GameBoard() {
                   carrier={carriedFighterDeploymentGuideCarrier}
                 />
               )}
+            {pendingFighterLaunchPlacement &&
+              pendingLaunchCarrier &&
+              pendingLaunchFighterModel && (
+                <>
+                  <CarriedFighterDeploymentGuide
+                    carrier={{
+                      x: pendingLaunchCarrier.hexQ,
+                      z: pendingLaunchCarrier.hexR,
+                    }}
+                    radius={carriedFighterDeployCenterRadius(
+                      pendingLaunchCarrier,
+                      pendingLaunchFighterModel,
+                    )}
+                  />
+                  <EndPhaseFighterLaunchPreview
+                    fighterModel={pendingLaunchFighterModel}
+                    x={pendingFighterLaunchPlacement.x}
+                    z={pendingFighterLaunchPlacement.z}
+                    heading={pendingFighterLaunchPlacement.heading}
+                    legal={pendingLaunchPlacementLegal}
+                    shipMeshTintsEnabled={shipMeshTintsEnabled}
+                  />
+                </>
+              )}
             {units.map((unit) => {
               const weaponsForUnit = getWeaponsForUnit(unit);
               const phaseViable =
@@ -10295,6 +10980,31 @@ export default function GameBoard() {
                         (isFighterUnit(unit) ? rulesBaseRadius(unit) : 0),
                     }))
                   : [];
+              let targetingPreview: TargetingPreviewState | null = null;
+              if (
+                activeTargetingPreview &&
+                unit.id !== activeTargetingPreview.attacker.id &&
+                unit.ownerId !== activeTargetingPreview.attacker.ownerId &&
+                unitIsCombatEffective(unit)
+              ) {
+                const targetIsFighter = isFighterUnit(unit);
+                const distance = weaponRangeDistanceForPreview(
+                  activeTargetingPreview.attacker,
+                  unit,
+                  Boolean(activeTargetingPreview.attacker.isFighter),
+                  targetIsFighter,
+                );
+                const inRange = distance <= activeTargetingPreview.weapon.range + 1e-6;
+                const inArc = isTargetInWeaponArc(
+                  activeTargetingPreview.attacker,
+                  unit,
+                  activeTargetingPreview.weapon.arc,
+                );
+                targetingPreview =
+                  inRange && inArc && !activeFighterLockedInDogfight
+                    ? "eligible"
+                    : "ineligible";
+              }
               return (
                 <GameUnit3D
                   key={unit.id}
@@ -10313,11 +11023,17 @@ export default function GameBoard() {
                   phaseViable={phaseViable}
                   firingArc={firingArc}
                   projectedWeaponArcs={projectedWeaponArcs}
+                  targetingPreview={targetingPreview}
                   arcColorScheme={uiArcColorScheme}
                   healthBarFacesCamera={uiControlMode === "mode-f"}
                   shipMeshTintsEnabled={shipMeshTintsEnabled}
                   shipHullNamesEnabled={shipHullNamesEnabled}
+                  shipStatusDisplayMode={shipStatusDisplayMode}
                   isFighter={isFighterUnit(unit)}
+                  launchHighlight={
+                    endPhaseLaunchPrompt?.mode === "highlight" &&
+                    eligibleLaunchCarrierIds.has(unit.id)
+                  }
                 />
               );
             })}
@@ -10552,6 +11268,190 @@ export default function GameBoard() {
               />
             </EffectComposer>
           </Canvas>
+          {endPhaseLaunchPrompt?.mode === "prompt" &&
+            eligibleLaunchCarrierIds.size > 0 && (
+              <div
+                className="pointer-events-auto absolute left-1/2 top-1/2 z-40 w-[min(18rem,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded border border-sky-300/45 bg-black/88 p-4 text-center shadow-2xl shadow-sky-500/20 backdrop-blur-sm"
+                data-testid="end-phase-launch-fighters-prompt"
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="font-mono text-sm font-semibold uppercase tracking-[0.2em] text-sky-100">
+                  Launch fighters?
+                </div>
+                <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-sky-200/70">
+                  {eligibleLaunchCarrierIds.size} eligible carrier
+                  {eligibleLaunchCarrierIds.size === 1 ? "" : "s"}
+                </div>
+                <div className="mt-4 flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    title="Show eligible carriers"
+                    aria-label="Show eligible carriers"
+                    className="flex h-10 w-10 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_16px_rgba(52,211,153,0.24)] transition-colors hover:bg-emerald-400/25"
+                    data-testid="button-show-launch-fighter-carriers"
+                    onClick={() =>
+                      setEndPhaseLaunchPrompt((prev) =>
+                        prev ? { ...prev, mode: "highlight" } : prev,
+                      )
+                    }
+                  >
+                    <Check className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Skip fighter launches"
+                    aria-label="Skip fighter launches"
+                    className="flex h-10 w-10 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_14px_rgba(248,113,113,0.2)] transition-colors hover:bg-red-400/25"
+                    data-testid="button-skip-launch-fighters"
+                    onClick={() =>
+                      setEndPhaseLaunchPrompt((prev) =>
+                        prev ? { ...prev, mode: "skipped" } : prev,
+                      )
+                    }
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          {selectedLaunchCarrier &&
+            selectedLaunchCarrierItems.length > 0 &&
+            !pendingFighterLaunchPlacement &&
+            (() => {
+              const canvas = threeRef.current
+                ? ((threeRef.current.gl as any).domElement as HTMLCanvasElement)
+                : null;
+              const rect = canvas?.getBoundingClientRect();
+              const projected = boardToScreen(
+                selectedLaunchCarrier.hexQ,
+                selectedLaunchCarrier.hexR,
+                threeRef,
+              );
+              const width = 260;
+              const height = 72 + selectedLaunchCarrierItems.length * 38;
+              const left = rect
+                ? Math.max(
+                    8,
+                    Math.min(
+                      rect.width - width - 8,
+                      (projected?.x ?? rect.width / 2) + 18,
+                    ),
+                  )
+                : 16;
+              const top = rect
+                ? Math.max(
+                    8,
+                    Math.min(
+                      rect.height - height - 8,
+                      (projected?.y ?? rect.height / 2) - 12,
+                    ),
+                  )
+                : 16;
+              return (
+                <div
+                  className="pointer-events-auto absolute z-40 w-[260px] rounded border border-sky-300/45 bg-black/88 p-2 shadow-2xl shadow-sky-500/20 backdrop-blur-sm"
+                  style={{ left, top }}
+                  data-testid="end-phase-launch-carrier-menu"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onPointerUp={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                >
+                  <div className="space-y-1.5">
+                    {selectedLaunchCarrierItems.map((item) => {
+                      const key = `launch:${selectedLaunchCarrier.id}:${item.shipModelId ?? item.name}`;
+                      const disabled =
+                        fighterBayBusyKey !== null ||
+                        !canLaunchFightersFromCarrier(selectedLaunchCarrier);
+                      const beginPlacement = () => {
+                        if (disabled) return;
+                        beginFighterLaunchPlacement(selectedLaunchCarrier, item);
+                      };
+                      return (
+                        <div
+                          key={`${item.name}-${item.shipModelId ?? "unlinked"}`}
+                          className="flex items-center justify-between gap-2 rounded border border-sky-300/15 bg-sky-300/5 px-2 py-1.5"
+                          onDoubleClick={beginPlacement}
+                          title="Double-click to place"
+                        >
+                          <div className="min-w-0 font-mono">
+                            <div className="truncate text-[11px] font-semibold text-sky-100">
+                              {item.name}
+                            </div>
+                            <div className="text-[9px] uppercase tracking-widest text-sky-200/60">
+                              {item.available}/{item.total} available
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="h-7 shrink-0 rounded border border-emerald-300/60 bg-emerald-400/15 px-2 font-mono text-[9px] font-bold uppercase tracking-widest text-emerald-100 transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                            disabled={disabled}
+                            onClick={beginPlacement}
+                            data-testid="button-launch-carrier-fighter"
+                          >
+                            {fighterBayBusyKey === key ? "..." : "Place"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded border border-red-300/60 bg-red-400/10 font-mono text-[10px] font-bold uppercase tracking-widest text-red-100 transition-colors hover:bg-red-400/20"
+                    data-testid="button-end-fighter-launches"
+                    onClick={() =>
+                      setEndPhaseLaunchPrompt((prev) =>
+                        prev ? { ...prev, mode: "skipped" } : prev,
+                      )
+                    }
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    End launches
+                  </button>
+                </div>
+              );
+            })()}
+          {moveConfirmPopover && canUsePcMoveConfirmPopover && (
+            <div
+              className="absolute z-40 flex items-center gap-1 rounded border border-cyan-300/50 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
+              style={{
+                left: moveConfirmPopover.x,
+                top: moveConfirmPopover.y,
+              }}
+              data-testid="pc-move-confirm-popover"
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <button
+                type="button"
+                title="Confirm move"
+                aria-label="Confirm move"
+                disabled={!canConfirmMovePlan}
+                onClick={confirmMovePlan}
+                className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                data-testid="button-pc-confirm-move-plan"
+              >
+                <Check className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                title="Cancel move"
+                aria-label="Cancel move"
+                onClick={cancelMovePlan}
+                className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25"
+                data-testid="button-pc-cancel-move-plan"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          )}
           {touchGameControls &&
             currentPhase === "movement" &&
             isSelectedUnitActive &&
@@ -10661,8 +11561,16 @@ export default function GameBoard() {
               remainingTicks={stagedAllocation.remainingTicks}
             />
           )}
+          {game.status === "deploying" && !myDeploymentLocked && (
+            <div
+              className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 border border-primary/50 bg-black/80 px-4 py-2 text-center font-mono text-sm font-bold uppercase tracking-[0.24em] text-primary shadow-lg shadow-black/60 backdrop-blur-sm"
+              data-testid="hud-deployment-owner"
+            >
+              {deploymentBoardTitle}
+            </div>
+          )}
           {/* Status overlay */}
-          <div className="absolute top-3 left-3 flex flex-col gap-1.5 pointer-events-none">
+          <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 pointer-events-none">
             <div
               className={`px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border ${
                 game.status === "active"
@@ -10805,31 +11713,12 @@ export default function GameBoard() {
           {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
           <AiDiagnosticsPanel
             game={game}
-            onRunStep={() =>
-              runAiStep.mutate(
-                { gameId },
-                {
-                  onSettled: () =>
-                    qc.invalidateQueries({
-                      queryKey: getGetGameQueryKey(gameId),
-                    }),
-                },
-              )
-            }
-            onRunUntilHuman={runAiUntilHuman}
             onToggleAuto={() => {
               setAutoAiError(null);
               setAiAutoRunEnabled((enabled) => !enabled);
             }}
             isRunning={runAiStep.isPending}
-            isAutoRunning={autoAiRunning}
             autoEnabled={aiAutoRunEnabled}
-            runError={
-              autoAiError ??
-              (runAiStep.isError
-                ? (runAiStep.error as Error).message || "AI step failed"
-                : null)
-            }
           />
 
           {mobileGameChrome && (
@@ -10992,15 +11881,7 @@ export default function GameBoard() {
           {game.status === "deploying" && !myDeploymentLocked && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">
-                {aiDeploymentControlActive
-                  ? "Deploy AI Opponent Fleet"
-                  : "Deploy Your Fleet"}
-              </p>
-              <p
-                className="rounded border border-primary/25 bg-primary/5 px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-primary"
-                data-testid="text-deployment-fleet-owner"
-              >
-                Assembling {deploymentFleetOwnerLabel}
+                Fleet Yards
               </p>
               {!aiDeploymentControlActive &&
                 ((mySide === "challenger" && game.opponentDeployed) ||
@@ -11018,8 +11899,7 @@ export default function GameBoard() {
               >
                 {aiDeploymentControlActive
                   ? "Place the AI fleet on the opponent edge, then commit deployment to begin the engagement."
-                  : "Drag ships from the roster below straight onto the board, or quick-load one of your saved fleets."}{" "}
-                {deploymentFleetOwnerDetail}
+                  : "Drag ships from the roster below straight onto the board, or quick-load one of your saved fleets."}
                 {fleets && fleets.length === 0 && (
                   <>
                     {" "}
@@ -11898,12 +12778,13 @@ export default function GameBoard() {
                           <div className="space-y-1.5">
                             {selectedUnitData.carriedFighters.map((item) => {
                               const key = `launch:${selectedUnitData.id}:${item.shipModelId ?? item.name}`;
+                              const carrierCanLaunch =
+                                canLaunchFightersFromCarrier(selectedUnitData);
                               const disabled =
-                                !isMyEndPhaseWindow ||
+                                !carrierCanLaunch ||
                                 fighterBayBusyKey !== null ||
                                 item.available <= 0 ||
-                                !item.shipModelId ||
-                                !!selectedUnitData.specialAction;
+                                !item.shipModelId;
                               return (
                                 <div
                                   key={`${item.name}-${item.shipModelId ?? "unlinked"}`}

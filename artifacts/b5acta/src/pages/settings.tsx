@@ -26,10 +26,12 @@ import {
   useUiIsoCameraControls,
   useUiShipHullNames,
   useUiShipMeshTints,
+  useUiShipStatusDisplayMode,
   useUiWeaponArcProjection,
   type UiArcColorScheme,
   type UiBoardBackgroundMode,
   type UiControlMode,
+  type UiShipStatusDisplayMode,
 } from "@/hooks/use-ui-settings";
 
 const CONTROL_MODES: Array<{
@@ -130,11 +132,30 @@ const BOARD_BACKGROUND_MODES: Array<{
   },
 ];
 
+const SHIP_STATUS_DISPLAY_MODES: Array<{
+  id: UiShipStatusDisplayMode;
+  name: string;
+  summary: string;
+}> = [
+  {
+    id: "bar",
+    name: "Split bars",
+    summary: "Show hull and crew as the current colored status bar.",
+  },
+  {
+    id: "text",
+    name: "Text values",
+    summary: "Show Hull x | Crew x below the ship name with colored numbers.",
+  },
+];
+
 export default function Settings() {
   const [controlMode, setControlMode] = useUiControlMode();
   const [arcColorScheme, setArcColorScheme] = useUiArcColorScheme();
   const [shipMeshTintsEnabled, setShipMeshTintsEnabled] = useUiShipMeshTints();
   const [shipHullNamesEnabled, setShipHullNamesEnabled] = useUiShipHullNames();
+  const [shipStatusDisplayMode, setShipStatusDisplayMode] =
+    useUiShipStatusDisplayMode();
   const [boardOpacity, setBoardOpacity] = useUiBoardOpacity();
   const [attackPulseOpacity, setAttackPulseOpacity] =
     useUiAttackPhasePulseOpacity();
@@ -460,6 +481,44 @@ export default function Settings() {
                 data-testid="switch-hide-ship-hull-names"
               />
             </div>
+          </div>
+          <div className="mt-4 border-t border-border pt-4">
+            <Label className="font-mono text-sm font-bold uppercase tracking-widest">
+              Ship status display
+            </Label>
+            <RadioGroup
+              value={shipStatusDisplayMode}
+              onValueChange={(value) =>
+                setShipStatusDisplayMode(value as UiShipStatusDisplayMode)
+              }
+              className="mt-3 grid gap-2 md:grid-cols-2"
+              data-testid="ship-status-display-mode-radio-group"
+            >
+              {SHIP_STATUS_DISPLAY_MODES.map((mode) => (
+                <Label
+                  key={mode.id}
+                  htmlFor={`ship-status-${mode.id}`}
+                  className={`block cursor-pointer rounded border p-3 transition-colors ${
+                    shipStatusDisplayMode === mode.id
+                      ? "border-primary bg-primary/10 text-foreground"
+                      : "border-border bg-black/20 text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem
+                      id={`ship-status-${mode.id}`}
+                      value={mode.id}
+                    />
+                    <span className="font-mono text-xs font-bold uppercase tracking-widest">
+                      {mode.name}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {mode.summary}
+                  </p>
+                </Label>
+              ))}
+            </RadioGroup>
           </div>
         </div>
 
