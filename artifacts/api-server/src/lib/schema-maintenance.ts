@@ -16,6 +16,10 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Avioki Heavy Cruiser", priority: "battle" },
   { name: "G'Quan Cruiser", priority: "battle" },
   { name: "G'Quan Heavy Cruiser", priority: "battle" },
+  { name: "T'Loth Assault Cruiser", priority: "raid" },
+  { name: "Tloth Assault Cruiser", priority: "raid" },
+  { name: "Var'Nic Long Range Destroyer", priority: "raid" },
+  { name: "Varnic Long Range Destroyer", priority: "raid" },
   { name: "Omega Destroyer", priority: "battle" },
   { name: "Omega Class Destroyer", priority: "battle" },
   { name: "Primus Battle Cruiser", priority: "battle" },
@@ -47,6 +51,7 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Sagittarius Missile Cruiser", priority: "skirmish" },
   { name: "Nial Fighter Flight", priority: "patrol" },
   { name: "Sentri Flight", priority: "patrol" },
+  { name: "Frazi Flight", priority: "patrol" },
   { name: "Tiger Starfury Flight", priority: "patrol" },
   { name: "Flyer Flight", priority: "patrol" },
 ];
@@ -335,6 +340,96 @@ const GQUAN_WEAPONS = [
     arc: "Starboard",
     range: 8,
     attackDice: 6,
+    traits: "",
+  },
+];
+
+const TLOTH_WEAPONS = [
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Forward",
+    range: 10,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Port",
+    range: 10,
+    attackDice: 6,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Starboard",
+    range: 10,
+    attackDice: 6,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 4,
+    traits: "",
+  },
+];
+
+const VARNIC_WEAPONS = [
+  {
+    name: "Medium Laser Cannon",
+    arc: "Boresight Forward",
+    range: 20,
+    attackDice: 4,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Ion Torpedo",
+    arc: "Forward",
+    range: 30,
+    attackDice: 2,
+    traits: "Precise; Super Armor Piercing",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 4,
     traits: "",
   },
 ];
@@ -1321,6 +1416,29 @@ const FIGHTER_FLIGHTS = [
       },
     ],
   },
+  {
+    name: "Frazi Flight",
+    filename: "frazi.glb",
+    faction: "Narn Regime",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 4,
+    speed: 10,
+    traits: "Dodge 3+; Dogfight +1; Fighter; Super Maneuverable",
+    weaponRange: 2,
+    weaponDamage: 2,
+    description: "Narn Regime Frazi fighter flight",
+    aliases: ["Frazi Flight", "Frazi Fighter Flight", "Frazi Wing"],
+    weapons: [
+      {
+        name: "Light Pulse Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "",
+      },
+    ],
+  },
 ];
 
 type CsvShipSeed = {
@@ -1767,6 +1885,14 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       ALTER TABLE games
       ADD COLUMN IF NOT EXISTS ai_state jsonb NOT NULL DEFAULT '{}'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS archived_at timestamp with time zone
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS archive_expires_at timestamp with time zone
     `);
     await pool.query(`
       ALTER TABLE game_units
@@ -2389,6 +2515,142 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     const gquanId = gquan.rows[0]?.id;
     if (gquanId) {
       await syncWeaponsForShipModel(gquanId, GQUAN_WEAPONS);
+    }
+
+    const tloth = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'T''Loth Assault Cruiser',
+            filename = 'tloth.glb',
+            faction = 'Narn Regime',
+            point_cost = 150,
+            priority_level = 'raid',
+            ship_class = 'Assault Cruiser',
+            hull = 6,
+            troops = 12,
+            damage = 48,
+            damage_threshold = 14,
+            hull_rating = 6,
+            crew = 52,
+            crew_threshold = 14,
+            speed = 6,
+            turns = 1,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Anti-Fighter 2; Jump Engine; Lumbering; Shuttles 2',
+            small_craft = 'Frazi (2)',
+            base_radius_inches = $1,
+            hull_points = 48,
+            weapon_range = 12,
+            weapon_damage = 6,
+            description = 'Narn Regime T''Loth assault cruiser, a rugged troop-carrier with plasma cannon and pulse batteries'
+          WHERE lower(filename) IN ('tloth.glb', 't-loth.glb', 't_loth.glb')
+            OR lower(name) IN ('t''loth', 'tloth', 't''loth assault cruiser', 'tloth assault cruiser')
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'T''Loth Assault Cruiser', 'tloth.glb', 'Narn Regime', 150,
+            'raid', 'Assault Cruiser', 6, 12, 48, 14, 6, 52, 14, 6, 1, 45,
+            'Regular', 0, 0, 0,
+            'Anti-Fighter 2; Jump Engine; Lumbering; Shuttles 2',
+            'Frazi (2)', 48,
+            $1, 12, 6,
+            'Narn Regime T''Loth assault cruiser, a rugged troop-carrier with plasma cannon and pulse batteries'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+
+    const tlothId = tloth.rows[0]?.id;
+    if (tlothId) {
+      await syncWeaponsForShipModel(tlothId, TLOTH_WEAPONS);
+    }
+
+    const varnic = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'Var''Nic Long Range Destroyer',
+            filename = 'varnic.glb',
+            faction = 'Narn Regime',
+            point_cost = 200,
+            priority_level = 'raid',
+            ship_class = 'Long Range Destroyer',
+            hull = 6,
+            troops = 3,
+            damage = 30,
+            damage_threshold = 8,
+            hull_rating = 6,
+            crew = 42,
+            crew_threshold = 11,
+            speed = 9,
+            turns = 2,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Jump Engine',
+            small_craft = 'Frazi Flight (1)',
+            base_radius_inches = $1,
+            hull_points = 30,
+            weapon_range = 30,
+            weapon_damage = 6,
+            description = 'Narn Regime Var''Nic long range destroyer, a fast hunter-killer built around laser, torpedo, and pulse fire'
+          WHERE lower(filename) = 'varnic.glb'
+            OR lower(name) IN ('var''nic', 'varnic', 'var''nic long range destroyer', 'varnic long range destroyer')
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'Var''Nic Long Range Destroyer', 'varnic.glb', 'Narn Regime', 200,
+            'raid', 'Long Range Destroyer', 6, 3, 30, 8, 6, 42, 11, 9, 2, 45,
+            'Regular', 0, 0, 0,
+            'Jump Engine',
+            'Frazi Flight (1)', 30,
+            $1, 30, 6,
+            'Narn Regime Var''Nic long range destroyer, a fast hunter-killer built around laser, torpedo, and pulse fire'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+
+    const varnicId = varnic.rows[0]?.id;
+    if (varnicId) {
+      await syncWeaponsForShipModel(varnicId, VARNIC_WEAPONS);
     }
 
     const avenger = await pool.query<{ id: number }>(

@@ -1262,6 +1262,8 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "primus.glb",
   "whitestar.glb",
   "avenger.glb",
+  "tloth.glb",
+  "frazi.glb",
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.25,
@@ -1286,6 +1288,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "nial.glb": 0.165,
   "flyer.glb": 0.165,
   "sentri.glb": 0.165,
+  "frazi.glb": 0.165,
 };
 const FIGHTER_SQUADRON_MODELS = new Set([
   "aurora.glb",
@@ -1294,6 +1297,7 @@ const FIGHTER_SQUADRON_MODELS = new Set([
   "nial.glb",
   "flyer.glb",
   "sentri.glb",
+  "frazi.glb",
 ]);
 const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   aurora: "aurora.glb",
@@ -1302,9 +1306,10 @@ const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   nial: "nial.glb",
   flyer: "flyer.glb",
   sentri: "sentri.glb",
+  frazi: "frazi.glb",
 };
 const FIGHTER_IDENTITY_PATTERN =
-  /\b(?:aurora|thunderbolt|tiger|nial|flyer|sentri)\b/i;
+  /\b(?:aurora|thunderbolt|tiger|nial|flyer|sentri|frazi)\b/i;
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -1647,6 +1652,10 @@ const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "sentri fighter": "Sentri Flight",
   "sentri fighter flight": "Sentri Flight",
   "sentri flight": "Sentri Flight",
+  frazi: "Frazi Flight",
+  "frazi fighter": "Frazi Flight",
+  "frazi fighter flight": "Frazi Flight",
+  "frazi flight": "Frazi Flight",
 };
 
 function normalizeSmallCraftKey(value: string): string {
