@@ -2748,7 +2748,7 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
       moved,
       heading: finalHeading,
       headingLabel: selectedPlan?.headingLabel ?? null,
-      passOverAllowed: false,
+      passOverAllowed: true,
       scoredAgainstTargetId: nearestFootprint?.id ?? null,
       incomingThreat: Number((selectedPlan?.incomingThreat ?? 0).toFixed(2)),
       ownThreat: Number((selectedPlan?.ownThreat ?? 0).toFixed(2)),
@@ -5623,7 +5623,83 @@ router.post("/games/:gameId/decline", requireAuth, async (req, res): Promise<voi
   }
 });
 
-// Surrender: a player concedes an active (or still-deploying) game. Per the
+// Abandon: pre-start exit that never records a battle result. If the challenger
+// abandons, the setup is closed as declined. If an opponent abandons a claimed
+// open game during deployment, remove their deployment and return the game to
+// open so another commander can join.
+router.post("/games/:gameId/abandon", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  try {
+    const updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.challengerId !== userId && game.opponentId !== userId) {
+        throw Object.assign(new Error("Game not found"), { status: 404 });
+      }
+      if (game.status !== "open" && game.status !== "pending" && game.status !== "deploying") {
+        throw Object.assign(new Error(`Cannot abandon from status '${game.status}'`), { status: 400 });
+      }
+
+      const unitRows = await tx.select({ id: gameUnitsTable.id }).from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, game.id),
+        eq(gameUnitsTable.ownerId, userId),
+      ));
+      if (unitRows.length > 0) {
+        await tx.delete(unitCriticalEffectsTable)
+          .where(inArray(unitCriticalEffectsTable.gameUnitId, unitRows.map(u => u.id)));
+        await tx.delete(gameUnitsTable).where(and(
+          eq(gameUnitsTable.gameId, game.id),
+          eq(gameUnitsTable.ownerId, userId),
+        ));
+      }
+
+      if (userId === game.challengerId) {
+        const [row] = await tx.update(gamesTable).set({
+          status: "declined",
+          activePlayerId: null,
+          activeUnitId: null,
+          challengerDeployed: false,
+        }).where(eq(gamesTable.id, game.id)).returning();
+        return row;
+      }
+
+      if (game.status === "deploying") {
+        const [row] = await tx.update(gamesTable).set({
+          status: "open",
+          opponentId: null,
+          opponentName: null,
+          opponentKind: "human",
+          opponentFleetId: null,
+          opponentDeployed: false,
+          activePlayerId: null,
+          activeUnitId: null,
+        }).where(eq(gamesTable.id, game.id)).returning();
+        return row;
+      }
+
+      const [row] = await tx.update(gamesTable).set({
+        status: "declined",
+        opponentDeployed: false,
+        activePlayerId: null,
+        activeUnitId: null,
+      }).where(eq(gamesTable.id, game.id)).returning();
+      return row;
+    });
+    res.json(toGameDto(updated));
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+// Surrender: a player concedes an active game. Per the
 // user's product spec, surrender both ends the match AND wipes the record so
 // the game vanishes from Active Operations and never shows up in Recent
 // Engagements. We delete child rows manually because the schema's FKs aren't
@@ -5645,7 +5721,7 @@ router.post("/games/:gameId/surrender", requireAuth, async (req, res): Promise<v
         // isn't party to.
         throw Object.assign(new Error("Game not found"), { status: 404 });
       }
-      if (game.status !== "active" && game.status !== "deploying") {
+      if (game.status !== "active") {
         throw Object.assign(new Error(`Cannot surrender from status '${game.status}'`), { status: 400 });
       }
 
@@ -5670,11 +5746,9 @@ router.post("/games/:gameId/surrender", requireAuth, async (req, res): Promise<v
 
 // Concede: a player throws in the towel and grants victory to their opponent
 // while preserving the game record (vs. /surrender, which wipes the record
-// entirely). Unlike /surrender — which is gated on "all my ships are
-// combat-inert" as a forfeit-the-corpse escape hatch — concession is
-// available at any time during 'deploying' or 'active' so a player can bow
-// out early. The game ends with status='completed' and winnerId set to the
-// OTHER player, and shows up in Recent Engagements as a normal loss/win.
+// entirely). Concession is only valid once the engagement is active; during
+// deployment there may be zero units on the board, and allowing concession
+// there can accidentally complete a not-yet-started game.
 router.post("/games/:gameId/concede", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = GetGameParams.safeParse(req.params);
@@ -5692,7 +5766,7 @@ router.post("/games/:gameId/concede", requireAuth, async (req, res): Promise<voi
         // isn't party to.
         throw Object.assign(new Error("Game not found"), { status: 404 });
       }
-      if (game.status !== "active" && game.status !== "deploying") {
+      if (game.status !== "active") {
         throw Object.assign(new Error(`Cannot concede from status '${game.status}'`), { status: 400 });
       }
       // Winner is the OTHER party. If the opponent slot is somehow empty

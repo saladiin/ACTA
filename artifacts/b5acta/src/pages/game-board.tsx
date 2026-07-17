@@ -7,7 +7,7 @@ import React, {
   useCallback,
 } from "react";
 import { useParams, Link, useLocation } from "wouter";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree, useFrame } from "@react-three/fiber";
 import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -5785,6 +5785,18 @@ export default function GameBoard() {
   const [, setLocation] = useLocation();
   const [confirmingSurrender, setConfirmingSurrender] = useState(false);
   const [confirmingConcede, setConfirmingConcede] = useState(false);
+  const [confirmingAbandon, setConfirmingAbandon] = useState(false);
+  const abandonGame = useMutation({
+    mutationFn: () =>
+      customFetch(`/api/games/${gameId}/abandon`, { method: "POST" }),
+    onSuccess: () => {
+      setConfirmingAbandon(false);
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+      qc.invalidateQueries({ queryKey: ["getLobby"] });
+      qc.invalidateQueries({ queryKey: ["listGames"] });
+      setLocation("/lobby");
+    },
+  });
   const chooseSpecialAction = useChooseSpecialAction();
   const chooseScoutAction = useChooseScoutAction();
   useEffect(() => {
@@ -6611,6 +6623,7 @@ export default function GameBoard() {
   );
 
   const isChallenger = game?.challengerId === myUserId;
+  const isOpponent = game?.opponentId === myUserId;
   // Surrender eligibility: every one of MY ships is at ≤0 hull OR ≤0 crew
   // (or destroyed). A ship with maxCrewPoints=0 (legacy unit without a crew
   // pool) shouldn't gate surrender on its non-existent crew, so we only
@@ -6694,6 +6707,12 @@ export default function GameBoard() {
     ((mySide === "challenger" && game.challengerDeployed) ||
       (mySide === "opponent" && game.opponentDeployed)) &&
     !canDevRedeployAiOpponent,
+  );
+  const canAbandonPreStart = Boolean(
+    game &&
+      (isChallenger || isOpponent) &&
+      (game.status === "deploying" ||
+        (game.status === "open" && isChallenger)),
   );
   const scenarioPriority = normalizePriorityLevel(game?.priorityLevel);
   const allocationPoints =
@@ -7101,7 +7120,6 @@ export default function GameBoard() {
     setDraggingId(null);
     setTapPlacementShip(null);
   }, [yardsFleetId, yardsFleetShips, makeStagedUnit, myUserId]);
-  const isOpponent = game?.opponentId === myUserId;
   const canUseGameChat = Boolean(
     game && game.opponentKind !== "ai" && (isChallenger || isOpponent),
   );
@@ -9738,6 +9756,8 @@ export default function GameBoard() {
                 0,
                 Math.min(selectedRemainingMove, snapMovementDistance(proj)),
               );
+              const previousDistance =
+                movePlan?.kind === "forward" ? movePlan.distance : 0;
               const distance = clampForwardDistanceToLegalRestingSpot(
                 {
                   ...selectedUnitData,
@@ -9747,6 +9767,7 @@ export default function GameBoard() {
                 v,
                 requested,
                 selectedRemainingMove,
+                requested + 1e-6 >= previousDistance ? "forward" : "nearest",
               );
               setMovePlan({ kind: "forward", distance });
               return;
@@ -11529,40 +11550,41 @@ export default function GameBoard() {
               <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
                 Open challenge — awaiting a commander to accept
               </p>
-              <Button
-                size="sm"
-                variant="destructive"
-                data-testid="button-withdraw-game"
-                className="w-full gap-1.5 uppercase tracking-wider text-xs"
-                onClick={() =>
-                  declineGame.mutate(
-                    { gameId },
-                    {
-                      onSuccess: () =>
-                        qc.invalidateQueries({
-                          queryKey: getGetGameQueryKey(gameId),
-                        }),
-                    },
-                  )
-                }
-                disabled={declineGame.isPending}
-              >
-                <XCircle className="w-3.5 h-3.5" /> Withdraw Challenge
-              </Button>
             </div>
           )}
 
-          {/* Concede. Always available to either player during 'deploying'
-              or 'active' — distinct from Surrender (below), which is the
-              auto-loss escape hatch and wipes the record entirely. Concede
-              ends the match cleanly with the opponent recorded as the
-              victor and preserves the game in Recent Engagements. */}
-          {(game.status === "active" || game.status === "deploying") &&
-            (isChallenger || isOpponent) && (
-              <div
-                className="p-4 border-b border-border space-y-2"
-                data-testid="concede-panel"
+          {canAbandonPreStart && (
+            <div className="p-4 border-b border-red-500/30 bg-red-950/15 space-y-2">
+              <p className="text-[11px] text-red-300/90 font-mono uppercase tracking-wider">
+                Leave before the engagement starts
+              </p>
+              <Button
+                size="sm"
+                variant="destructive"
+                data-testid="button-abandon-game"
+                className="w-full gap-1.5 uppercase tracking-wider text-xs"
+                onClick={() => setConfirmingAbandon(true)}
+                disabled={abandonGame.isPending}
               >
+                <XCircle className="w-3.5 h-3.5" />
+                {abandonGame.isPending ? "Abandoning..." : "Abandon Game"}
+              </Button>
+              {abandonGame.isError && (
+                <p className="text-[11px] text-red-400 font-mono">
+                  {(abandonGame.error as Error).message}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Concede. Available only after both sides deploy and the match is active.
+              Completing a still-deploying setup room is too easy to do
+              accidentally and can strand players before fleets exist. */}
+          {game.status === "active" && (isChallenger || isOpponent) && (
+            <div
+              className="p-4 border-b border-border space-y-2"
+              data-testid="concede-panel"
+            >
                 {confirmingConcede ? (
                   <>
                     <p className="text-[11px] text-amber-300/90 font-mono uppercase tracking-wider">
@@ -11641,7 +11663,7 @@ export default function GameBoard() {
               cascade-deletes units/turns/crits), so we redirect to /lobby on
               success. The "Are you sure?" inline confirm prevents misclicks
               from nuking a still-recoverable engagement. */}
-          {(game.status === "active" || game.status === "deploying") &&
+          {game.status === "active" &&
             (isChallenger || isOpponent) &&
             allMyShipsCombatInert && (
               <div
@@ -13891,6 +13913,66 @@ export default function GameBoard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={confirmingAbandon}
+        onOpenChange={(open) => {
+          if (!abandonGame.isPending) setConfirmingAbandon(open);
+        }}
+      >
+        <AlertDialogContent
+          className="fixed max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] overflow-hidden border-2 border-red-500/90 bg-black p-0 text-red-50 shadow-[0_0_45px_rgba(239,68,68,0.32)] sm:max-w-md"
+          data-testid="dialog-abandon-game-confirm"
+        >
+          <div
+            className="absolute inset-0 opacity-25"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(135deg, #ef4444 0 18px, #ef4444 18px 34px, #020617 34px 52px, #020617 52px 68px)",
+            }}
+          />
+          <div className="relative m-2 max-h-[calc(100dvh-2.5rem)] overflow-y-auto border border-red-400/60 bg-black/95 p-4 shadow-inner shadow-black sm:p-5">
+            <AlertDialogHeader className="space-y-3 text-left">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-red-400/80 bg-red-500 text-black shadow-[0_0_18px_rgba(239,68,68,0.45)]">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <AlertDialogTitle className="font-mono text-lg uppercase tracking-[0.18em] text-red-200">
+                  Abandon Game?
+                </AlertDialogTitle>
+              </div>
+              <AlertDialogDescription className="font-mono text-xs leading-relaxed text-red-100/85">
+                {isOpponent && game?.status === "deploying"
+                  ? "You will leave this setup. Any ships you deployed will be removed, and the challenge will return to the lobby for another commander."
+                  : "This will close this pre-start setup. It will not be recorded as a completed battle."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="my-4 border border-red-400/35 bg-red-500/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-red-100/90">
+              This action is only for games that have not started.
+            </div>
+            <AlertDialogFooter className="gap-2 sm:space-x-0">
+              <AlertDialogCancel
+                disabled={abandonGame.isPending}
+                className="border-slate-500 bg-slate-950 font-mono text-xs uppercase tracking-widest text-slate-100 hover:bg-slate-800"
+                data-testid="button-cancel-abandon-game"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                disabled={abandonGame.isPending}
+                onClick={(event) => {
+                  event.preventDefault();
+                  abandonGame.mutate();
+                }}
+                className="bg-red-500 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-red-400 disabled:bg-slate-700 disabled:text-slate-400"
+                data-testid="button-confirm-abandon-game"
+              >
+                {abandonGame.isPending ? "Abandoning..." : "Confirm Abandon"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={endActivationConfirmOpen}
