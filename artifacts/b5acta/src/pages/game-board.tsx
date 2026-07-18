@@ -2628,6 +2628,147 @@ function DestroyedSmoke({
   );
 }
 
+function dogfightSeededUnit(seed: number): number {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function DogfightImpactFlashes({
+  effect,
+  onDone,
+}: {
+  effect: DogfightImpactEffect;
+  onDone: (id: number) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const startedAtRef = useRef<number | null>(null);
+  const finishedRef = useRef(false);
+  const tuning = DOGFIGHT_IMPACT_TUNING;
+  const flashes = useMemo(
+    () =>
+      Array.from({ length: tuning.count }, (_, i) => {
+        const radialSeed = dogfightSeededUnit(effect.id + i + 1.3);
+        const sizeSeed = dogfightSeededUnit(effect.id + i + 9.7);
+        const heightSeed = dogfightSeededUnit(effect.id + i + 17.1);
+        const angle =
+          i * 2.399963 +
+          dogfightSeededUnit(effect.id + i + 4.2) * tuning.randomness * 0.9;
+        const radius = (0.25 + radialSeed * 2.45) * tuning.spread;
+        const baseSize =
+          (0.32 + sizeSeed * (0.85 + tuning.randomness * 0.45)) *
+          tuning.size;
+        const height =
+          (1.35 +
+            tuning.arc * 0.32 +
+            heightSeed * (0.8 + tuning.arc * 0.18)) *
+          tuning.size;
+        return {
+          x: Math.cos(angle) * radius,
+          z: Math.sin(angle) * radius,
+          height,
+          baseSize,
+          phase: dogfightSeededUnit(effect.id + i + 29.4) * Math.PI * 2,
+          spin: (dogfightSeededUnit(effect.id + i + 37.8) - 0.5) * 0.018,
+          pulseSpeed: 0.7 + dogfightSeededUnit(effect.id + i + 44.6) * 0.9,
+          accent: dogfightSeededUnit(effect.id + i + 52.5) > 0.62,
+        };
+      }),
+    [
+      effect.id,
+      tuning.arc,
+      tuning.count,
+      tuning.randomness,
+      tuning.size,
+      tuning.spread,
+    ],
+  );
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    if (startedAtRef.current === null) startedAtRef.current = clock.elapsedTime;
+    const age = clock.elapsedTime - startedAtRef.current;
+    const duration = 10;
+    const progress = Math.min(1, age / duration);
+    const fadeIn = THREE.MathUtils.clamp(age / 0.25, 0, 1);
+    const fadeOut = THREE.MathUtils.clamp((duration - age) / tuning.fade, 0, 1);
+    const life = fadeIn * fadeOut;
+
+    groupRef.current.children.forEach((child, i) => {
+      const flash = flashes[i];
+      if (!flash) return;
+      const pulse =
+        Math.sin(
+          clock.elapsedTime * tuning.speed * flash.pulseSpeed + flash.phase,
+        ) *
+          0.5 +
+        0.5;
+      child.position.set(
+        flash.x,
+        flash.height +
+          Math.sin(clock.elapsedTime * tuning.speed * 0.42 + flash.phase) *
+            0.08 *
+            tuning.spread,
+        flash.z,
+      );
+      child.rotation.y += flash.spin * tuning.speed;
+      child.scale.setScalar(flash.baseSize * (0.82 + pulse * 0.34));
+      child.children.forEach((mesh, meshIndex) => {
+        if (!("material" in mesh)) return;
+        const mat = (mesh as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        mat.opacity =
+          (meshIndex === 0
+            ? (0.14 + pulse * 0.28) * tuning.intensity
+            : (0.28 + pulse * 0.38) * tuning.intensity) * life;
+      });
+    });
+
+    if (progress >= 1 && !finishedRef.current) {
+      finishedRef.current = true;
+      onDone(effect.id);
+    }
+  });
+
+  return (
+    <group position={[effect.x, 0, effect.z]}>
+      <group ref={groupRef}>
+        {flashes.map((flash, i) => (
+          <group key={i} position={[flash.x, flash.height, flash.z]}>
+            <mesh raycast={() => null}>
+              <sphereGeometry args={[1, 24, 24]} />
+              <meshBasicMaterial
+                color={flash.accent ? tuning.secondaryColor : tuning.color}
+                transparent
+                opacity={0.24 * tuning.intensity}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+            <mesh raycast={() => null} scale={[1.04, 1.04, 1.04]}>
+              <sphereGeometry args={[1, 18, 18]} />
+              <meshBasicMaterial
+                color={tuning.secondaryColor}
+                transparent
+                opacity={0.42 * tuning.intensity}
+                wireframe
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          </group>
+        ))}
+      </group>
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={2.6 * tuning.intensity}
+        distance={9 * tuning.spread}
+        position={[0, 2.4 + tuning.arc * 0.2, 0]}
+      />
+    </group>
+  );
+}
+
 // Showcase hull-fire tuning, anchored to the ship hull for damage states.
 const HULL_FIRE_TUNING = {
   color: "#ff7a18",
@@ -3494,6 +3635,26 @@ type DogfightModalState = {
   phase: "rolling" | "shown";
   result: DogfightResult;
   confirmingClose?: boolean;
+};
+
+type DogfightImpactEffect = {
+  id: number;
+  x: number;
+  z: number;
+};
+
+const DOGFIGHT_IMPACT_TUNING = {
+  color: "#f96767",
+  secondaryColor: "#a86b43",
+  speed: 2.95,
+  size: 0.25,
+  fade: 1.25,
+  intensity: 0.5,
+  spread: 0.7,
+  count: 20,
+  arc: 6,
+  thickness: 1.25,
+  randomness: 0,
 };
 
 type SplitFirePlan = {
@@ -6304,6 +6465,9 @@ export default function GameBoard() {
   const [dogfightModal, setDogfightModal] = useState<DogfightModalState | null>(
     null,
   );
+  const [dogfightImpactEffects, setDogfightImpactEffects] = useState<
+    DogfightImpactEffect[]
+  >([]);
   const [dogfightTargetPicking, setDogfightTargetPicking] = useState(false);
   const [selfRepairModal, setSelfRepairModal] =
     useState<SelfRepairModalState | null>(null);
@@ -9853,6 +10017,14 @@ export default function GameBoard() {
             body: JSON.stringify({ targetUnitId: target.id }),
           },
         );
+        setDogfightImpactEffects((prev) => [
+          ...prev.slice(-3),
+          {
+            id: Date.now(),
+            x: (attacker.hexQ + target.hexQ) / 2,
+            z: (attacker.hexR + target.hexR) / 2,
+          },
+        ]);
         setDogfightModal({ phase: "rolling", result });
         setTimeout(() => {
           setDogfightModal((modal) =>
@@ -10181,6 +10353,7 @@ export default function GameBoard() {
               time: performance.now(),
             };
             if (
+              e.button === 0 &&
               game.status === "active" &&
               currentPhase === "movement" &&
               isSelectedUnitActive &&
@@ -10189,6 +10362,7 @@ export default function GameBoard() {
               selectedUnitData.ownerId === myUserId &&
               !draggingId &&
               !movementGesture &&
+              !moveConfirmPopover &&
               (!movePlan || selectedUnitIsFighter)
             ) {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
@@ -10293,6 +10467,7 @@ export default function GameBoard() {
             }
             if (
               movementGesture?.kind === "fighter-free" &&
+              !moveConfirmPopover &&
               selectedUnitData &&
               selectedUnitData.ownerId === myUserId
             ) {
@@ -10314,6 +10489,7 @@ export default function GameBoard() {
             }
             // Forward-move drag: project cursor onto heading axis from ship origin.
             if (
+              !moveConfirmPopover &&
               (movementGesture?.kind === "forward" ||
                 (!mobileGameChrome && movePlan?.kind === "forward")) &&
               selectedUnitData &&
@@ -10350,6 +10526,7 @@ export default function GameBoard() {
             }
             if (
               movementGesture?.kind === "turn" &&
+              !moveConfirmPopover &&
               selectedUnitData &&
               selectedUnitData.ownerId === myUserId &&
               selectedMovementUi?.canTurn
@@ -10945,7 +11122,20 @@ export default function GameBoard() {
                   />
                 </>
               )}
+            {dogfightImpactEffects.map((effect) => (
+              <DogfightImpactFlashes
+                key={effect.id}
+                effect={effect}
+                onDone={(id) =>
+                  setDogfightImpactEffects((prev) =>
+                    prev.filter((item) => item.id !== id),
+                  )
+                }
+              />
+            ))}
             {units.map((unit) => {
+              const unitIsFighter = isFighterUnit(unit);
+              if (unit.isDestroyed && unitIsFighter) return null;
               const weaponsForUnit = getWeaponsForUnit(unit);
               const phaseViable =
                 game.status === "active" &&
@@ -10967,7 +11157,7 @@ export default function GameBoard() {
                     arc: w.arc,
                     range:
                       w.range +
-                      (isFighterUnit(unit) ? rulesBaseRadius(unit) : 0),
+                      (unitIsFighter ? rulesBaseRadius(unit) : 0),
                   };
                 }
               }
@@ -10977,7 +11167,7 @@ export default function GameBoard() {
                       arc: w.arc,
                       range:
                         w.range +
-                        (isFighterUnit(unit) ? rulesBaseRadius(unit) : 0),
+                        (unitIsFighter ? rulesBaseRadius(unit) : 0),
                     }))
                   : [];
               let targetingPreview: TargetingPreviewState | null = null;
@@ -10987,12 +11177,11 @@ export default function GameBoard() {
                 unit.ownerId !== activeTargetingPreview.attacker.ownerId &&
                 unitIsCombatEffective(unit)
               ) {
-                const targetIsFighter = isFighterUnit(unit);
                 const distance = weaponRangeDistanceForPreview(
                   activeTargetingPreview.attacker,
                   unit,
                   Boolean(activeTargetingPreview.attacker.isFighter),
-                  targetIsFighter,
+                  unitIsFighter,
                 );
                 const inRange = distance <= activeTargetingPreview.weapon.range + 1e-6;
                 const inArc = isTargetInWeaponArc(
@@ -11029,7 +11218,7 @@ export default function GameBoard() {
                   shipMeshTintsEnabled={shipMeshTintsEnabled}
                   shipHullNamesEnabled={shipHullNamesEnabled}
                   shipStatusDisplayMode={shipStatusDisplayMode}
-                  isFighter={isFighterUnit(unit)}
+                  isFighter={unitIsFighter}
                   launchHighlight={
                     endPhaseLaunchPrompt?.mode === "highlight" &&
                     eligibleLaunchCarrierIds.has(unit.id)
