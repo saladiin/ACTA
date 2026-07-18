@@ -8159,7 +8159,26 @@ export default function GameBoard() {
           );
           return;
         }
-        setMovePlan({ kind: "forward", distance: 0 });
+        const v = headingForwardVec(u);
+        setMovePlan((prev) => {
+          const current = prev?.kind === "forward" ? prev.distance : 0;
+          const requested = Math.max(
+            0,
+            Math.min(
+              remainingMove,
+              snapMovementDistance(current + TABLET_FORWARD_STEP),
+            ),
+          );
+          const next = clampForwardDistanceToLegalRestingSpot(
+            { ...u, isFighter: false },
+            unitsWithFighterFlags,
+            v,
+            requested,
+            remainingMove,
+            "forward",
+          );
+          return { kind: "forward", distance: next };
+        });
       } else if (e.key === "Enter" || e.key === " " || e.code === "Space") {
         e.preventDefault();
         confirmMovePlan();
@@ -10662,8 +10681,7 @@ export default function GameBoard() {
             // Forward-move drag: project cursor onto heading axis from ship origin.
             if (
               !moveConfirmPopover &&
-              (movementGesture?.kind === "forward" ||
-                (!mobileGameChrome && movePlan?.kind === "forward")) &&
+              movementGesture?.kind === "forward" &&
               selectedUnitData &&
               selectedUnitData.ownerId === myUserId
             ) {
@@ -11783,6 +11801,7 @@ export default function GameBoard() {
               }}
               data-testid="pc-move-confirm-popover"
               onPointerDown={(e) => e.stopPropagation()}
+              onPointerMove={(e) => e.stopPropagation()}
               onPointerUp={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => {
@@ -11813,155 +11832,6 @@ export default function GameBoard() {
               </button>
             </div>
           )}
-          {!isTouchInput &&
-            !mobileGameChrome &&
-            currentPhase === "movement" &&
-            isSelectedUnitActive &&
-            selectedUnitData &&
-            selectedMovementUi &&
-            !selectedUnitData.isDestroyed &&
-            selectedUnitData.damageState !== "adrift" &&
-            selectedUnitData.damageState !== "exploding-end-of-next" && (
-              <div
-                className="pointer-events-auto absolute bottom-12 right-3 z-30 w-56 rounded border border-cyan-300/40 bg-black/78 p-2 shadow-2xl shadow-cyan-950/50 backdrop-blur-md"
-                data-testid="pc-movement-quick-controls"
-                onPointerDown={(e) => e.stopPropagation()}
-                onPointerUp={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest text-cyan-100/80">
-                  <span>{selectedUnitData.name}</span>
-                  <span className="text-cyan-300">
-                    {movePlan?.kind === "forward"
-                      ? `${movePlan.distance.toFixed(1)}"`
-                      : movePlan?.kind === "turn"
-                        ? `${movePlan.deltaDeg > 0 ? "+" : ""}${movePlan.deltaDeg} deg`
-                        : `${selectedRemainingMove.toFixed(1)}"`}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-1">
-                  <div />
-                  <button
-                    type="button"
-                    aria-label="Plan forward movement"
-                    title="Forward"
-                    disabled={
-                      !selectedMovementUi.canForward ||
-                      moveUnit.isPending ||
-                      activateUnit.isPending
-                    }
-                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={() => nudgeForwardPlan(TABLET_FORWARD_STEP)}
-                    data-testid="button-pc-plan-forward"
-                  >
-                    <ArrowUp className="h-5 w-5" />
-                  </button>
-                  <div />
-                  <button
-                    type="button"
-                    aria-label="Plan port turn"
-                    title="Turn left"
-                    disabled={
-                      !selectedMovementUi.canTurn ||
-                      moveUnit.isPending ||
-                      activateUnit.isPending
-                    }
-                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={() => nudgeTurnPlan(-TABLET_TURN_STEP_DEG, "left")}
-                    data-testid="button-pc-plan-turn-left"
-                  >
-                    <ArrowLeft className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Cancel move preview"
-                    title="Cancel"
-                    disabled={!movePlan}
-                    className="flex h-9 items-center justify-center rounded border border-slate-500/70 bg-slate-950/80 text-slate-200 hover:bg-slate-800 disabled:border-slate-700 disabled:text-slate-600"
-                    onClick={cancelMovePlan}
-                    data-testid="button-pc-cancel-quick-move"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Plan starboard turn"
-                    title="Turn right"
-                    disabled={
-                      !selectedMovementUi.canTurn ||
-                      moveUnit.isPending ||
-                      activateUnit.isPending
-                    }
-                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={() => nudgeTurnPlan(TABLET_TURN_STEP_DEG, "right")}
-                    data-testid="button-pc-plan-turn-right"
-                  >
-                    <ArrowRight className="h-5 w-5" />
-                  </button>
-                  <div />
-                  <button
-                    type="button"
-                    aria-label="Reduce forward movement preview"
-                    title="Reduce forward preview"
-                    disabled={movePlan?.kind !== "forward" || movePlan.distance <= 0}
-                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={() => nudgeForwardPlan(-TABLET_FORWARD_STEP)}
-                    data-testid="button-pc-plan-back"
-                  >
-                    <ArrowDown className="h-5 w-5" />
-                  </button>
-                  <div />
-                </div>
-                <div className="mt-2 grid grid-cols-3 gap-1">
-                  <button
-                    type="button"
-                    aria-label="Plan free turn"
-                    title="Free turn"
-                    disabled={
-                      !selectedMovementUi.isSuperManeuverable ||
-                      !selectedMovementUi.canTurn ||
-                      moveUnit.isPending ||
-                      activateUnit.isPending
-                    }
-                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={startFreeTurnPlan}
-                    data-testid="button-pc-plan-free-turn"
-                  >
-                    <RotateCcw className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Confirm move preview"
-                    title="Confirm"
-                    disabled={!canConfirmMovePlan}
-                    className="flex h-9 items-center justify-center rounded border border-amber-300/80 bg-amber-300 text-black hover:bg-amber-200 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={confirmMovePlan}
-                    data-testid="button-pc-confirm-quick-move"
-                  >
-                    <Check className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="End activation"
-                    title={
-                      minMoveGate.blocked
-                        ? `Must move at least ${formatInches(minMoveGate.required)}" or declare All Stop before ending activation`
-                        : "End activation"
-                    }
-                    disabled={
-                      !hasActiveUnit ||
-                      endActivation.isPending ||
-                      minMoveGate.blocked
-                    }
-                    className="flex h-9 items-center justify-center rounded border border-cyan-300/55 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
-                    onClick={handleRequestEndActivation}
-                    data-testid="button-pc-end-activation"
-                  >
-                    <CheckCircle className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            )}
           {touchGameControls &&
             currentPhase === "movement" &&
             isSelectedUnitActive &&
@@ -12023,6 +11893,7 @@ export default function GameBoard() {
               <div
                 className="absolute bottom-14 right-3 z-20 w-[min(92vw,22rem)] rounded border border-cyan-500/50 bg-card/95 p-2 shadow-xl"
                 data-testid="mobile-move-confirm-strip"
+                onPointerMove={(e) => e.stopPropagation()}
               >
                 <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-wider text-cyan-200">
                   <span className="truncate">Move Preview</span>
@@ -12293,7 +12164,7 @@ export default function GameBoard() {
                             : touchGameControls
                               ? "Drag to orbit · Pinch to zoom · Two-finger drag to pan · Controller moves ships"
                               : "Drag to orbit · Pinch to zoom · Two-finger drag to pan"
-                : "WASD to pan · F forward · Q/E turn · Enter confirm · Scroll to zoom · Right-drag orbit"}
+                : "WASD to pan · F +0.5\" forward · Q/E turn · Enter/Space confirm · Scroll to zoom · Right-drag orbit"}
             </div>
             {game.status === "deploying" && (
               <div className="text-[10px] text-gray-600 font-mono">
