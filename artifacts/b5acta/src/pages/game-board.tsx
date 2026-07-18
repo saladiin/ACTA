@@ -1201,11 +1201,12 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "frazi.glb",
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
-  "hyperion.glb": 1.25,
+  "hyperion.glb": 1.2,
+  "avenger.glb": 1.2,
   "olympus.glb": 0.5,
-  "omega.glb": 1.15,
+  "omega.glb": 1.5,
   "nova.glb": 1.15,
-  "tethys.glb": 0.5,
+  "tethys.glb": 0.4,
   "vorchan.glb": 0.5,
   "covran.glb": 0.5,
   "whitestar.glb": 0.5,
