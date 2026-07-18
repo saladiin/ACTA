@@ -1820,6 +1820,37 @@ function finalForwardPositionOverlapsBase(
   return false;
 }
 
+function firstLegalForwardDistanceAtOrAfter(
+  moving: {
+    id: number;
+    hexQ: number;
+    hexR: number;
+    isFighter?: boolean;
+    baseRadiusInches?: number | null;
+  },
+  others: Array<{
+    id: number;
+    hexQ: number;
+    hexR: number;
+    isDestroyed: boolean;
+    isFighter?: boolean;
+    baseRadiusInches?: number | null;
+  }>,
+  direction: { x: number; z: number },
+  startDistance: number,
+  maxDistance: number,
+): number | null {
+  const maxLegal = Math.max(0, snapMovementDistance(maxDistance));
+  let distance = Math.max(0, snapMovementDistance(startDistance));
+  while (distance <= maxLegal + 1e-6) {
+    if (!finalForwardPositionOverlapsBase(moving, others, direction, distance)) {
+      return distance;
+    }
+    distance = snapMovementDistance(distance + TABLET_FORWARD_STEP);
+  }
+  return null;
+}
+
 function clampForwardDistanceToLegalRestingSpot(
   moving: {
     id: number;
@@ -1893,13 +1924,22 @@ function clampForwardDistanceToLegalRestingSpot(
       (d) => !finalForwardPositionOverlapsBase(moving, others, direction, d),
     );
 
-  if (legalCandidates.length === 0) return 0;
   if (preference === "forward") {
+    const scannedForwardCandidate = firstLegalForwardDistanceAtOrAfter(
+      moving,
+      others,
+      direction,
+      requested,
+      maxLegal,
+    );
+    if (scannedForwardCandidate !== null) return scannedForwardCandidate;
+
     const forwardCandidate = legalCandidates
       .filter((d) => d >= requested - 1e-6)
       .sort((a, b) => a - b)[0];
     if (forwardCandidate !== undefined) return forwardCandidate;
   }
+  if (legalCandidates.length === 0) return 0;
   legalCandidates.sort(
     (a, b) => Math.abs(a - requested) - Math.abs(b - requested) || b - a,
   );
