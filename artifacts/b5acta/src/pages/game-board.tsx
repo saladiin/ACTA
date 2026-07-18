@@ -8841,6 +8841,7 @@ export default function GameBoard() {
       } finally {
         setFighterBayBusyKey(null);
         void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        void qc.invalidateQueries({ queryKey: ["movement-audit-log", gameId] });
       }
     },
     [
@@ -8917,6 +8918,7 @@ export default function GameBoard() {
       } finally {
         setFighterBayBusyKey(null);
         void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        void qc.invalidateQueries({ queryKey: ["movement-audit-log", gameId] });
       }
     },
     [gameId, mergeFighterBayResultIntoGame, qc],
@@ -12041,15 +12043,14 @@ export default function GameBoard() {
                 onConfirm={confirmMovePlan}
                 canEndActivation={
                   hasActiveUnit &&
-                  !endActivation.isPending &&
-                  !minMoveGate.blocked
+                  !endActivation.isPending
                 }
                 endActivationLabel={
                   endActivation.isPending ? "Ending..." : "End Activation"
                 }
                 endActivationTitle={
                   minMoveGate.blocked
-                    ? `Must move at least ${formatInches(minMoveGate.required)}" or declare All Stop before ending activation`
+                    ? `Server will allow this only if no legal final resting spot can satisfy the ${formatInches(minMoveGate.required)}" minimum move`
                     : undefined
                 }
                 onEndActivation={handleRequestEndActivation}
@@ -13667,8 +13668,7 @@ export default function GameBoard() {
                   onClick={handleRequestEndActivation}
                   disabled={
                     (!hasActiveUnit && !canPassPhase) ||
-                    endActivation.isPending ||
-                    minMoveGate.blocked
+                    endActivation.isPending
                   }
                 >
                   {endActivation.isPending
@@ -14963,10 +14963,17 @@ export default function GameBoard() {
                                     ),
                                   );
                                 },
-                                onSettled: () =>
-                                  qc.invalidateQueries({
+                                onSettled: () => {
+                                  void qc.invalidateQueries({
                                     queryKey: getGetGameQueryKey(gameId),
-                                  }),
+                                  });
+                                  void qc.invalidateQueries({
+                                    queryKey: [
+                                      "special-action-audit-log",
+                                      gameId,
+                                    ],
+                                  });
+                                },
                               },
                             );
                           }}

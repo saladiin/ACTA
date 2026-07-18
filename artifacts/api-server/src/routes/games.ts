@@ -211,7 +211,7 @@ async function recordMovementAuditLog(
     actorPlayerId: string | null;
     unitBefore: typeof gameUnitsTable.$inferSelect;
     unitAfter: typeof gameUnitsTable.$inferSelect;
-    movementKind: "move" | "turn" | "move-and-turn" | "all-stop" | "adrift-drift";
+    movementKind: "move" | "turn" | "move-and-turn" | "all-stop" | "adrift-drift" | "fighter-launch" | "fighter-recovery" | "forced-hold";
     summary: string;
     payload: Record<string, unknown>;
   },
@@ -1269,6 +1269,144 @@ function findIllegalBaseOverlap(candidate: UnitFootprint, others: UnitFootprint[
     if (basesOverlap(candidate, other)) return other;
   }
   return null;
+}
+
+type MovementDebtClearanceResult = {
+  hasLegalRestingSpot: boolean;
+  checkedDistances: number[];
+  checkedHeadings: number[];
+  firstLegal?: { distance: number; heading: number; x: number; z: number };
+  remainingMinimum: number;
+  remainingMaximum: number;
+};
+
+function candidateMovementDebtHeadings(
+  unit: typeof gameUnitsTable.$inferSelect,
+  crits: ReturnType<typeof deriveCritEffects>,
+  traits: ReturnType<typeof movementTraitsForModel>,
+  turnProfile: ReturnType<typeof effectiveTurnProfile>,
+): number[] {
+  const headings = new Set<number>([normalizeHeadingDegrees(unit.heading)]);
+  if (turnProfile.turnsForbidden) return [...headings];
+  if (unit.turnsMadeThisActivation >= turnProfile.maxTurns) return [...headings];
+  const requiredStraight = turnDistanceRequirement(
+    unit,
+    crits,
+    traits,
+    unit.turnsMadeThisActivation,
+  );
+  if (unit.distanceSinceLastTurnThisActivation + 1e-6 < requiredStraight) {
+    return [...headings];
+  }
+  const step = Math.max(1, Math.min(45, turnProfile.turnAngle));
+  for (let delta = step; delta <= turnProfile.turnAngle + 1e-6; delta += step) {
+    headings.add(normalizeHeadingDegrees(unit.heading + delta));
+    headings.add(normalizeHeadingDegrees(unit.heading - delta));
+  }
+  return [...headings];
+}
+
+async function scanLegalMovementDebtRestingSpots(
+  tx: any,
+  gameId: number,
+  unit: typeof gameUnitsTable.$inferSelect,
+  args: {
+    minRequired: number;
+    speedCap: number;
+    crits: ReturnType<typeof deriveCritEffects>;
+    traits: ReturnType<typeof movementTraitsForModel>;
+    turnProfile: ReturnType<typeof effectiveTurnProfile>;
+  },
+): Promise<MovementDebtClearanceResult> {
+  const remainingMinimum = Math.max(
+    0,
+    args.minRequired - unit.inchesMovedThisActivation,
+  );
+  const remainingMaximum = Math.max(
+    0,
+    args.speedCap - unit.inchesMovedThisActivation,
+  );
+  const result: MovementDebtClearanceResult = {
+    hasLegalRestingSpot: false,
+    checkedDistances: [],
+    checkedHeadings: [],
+    remainingMinimum,
+    remainingMaximum,
+  };
+  if (remainingMinimum <= 1e-6) {
+    return {
+      ...result,
+      hasLegalRestingSpot: true,
+      firstLegal: {
+        distance: 0,
+        heading: normalizeHeadingDegrees(unit.heading),
+        x: unit.hexQ,
+        z: unit.hexR,
+      },
+    };
+  }
+  if (remainingMaximum + 1e-6 < remainingMinimum) return result;
+
+  const allUnits = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const otherFootprints: UnitFootprint[] = [];
+  for (const other of allUnits as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (other.id === unit.id) continue;
+    const model = await getShipModelForUnit(tx, other);
+    otherFootprints.push({
+      id: other.id,
+      ownerId: other.ownerId,
+      x: other.hexQ,
+      z: other.hexR,
+      baseRadiusInches: rulesBaseRadius(other),
+      isFighter: model ? shipModelIsFighter(model) : false,
+    });
+  }
+
+  const headings = candidateMovementDebtHeadings(
+    unit,
+    args.crits,
+    args.traits,
+    args.turnProfile,
+  );
+  result.checkedHeadings = headings;
+  const startDistance = Math.ceil(remainingMinimum * 2) / 2;
+  for (
+    let distance = startDistance;
+    distance <= remainingMaximum + 1e-6;
+    distance = snapHalfInch(distance + 0.5)
+  ) {
+    const snappedDistance = snapHalfInch(distance);
+    if (!result.checkedDistances.some(d => Math.abs(d - snappedDistance) < 1e-6)) {
+      result.checkedDistances.push(snappedDistance);
+    }
+    for (const heading of headings) {
+      const forward = headingForwardVec({ ...unit, heading });
+      const candidate: UnitFootprint = {
+        id: unit.id,
+        ownerId: unit.ownerId,
+        x: snapBoardCoord(unit.hexQ + forward.x * snappedDistance),
+        z: snapBoardCoord(unit.hexR + forward.z * snappedDistance),
+        baseRadiusInches: rulesBaseRadius(unit),
+        isFighter: false,
+      };
+      if (!findIllegalBaseOverlap(candidate, otherFootprints)) {
+        return {
+          ...result,
+          hasLegalRestingSpot: true,
+          firstLegal: {
+            distance: snappedDistance,
+            heading,
+            x: candidate.x,
+            z: candidate.z,
+          },
+        };
+      }
+    }
+  }
+  return result;
 }
 
 type AiMovementHeadingCandidate = {
@@ -6937,6 +7075,41 @@ router.post("/games/:gameId/units/:unitId/launch-fighter", requireAuth, async (r
         fighterBayOperationsUsed: used + 1,
       }).where(eq(gameUnitsTable.id, carrier.id)).returning();
 
+      try {
+        await recordMovementAuditLog(tx, {
+          game,
+          actorKind: "player",
+          actorPlayerId: userId,
+          unitBefore: carrier,
+          unitAfter: updatedCarrier,
+          movementKind: "fighter-launch",
+          summary: `${carrier.name} launched ${fighter.name}.`,
+          payload: {
+            rulesPath: "end-phase-fighter-launch",
+            carrier: unitAuditState(updatedCarrier),
+            fighter: unitAuditState(fighter),
+            fighterModel: {
+              id: fighterModel.id,
+              name: fighterModel.name,
+              faction: fighterModel.faction,
+            },
+            launchPosition: {
+              hexQ: fighter.hexQ,
+              hexR: fighter.hexR,
+              heading: fighter.heading,
+            },
+            launchDistance,
+            bayLimit,
+            bayOperationsUsedBefore: used,
+            bayOperationsUsedAfter: used + 1,
+            inventoryItemBefore: bayItem,
+            inventoryAfter: nextInventory,
+          },
+        });
+      } catch (err) {
+        req.log.warn({ err, gameId, unitId: carrier.id, fighterId: fighter.id }, "fighter launch audit log insert failed");
+      }
+
       return { carrier: updatedCarrier, fighter };
     });
     res.json(out);
@@ -7025,6 +7198,32 @@ router.post("/games/:gameId/units/:unitId/recover-fighter", requireAuth, async (
         fighterBayOperationsUsed: used + 1,
       }).where(eq(gameUnitsTable.id, carrier.id)).returning();
       await tx.delete(gameUnitsTable).where(eq(gameUnitsTable.id, fighter.id));
+
+      try {
+        await recordMovementAuditLog(tx, {
+          game,
+          actorKind: "player",
+          actorPlayerId: userId,
+          unitBefore: carrier,
+          unitAfter: updatedCarrier,
+          movementKind: "fighter-recovery",
+          summary: `${updatedCarrier.name} recovered ${fighter.name}.`,
+          payload: {
+            rulesPath: "end-phase-fighter-recovery",
+            carrier: unitAuditState(updatedCarrier),
+            fighter: unitAuditState(fighter),
+            recoveredUnitId: fighter.id,
+            recoveryLimit,
+            bayOperationsUsedBefore: used,
+            bayOperationsUsedAfter: used + 1,
+            originCarrierId: originCarrier.id,
+            inventoryItemBefore: bayItem,
+            inventoryAfter: nextCarrierInventory,
+          },
+        });
+      } catch (err) {
+        req.log.warn({ err, gameId, unitId: carrier.id, fighterId: fighter.id }, "fighter recovery audit log insert failed");
+      }
 
       return { carrier: updatedCarrier, recoveredUnitId: fighter.id };
     });
@@ -7701,6 +7900,13 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       const isFiring = game.phase === "firing";
       const endedUnitId = game.activeUnitId;
       let endedUnitForHandoff: typeof gameUnitsTable.$inferSelect | null = null;
+      let forcedHoldAudit:
+        | {
+          unitBefore: typeof gameUnitsTable.$inferSelect;
+          summary: string;
+          payload: Record<string, unknown>;
+        }
+        | null = null;
       if (endedUnitId) {
         const [row] = await tx.select().from(gameUnitsTable).where(and(
           eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId),
@@ -7828,21 +8034,69 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                   : effectiveMax > 0 ? Math.max(1, effectiveMax / 2) : 0;
                 if (minRequired > 0 && endedUnit.inchesMovedThisActivation < minRequired) {
                   const fmt = (value: number): string => value.toFixed(value % 1 === 0 ? 0 : 1);
-                  throw Object.assign(
-                    new Error(
-                      `Ship must move at least ${fmt(minRequired)}" this activation or declare All Stop (moved ${fmt(endedUnit.inchesMovedThisActivation)}")`,
-                    ),
-                    { status: 400 },
+                  const speedCap = movementSpeedCap(endedUnit, cap);
+                  const turnProfile = effectiveTurnProfile(endedUnit, endedTraits);
+                  const clearance = await scanLegalMovementDebtRestingSpots(
+                    tx,
+                    game.id,
+                    endedUnit,
+                    {
+                      minRequired,
+                      speedCap,
+                      crits: cap,
+                      traits: endedTraits,
+                      turnProfile,
+                    },
                   );
+                  if (clearance.hasLegalRestingSpot) {
+                    throw Object.assign(
+                      new Error(
+                        `Ship must move at least ${fmt(minRequired)}" this activation or declare All Stop (moved ${fmt(endedUnit.inchesMovedThisActivation)}")`,
+                      ),
+                      { status: 400 },
+                    );
+                  }
+                  forcedHoldAudit = {
+                    unitBefore: endedUnit,
+                    summary: `${endedUnit.name} held position because no legal final resting spot was available to satisfy its ${fmt(minRequired)}" minimum move.`,
+                    payload: {
+                      rulesPath: "public-alpha-no-legal-minimum-move-clearance",
+                      minRequired,
+                      movedThisActivation: endedUnit.inchesMovedThisActivation,
+                      effectiveMax,
+                      speedCap,
+                      clearance,
+                      damageState: eff,
+                      specialAction: endedUnit.specialAction,
+                      publicAlphaSafetyValve: true,
+                    },
+                  };
                 }
               }
             }
           }
         }
         // Mark the just-ended activation as done for THIS phase only.
-        await tx.update(gameUnitsTable)
+        const [endedAfter] = await tx.update(gameUnitsTable)
           .set(isFiring ? { hasFiredThisRound: true } : { hasMovedThisRound: true })
-          .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)));
+          .where(and(eq(gameUnitsTable.id, endedUnitId), eq(gameUnitsTable.gameId, gameId)))
+          .returning();
+        if (forcedHoldAudit && endedAfter) {
+          try {
+            await recordMovementAuditLog(tx, {
+              game,
+              actorKind: "system",
+              actorPlayerId: userId,
+              unitBefore: forcedHoldAudit.unitBefore,
+              unitAfter: endedAfter,
+              movementKind: "forced-hold",
+              summary: forcedHoldAudit.summary,
+              payload: forcedHoldAudit.payload,
+            });
+          } catch (err) {
+            req.log.warn({ err, gameId, unitId: endedUnitId }, "forced hold audit log insert failed");
+          }
+        }
       }
 
       // In active games the opponent is always bound; the status check above
@@ -10309,6 +10563,47 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       // contract and the client can refresh the panel without a roundtrip.
       const liveCrits = await tx.select().from(unitCriticalEffectsTable)
         .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+
+      try {
+        await recordSpecialActionAuditLog(tx, {
+          game,
+          actorKind: "player",
+          actorPlayerId: userId,
+          unitBefore: unit,
+          unitAfter: updated,
+          action: "damage-control",
+          storedAction: "damage-control",
+          success,
+          cqRequired: dcThreshold,
+          cqRoll: dcRoll,
+          cqTotal: dcTotal,
+          targetUnitId: null,
+          summary: `${unit.name} ${success ? "repaired" : "failed to repair"} ${effect.name} with Damage Control (${dcRoll} + CQ ${unit.crewQuality}${dcPenalty > 0 ? ` - ${dcPenalty}` : ""}${allHandsBonus > 0 ? ` + ${allHandsBonus}` : ""} = ${dcTotal}; needed ${dcThreshold}).`,
+          payload: {
+            rulesPath: "end-phase-damage-control",
+            effect: {
+              id: effect.id,
+              name: effect.name,
+              location: effect.location,
+              effectKey: effect.effectKey,
+              appliedRound: effect.appliedRound,
+              damageApplied: effect.damageApplied,
+              crewApplied: effect.crewApplied,
+              repairable: effect.repairable,
+            },
+            dcRoll,
+            crewQuality: unit.crewQuality,
+            dcPenalty,
+            dcBonus: allHandsBonus,
+            dcTotal,
+            dcThreshold,
+            allHandsActive,
+            repairedEffect: success,
+          },
+        });
+      } catch (err) {
+        req.log.warn({ err, gameId, unitId: unit.id, effectId: effect.id }, "damage control audit log insert failed");
+      }
       return {
         success, dcRoll, dcTotal, dcThreshold, dcPenalty, dcBonus: allHandsBonus, effectId,
         unit: { ...updated, damageState: effectiveDamageState(updated.damageState, liveCrits), criticals: liveCrits },
