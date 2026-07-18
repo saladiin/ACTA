@@ -69,7 +69,24 @@ import {
   ListTurnsResponse,
 } from "@workspace/api-zod";
 
-function parseReportBugBody(raw: unknown): { success: true; data: { message: string; rescueRequested: boolean } } | { success: false; error: string } {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function sanitizeDiagnosticValue(value: unknown, depth = 0): unknown {
+  if (depth > 4) return "[depth-limit]";
+  if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 60).map(item => sanitizeDiagnosticValue(item, depth + 1));
+  }
+  if (!isPlainRecord(value)) return String(value);
+  const entries = Object.entries(value).slice(0, 80);
+  return Object.fromEntries(entries.map(([key, item]) => [key.slice(0, 80), sanitizeDiagnosticValue(item, depth + 1)]));
+}
+
+function parseReportBugBody(raw: unknown): { success: true; data: { message: string; rescueRequested: boolean; clientSnapshot: Record<string, unknown> | null } } | { success: false; error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { success: false, error: "Bug report body must be an object" };
   }
@@ -80,7 +97,17 @@ function parseReportBugBody(raw: unknown): { success: true; data: { message: str
   if (body.rescueRequested !== undefined && typeof body.rescueRequested !== "boolean") {
     return { success: false, error: "rescueRequested must be a boolean" };
   }
-  return { success: true, data: { message, rescueRequested: body.rescueRequested === true } };
+  if (body.clientSnapshot !== undefined && !isPlainRecord(body.clientSnapshot)) {
+    return { success: false, error: "clientSnapshot must be an object" };
+  }
+  return {
+    success: true,
+    data: {
+      message,
+      rescueRequested: body.rescueRequested === true,
+      clientSnapshot: body.clientSnapshot ? sanitizeDiagnosticValue(body.clientSnapshot) as Record<string, unknown> : null,
+    },
+  };
 }
 
 function parseGameChatBody(raw: unknown): { success: true; data: { message: string } } | { success: false; error: string } {
@@ -122,6 +149,16 @@ function unitAuditState(unit: typeof gameUnitsTable.$inferSelect): Record<string
     hexQ: unit.hexQ,
     hexR: unit.hexR,
     heading: unit.heading,
+    speed: unit.speed,
+    turns: unit.turns,
+    turnAngle: unit.turnAngle,
+    specialAction: unit.specialAction,
+    hasMovedThisRound: unit.hasMovedThisRound,
+    hasFiredThisRound: unit.hasFiredThisRound,
+    firedWeaponIds: unit.firedWeaponIds,
+    slowLoadingWeaponCooldowns: unit.slowLoadingWeaponCooldowns,
+    baseRadiusInches: unit.baseRadiusInches,
+    modelFilename: unit.modelFilename,
   };
 }
 
@@ -5392,6 +5429,98 @@ router.post("/games/:gameId/bug-report", requireAuth, async (req, res): Promise<
 
       const units = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
       const activeUnit = game.activeUnitId ? units.find(u => u.id === game.activeUnitId) ?? null : null;
+      const selectedUnitId =
+        typeof body.data.clientSnapshot?.selectedUnitId === "number"
+          ? body.data.clientSnapshot.selectedUnitId
+          : null;
+      const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) ?? null : null;
+      const focusUnit = activeUnit ?? selectedUnit;
+      const unitIds = units.map(u => u.id);
+      const critRows = unitIds.length > 0
+        ? await tx.select().from(unitCriticalEffectsTable).where(inArray(unitCriticalEffectsTable.gameUnitId, unitIds))
+        : [];
+      const criticalsByUnit = new Map<number, Array<Record<string, unknown>>>();
+      for (const crit of critRows) {
+        const list = criticalsByUnit.get(crit.gameUnitId) ?? [];
+        list.push({
+          id: crit.id,
+          effectKey: crit.effectKey,
+          location: crit.location,
+          name: crit.name,
+          damageApplied: crit.damageApplied,
+          crewApplied: crit.crewApplied,
+          randomArc: crit.randomArc,
+          randomWeaponId: crit.randomWeaponId,
+          lostTraits: crit.lostTraits,
+          appliedRound: crit.appliedRound,
+          repairable: crit.repairable,
+        });
+        criticalsByUnit.set(crit.gameUnitId, list);
+      }
+      const unitStateWithCriticals = (unit: typeof gameUnitsTable.$inferSelect): Record<string, unknown> => ({
+        ...unitAuditState(unit),
+        criticalEffects: criticalsByUnit.get(unit.id) ?? [],
+      });
+      const nearbyUnits = focusUnit
+        ? units
+          .filter(u => u.id !== focusUnit.id)
+          .map(u => ({
+            ...unitStateWithCriticals(u),
+            distanceFromFocus: Number(Math.hypot(u.hexQ - focusUnit.hexQ, u.hexR - focusUnit.hexR).toFixed(3)),
+          }))
+          .sort((a, b) => Number(a.distanceFromFocus) - Number(b.distanceFromFocus))
+          .slice(0, 12)
+        : [];
+      const [recentMoves, recentAttacks, recentSpecialActions] = await Promise.all([
+        tx.select({
+          id: gameMovementAuditLogsTable.id,
+          round: gameMovementAuditLogsTable.round,
+          phase: gameMovementAuditLogsTable.phase,
+          actorKind: gameMovementAuditLogsTable.actorKind,
+          actorPlayerId: gameMovementAuditLogsTable.actorPlayerId,
+          unitId: gameMovementAuditLogsTable.unitId,
+          movementKind: gameMovementAuditLogsTable.movementKind,
+          summary: gameMovementAuditLogsTable.summary,
+          payload: gameMovementAuditLogsTable.payload,
+          createdAt: gameMovementAuditLogsTable.createdAt,
+        }).from(gameMovementAuditLogsTable)
+          .where(eq(gameMovementAuditLogsTable.gameId, game.id))
+          .orderBy(desc(gameMovementAuditLogsTable.createdAt), desc(gameMovementAuditLogsTable.id))
+          .limit(8),
+        tx.select({
+          id: gameAttackAuditLogsTable.id,
+          round: gameAttackAuditLogsTable.round,
+          phase: gameAttackAuditLogsTable.phase,
+          actorKind: gameAttackAuditLogsTable.actorKind,
+          actorPlayerId: gameAttackAuditLogsTable.actorPlayerId,
+          attackerUnitId: gameAttackAuditLogsTable.attackerUnitId,
+          targetUnitId: gameAttackAuditLogsTable.targetUnitId,
+          weaponId: gameAttackAuditLogsTable.weaponId,
+          summary: gameAttackAuditLogsTable.summary,
+          payload: gameAttackAuditLogsTable.payload,
+          createdAt: gameAttackAuditLogsTable.createdAt,
+        }).from(gameAttackAuditLogsTable)
+          .where(eq(gameAttackAuditLogsTable.gameId, game.id))
+          .orderBy(desc(gameAttackAuditLogsTable.createdAt), desc(gameAttackAuditLogsTable.id))
+          .limit(8),
+        tx.select({
+          id: gameSpecialActionAuditLogsTable.id,
+          round: gameSpecialActionAuditLogsTable.round,
+          phase: gameSpecialActionAuditLogsTable.phase,
+          actorKind: gameSpecialActionAuditLogsTable.actorKind,
+          actorPlayerId: gameSpecialActionAuditLogsTable.actorPlayerId,
+          unitId: gameSpecialActionAuditLogsTable.unitId,
+          action: gameSpecialActionAuditLogsTable.action,
+          success: gameSpecialActionAuditLogsTable.success,
+          targetUnitId: gameSpecialActionAuditLogsTable.targetUnitId,
+          summary: gameSpecialActionAuditLogsTable.summary,
+          payload: gameSpecialActionAuditLogsTable.payload,
+          createdAt: gameSpecialActionAuditLogsTable.createdAt,
+        }).from(gameSpecialActionAuditLogsTable)
+          .where(eq(gameSpecialActionAuditLogsTable.gameId, game.id))
+          .orderBy(desc(gameSpecialActionAuditLogsTable.createdAt), desc(gameSpecialActionAuditLogsTable.id))
+          .limit(8),
+      ]);
       const rescuePhase = game.phase === "movement" || game.phase === "firing";
       const reporterCanRescue =
         game.activePlayerId === userId ||
@@ -5411,8 +5540,26 @@ router.post("/games/:gameId/bug-report", requireAuth, async (req, res): Promise<
           opponentId: game.opponentId,
           opponentKind: game.opponentKind,
         },
-        activeUnit: activeUnit ? unitAuditState(activeUnit) : null,
-        units: units.map(unitAuditState),
+        reporter: {
+          playerId: userId,
+          canRescue: reporterCanRescue,
+        },
+        rescue: {
+          requested: body.data.rescueRequested,
+          applied: rescueApplied,
+          eligiblePhase: rescuePhase,
+        },
+        activeUnit: activeUnit ? unitStateWithCriticals(activeUnit) : null,
+        selectedUnit: selectedUnit ? unitStateWithCriticals(selectedUnit) : null,
+        focusUnitId: focusUnit?.id ?? null,
+        nearbyUnits,
+        units: units.map(unitStateWithCriticals),
+        auditTail: {
+          movement: recentMoves.reverse(),
+          attacks: recentAttacks.reverse(),
+          specialActions: recentSpecialActions.reverse(),
+        },
+        client: body.data.clientSnapshot,
       };
 
       const [report] = await tx.insert(bugReportsTable).values({

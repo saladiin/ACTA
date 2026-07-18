@@ -10059,8 +10059,82 @@ export default function GameBoard() {
   const handleSubmitBugReport = useCallback(async () => {
     const message = bugReportMessage.trim();
     if (message.length < 4 || bugReportPending) return;
+    if (!game) {
+      setBugReportError("Game data is still loading. Try again in a moment.");
+      return;
+    }
     setBugReportPending(true);
     setBugReportError(null);
+    const clientSnapshot = {
+      capturedAt: new Date().toISOString(),
+      gameId,
+      round: game.currentRound,
+      phase: currentPhase,
+      activePlayerId: game.activePlayerId,
+      activeUnitId,
+      selectedUnitId: selectedUnit,
+      selectedUnit: selectedUnitData
+        ? {
+            id: selectedUnitData.id,
+            name: selectedUnitData.name,
+            ownerId: selectedUnitData.ownerId,
+            hullPoints: selectedUnitData.hullPoints,
+            maxHullPoints: selectedUnitData.maxHullPoints,
+            crewPoints: selectedUnitData.crewPoints,
+            maxCrewPoints: selectedUnitData.maxCrewPoints,
+            damageState: selectedUnitData.damageState,
+            isDestroyed: selectedUnitData.isDestroyed,
+            hexQ: selectedUnitData.hexQ,
+            hexR: selectedUnitData.hexR,
+            heading: selectedUnitData.heading,
+            specialAction: selectedUnitData.specialAction,
+            speed: selectedUnitData.speed,
+            turns: selectedUnitData.turns,
+            turnAngle: selectedUnitData.turnAngle,
+            isFighter: isFighterUnit(selectedUnitData),
+          }
+        : null,
+      activeUnit: activeUnitData
+        ? {
+            id: activeUnitData.id,
+            name: activeUnitData.name,
+            ownerId: activeUnitData.ownerId,
+            hullPoints: activeUnitData.hullPoints,
+            maxHullPoints: activeUnitData.maxHullPoints,
+            crewPoints: activeUnitData.crewPoints,
+            maxCrewPoints: activeUnitData.maxCrewPoints,
+            damageState: activeUnitData.damageState,
+            isDestroyed: activeUnitData.isDestroyed,
+            hexQ: activeUnitData.hexQ,
+            hexR: activeUnitData.hexR,
+            heading: activeUnitData.heading,
+            specialAction: activeUnitData.specialAction,
+            speed: activeUnitData.speed,
+            turns: activeUnitData.turns,
+            turnAngle: activeUnitData.turnAngle,
+            isFighter: isFighterUnit(activeUnitData),
+          }
+        : null,
+      movePlan,
+      movementGesture,
+      moveTarget,
+      attackTarget,
+      selectedSaCaps,
+      selectedMovementUi,
+      selectedRemainingMove,
+      selectedDragOffset,
+      selectedPreviewHeadingDelta,
+      minMoveGate,
+      phaseLedger,
+      activationFeedback,
+      inputProfile,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      },
+      battleLogTail: battleLogEntries.slice(-6),
+    };
     try {
       const response = await customFetch<{ rescueApplied?: boolean }>(
         `/api/games/${gameId}/bug-report`,
@@ -10069,6 +10143,7 @@ export default function GameBoard() {
           body: JSON.stringify({
             message,
             rescueRequested: bugReportBlocking,
+            clientSnapshot,
           }),
         },
       );
@@ -10100,9 +10175,30 @@ export default function GameBoard() {
     bugReportBlocking,
     bugReportMessage,
     bugReportPending,
+    activeUnitData,
+    activeUnitId,
+    activationFeedback,
+    attackTarget,
+    battleLogEntries,
+    currentPhase,
+    game,
     gameId,
+    inputProfile,
+    isFighterUnit,
+    minMoveGate,
     mergeActiveUnitIntoGame,
+    movePlan,
+    moveTarget,
+    movementGesture,
+    phaseLedger,
     qc,
+    selectedDragOffset,
+    selectedMovementUi,
+    selectedPreviewHeadingDelta,
+    selectedRemainingMove,
+    selectedSaCaps,
+    selectedUnit,
+    selectedUnitData,
   ]);
 
   const handleSendChat = useCallback(async () => {

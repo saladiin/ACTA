@@ -90,6 +90,125 @@ type AdminBugReportsResponse = {
   reports: AdminBugReport[];
 };
 
+function snapshotRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function snapshotValue(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value.length > 0 ? value : null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+function unitSnapshotLabel(value: unknown): string | null {
+  const unit = snapshotRecord(value);
+  if (!unit) return null;
+  const name = snapshotValue(unit.name) ?? "Unit";
+  const id = snapshotValue(unit.id);
+  const owner = snapshotValue(unit.ownerId);
+  const hull = snapshotValue(unit.hullPoints);
+  const maxHull = snapshotValue(unit.maxHullPoints);
+  const crew = snapshotValue(unit.crewPoints);
+  const maxCrew = snapshotValue(unit.maxCrewPoints);
+  const position =
+    snapshotValue(unit.hexQ) != null && snapshotValue(unit.hexR) != null
+      ? `pos ${snapshotValue(unit.hexQ)}, ${snapshotValue(unit.hexR)}`
+      : null;
+  const health =
+    hull != null && maxHull != null && crew != null && maxCrew != null
+      ? `hull ${hull}/${maxHull}, crew ${crew}/${maxCrew}`
+      : null;
+  return [
+    id ? `${name} #${id}` : name,
+    owner ? `owner ${owner}` : null,
+    health,
+    position,
+    snapshotValue(unit.heading) != null ? `heading ${snapshotValue(unit.heading)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function bugSnapshotSummary(snapshot: Record<string, unknown>): Array<{ label: string; value: string }> {
+  const rows: Array<{ label: string; value: string }> = [];
+  const game = snapshotRecord(snapshot.game);
+  const reporter = snapshotRecord(snapshot.reporter);
+  const rescue = snapshotRecord(snapshot.rescue);
+  const client = snapshotRecord(snapshot.client);
+  const activeUnit = unitSnapshotLabel(snapshot.activeUnit);
+  const selectedUnit = unitSnapshotLabel(snapshot.selectedUnit);
+  const nearbyUnits = Array.isArray(snapshot.nearbyUnits) ? snapshot.nearbyUnits : [];
+  const auditTail = snapshotRecord(snapshot.auditTail);
+  const movementTail = Array.isArray(auditTail?.movement) ? auditTail.movement : [];
+  const attackTail = Array.isArray(auditTail?.attacks) ? auditTail.attacks : [];
+  const specialTail = Array.isArray(auditTail?.specialActions) ? auditTail.specialActions : [];
+
+  const add = (label: string, value: unknown) => {
+    const rendered = snapshotValue(value);
+    if (rendered != null) rows.push({ label, value: rendered });
+  };
+
+  if (game) {
+    rows.push({
+      label: "game",
+      value: [
+        `round ${snapshotValue(game.round) ?? "?"}`,
+        snapshotValue(game.phase) ?? "unknown phase",
+        `active ${snapshotValue(game.activePlayerId) ?? "none"}`,
+        `unit ${snapshotValue(game.activeUnitId) ?? "none"}`,
+      ].join(" | "),
+    });
+  }
+  if (client) {
+    rows.push({
+      label: "client",
+      value: [
+        snapshotValue(client.phase) ?? "unknown phase",
+        `selected ${snapshotValue(client.selectedUnitId) ?? "none"}`,
+        `active ${snapshotValue(client.activeUnitId) ?? "none"}`,
+        `input ${snapshotValue(client.inputProfile) ?? "unknown"}`,
+      ].join(" | "),
+    });
+  }
+  if (reporter) {
+    rows.push({
+      label: "reporter",
+      value: [
+        snapshotValue(reporter.playerId) ?? "unknown",
+        `can rescue ${snapshotValue(reporter.canRescue) ?? "?"}`,
+      ].join(" | "),
+    });
+  }
+  if (rescue) {
+    rows.push({
+      label: "rescue",
+      value: [
+        `requested ${snapshotValue(rescue.requested) ?? "?"}`,
+        `applied ${snapshotValue(rescue.applied) ?? "?"}`,
+        `eligible ${snapshotValue(rescue.eligiblePhase) ?? "?"}`,
+      ].join(" | "),
+    });
+  }
+  if (activeUnit) rows.push({ label: "active unit", value: activeUnit });
+  if (selectedUnit) rows.push({ label: "selected unit", value: selectedUnit });
+  add("move plan", client?.movePlan ? JSON.stringify(client.movePlan) : null);
+  add("gesture", client?.movementGesture ? JSON.stringify(client.movementGesture) : null);
+  add("move target", client?.moveTarget ? JSON.stringify(client.moveTarget) : null);
+  add("attack target", client?.attackTarget);
+  rows.push({
+    label: "nearby",
+    value: `${nearbyUnits.length} captured${nearbyUnits[0] ? ` | closest ${unitSnapshotLabel(nearbyUnits[0]) ?? "unknown"}` : ""}`,
+  });
+  rows.push({
+    label: "audit tail",
+    value: `moves ${movementTail.length} | attacks ${attackTail.length} | special ${specialTail.length}`,
+  });
+
+  return rows;
+}
+
 type AdminMeResponse = {
   isAdmin: boolean;
 };
@@ -469,6 +588,7 @@ function AdminContent({
             {bugReports.reports.map((report) => {
               const gameTitle = `${report.challengerName ?? "Unknown"} vs ${report.opponentName ?? (report.opponentKind === "ai" ? "AI" : "Open Slot")}`;
               const resolved = Boolean(report.resolvedAt);
+              const diagnosticSummary = bugSnapshotSummary(report.snapshot ?? {});
               return (
                 <div
                   key={report.id}
@@ -556,6 +676,36 @@ function AdminContent({
                           </span>
                         )}
                       </div>
+                      {diagnosticSummary.length > 0 && (
+                        <div className="mt-3 rounded border border-sky-500/20 bg-sky-500/5 p-3">
+                          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-sky-200">
+                            Diagnostic snapshot
+                          </div>
+                          <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                            {diagnosticSummary.map((row) => (
+                              <div
+                                key={row.label}
+                                className="grid gap-1 md:grid-cols-[8rem_1fr]"
+                              >
+                                <span className="font-mono uppercase tracking-wider text-sky-200/80">
+                                  {row.label}
+                                </span>
+                                <span className="break-words font-mono text-zinc-200">
+                                  {row.value}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          <details className="mt-2">
+                            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest text-primary">
+                              Raw snapshot
+                            </summary>
+                            <pre className="mt-2 max-h-72 overflow-auto rounded bg-black/45 p-2 text-[10px] leading-4 text-zinc-300">
+                              {JSON.stringify(report.snapshot ?? {}, null, 2)}
+                            </pre>
+                          </details>
+                        </div>
+                      )}
                     </div>
                     {!resolved && (
                       <Button
