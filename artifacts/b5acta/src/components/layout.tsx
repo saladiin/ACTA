@@ -98,7 +98,7 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
             <span className="mt-1 text-[11px] text-primary uppercase tracking-[0.2em] font-mono">Wheel of Fire</span>
           </div>
         </div>
-        <nav className={`p-4 flex-1 flex gap-2 hide-scrollbar ${mobileChrome ? "flex-col overflow-visible" : "flex-row md:flex-col overflow-x-auto md:overflow-visible"}`}>
+        <nav className="p-4 flex-1 flex flex-col gap-2 hide-scrollbar overflow-y-auto overflow-x-hidden">
           <Link onClick={() => mobileChrome && setNavOpen(false)} href="/lobby" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
             <LayoutDashboard className="w-4 h-4" />
             <span className="text-sm font-medium tracking-wide uppercase">Lobby</span>

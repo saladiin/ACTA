@@ -11994,112 +11994,11 @@ export default function GameBoard() {
               </div>
             )}
           </div>
-          {/* Camera / key hints */}
-          <div className="absolute bottom-3 left-3 flex flex-col items-start gap-1 pointer-events-none">
-            <div className="text-xs text-gray-500 font-mono">
-              {isTouchInput
-                ? movementGesture
-                  ? "Drag ship preview · Release to stage · Confirm to commit"
-                  : uiControlMode === "mode-b"
-                    ? "Left side orbit - Right side pan - Pinch to zoom - Controller moves ships"
-                    : uiControlMode === "mode-c"
-                      ? "Drag to pan - Pinch to zoom - Two-finger drag to pan - Controller moves ships"
-                      : uiControlMode === "mode-d"
-                        ? "Drag to pan - Long-press then drag to orbit - Pinch to zoom - Controller moves ships"
-                        : uiControlMode === "mode-e"
-                          ? "Drag to pan - Pinch to zoom - Two-finger drag to orbit - Controller moves ships"
-                          : uiControlMode === "mode-f"
-                            ? "Top-down - Drag to pan - Pinch to zoom - Orbit locked - Controller moves ships"
-                            : touchGameControls
-                              ? "Drag to orbit · Pinch to zoom · Two-finger drag to pan · Controller moves ships"
-                              : "Drag to orbit · Pinch to zoom · Two-finger drag to pan"
-                : "WASD to pan · F forward · Q/E turn · Enter confirm · Scroll to zoom · Right-drag orbit"}
-            </div>
-            {game.status === "deploying" && (
-              <div className="text-[10px] text-gray-600 font-mono">
-                {selectedStagedId
-                  ? "L — lock/unlock · Del — remove · Esc — deselect"
-                  : "Click a placed ship to select it"}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {mobileGameChrome && (
-          <>
-            {!opsPanelOpen && (
-              <button
-                type="button"
-                aria-label="Open operations panel"
-                aria-expanded={opsPanelOpen}
-                onClick={() => setOpsPanelOpen(true)}
-                className="mobile-side-drawer-tab mobile-side-drawer-tab-right fixed right-0 top-24 z-50 flex h-12 w-9 items-center justify-center border border-r-0 border-border bg-card/95 text-primary shadow-lg"
-                data-testid="button-mobile-ops-panel-open"
-              >
-                <PanelRightOpen className="h-4 w-4" />
-              </button>
-            )}
-            {opsPanelOpen && (
-              <button
-                type="button"
-                aria-label="Close operations panel overlay"
-                className="fixed inset-0 z-30 bg-black/45 lg:hidden"
-                onClick={() => setOpsPanelOpen(false)}
-                data-testid="overlay-mobile-ops-panel"
-              />
-            )}
-          </>
-        )}
-
-        {/* Sidebar panel */}
-        <div
-          className={`game-board-sidebar border-border bg-card flex flex-col transition-transform duration-200 ease-out ${
-            mobileGameChrome
-              ? `fixed inset-y-0 right-0 z-40 w-[min(88vw,22rem)] border-l shadow-2xl safe-top safe-bottom overflow-y-auto ${opsPanelOpen ? "translate-x-0" : "translate-x-full"}`
-              : "w-full lg:w-72 lg:h-full lg:min-h-0 lg:overflow-y-auto border-t lg:border-t-0 lg:border-l"
-          }`}
-          data-state={opsPanelOpen ? "open" : "closed"}
-          data-testid="game-operations-sidebar"
-        >
-          {mobileGameChrome && (
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-primary">
-                Operations
-              </span>
-              <button
-                type="button"
-                aria-label="Close operations panel"
-                onClick={() => setOpsPanelOpen(false)}
-                className="flex h-9 w-9 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
-                data-testid="button-mobile-ops-panel-close"
-              >
-                <PanelRightClose className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
-          <AiDiagnosticsPanel
-            game={game}
-            onToggleAuto={() => {
-              setAutoAiError(null);
-              setAiAutoRunEnabled((enabled) => !enabled);
-            }}
-            isRunning={runAiStep.isPending}
-            autoEnabled={aiAutoRunEnabled}
-          />
-
-          {mobileGameChrome && (
-            <BattleLogPanel
-              entries={battleLogEntries}
-              collapsible
-              defaultOpen={false}
-            />
-          )}
-
           {canUseGameChat && (
             <div
-              className="border-b border-border"
+              className={`absolute left-3 z-30 w-[min(22rem,calc(100%-1.5rem))] overflow-hidden rounded border border-border bg-card/95 shadow-2xl backdrop-blur pointer-events-auto touch-auto ${
+                mobileGameChrome ? "top-16" : "top-20"
+              }`}
               data-testid="game-chat-panel"
             >
               <button
@@ -12225,6 +12124,108 @@ export default function GameBoard() {
                 </div>
               )}
             </div>
+          )}
+          {/* Camera / key hints */}
+          <div className="absolute bottom-3 left-3 flex flex-col items-start gap-1 pointer-events-none">
+            <div className="text-xs text-gray-500 font-mono">
+              {isTouchInput
+                ? movementGesture
+                  ? "Drag ship preview · Release to stage · Confirm to commit"
+                  : uiControlMode === "mode-b"
+                    ? "Left side orbit - Right side pan - Pinch to zoom - Controller moves ships"
+                    : uiControlMode === "mode-c"
+                      ? "Drag to pan - Pinch to zoom - Two-finger drag to pan - Controller moves ships"
+                      : uiControlMode === "mode-d"
+                        ? "Drag to pan - Long-press then drag to orbit - Pinch to zoom - Controller moves ships"
+                        : uiControlMode === "mode-e"
+                          ? "Drag to pan - Pinch to zoom - Two-finger drag to orbit - Controller moves ships"
+                          : uiControlMode === "mode-f"
+                            ? "Top-down - Drag to pan - Pinch to zoom - Orbit locked - Controller moves ships"
+                            : touchGameControls
+                              ? "Drag to orbit · Pinch to zoom · Two-finger drag to pan · Controller moves ships"
+                              : "Drag to orbit · Pinch to zoom · Two-finger drag to pan"
+                : "WASD to pan · F forward · Q/E turn · Enter confirm · Scroll to zoom · Right-drag orbit"}
+            </div>
+            {game.status === "deploying" && (
+              <div className="text-[10px] text-gray-600 font-mono">
+                {selectedStagedId
+                  ? "L — lock/unlock · Del — remove · Esc — deselect"
+                  : "Click a placed ship to select it"}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {mobileGameChrome && (
+          <>
+            {!opsPanelOpen && (
+              <button
+                type="button"
+                aria-label="Open operations panel"
+                aria-expanded={opsPanelOpen}
+                onClick={() => setOpsPanelOpen(true)}
+                className="mobile-side-drawer-tab mobile-side-drawer-tab-right fixed right-0 top-24 z-50 flex h-12 w-9 items-center justify-center border border-r-0 border-border bg-card/95 text-primary shadow-lg"
+                data-testid="button-mobile-ops-panel-open"
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </button>
+            )}
+            {opsPanelOpen && (
+              <button
+                type="button"
+                aria-label="Close operations panel overlay"
+                className="fixed inset-0 z-30 bg-black/45 lg:hidden"
+                onClick={() => setOpsPanelOpen(false)}
+                data-testid="overlay-mobile-ops-panel"
+              />
+            )}
+          </>
+        )}
+
+        {/* Sidebar panel */}
+        <div
+          className={`game-board-sidebar border-border bg-card flex flex-col transition-transform duration-200 ease-out ${
+            mobileGameChrome
+              ? `fixed inset-y-0 right-0 z-40 w-[min(88vw,22rem)] border-l shadow-2xl safe-top safe-bottom overflow-y-auto ${opsPanelOpen ? "translate-x-0" : "translate-x-full"}`
+              : "w-full lg:w-72 lg:h-full lg:min-h-0 lg:overflow-y-auto border-t lg:border-t-0 lg:border-l"
+          }`}
+          data-state={opsPanelOpen ? "open" : "closed"}
+          data-testid="game-operations-sidebar"
+        >
+          {mobileGameChrome && (
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-primary">
+                Operations
+              </span>
+              <button
+                type="button"
+                aria-label="Close operations panel"
+                onClick={() => setOpsPanelOpen(false)}
+                className="flex h-9 w-9 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
+                data-testid="button-mobile-ops-panel-close"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
+          <AiDiagnosticsPanel
+            game={game}
+            onToggleAuto={() => {
+              setAutoAiError(null);
+              setAiAutoRunEnabled((enabled) => !enabled);
+            }}
+            isRunning={runAiStep.isPending}
+            autoEnabled={aiAutoRunEnabled}
+          />
+
+          {mobileGameChrome && (
+            <BattleLogPanel
+              entries={battleLogEntries}
+              collapsible
+              defaultOpen={false}
+            />
           )}
 
           {game.status === "deploying" && myDeploymentLocked && (
