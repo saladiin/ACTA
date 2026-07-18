@@ -7574,12 +7574,22 @@ export default function GameBoard() {
   const [optimisticActiveUnitId, setOptimisticActiveUnitId] = useState<
     number | null
   >(null);
+  const [activationAttemptDebug, setActivationAttemptDebug] = useState<{
+    unitId: number;
+    unitName: string;
+    phase: string;
+    source: "pick" | "swap";
+    startedAt: string;
+  } | null>(null);
   const activeUnitId = optimisticActiveUnitId ?? serverActiveUnitId;
   const hasActiveUnit = activeUnitId !== null;
   const activeUnitReadyForActions =
     isMyActivation &&
     serverActiveUnitId !== null &&
     activeUnitId === serverActiveUnitId;
+  const activationRequestPending =
+    optimisticActiveUnitId !== null &&
+    serverActiveUnitId !== optimisticActiveUnitId;
   useEffect(() => {
     if (!isMyActivation || game?.status !== "active") {
       setOptimisticActiveUnitId(null);
@@ -7605,6 +7615,20 @@ export default function GameBoard() {
     optimisticActiveUnitId,
     serverActiveUnitId,
   ]);
+  useEffect(() => {
+    if (!activationAttemptDebug || !activateUnit.isPending) return;
+    const timeout = window.setTimeout(() => {
+      setActivationFeedback(
+        `Still waiting for ${activationAttemptDebug.unitName} activation to confirm. If this does not clear, submit a blocker report.`,
+      );
+    }, 8000);
+    return () => window.clearTimeout(timeout);
+  }, [activationAttemptDebug, activateUnit.isPending]);
+  useEffect(() => {
+    if (!activateUnit.isPending && activationAttemptDebug) {
+      setActivationAttemptDebug(null);
+    }
+  }, [activationAttemptDebug, activateUnit.isPending]);
   // With live polling, an opponent's action can advance the turn/activation
   // while this client still has a staged move preview. Drop any pending preview
   // the moment it's no longer our activation so a stale ghost can't linger; this
@@ -9794,6 +9818,13 @@ export default function GameBoard() {
       if (!hasActiveUnit && !phaseDone) {
         // Pick this ship up for its activation.
         if (activateUnit.isPending) return;
+        setActivationAttemptDebug({
+          unitId,
+          unitName: unit.name,
+          phase: currentPhase,
+          source: "pick",
+          startedAt: new Date().toISOString(),
+        });
         setSelectedUnit(unitId);
         setOptimisticActiveUnitId(unitId);
         setActivationFeedback(null);
@@ -9803,11 +9834,13 @@ export default function GameBoard() {
           { gameId, unitId },
           {
             onSuccess: () => {
+              setActivationAttemptDebug(null);
               mergeActiveUnitIntoGame(unitId);
               setOptimisticActiveUnitId(null);
               qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             },
             onError: (err: any) => {
+              setActivationAttemptDebug(null);
               setOptimisticActiveUnitId(null);
               setSelectedUnit(null);
               setActivationFeedback(
@@ -9853,6 +9886,13 @@ export default function GameBoard() {
       // before the server confirms; revert on error.
       const prevSelected = selectedUnit;
       const prevOptimisticActive = optimisticActiveUnitId;
+      setActivationAttemptDebug({
+        unitId,
+        unitName: unit.name,
+        phase: currentPhase,
+        source: "swap",
+        startedAt: new Date().toISOString(),
+      });
       setSelectedUnit(unitId);
       setOptimisticActiveUnitId(unitId);
       setActivationFeedback(null);
@@ -9863,11 +9903,13 @@ export default function GameBoard() {
         { gameId, unitId },
         {
           onSuccess: () => {
+            setActivationAttemptDebug(null);
             mergeActiveUnitIntoGame(unitId);
             setOptimisticActiveUnitId(null);
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           },
           onError: (err: any) => {
+            setActivationAttemptDebug(null);
             setSelectedUnit(prevSelected);
             setOptimisticActiveUnitId(prevOptimisticActive);
             setActivationFeedback(
@@ -10127,6 +10169,17 @@ export default function GameBoard() {
       minMoveGate,
       phaseLedger,
       activationFeedback,
+      activation: {
+        activatePending: activateUnit.isPending,
+        movePending: moveUnit.isPending,
+        endActivationPending: endActivation.isPending,
+        activeUnitReadyForActions,
+        activationRequestPending,
+        hasActiveUnit,
+        serverActiveUnitId,
+        optimisticActiveUnitId,
+        activationAttempt: activationAttemptDebug,
+      },
       inputProfile,
       viewport: {
         width: window.innerWidth,
@@ -10177,19 +10230,27 @@ export default function GameBoard() {
     bugReportPending,
     activeUnitData,
     activeUnitId,
+    activeUnitReadyForActions,
     activationFeedback,
+    activationAttemptDebug,
+    activationRequestPending,
+    activateUnit.isPending,
     attackTarget,
     battleLogEntries,
     currentPhase,
+    endActivation.isPending,
     game,
     gameId,
+    hasActiveUnit,
     inputProfile,
     isFighterUnit,
     minMoveGate,
     mergeActiveUnitIntoGame,
     movePlan,
     moveTarget,
+    moveUnit.isPending,
     movementGesture,
+    optimisticActiveUnitId,
     phaseLedger,
     qc,
     selectedDragOffset,
@@ -10199,6 +10260,7 @@ export default function GameBoard() {
     selectedSaCaps,
     selectedUnit,
     selectedUnitData,
+    serverActiveUnitId,
   ]);
 
   const handleSendChat = useCallback(async () => {
@@ -11880,10 +11942,17 @@ export default function GameBoard() {
             )}
             {game.status === "active" && isMyActivation && hasActiveUnit && (
               <div
-                className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+                className={`px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border ${
+                  activationRequestPending
+                    ? "border-amber-500/45 bg-amber-500/10 text-amber-200"
+                    : "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+                }`}
                 data-testid="hud-activating"
               >
-                Activating ·{" "}
+                {activationRequestPending
+                  ? "Requesting activation"
+                  : "Activating"}{" "}
+                ·{" "}
                 {units.find((u) => u.id === activeUnitId)?.name ?? "—"}
               </div>
             )}

@@ -137,6 +137,7 @@ function bugSnapshotSummary(snapshot: Record<string, unknown>): Array<{ label: s
   const reporter = snapshotRecord(snapshot.reporter);
   const rescue = snapshotRecord(snapshot.rescue);
   const client = snapshotRecord(snapshot.client);
+  const activation = snapshotRecord(client?.activation);
   const activeUnit = unitSnapshotLabel(snapshot.activeUnit);
   const selectedUnit = unitSnapshotLabel(snapshot.selectedUnit);
   const nearbyUnits = Array.isArray(snapshot.nearbyUnits) ? snapshot.nearbyUnits : [];
@@ -169,6 +170,18 @@ function bugSnapshotSummary(snapshot: Record<string, unknown>): Array<{ label: s
         `selected ${snapshotValue(client.selectedUnitId) ?? "none"}`,
         `active ${snapshotValue(client.activeUnitId) ?? "none"}`,
         `input ${snapshotValue(client.inputProfile) ?? "unknown"}`,
+      ].join(" | "),
+    });
+  }
+  if (activation) {
+    rows.push({
+      label: "activation",
+      value: [
+        `activate pending ${snapshotValue(activation.activatePending) ?? "?"}`,
+        `request pending ${snapshotValue(activation.activationRequestPending) ?? "?"}`,
+        `ready ${snapshotValue(activation.activeUnitReadyForActions) ?? "?"}`,
+        `server active ${snapshotValue(activation.serverActiveUnitId) ?? "none"}`,
+        `optimistic ${snapshotValue(activation.optimisticActiveUnitId) ?? "none"}`,
       ].join(" | "),
     });
   }
