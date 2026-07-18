@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { ClerkProvider, useClerk, useAuth } from "@clerk/react";
 import { publishableKeyFromHost } from "@clerk/react/internal";
 import { shadcn } from "@clerk/themes";
@@ -21,7 +21,6 @@ import Settings from "@/pages/settings";
 import Credits from "@/pages/credits";
 import Faq from "@/pages/faq";
 import UpdateLog from "@/pages/update-log";
-import VfxShowcase from "@/pages/vfx-showcase";
 import AdminPage from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 import { DevModeToggle } from "@/components/dev-mode-toggle";
@@ -36,6 +35,10 @@ import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },
 });
+
+const VfxShowcase = import.meta.env.DEV
+  ? lazy(() => import("@/pages/vfx-showcase"))
+  : null;
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -223,8 +226,12 @@ function ClerkProviderWithRoutes() {
             <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
             <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
             <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
-            {import.meta.env.DEV && (
-              <Route path="/vfx-showcase"><ProtectedRoute component={VfxShowcase} /></Route>
+            {import.meta.env.DEV && VfxShowcase && (
+              <Route path="/vfx-showcase">
+                <Suspense fallback={null}>
+                  <ProtectedRoute component={VfxShowcase} />
+                </Suspense>
+              </Route>
             )}
             <Route path="/credits"><ProtectedRoute component={Credits} /></Route>
             <Route path="/faq"><ProtectedRoute component={Faq} /></Route>
