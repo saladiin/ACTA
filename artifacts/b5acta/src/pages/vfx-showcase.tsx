@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Billboard, OrbitControls, Text } from "@react-three/drei";
+import { Billboard, OrbitControls, Text, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { Copy, RotateCcw, SlidersHorizontal, Sparkles, Target, Waves } from "lucide-react";
@@ -78,17 +78,34 @@ type SpecialStation = {
     | "phase-cloak"
     | "debris-sparks"
     | "arc-particle-spray"
+    | "persistent-impact-flashes"
     | "shockwave-dome"
     | "jump-point-aperture"
     | "hyperspace-wake"
     | "rift-shear"
     | "beacon-pulse"
-    | "gravity-lens";
+    | "gravity-lens"
+    | "damage-glow-core";
   position: Vec2;
   tuning?: Partial<Tuning>;
 };
 
-type ShowcaseStation = WeaponStation | AmbientStation | SpecialStation;
+type HullStateStation = {
+  kind: "hull-state";
+  id: string;
+  label: string;
+  note: string;
+  mode: "intact" | "adrift-tumble" | "adrift-askew" | "destroyed" | "exploding";
+  modelFilename: string;
+  position: Vec2;
+  tuning?: Partial<Tuning>;
+};
+
+type ShowcaseStation =
+  | WeaponStation
+  | AmbientStation
+  | SpecialStation
+  | HullStateStation;
 
 type ShowcaseBoard = {
   id: string;
@@ -207,6 +224,56 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     summary: "Persistent board ambience and impact accents.",
     stations: [
       {
+        kind: "hull-state",
+        id: "hyperion-intact-reference",
+        label: "Intact Hyperion",
+        note: "Baseline mesh reference for comparing hull-zero states.",
+        mode: "intact",
+        modelFilename: "hyperion.glb",
+        position: [-18, -26],
+        tuning: { color: "#38bdf8", secondaryColor: "#f8fafc", intensity: 0.35 },
+      },
+      {
+        kind: "hull-state",
+        id: "hyperion-adrift-tumble",
+        label: "Adrift Tumble",
+        note: "Powerless hull with slow visual-only roll and pitch drift.",
+        mode: "adrift-tumble",
+        modelFilename: "hyperion.glb",
+        position: [-9, -26],
+        tuning: { color: "#94a3b8", secondaryColor: "#67e8f9", speed: 0.35, intensity: 0.45 },
+      },
+      {
+        kind: "hull-state",
+        id: "hyperion-adrift-askew",
+        label: "Adrift Askew",
+        note: "Static off-axis hull for a quieter no-power state.",
+        mode: "adrift-askew",
+        modelFilename: "hyperion.glb",
+        position: [0, -26],
+        tuning: { color: "#94a3b8", secondaryColor: "#cbd5e1", intensity: 0.38 },
+      },
+      {
+        kind: "hull-state",
+        id: "hyperion-exploding-delayed",
+        label: "Exploding",
+        note: "Delayed explosion warning with red internal pulse.",
+        mode: "exploding",
+        modelFilename: "hyperion.glb",
+        position: [9, -26],
+        tuning: { color: "#ef4444", secondaryColor: "#f97316", speed: 1.25, size: 0.9, intensity: 1.35, count: 18, spread: 0.72 },
+      },
+      {
+        kind: "hull-state",
+        id: "hyperion-destroyed-wreck",
+        label: "Destroyed Wreck",
+        note: "Cold wreck sample using the dead Hyperion mesh and smoke.",
+        mode: "destroyed",
+        modelFilename: "dead-hyperion.glb",
+        position: [18, -26],
+        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.8, intensity: 0.8, count: 30, spread: 0.95 },
+      },
+      {
         kind: "ambient",
         id: "hull-fire",
         label: "Hull Fire",
@@ -232,6 +299,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "impact",
         position: [16, -18],
         tuning: { color: "#67e8f9", speed: 1, size: 1.2, fade: 1, intensity: 1.25 },
+      },
+      {
+        kind: "special",
+        id: "dead-hyperion-glow-core-detail",
+        label: "Glow Core Detail",
+        note: "Magnified standalone core from the dead Hyperion small_glow anchor.",
+        effect: "damage-glow-core",
+        position: [18, -10],
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fef08a",
+          speed: 0.9,
+          size: 1,
+          fade: 1,
+          intensity: 1.2,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "weapon",
@@ -439,6 +526,27 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
       },
       {
         kind: "special",
+        id: "persistent-impact-flashes",
+        label: "Persistent Impact Flashes",
+        note: "Multiple full-sphere impact blooms suspended above the board with randomized sizes.",
+        effect: "persistent-impact-flashes",
+        position: [10, 8],
+        tuning: {
+          color: "#67e8f9",
+          secondaryColor: "#ffffff",
+          speed: 0.85,
+          size: 1,
+          fade: 1.25,
+          intensity: 1.15,
+          spread: 1.35,
+          count: 14,
+          arc: 3.2,
+          thickness: 1,
+          randomness: 0.85,
+        },
+      },
+      {
+        kind: "special",
         id: "shockwave-dome",
         label: "Shockwave Dome",
         note: "Expanding shell for large detonations or spatial pressure waves.",
@@ -616,16 +724,21 @@ function toVector3([x, z]: Vec2, y = 0.8): THREE.Vector3 {
 
 function stationTypeLabel(station: ShowcaseStation): string {
   if (station.kind === "weapon") return station.weapon.name;
+  if (station.kind === "hull-state") return station.mode;
   return station.effect;
 }
 
 function supportsRibbonRandomness(station: ShowcaseStation): boolean {
   if (station.kind !== "special") return false;
-  return station.effect === "jump-point" || station.effect === "vortex-ribbons" || station.effect === "jump-vortex" || station.effect === "jump-point-aperture" || station.effect === "arc-particle-spray";
+  return station.effect === "jump-point" || station.effect === "vortex-ribbons" || station.effect === "jump-vortex" || station.effect === "jump-point-aperture" || station.effect === "arc-particle-spray" || station.effect === "persistent-impact-flashes";
 }
 
 function isArcParticleSpray(station: ShowcaseStation): boolean {
   return station.kind === "special" && station.effect === "arc-particle-spray";
+}
+
+function isPersistentImpactFlashes(station: ShowcaseStation): boolean {
+  return station.kind === "special" && station.effect === "persistent-impact-flashes";
 }
 
 function baseTuningFor(station: ShowcaseStation): Tuning {
@@ -702,6 +815,433 @@ function EndpointMarker({ position, color, selected = false }: { position: Vec2;
         <meshBasicMaterial color={color} transparent opacity={selected ? 0.94 : 0.78} />
       </mesh>
       <pointLight color={color} intensity={selected ? 1.8 : 1.1} distance={5} />
+    </group>
+  );
+}
+
+function showcaseShipScale(object: THREE.Object3D, targetInches = 2.4): number {
+  const box = new THREE.Box3().setFromObject(object);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxHorizontal = Math.max(size.x, size.z);
+  return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
+}
+
+const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "dead-hyperion.glb": "20260718-163044",
+};
+
+type ShowcaseModelAnchor = {
+  name: string;
+  position: [number, number, number];
+};
+
+function ShowcaseGlbModel({
+  filename,
+  tint,
+  opacity = 1,
+  emissiveColor,
+  emissiveIntensity = 0,
+  emissivePulse = false,
+  anchorEffects = false,
+}: {
+  filename: string;
+  tint: string;
+  opacity?: number;
+  emissiveColor?: string;
+  emissiveIntensity?: number;
+  emissivePulse?: boolean;
+  anchorEffects?: boolean;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+  const { scene } = useGLTF(url);
+  const emissiveMaterialsRef = useRef<Array<THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }>>([]);
+
+  const { cloned, anchors } = useMemo(() => {
+    const c = scene.clone(true);
+    const emissiveMaterials: Array<THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }> = [];
+    const tintColor = new THREE.Color(tint);
+    const glowColor = new THREE.Color(emissiveColor ?? tint);
+    const anchorPoints: ShowcaseModelAnchor[] = [];
+
+    c.traverse((child: any) => {
+      const anchorName = String(child.name ?? "").toLowerCase();
+      if (
+        anchorName.startsWith("wreck_smoke") ||
+        anchorName.startsWith("small_glow")
+      ) {
+        anchorPoints.push({
+          name: anchorName,
+          position: [child.position.x, child.position.y, child.position.z],
+        });
+      }
+      if (!child.isMesh) return;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.14);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = glowColor.clone();
+          adjustable.emissiveIntensity = emissiveIntensity;
+          emissiveMaterials.push(adjustable);
+        }
+        clonedMaterial.transparent = opacity < 1;
+        clonedMaterial.opacity = opacity;
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+
+    emissiveMaterialsRef.current = emissiveMaterials;
+    return { cloned: c, anchors: anchorPoints };
+  }, [scene, tint, opacity, emissiveColor, emissiveIntensity]);
+
+  useFrame(({ clock }) => {
+    if (!emissivePulse) return;
+    const pulse = 0.65 + (Math.sin(clock.elapsedTime * 5.2) + 1) * 0.75;
+    for (const material of emissiveMaterialsRef.current) {
+      material.emissiveIntensity = emissiveIntensity * pulse;
+    }
+  });
+
+  const scale = useMemo(() => showcaseShipScale(cloned), [cloned]);
+  return (
+    <group scale={[scale, scale, scale]}>
+      <primitive object={cloned} />
+      {anchorEffects
+        ? anchors.map((anchor) => (
+            <ModelAnchorEffect
+              key={`${filename}-${anchor.name}`}
+              anchor={anchor}
+              modelScale={scale}
+            />
+          ))
+        : null}
+    </group>
+  );
+}
+
+function ModelAnchorSmoke({
+  anchor,
+  modelScale,
+}: {
+  anchor: ShowcaseModelAnchor;
+  modelScale: number;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => ({
+        angle: i * 2.21,
+        radius: 0.05 + (i % 3) * 0.025,
+        speed: 0.18 + (i % 4) * 0.025,
+        offset: i * 0.17,
+        size: (0.14 + (i % 3) * 0.045) * 0.36,
+      })),
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    groupRef.current.children.forEach((child, i) => {
+      const p = particles[i];
+      if (!p) return;
+      const t = (clock.elapsedTime * p.speed + p.offset) % 1;
+      child.position.set(
+        Math.cos(p.angle + t) * p.radius * (1 + t * 1.5),
+        t * 0.42,
+        Math.sin(p.angle + t) * p.radius * (1 + t * 1.5),
+      );
+      child.scale.setScalar(p.size * (0.7 + t * 1.1));
+      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.32 * (1 - t);
+    });
+  });
+
+  return (
+    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]} ref={groupRef}>
+      {particles.map((_, i) => (
+        <mesh key={i} raycast={() => null}>
+          <sphereGeometry args={[1, 10, 10]} />
+          <meshBasicMaterial
+            color="#cbd5e1"
+            transparent
+            opacity={0}
+            depthWrite={false}
+            depthTest={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ModelAnchorGlow({
+  anchor,
+  modelScale,
+}: {
+  anchor: ShowcaseModelAnchor;
+  modelScale: number;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 4.8) + 1) / 2;
+    if (meshRef.current) meshRef.current.scale.setScalar((0.2 + pulse * 0.04) * 0.3);
+    if (matRef.current) matRef.current.opacity = 0.12 + pulse * 0.24;
+    if (lightRef.current) lightRef.current.intensity = 0.55 + pulse * 1.15;
+  });
+
+  return (
+    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]}>
+      <mesh ref={meshRef} raycast={() => null}>
+        <sphereGeometry args={[1, 24, 16]} />
+        <meshBasicMaterial
+          ref={matRef}
+          color="#ef4444"
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color="#f97316" intensity={0.8} distance={1.8} />
+    </group>
+  );
+}
+
+function DamageGlowCore({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+  const coreRef = useRef<THREE.Mesh>(null);
+  const shellRef = useRef<THREE.Mesh>(null);
+  const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const shellMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 4.8 * tuning.speed) + 1) / 2;
+    const size = tuning.size * (1 + pulse * 0.08);
+    if (coreRef.current) coreRef.current.scale.setScalar(size);
+    if (shellRef.current) shellRef.current.scale.setScalar(tuning.size * (1.18 + pulse * 0.1));
+    if (coreMatRef.current) coreMatRef.current.opacity = (0.62 + pulse * 0.28) * tuning.intensity;
+    if (shellMatRef.current) shellMatRef.current.opacity = (0.18 + pulse * 0.22) * tuning.intensity;
+    if (lightRef.current) lightRef.current.intensity = (1.8 + pulse * 2.8) * tuning.intensity;
+  });
+
+  return (
+    <group position={[position[0], 1.2, position[1]]}>
+      <mesh ref={shellRef} raycast={() => null}>
+        <sphereGeometry args={[0.34, 32, 20]} />
+        <meshBasicMaterial
+          ref={shellMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0.28}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh ref={coreRef} raycast={() => null}>
+        <sphereGeometry args={[0.14, 24, 16]} />
+        <meshBasicMaterial
+          ref={coreMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0.78}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color={tuning.color} intensity={2.4} distance={5} />
+    </group>
+  );
+}
+
+function ModelAnchorEffect({
+  anchor,
+  modelScale,
+}: {
+  anchor: ShowcaseModelAnchor;
+  modelScale: number;
+}) {
+  if (anchor.name.startsWith("wreck_smoke")) {
+    return <ModelAnchorSmoke anchor={anchor} modelScale={modelScale} />;
+  }
+  if (anchor.name.startsWith("small_glow")) {
+    return <ModelAnchorGlow anchor={anchor} modelScale={modelScale} />;
+  }
+  return null;
+}
+
+function ExplodingHullPulse({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 5.2 * tuning.speed) + 1) / 2;
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar((1.15 + pulse * 0.18) * tuning.size);
+    }
+    if (matRef.current) {
+      matRef.current.opacity = (0.08 + pulse * 0.22) * tuning.intensity;
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = (1.2 + pulse * 4.5) * tuning.intensity;
+    }
+  });
+
+  return (
+    <group position={[position[0], 1.35, position[1]]}>
+      <mesh ref={meshRef} raycast={() => null}>
+        <sphereGeometry args={[1.45, 32, 16]} />
+        <meshBasicMaterial
+          ref={matRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8} />
+    </group>
+  );
+}
+
+function ExplodingOriginSmoke({ tuning }: { tuning: Tuning }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const plumeColors = ["#ef4444", "#f97316", "#facc15", "#fde68a"];
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 16 }, (_, i) => ({
+        angle: i * 2.399,
+        radius: 0.1 + (i % 5) * 0.035,
+        speed: 0.18 + (i % 4) * 0.035,
+        offset: i * 0.13,
+        size: 0.14 + (i % 4) * 0.04,
+      })),
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    groupRef.current.children.forEach((child, i) => {
+      const p = particles[i];
+      if (!p) return;
+      const t = (clock.elapsedTime * p.speed * tuning.speed + p.offset) % 1;
+      child.position.set(
+        Math.cos(p.angle + t * 0.7) * p.radius * (1 + t * 2.2),
+        t * 1.25,
+        Math.sin(p.angle + t * 0.7) * p.radius * (1 + t * 2.2),
+      );
+      child.scale.setScalar(p.size * (0.85 + t * 1.45) * tuning.size);
+      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.22 * (1 - t) * tuning.intensity;
+    });
+  });
+
+  return (
+    <group ref={groupRef}>
+      {particles.map((_, i) => (
+        <mesh key={i} raycast={() => null}>
+          <sphereGeometry args={[1, 12, 10]} />
+          <meshBasicMaterial
+            color={plumeColors[i % plumeColors.length]}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function HullStateFxStation({ station, tuning, selected }: { station: HullStateStation; tuning: Tuning; selected: boolean }) {
+  const modelGroupRef = useRef<THREE.Group>(null);
+  const staticRotation = useMemo<[number, number, number]>(() => {
+    if (station.mode === "adrift-askew") return [THREE.MathUtils.degToRad(18), 0, THREE.MathUtils.degToRad(-23)];
+    if (station.mode === "destroyed") return [THREE.MathUtils.degToRad(7), 0, THREE.MathUtils.degToRad(5)];
+    return [0, 0, 0];
+  }, [station.mode]);
+  const modelTint =
+    station.mode === "intact"
+      ? "#dbeafe"
+      : station.mode === "exploding"
+        ? "#fecaca"
+        : "#94a3b8";
+  const markerColor =
+    station.mode === "exploding"
+      ? "#ef4444"
+      : station.mode === "destroyed"
+        ? "#64748b"
+        : station.mode === "intact"
+          ? "#38bdf8"
+          : "#facc15";
+
+  useFrame(({ clock }) => {
+    if (!modelGroupRef.current || station.mode !== "adrift-tumble") return;
+    const t = clock.elapsedTime * tuning.speed;
+    modelGroupRef.current.rotation.x = THREE.MathUtils.degToRad(9 + Math.sin(t * 0.83) * 8);
+    modelGroupRef.current.rotation.y = Math.sin(t * 0.42) * 0.12;
+    modelGroupRef.current.rotation.z = THREE.MathUtils.degToRad(-11 + Math.cos(t * 0.71) * 9);
+  });
+
+  return (
+    <group>
+      <EndpointMarker position={station.position} color={markerColor} selected={selected} />
+      <group position={[station.position[0], 0, station.position[1]]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+          <ringGeometry args={[1.25, 1.42, 64]} />
+          <meshBasicMaterial color={markerColor} transparent opacity={selected ? 0.9 : 0.42} />
+        </mesh>
+        <group ref={modelGroupRef} position={[0, 1.35, 0]} rotation={staticRotation}>
+          <Suspense fallback={null}>
+            <ShowcaseGlbModel
+              filename={station.modelFilename}
+              tint={modelTint}
+              opacity={station.mode === "destroyed" ? 0.92 : 1}
+              emissiveColor={station.mode === "exploding" ? tuning.color : tuning.secondaryColor}
+              emissiveIntensity={station.mode === "exploding" ? 0.85 : 0.08 * tuning.intensity}
+              emissivePulse={station.mode === "exploding"}
+              anchorEffects={station.mode === "destroyed"}
+            />
+          </Suspense>
+        </group>
+      </group>
+      {station.mode === "exploding" ? (
+        <>
+          <group position={[station.position[0], 1.35, station.position[1]]}>
+            <ExplodingOriginSmoke tuning={tuning} />
+          </group>
+          <ExplodingHullPulse position={station.position} tuning={tuning} />
+        </>
+      ) : null}
+      <StationLabel station={station} selected={selected} />
     </group>
   );
 }
@@ -1968,6 +2508,78 @@ function GravityLens({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   );
 }
 
+function seededUnit(seed: number): number {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function PersistentImpactFlashes({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const count = clamp(Math.round(tuning.count), 2, 40);
+  const randomness = clamp(tuning.randomness ?? 0.75, 0, 1.5);
+  const flashes = useMemo(
+    () => Array.from({ length: count }, (_, i) => {
+      const radialSeed = seededUnit(i + 1.3);
+      const sizeSeed = seededUnit(i + 9.7);
+      const heightSeed = seededUnit(i + 17.1);
+      const angle = i * 2.399963 + seededUnit(i + 4.2) * randomness * 0.9;
+      const radius = (0.25 + radialSeed * 2.45) * tuning.spread;
+      const baseSize = (0.32 + sizeSeed * (0.85 + randomness * 0.45)) * tuning.size;
+      const height = (1.35 + tuning.arc * 0.32 + heightSeed * (0.8 + tuning.arc * 0.18)) * tuning.size;
+      return {
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
+        height,
+        baseSize,
+        phase: seededUnit(i + 29.4) * Math.PI * 2,
+        spin: (seededUnit(i + 37.8) - 0.5) * 0.018,
+        pulseSpeed: 0.7 + seededUnit(i + 44.6) * 0.9,
+        accent: seededUnit(i + 52.5) > 0.62,
+      };
+    }),
+    [count, randomness, tuning.arc, tuning.size, tuning.spread],
+  );
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    groupRef.current.children.forEach((child, i) => {
+      const flash = flashes[i];
+      if (!flash) return;
+      const pulse = Math.sin(clock.elapsedTime * tuning.speed * flash.pulseSpeed + flash.phase) * 0.5 + 0.5;
+      child.position.set(flash.x, flash.height + Math.sin(clock.elapsedTime * tuning.speed * 0.42 + flash.phase) * 0.08 * tuning.spread, flash.z);
+      child.rotation.y += flash.spin * tuning.speed;
+      child.scale.setScalar(flash.baseSize * (0.82 + pulse * 0.34));
+      child.children.forEach((mesh, meshIndex) => {
+        if (!("material" in mesh)) return;
+        const mat = (mesh as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        mat.opacity = meshIndex === 0
+          ? (0.14 + pulse * 0.28) * tuning.intensity
+          : (0.28 + pulse * 0.38) * tuning.intensity;
+      });
+    });
+  });
+
+  return (
+    <group position={[position[0], 0, position[1]]}>
+      <group ref={groupRef}>
+        {flashes.map((flash, i) => (
+          <group key={i} position={[flash.x, flash.height, flash.z]}>
+            <mesh raycast={() => null}>
+              <sphereGeometry args={[1, 24, 24]} />
+              <meshBasicMaterial color={flash.accent ? tuning.secondaryColor : tuning.color} transparent opacity={0.24} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            </mesh>
+            <mesh raycast={() => null} scale={[1.04, 1.04, 1.04]}>
+              <sphereGeometry args={[1, 18, 18]} />
+              <meshBasicMaterial color={tuning.secondaryColor} transparent opacity={0.42} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            </mesh>
+          </group>
+        ))}
+      </group>
+      <pointLight color={tuning.secondaryColor} intensity={2.6 * tuning.intensity} distance={9 * tuning.spread} position={[0, 2.4 + tuning.arc * 0.2, 0]} />
+    </group>
+  );
+}
+
 function SpecialFxStation({ station, tuning, selected }: { station: SpecialStation; tuning: Tuning; selected: boolean }) {
   return (
     <group>
@@ -1988,12 +2600,14 @@ function SpecialFxStation({ station, tuning, selected }: { station: SpecialStati
       {station.effect === "phase-cloak" ? <PhaseCloak position={station.position} tuning={tuning} /> : null}
       {station.effect === "debris-sparks" ? <DebrisSparks position={station.position} tuning={tuning} /> : null}
       {station.effect === "arc-particle-spray" ? <ArcParticleSpray position={station.position} tuning={tuning} /> : null}
+      {station.effect === "persistent-impact-flashes" ? <PersistentImpactFlashes position={station.position} tuning={tuning} /> : null}
       {station.effect === "shockwave-dome" ? <ShockwaveDome position={station.position} tuning={tuning} /> : null}
       {station.effect === "jump-point-aperture" ? <HorizontalJumpVortex position={station.position} tuning={tuning} /> : null}
       {station.effect === "hyperspace-wake" ? <HyperspaceWake position={station.position} tuning={tuning} /> : null}
       {station.effect === "rift-shear" ? <RiftShear position={station.position} tuning={tuning} /> : null}
       {station.effect === "beacon-pulse" ? <BeaconPulse position={station.position} tuning={tuning} /> : null}
       {station.effect === "gravity-lens" ? <GravityLens position={station.position} tuning={tuning} /> : null}
+      {station.effect === "damage-glow-core" ? <DamageGlowCore position={station.position} tuning={tuning} /> : null}
       <StationLabel station={station} selected={selected} />
     </group>
   );
@@ -2019,6 +2633,7 @@ function ShowcaseScene({
         const selected = station.id === selectedStationId;
         if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
+        if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
       })}
       <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={14} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={[0, 0, 0]} />
@@ -2110,7 +2725,11 @@ function exportPresetFor(station: ShowcaseStation, tuning: Tuning): string {
       stationId: station.id,
       label: station.label,
       source: "vfx-showcase-preview-only",
-      effect: station.kind === "weapon" ? classifyWeapon(station.weapon) : station.effect,
+      effect: station.kind === "weapon"
+        ? classifyWeapon(station.weapon)
+        : station.kind === "hull-state"
+          ? station.mode
+          : station.effect,
       tuning,
     },
     null,
@@ -2131,6 +2750,7 @@ export default function VfxShowcase() {
   const selectedStation = activeBoard.stations.find(station => station.id === selectedStationId) ?? activeBoard.stations[0];
   const selectedTuning = selectedStation ? effectiveTuning(selectedStation, overrides) : DEFAULT_TUNING;
   const selectedIsArcParticleSpray = selectedStation ? isArcParticleSpray(selectedStation) : false;
+  const selectedIsPersistentImpactFlashes = selectedStation ? isPersistentImpactFlashes(selectedStation) : false;
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -2243,7 +2863,7 @@ export default function VfxShowcase() {
                   <SliderControl label="Fade" value={selectedTuning.fade} min={0.25} max={3} step={0.05} onChange={fade => updateSelected({ fade })} />
                   <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
                   <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
-                  <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : 16} step={1} onChange={count => updateSelected({ count })} />
+                  <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
                   <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
                   <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
                   {supportsRibbonRandomness(selectedStation) ? (

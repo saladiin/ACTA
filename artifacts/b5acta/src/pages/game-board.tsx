@@ -1187,6 +1187,11 @@ function ObjModel({
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
+const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
+const DEAD_MODEL_FILENAMES: Record<string, string> = {
+  "battlecrab.glb": DEAD_BATTLECRAB_MODEL_FILENAME,
+  "hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
+};
 const VISUAL_ROTATE_180_MODELS = new Set([
   "aurora.glb",
   "thunderbolt.glb",
@@ -1219,6 +1224,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "avioki.glb": 1.5,
   "battlecrab.glb": 1.5,
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
+  [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
   "aurora.glb": 0.165,
   "thunderbolt.glb": 0.165,
   "tiger.glb": 0.165,
@@ -1257,17 +1263,16 @@ function modelScaleMultiplier(filename: string): number {
   return MODEL_SCALE_MULTIPLIERS[filename.toLowerCase()] ?? 1;
 }
 
-function isBattlecrabModel(filename: string): boolean {
-  return filename.toLowerCase() === "battlecrab.glb";
-}
-
 function visualModelFilenameForUnit(unit: {
   modelFilename: string;
   isDestroyed: boolean;
+  damageState?: string | null;
 }): string {
-  if (unit.isDestroyed && isBattlecrabModel(unit.modelFilename)) {
-    return DEAD_BATTLECRAB_MODEL_FILENAME;
-  }
+  const shouldUseDeadMesh =
+    unit.isDestroyed || unit.damageState === "destroyed";
+  if (!shouldUseDeadMesh) return unit.modelFilename;
+  const deadFilename = DEAD_MODEL_FILENAMES[unit.modelFilename.toLowerCase()];
+  if (deadFilename) return deadFilename;
   return unit.modelFilename;
 }
 
@@ -1284,23 +1289,38 @@ function unitIsCombatEffective(unit: {
   );
 }
 
+type DamageVfxAnchor = {
+  name: string;
+  position: [number, number, number];
+};
+
 function GlbModel({
   url,
   tint,
   filename,
   opacity = 1,
   meshTintsEnabled = true,
+  damageAnchorEffects = false,
 }: {
   url: string;
   tint: string;
   filename: string;
   opacity?: number;
   meshTintsEnabled?: boolean;
+  damageAnchorEffects?: boolean;
 }) {
   const { scene } = useGLTF(url);
-  const cloned = useMemo(() => {
+  const { cloned, anchors } = useMemo(() => {
     const c = scene.clone(true);
+    const anchorNodes: THREE.Object3D[] = [];
     c.traverse((child: any) => {
+      const anchorName = String(child.name ?? "").toLowerCase();
+      if (
+        anchorName.startsWith("wreck_smoke") ||
+        anchorName.startsWith("small_glow")
+      ) {
+        anchorNodes.push(child);
+      }
       if (child.isMesh) {
         const sourceMaterials = Array.isArray(child.material)
           ? child.material
@@ -1326,7 +1346,18 @@ function GlbModel({
           : materials[0];
       }
     });
-    return c;
+    c.updateMatrixWorld(true);
+    const rootInverse = new THREE.Matrix4().copy(c.matrixWorld).invert();
+    const anchorPoints = anchorNodes.map((node) => {
+      const position = new THREE.Vector3();
+      node.getWorldPosition(position);
+      position.applyMatrix4(rootInverse);
+      return {
+        name: node.name.toLowerCase(),
+        position: [position.x, position.y, position.z] as [number, number, number],
+      };
+    });
+    return { cloned: c, anchors: anchorPoints };
   }, [scene, tint, opacity, meshTintsEnabled]);
   const s = useMemo(
     () => shipScale(cloned) * modelScaleMultiplier(filename),
@@ -1336,11 +1367,18 @@ function GlbModel({
   const visualFlip =
     flip || VISUAL_ROTATE_180_MODELS.has(filename.toLowerCase());
   return (
-    <primitive
-      object={cloned}
-      scale={[s, s, s]}
-      rotation={[0, visualFlip ? Math.PI : 0, 0]}
-    />
+    <group scale={[s, s, s]} rotation={[0, visualFlip ? Math.PI : 0, 0]}>
+      <primitive object={cloned} />
+      {damageAnchorEffects
+        ? anchors.map((anchor) => (
+            <LiveDamageAnchorEffect
+              key={`${filename}-${anchor.name}`}
+              anchor={anchor}
+              modelScale={s}
+            />
+          ))
+        : null}
+    </group>
   );
 }
 
@@ -1382,6 +1420,9 @@ function ShipModelFallback({
 
 // Cache HEAD-check results so each URL is only fetched once per session
 const modelExistsCache = new Map<string, boolean>();
+const MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "dead-hyperion.glb": "20260718-163044",
+};
 
 function useModelExists(url: string): boolean | null {
   const [exists, setExists] = useState<boolean | null>(
@@ -1410,14 +1451,18 @@ function ShipModel3D({
   tint,
   opacity = 1,
   meshTintsEnabled = true,
+  damageAnchorEffects = false,
 }: {
   filename: string;
   tint: string;
   opacity?: number;
   meshTintsEnabled?: boolean;
+  damageAnchorEffects?: boolean;
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(APP_BUILD_SHA)}`;
+  const assetRevision =
+    MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
+  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(assetRevision)}`;
   const isGlb =
     filename.toLowerCase().endsWith(".glb") ||
     filename.toLowerCase().endsWith(".gltf");
@@ -1438,6 +1483,7 @@ function ShipModel3D({
         filename={filename}
         opacity={opacity}
         meshTintsEnabled={meshTintsEnabled}
+        damageAnchorEffects={damageAnchorEffects}
       />
     );
   return (
@@ -1951,11 +1997,13 @@ function BoardModelVisual({
   tint,
   opacity = 1,
   meshTintsEnabled = true,
+  damageAnchorEffects = false,
 }: {
   filename: string;
   tint: string;
   opacity?: number;
   meshTintsEnabled?: boolean;
+  damageAnchorEffects?: boolean;
 }) {
   const fighterFilename = canonicalFighterSquadronFilename(filename);
   if (!fighterFilename) {
@@ -1965,6 +2013,7 @@ function BoardModelVisual({
         tint={tint}
         opacity={opacity}
         meshTintsEnabled={meshTintsEnabled}
+        damageAnchorEffects={damageAnchorEffects}
       />
     );
   }
@@ -1982,9 +2031,232 @@ function BoardModelVisual({
             tint={tint}
             opacity={opacity}
             meshTintsEnabled={meshTintsEnabled}
+            damageAnchorEffects={false}
           />
         </group>
       ))}
+    </group>
+  );
+}
+
+function LiveAnchorSmoke({
+  anchor,
+  modelScale,
+}: {
+  anchor: DamageVfxAnchor;
+  modelScale: number;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => ({
+        angle: i * 2.21,
+        radius: 0.05 + (i % 3) * 0.025,
+        speed: 0.18 + (i % 4) * 0.025,
+        offset: i * 0.17,
+        size: (0.14 + (i % 3) * 0.045) * 0.36,
+      })),
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.children.forEach((child, i) => {
+      const particle = particles[i];
+      if (!particle) return;
+      const local =
+        (clock.elapsedTime * particle.speed + particle.offset) % 1;
+      child.position.set(
+        Math.cos(particle.angle + local) *
+          particle.radius *
+          (1 + local * 1.5),
+        local * 0.42,
+        Math.sin(particle.angle + local) *
+          particle.radius *
+          (1 + local * 1.5),
+      );
+      child.scale.setScalar(particle.size * (0.7 + local * 1.1));
+      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.32 * (1 - local);
+    });
+  });
+
+  return (
+    <group
+      ref={groupRef}
+      position={anchor.position}
+      scale={[effectScale, effectScale, effectScale]}
+    >
+      {particles.map((_, i) => (
+        <mesh key={i} raycast={() => null}>
+          <sphereGeometry args={[1, 10, 10]} />
+          <meshBasicMaterial
+            color="#cbd5e1"
+            transparent
+            opacity={0}
+            depthWrite={false}
+            depthTest={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function LiveAnchorGlow({
+  anchor,
+  modelScale,
+}: {
+  anchor: DamageVfxAnchor;
+  modelScale: number;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 4.8) + 1) / 2;
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar((0.2 + pulse * 0.04) * 0.3);
+    }
+    if (matRef.current) matRef.current.opacity = 0.12 + pulse * 0.24;
+    if (lightRef.current) lightRef.current.intensity = 0.55 + pulse * 1.15;
+  });
+
+  return (
+    <group
+      position={anchor.position}
+      scale={[effectScale, effectScale, effectScale]}
+    >
+      <mesh ref={meshRef} raycast={() => null}>
+        <sphereGeometry args={[1, 24, 16]} />
+        <meshBasicMaterial
+          ref={matRef}
+          color="#ef4444"
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color="#f97316"
+        intensity={0.8}
+        distance={1.8}
+      />
+    </group>
+  );
+}
+
+function LiveDamageAnchorEffect({
+  anchor,
+  modelScale,
+}: {
+  anchor: DamageVfxAnchor;
+  modelScale: number;
+}) {
+  if (anchor.name.startsWith("wreck_smoke")) {
+    return <LiveAnchorSmoke anchor={anchor} modelScale={modelScale} />;
+  }
+  if (anchor.name.startsWith("small_glow")) {
+    return <LiveAnchorGlow anchor={anchor} modelScale={modelScale} />;
+  }
+  return null;
+}
+
+function LiveExplodingOriginPlume() {
+  const groupRef = useRef<THREE.Group>(null);
+  const plumeColors = ["#ef4444", "#f97316", "#facc15", "#fde68a"];
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 16 }, (_, i) => ({
+        angle: i * 2.399,
+        radius: 0.1 + (i % 5) * 0.035,
+        speed: 0.18 + (i % 4) * 0.035,
+        offset: i * 0.13,
+        size: 0.14 + (i % 4) * 0.04,
+      })),
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.children.forEach((child, i) => {
+      const particle = particles[i];
+      if (!particle) return;
+      const local = (clock.elapsedTime * particle.speed + particle.offset) % 1;
+      child.position.set(
+        Math.cos(particle.angle + local * 0.7) *
+          particle.radius *
+          (1 + local * 2.2),
+        local * 1.25,
+        Math.sin(particle.angle + local * 0.7) *
+          particle.radius *
+          (1 + local * 2.2),
+      );
+      child.scale.setScalar(particle.size * (0.85 + local * 1.45));
+      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.22 * (1 - local);
+    });
+  });
+
+  return (
+    <group ref={groupRef}>
+      {particles.map((_, i) => (
+        <mesh key={i} raycast={() => null}>
+          <sphereGeometry args={[1, 12, 10]} />
+          <meshBasicMaterial
+            color={plumeColors[i % plumeColors.length]}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function LiveExplodingCorePulse() {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 5.2) + 1) / 2;
+    if (meshRef.current) meshRef.current.scale.setScalar(0.74 + pulse * 0.12);
+    if (matRef.current) matRef.current.opacity = 0.08 + pulse * 0.22;
+    if (lightRef.current) lightRef.current.intensity = 1.2 + pulse * 4.5;
+  });
+
+  return (
+    <group>
+      <mesh ref={meshRef} raycast={() => null}>
+        <sphereGeometry args={[1.45, 32, 16]} />
+        <meshBasicMaterial
+          ref={matRef}
+          color="#ef4444"
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color="#ef4444"
+        intensity={0}
+        distance={8}
+      />
     </group>
   );
 }
@@ -2274,7 +2546,8 @@ function GameUnit3D({
   const useShadowDamageVfx = !isFighter && isShadowCodedDamageVessel(unit);
   const visualModelFilename = visualModelFilenameForUnit({
     modelFilename: unit.modelFilename,
-    isDestroyed: visuallyDestroyed,
+    isDestroyed: unit.isDestroyed,
+    damageState: unit.damageState,
   });
   const headingRad = (unit.heading * Math.PI) / 180;
   const previewHeadingRad =
@@ -2289,11 +2562,43 @@ function GameUnit3D({
   const targetRingOuter = baseRadius + 0.48;
   const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const targetMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const modelAttitudeRef = useRef<THREE.Group>(null);
   const pulseHalo = Boolean((phaseViable || lightBlueHighlight) && !visuallyDestroyed);
   const dimOpacityScale = targetIneligible ? 0.38 : 1;
   const modelOpacity = hasPreview ? 0.28 : targetIneligible ? 0.24 : 1;
+  const usesDeadHyperionVisual =
+    visualModelFilename.toLowerCase() === DEAD_HYPERION_MODEL_FILENAME;
+  const usesAdriftVisual = unit.damageState === "adrift" && !isFighter;
+  const usesExplodingVisual =
+    unit.damageState === "exploding-end-of-next" && !isFighter;
+  const showGenericDamageFire =
+    !usesAdriftVisual &&
+    !usesExplodingVisual &&
+    !usesDeadHyperionVisual &&
+    fireLevel > 0;
+  const showGenericDestroyedSmoke =
+    !useShadowDamageVfx &&
+    !usesDeadHyperionVisual &&
+    !usesExplodingVisual &&
+    !usesAdriftVisual &&
+    (visuallyDestroyed || fireLevel >= 0.7);
 
   useFrame(({ clock }) => {
+    const modelAttitude = modelAttitudeRef.current;
+    if (modelAttitude) {
+      if (usesAdriftVisual && !hasPreview) {
+        const t = clock.elapsedTime * 0.35;
+        modelAttitude.rotation.x = THREE.MathUtils.degToRad(
+          9 + Math.sin(t * 0.83) * 8,
+        );
+        modelAttitude.rotation.y = Math.sin(t * 0.42) * 0.12;
+        modelAttitude.rotation.z = THREE.MathUtils.degToRad(
+          -11 + Math.cos(t * 0.71) * 9,
+        );
+      } else {
+        modelAttitude.rotation.set(0, 0, 0);
+      }
+    }
     const mat = haloMaterialRef.current;
     if (mat) {
       if (!pulseHalo) {
@@ -2433,18 +2738,27 @@ function GameUnit3D({
       )}
       {/* Ship model floating 2" above the base, rotated to heading */}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
-        <ModelErrorBoundary color={modelTint}>
-          <Suspense fallback={<ShipModelFallback color={modelTint} />}>
-            <BoardModelVisual
-              filename={visualModelFilename}
-              tint={modelTint}
-              opacity={modelOpacity}
-              meshTintsEnabled={shipMeshTintsEnabled}
-            />
-          </Suspense>
-        </ModelErrorBoundary>
+        <group ref={modelAttitudeRef}>
+          <ModelErrorBoundary color={modelTint}>
+            <Suspense fallback={<ShipModelFallback color={modelTint} />}>
+              <BoardModelVisual
+                filename={visualModelFilename}
+                tint={modelTint}
+                opacity={modelOpacity}
+                meshTintsEnabled={shipMeshTintsEnabled}
+                damageAnchorEffects={!hasPreview && usesDeadHyperionVisual}
+              />
+            </Suspense>
+          </ModelErrorBoundary>
+          {!hasPreview && usesExplodingVisual && (
+            <>
+              <LiveExplodingOriginPlume />
+              <LiveExplodingCorePulse />
+            </>
+          )}
+        </group>
         {!hasPreview &&
-          fireLevel > 0 &&
+          showGenericDamageFire &&
           (useShadowDamageVfx ? (
             <ShadowDamageParticleSpray
               level={fireLevel}
@@ -2453,15 +2767,13 @@ function GameUnit3D({
           ) : (
             <ShipDamageFire level={fireLevel} destroyed={visuallyDestroyed} />
           ))}
-        {!useShadowDamageVfx &&
-          !hasPreview &&
-          (visuallyDestroyed || fireLevel >= 0.7) && (
-            <DestroyedSmoke
-              intensity={visuallyDestroyed ? 1 : 0.45}
-              puffCount={visuallyDestroyed ? 12 : 5}
-              spread={visuallyDestroyed ? 1 : 0.45}
-            />
-          )}
+        {!hasPreview && showGenericDestroyedSmoke && (
+          <DestroyedSmoke
+            intensity={visuallyDestroyed ? 1 : 0.45}
+            puffCount={visuallyDestroyed ? 12 : 5}
+            spread={visuallyDestroyed ? 1 : 0.45}
+          />
+        )}
       </group>
       {hasPreview && (
         <group position={[dragOffset?.x ?? 0, 0, dragOffset?.z ?? 0]}>
