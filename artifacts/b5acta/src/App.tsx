@@ -20,6 +20,7 @@ import GamesList from "@/pages/games";
 import Settings from "@/pages/settings";
 import Credits from "@/pages/credits";
 import Faq from "@/pages/faq";
+import UpdateLog from "@/pages/update-log";
 import VfxShowcase from "@/pages/vfx-showcase";
 import AdminPage from "@/pages/admin";
 import NotFound from "@/pages/not-found";
@@ -222,9 +223,12 @@ function ClerkProviderWithRoutes() {
             <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
             <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
             <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
-            <Route path="/vfx-showcase"><ProtectedRoute component={VfxShowcase} /></Route>
+            {import.meta.env.DEV && (
+              <Route path="/vfx-showcase"><ProtectedRoute component={VfxShowcase} /></Route>
+            )}
             <Route path="/credits"><ProtectedRoute component={Credits} /></Route>
             <Route path="/faq"><ProtectedRoute component={Faq} /></Route>
+            <Route path="/update-log"><ProtectedRoute component={UpdateLog} /></Route>
             <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
             <Route path="/admin"><ProtectedRoute component={AdminPage} /></Route>
             <Route component={NotFound} />
