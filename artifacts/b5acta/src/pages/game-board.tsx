@@ -8179,6 +8179,15 @@ export default function GameBoard() {
           );
           return { kind: "forward", distance: next };
         });
+      } else if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        setMovePlan((prev) => {
+          if (prev?.kind !== "forward") return prev;
+          const next = snapMovementDistance(
+            Math.max(0, prev.distance - TABLET_FORWARD_STEP),
+          );
+          return next > 0 ? { kind: "forward", distance: next } : null;
+        });
       } else if (e.key === "Enter" || e.key === " " || e.code === "Space") {
         e.preventDefault();
         confirmMovePlan();
@@ -12164,7 +12173,7 @@ export default function GameBoard() {
                             : touchGameControls
                               ? "Drag to orbit · Pinch to zoom · Two-finger drag to pan · Controller moves ships"
                               : "Drag to orbit · Pinch to zoom · Two-finger drag to pan"
-                : "WASD to pan · F +0.5\" forward · Q/E turn · Enter/Space confirm · Scroll to zoom · Right-drag orbit"}
+                : "WASD to pan · hold F/R forward ±0.5\" · Q/E turn · Enter/Space confirm · Scroll to zoom · Right-drag orbit"}
             </div>
             {game.status === "deploying" && (
               <div className="text-[10px] text-gray-600 font-mono">
