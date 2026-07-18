@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck, Newspaper } from "lucide-react";
+import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck, Newspaper, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { customFetch } from "@workspace/api-client-react";
 import { APP_BUILD_SHA } from "@/lib/build-version";
@@ -24,6 +24,7 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
   const inputProfile = useInputProfile();
   const mobileChrome = inputProfile.layout === "compact" || inputProfile.input === "touch";
   const [navOpen, setNavOpen] = useState(false);
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
   const { data: adminMe } = useQuery({
     queryKey: ["admin-me"],
     queryFn: () => customFetch<AdminMeResponse>("/api/admin/me", { responseType: "json" }),
@@ -98,50 +99,65 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
             <span className="mt-1 text-[11px] text-primary uppercase tracking-[0.2em] font-mono">Wheel of Fire</span>
           </div>
         </div>
-        <nav className="p-4 flex-1 flex flex-col gap-2 hide-scrollbar overflow-y-auto overflow-x-hidden">
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/lobby" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <LayoutDashboard className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">Lobby</span>
-          </Link>
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/fleets" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+        <nav className="p-4 flex flex-col gap-2 hide-scrollbar overflow-y-auto overflow-x-hidden">
+          <button
+            type="button"
+            aria-expanded={navMenuOpen}
+            onClick={() => setNavMenuOpen((open) => !open)}
+            className="flex items-center gap-3 rounded-md border border-border/80 bg-background/40 px-3 py-2 text-left text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+            data-testid="button-toggle-main-menu"
+          >
             <List className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">Fleets</span>
-          </Link>
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/games" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <Crosshair className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">Active Ops</span>
-          </Link>
-          {import.meta.env.DEV && (
-            <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-              <Sparkles className="w-4 h-4" />
-              <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
-            </Link>
-          )}
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/credits" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <ScrollText className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">Credits</span>
-          </Link>
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/faq" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <CircleHelp className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">FAQ</span>
-          </Link>
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/update-log" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <Newspaper className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">Update Log</span>
-          </Link>
-          <Link onClick={() => mobileChrome && setNavOpen(false)} href="/settings" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-            <Settings className="w-4 h-4" />
-            <span className="text-sm font-medium tracking-wide uppercase">Settings</span>
-          </Link>
-          {showAdminNav && (
-            <Link onClick={() => mobileChrome && setNavOpen(false)} href="/admin" className="flex items-center gap-3 px-3 py-2 rounded-md border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary transition-colors shrink-0">
-              <ShieldCheck className="w-4 h-4" />
-              <span className="text-sm font-medium tracking-wide uppercase">Admin</span>
-            </Link>
+            <span className="flex-1 text-sm font-medium tracking-wide uppercase">Menu</span>
+            {navMenuOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {navMenuOpen && (
+            <div className="flex flex-col gap-1 border-l border-border/70 pl-2">
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/lobby" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <LayoutDashboard className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Lobby</span>
+              </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/fleets" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <List className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Fleets</span>
+              </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/games" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <Crosshair className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Active Ops</span>
+              </Link>
+              {import.meta.env.DEV && (
+                <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                  <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
+                </Link>
+              )}
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/credits" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <ScrollText className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Credits</span>
+              </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/faq" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <CircleHelp className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">FAQ</span>
+              </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/update-log" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <Newspaper className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Update Log</span>
+              </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/settings" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <Settings className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Settings</span>
+              </Link>
+              {showAdminNav && (
+                <Link onClick={() => mobileChrome && setNavOpen(false)} href="/admin" className="flex items-center gap-3 px-3 py-2 rounded-md border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary transition-colors shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                  <span className="text-sm font-medium tracking-wide uppercase">Admin</span>
+                </Link>
+              )}
+            </div>
           )}
         </nav>
         {sidebarBottom && (
-          <div className="hidden border-t border-border md:block">
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-border">
             {sidebarBottom}
           </div>
         )}

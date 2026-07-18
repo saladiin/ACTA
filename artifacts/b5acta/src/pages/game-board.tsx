@@ -10499,13 +10499,135 @@ export default function GameBoard() {
       : completedWinnerName
         ? `${completedWinnerName} wins.`
         : "Both fleets have been eliminated.";
+  const gameChatPanel = canUseGameChat ? (
+    <div className="border-b border-border" data-testid="game-chat-panel">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-secondary/30"
+        onClick={() => setChatOpen((open) => !open)}
+        aria-expanded={chatOpen}
+        data-testid="button-toggle-game-chat"
+      >
+        <MessageCircle className="h-4 w-4 text-primary" />
+        <span className="flex-1 text-xs font-mono font-bold uppercase tracking-widest text-primary">
+          Opponent Chat
+        </span>
+        {chatMessages.length > 0 && (
+          <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-mono">
+            {chatMessages.length}
+          </Badge>
+        )}
+        {chatOpen ? (
+          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        )}
+      </button>
+      {!chatOpen && latestChatMessage && (
+        <div
+          className="px-4 pb-3 text-[10px] font-mono text-muted-foreground truncate"
+          data-testid="game-chat-collapsed-preview"
+        >
+          {latestChatMessage.senderPlayerId === myUserId
+            ? "You"
+            : (latestChatMessage.senderName ?? "Opponent")}
+          : {latestChatMessage.message}
+        </div>
+      )}
+      {chatOpen && (
+        <div className="px-3 pb-3 space-y-2">
+          <div
+            ref={chatScrollRef}
+            className="max-h-52 overflow-y-auto rounded border border-border bg-background/70 p-2 space-y-1.5"
+            data-testid="game-chat-messages"
+          >
+            {chatMessages.length === 0 ? (
+              <p className="py-4 text-center text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                No messages yet
+              </p>
+            ) : (
+              chatMessages.map((message) => {
+                const mine = message.senderPlayerId === myUserId;
+                return (
+                  <div
+                    key={message.id}
+                    className={`rounded border px-2 py-1.5 text-xs font-mono ${
+                      mine
+                        ? "ml-5 border-primary/35 bg-primary/10 text-primary"
+                        : "mr-5 border-border bg-card text-foreground"
+                    }`}
+                    data-testid={`game-chat-message-${message.id}`}
+                  >
+                    <div className="mb-0.5 flex items-center justify-between gap-2 text-[9px] uppercase tracking-wider opacity-70">
+                      <span className="truncate">
+                        {mine ? "You" : (message.senderName ?? "Opponent")}
+                      </span>
+                      <span className="shrink-0">
+                        {formatChatTime(message.createdAt)}
+                      </span>
+                    </div>
+                    <div className="whitespace-pre-wrap break-words leading-relaxed">
+                      {message.message}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleSendChat();
+            }}
+          >
+            <Textarea
+              data-testid="textarea-game-chat"
+              value={chatMessage}
+              onChange={(event) => setChatMessage(event.target.value)}
+              maxLength={500}
+              rows={2}
+              placeholder="Message opponent..."
+              className="min-h-14 resize-none font-mono text-xs"
+            />
+            <div className="flex items-center gap-2">
+              <span className="flex-1 text-[10px] font-mono text-muted-foreground">
+                {chatMessage.length}/500
+              </span>
+              <Button
+                type="submit"
+                size="sm"
+                className="h-8 gap-1.5 px-3 text-[10px] font-bold uppercase tracking-widest"
+                disabled={chatSending || chatMessage.trim().length === 0}
+                data-testid="button-send-game-chat"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {chatSending ? "Sending" : "Send"}
+              </Button>
+            </div>
+            {chatError && (
+              <p
+                className="text-[10px] font-mono text-red-400"
+                data-testid="text-game-chat-error"
+              >
+                {chatError}
+              </p>
+            )}
+          </form>
+        </div>
+      )}
+    </div>
+  ) : null;
 
   return (
     <Layout
       title={`${game.challengerName ?? "?"} vs ${game.opponentName ?? "?"}`}
       sidebarBottom={
-        !mobileGameChrome ? (
-          <BattleLogPanel entries={battleLogEntries} />
+        gameChatPanel || !mobileGameChrome ? (
+          <div className="flex min-h-0 flex-col">
+            {gameChatPanel}
+            {!mobileGameChrome && <BattleLogPanel entries={battleLogEntries} />}
+          </div>
         ) : undefined
       }
     >
@@ -12023,137 +12145,6 @@ export default function GameBoard() {
               </div>
             )}
           </div>
-          {canUseGameChat && (
-            <div
-              className={`absolute left-3 z-30 w-[min(22rem,calc(100%-1.5rem))] overflow-hidden rounded border border-border bg-card/95 shadow-2xl backdrop-blur pointer-events-auto touch-auto ${
-                mobileGameChrome ? "top-16" : "top-20"
-              }`}
-              data-testid="game-chat-panel"
-            >
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-secondary/30"
-                onClick={() => setChatOpen((open) => !open)}
-                aria-expanded={chatOpen}
-                data-testid="button-toggle-game-chat"
-              >
-                <MessageCircle className="h-4 w-4 text-primary" />
-                <span className="flex-1 text-xs font-mono font-bold uppercase tracking-widest text-primary">
-                  Opponent Chat
-                </span>
-                {chatMessages.length > 0 && (
-                  <Badge
-                    variant="outline"
-                    className="h-5 px-1.5 text-[9px] font-mono"
-                  >
-                    {chatMessages.length}
-                  </Badge>
-                )}
-                {chatOpen ? (
-                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                )}
-              </button>
-              {!chatOpen && latestChatMessage && (
-                <div
-                  className="px-4 pb-3 text-[10px] font-mono text-muted-foreground truncate"
-                  data-testid="game-chat-collapsed-preview"
-                >
-                  {latestChatMessage.senderPlayerId === myUserId
-                    ? "You"
-                    : (latestChatMessage.senderName ?? "Opponent")}
-                  : {latestChatMessage.message}
-                </div>
-              )}
-              {chatOpen && (
-                <div className="px-3 pb-3 space-y-2">
-                  <div
-                    ref={chatScrollRef}
-                    className="max-h-48 overflow-y-auto rounded border border-border bg-background/70 p-2 space-y-1.5"
-                    data-testid="game-chat-messages"
-                  >
-                    {chatMessages.length === 0 ? (
-                      <p className="py-4 text-center text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                        No messages yet
-                      </p>
-                    ) : (
-                      chatMessages.map((message) => {
-                        const mine = message.senderPlayerId === myUserId;
-                        return (
-                          <div
-                            key={message.id}
-                            className={`rounded border px-2 py-1.5 text-xs font-mono ${
-                              mine
-                                ? "ml-5 border-primary/35 bg-primary/10 text-primary"
-                                : "mr-5 border-border bg-card text-foreground"
-                            }`}
-                            data-testid={`game-chat-message-${message.id}`}
-                          >
-                            <div className="mb-0.5 flex items-center justify-between gap-2 text-[9px] uppercase tracking-wider opacity-70">
-                              <span className="truncate">
-                                {mine
-                                  ? "You"
-                                  : (message.senderName ?? "Opponent")}
-                              </span>
-                              <span className="shrink-0">
-                                {formatChatTime(message.createdAt)}
-                              </span>
-                            </div>
-                            <div className="whitespace-pre-wrap break-words leading-relaxed">
-                              {message.message}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                  <form
-                    className="space-y-2"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      handleSendChat();
-                    }}
-                  >
-                    <Textarea
-                      data-testid="textarea-game-chat"
-                      value={chatMessage}
-                      onChange={(event) => setChatMessage(event.target.value)}
-                      maxLength={500}
-                      rows={2}
-                      placeholder="Message opponent..."
-                      className="min-h-14 resize-none font-mono text-xs"
-                    />
-                    <div className="flex items-center gap-2">
-                      <span className="flex-1 text-[10px] font-mono text-muted-foreground">
-                        {chatMessage.length}/500
-                      </span>
-                      <Button
-                        type="submit"
-                        size="sm"
-                        className="h-8 gap-1.5 px-3 text-[10px] font-bold uppercase tracking-widest"
-                        disabled={
-                          chatSending || chatMessage.trim().length === 0
-                        }
-                        data-testid="button-send-game-chat"
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        {chatSending ? "Sending" : "Send"}
-                      </Button>
-                    </div>
-                    {chatError && (
-                      <p
-                        className="text-[10px] font-mono text-red-400"
-                        data-testid="text-game-chat-error"
-                      >
-                        {chatError}
-                      </p>
-                    )}
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
           {/* Camera / key hints */}
           <div className="absolute bottom-3 left-3 flex flex-col items-start gap-1 pointer-events-none">
             <div className="text-xs text-gray-500 font-mono">
