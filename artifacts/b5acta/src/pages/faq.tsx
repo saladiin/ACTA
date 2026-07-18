@@ -209,6 +209,23 @@ const FAQ_SECTIONS = [
   },
 ];
 
+const QUICK_CONTROLS = [
+  "WASD: pan the board",
+  "Mouse wheel: zoom",
+  "Right-drag: orbit/rotate camera",
+  "Click ship: select ship",
+  "Double-click ship: focus camera on ship",
+  "F / hold F: stage forward movement",
+  "R / hold R: stage reverse movement",
+  "Q / E: stage turns",
+  "Enter or Space: confirm staged movement",
+  "Esc / X button: cancel staged movement or placement",
+  "Right-click after movement: bring up confirm/cancel move controls",
+  "Drag ship: move/place ship where allowed",
+  "Hover: see trait/critical/tooltips where available",
+  "Chat box active + Enter: send chat message",
+];
+
 export default function Faq() {
   return (
     <Layout title="FAQ">
@@ -223,6 +240,21 @@ export default function Faq() {
               </p>
             </div>
           </div>
+        </section>
+
+        <section className="rounded border border-primary/30 bg-primary/5 p-4">
+          <h3 className="text-xs font-bold uppercase tracking-[0.22em] text-primary">Public Alpha Controls</h3>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            It is still very much in development, so please report bugs, and for anything that brings your game to a halt, use the "force step" bypass while reporting your bug.
+          </p>
+          <ul className="mt-4 grid gap-2 text-sm leading-5 text-muted-foreground md:grid-cols-2">
+            {QUICK_CONTROLS.map(control => (
+              <li key={control} className="font-mono">{control}</li>
+            ))}
+          </ul>
+          <p className="mt-4 text-sm font-semibold leading-6 text-foreground">
+            Important note: movement is staged first. The ship should not truly move until you confirm with Enter, Space, or the check button.
+          </p>
         </section>
 
         <div className="grid gap-4">
