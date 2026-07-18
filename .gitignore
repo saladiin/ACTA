@@ -49,3 +49,13 @@ Thumbs.db
 .cache/
 .local/
 .local-dev/
+
+# local secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+bg.env
+B5.env
+*.local.env
+postgres-local-admin-password.txt
