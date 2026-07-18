@@ -186,6 +186,7 @@ const CAMERA_MAX_DISTANCE = 72;
 const CAMERA_LONG_PRESS_ORBIT_MS = 320;
 const TABLET_FORWARD_STEP = 0.5;
 const TABLET_TURN_STEP_DEG = 5;
+const CAPITAL_MOVE_DRAG_START_EXTRA_INCHES = 1.5;
 const AI_OPPONENT_ID = "ai:acta-skirmish-v0";
 const AI_AUTO_STEP_LIMIT = 12;
 
@@ -8405,6 +8406,15 @@ export default function GameBoard() {
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
     (game?.phase as "initiative" | "movement" | "firing" | "end") ?? "movement";
+  useEffect(() => {
+    if (currentPhase !== "movement" || serverActiveUnitId == null) return;
+    setPhaseLedger((prev) => {
+      if (!(serverActiveUnitId in prev)) return prev;
+      const next = { ...prev };
+      delete next[serverActiveUnitId];
+      return next;
+    });
+  }, [currentPhase, serverActiveUnitId]);
   const activeDogfightEnemies = useMemo(() => {
     if (currentPhase !== "firing" || !activeUnitId)
       return [] as Array<BoardUnit & { isFighter: boolean }>;
@@ -10549,7 +10559,10 @@ export default function GameBoard() {
                   x - selectedUnitData.hexQ,
                   z - selectedUnitData.hexR,
                 );
-                if (distanceFromSelected <= baseRadius + 0.9) {
+                if (
+                  distanceFromSelected <=
+                  baseRadius + CAPITAL_MOVE_DRAG_START_EXTRA_INCHES
+                ) {
                   setMovementGesture({ kind: "forward" });
                   setMovePlan({ kind: "forward", distance: 0 });
                 }
