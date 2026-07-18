@@ -11813,6 +11813,155 @@ export default function GameBoard() {
               </button>
             </div>
           )}
+          {!isTouchInput &&
+            !mobileGameChrome &&
+            currentPhase === "movement" &&
+            isSelectedUnitActive &&
+            selectedUnitData &&
+            selectedMovementUi &&
+            !selectedUnitData.isDestroyed &&
+            selectedUnitData.damageState !== "adrift" &&
+            selectedUnitData.damageState !== "exploding-end-of-next" && (
+              <div
+                className="pointer-events-auto absolute bottom-12 right-3 z-30 w-56 rounded border border-cyan-300/40 bg-black/78 p-2 shadow-2xl shadow-cyan-950/50 backdrop-blur-md"
+                data-testid="pc-movement-quick-controls"
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest text-cyan-100/80">
+                  <span>{selectedUnitData.name}</span>
+                  <span className="text-cyan-300">
+                    {movePlan?.kind === "forward"
+                      ? `${movePlan.distance.toFixed(1)}"`
+                      : movePlan?.kind === "turn"
+                        ? `${movePlan.deltaDeg > 0 ? "+" : ""}${movePlan.deltaDeg} deg`
+                        : `${selectedRemainingMove.toFixed(1)}"`}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1">
+                  <div />
+                  <button
+                    type="button"
+                    aria-label="Plan forward movement"
+                    title="Forward"
+                    disabled={
+                      !selectedMovementUi.canForward ||
+                      moveUnit.isPending ||
+                      activateUnit.isPending
+                    }
+                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={() => nudgeForwardPlan(TABLET_FORWARD_STEP)}
+                    data-testid="button-pc-plan-forward"
+                  >
+                    <ArrowUp className="h-5 w-5" />
+                  </button>
+                  <div />
+                  <button
+                    type="button"
+                    aria-label="Plan port turn"
+                    title="Turn left"
+                    disabled={
+                      !selectedMovementUi.canTurn ||
+                      moveUnit.isPending ||
+                      activateUnit.isPending
+                    }
+                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={() => nudgeTurnPlan(-TABLET_TURN_STEP_DEG, "left")}
+                    data-testid="button-pc-plan-turn-left"
+                  >
+                    <ArrowLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Cancel move preview"
+                    title="Cancel"
+                    disabled={!movePlan}
+                    className="flex h-9 items-center justify-center rounded border border-slate-500/70 bg-slate-950/80 text-slate-200 hover:bg-slate-800 disabled:border-slate-700 disabled:text-slate-600"
+                    onClick={cancelMovePlan}
+                    data-testid="button-pc-cancel-quick-move"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Plan starboard turn"
+                    title="Turn right"
+                    disabled={
+                      !selectedMovementUi.canTurn ||
+                      moveUnit.isPending ||
+                      activateUnit.isPending
+                    }
+                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={() => nudgeTurnPlan(TABLET_TURN_STEP_DEG, "right")}
+                    data-testid="button-pc-plan-turn-right"
+                  >
+                    <ArrowRight className="h-5 w-5" />
+                  </button>
+                  <div />
+                  <button
+                    type="button"
+                    aria-label="Reduce forward movement preview"
+                    title="Reduce forward preview"
+                    disabled={movePlan?.kind !== "forward" || movePlan.distance <= 0}
+                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={() => nudgeForwardPlan(-TABLET_FORWARD_STEP)}
+                    data-testid="button-pc-plan-back"
+                  >
+                    <ArrowDown className="h-5 w-5" />
+                  </button>
+                  <div />
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-1">
+                  <button
+                    type="button"
+                    aria-label="Plan free turn"
+                    title="Free turn"
+                    disabled={
+                      !selectedMovementUi.isSuperManeuverable ||
+                      !selectedMovementUi.canTurn ||
+                      moveUnit.isPending ||
+                      activateUnit.isPending
+                    }
+                    className="flex h-9 items-center justify-center rounded border border-cyan-300/65 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={startFreeTurnPlan}
+                    data-testid="button-pc-plan-free-turn"
+                  >
+                    <RotateCcw className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Confirm move preview"
+                    title="Confirm"
+                    disabled={!canConfirmMovePlan}
+                    className="flex h-9 items-center justify-center rounded border border-amber-300/80 bg-amber-300 text-black hover:bg-amber-200 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={confirmMovePlan}
+                    data-testid="button-pc-confirm-quick-move"
+                  >
+                    <Check className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="End activation"
+                    title={
+                      minMoveGate.blocked
+                        ? `Must move at least ${formatInches(minMoveGate.required)}" or declare All Stop before ending activation`
+                        : "End activation"
+                    }
+                    disabled={
+                      !hasActiveUnit ||
+                      endActivation.isPending ||
+                      minMoveGate.blocked
+                    }
+                    className="flex h-9 items-center justify-center rounded border border-cyan-300/55 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20 disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                    onClick={handleRequestEndActivation}
+                    data-testid="button-pc-end-activation"
+                  >
+                    <CheckCircle className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
           {touchGameControls &&
             currentPhase === "movement" &&
             isSelectedUnitActive &&

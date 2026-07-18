@@ -6749,6 +6749,55 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     req.log.warn({ err, gameId: game.id, unitId: unit.id }, "movement audit log insert failed");
   }
 
+  req.log.info({
+    gameId: game.id,
+    round: game.currentRound,
+    phase: game.phase,
+    activePlayerId: game.activePlayerId,
+    activeUnitId: game.activeUnitId,
+    userId,
+    unitId: unit.id,
+    unitName: unit.name,
+    shipId: unit.shipId,
+    damageState: effectiveDamageState(updated.damageState, moveCritRows),
+    specialAction: unit.specialAction,
+    from: {
+      hexQ: unit.hexQ,
+      hexR: unit.hexR,
+      heading: unit.heading,
+    },
+    to: {
+      hexQ: updated.hexQ,
+      hexR: updated.hexR,
+      heading: updated.heading,
+    },
+    requested: {
+      toHexQ: body.data.toHexQ,
+      toHexR: body.data.toHexR,
+      newHeading: body.data.newHeading,
+    },
+    movement: {
+      requestedStepInches,
+      actualStepInches,
+      headingDelta,
+      isTurn,
+      isMovingFighter,
+      speedCap: currentSpeedCap,
+    },
+    ledger: {
+      before: {
+        inchesMovedThisActivation: unit.inchesMovedThisActivation,
+        turnsMadeThisActivation: unit.turnsMadeThisActivation,
+        distanceSinceLastTurnThisActivation: unit.distanceSinceLastTurnThisActivation,
+      },
+      after: {
+        inchesMovedThisActivation: updated.inchesMovedThisActivation,
+        turnsMadeThisActivation: updated.turnsMadeThisActivation,
+        distanceSinceLastTurnThisActivation: updated.distanceSinceLastTurnThisActivation,
+      },
+    },
+  }, "movement step committed");
+
   res.json({
     ...updated,
     damageState: effectiveDamageState(updated.damageState, moveCritRows),
@@ -7130,6 +7179,16 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
           })
           .where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
       }
+      req.log.info({
+        gameId,
+        round: game.currentRound,
+        phase: game.phase,
+        activePlayerId: game.activePlayerId,
+        previousActiveUnitId: game.activeUnitId,
+        unitId,
+        userId,
+        repeatedActivation: game.activeUnitId === unitId,
+      }, "unit activation accepted");
       return result[0];
     });
     res.json(updated);
