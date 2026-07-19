@@ -29,6 +29,7 @@ $env:NODE_ENV = "development"
 $env:BASE_PATH = "/"
 $env:PATH = (Join-Path $runtimeRoot "native\git\usr\bin") + ";" +
   (Join-Path $runtimeRoot "node\bin") + ";" +
+  (Join-Path $runtimeRoot "bin\fallback") + ";" +
   (Join-Path $runtimeRoot "bin") + ";" +
   $env:PATH
 

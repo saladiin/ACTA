@@ -3,6 +3,8 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { Billboard, OrbitControls, Text, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
+// @ts-ignore
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { Copy, RotateCcw, SlidersHorizontal, Sparkles, Target, Waves } from "lucide-react";
 
 import { Layout } from "@/components/layout";
@@ -101,11 +103,25 @@ type HullStateStation = {
   tuning?: Partial<Tuning>;
 };
 
+type AnimatedModelStation = {
+  kind: "animated-model";
+  id: string;
+  label: string;
+  note: string;
+  modelFilename: string;
+  position: Vec2;
+  rotatingBoneName: string;
+  rotationAxis: "x" | "y" | "z";
+  secondsPerRotation: number;
+  tuning?: Partial<Tuning>;
+};
+
 type ShowcaseStation =
   | WeaponStation
   | AmbientStation
   | SpecialStation
-  | HullStateStation;
+  | HullStateStation
+  | AnimatedModelStation;
 
 type ShowcaseBoard = {
   id: string;
@@ -319,6 +335,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           arc: 0,
           thickness: 1,
         },
+      },
+      {
+        kind: "animated-model",
+        id: "omega1-rotator-bone-test",
+        label: "Omega Rotator Bone",
+        note: "omega1.glb rotatorhull rotates around Blender Y/front-back over 30 seconds.",
+        modelFilename: "omega1.glb",
+        position: [-18, -10],
+        rotatingBoneName: "rotatorhull",
+        rotationAxis: "z",
+        secondsPerRotation: 30,
+        tuning: { color: "#38bdf8", secondaryColor: "#f8fafc", speed: 1, size: 1, intensity: 0.4 },
       },
       {
         kind: "weapon",
@@ -725,6 +753,7 @@ function toVector3([x, z]: Vec2, y = 0.8): THREE.Vector3 {
 function stationTypeLabel(station: ShowcaseStation): string {
   if (station.kind === "weapon") return station.weapon.name;
   if (station.kind === "hull-state") return station.mode;
+  if (station.kind === "animated-model") return "bone test";
   return station.effect;
 }
 
@@ -827,8 +856,21 @@ function showcaseShipScale(object: THREE.Object3D, targetInches = 2.4): number {
   return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
 }
 
+function readEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z"): number {
+  if (axis === "x") return rotation.x;
+  if (axis === "y") return rotation.y;
+  return rotation.z;
+}
+
+function writeEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z", value: number) {
+  if (axis === "x") rotation.x = value;
+  else if (axis === "y") rotation.y = value;
+  else rotation.z = value;
+}
+
 const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "dead-hyperion.glb": "20260718-163044",
+  "omega1.glb": "20260718-223718",
 };
 
 type ShowcaseModelAnchor = {
@@ -931,6 +973,118 @@ function ShowcaseGlbModel({
             />
           ))
         : null}
+    </group>
+  );
+}
+
+function RotatingBoneShowcaseModel({
+  filename,
+  tint,
+  rotatingBoneName,
+  rotationAxis,
+  secondsPerRotation,
+}: {
+  filename: string;
+  tint: string;
+  rotatingBoneName: string;
+  rotationAxis: "x" | "y" | "z";
+  secondsPerRotation: number;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+  const { scene } = useGLTF(url);
+  const boneRef = useRef<THREE.Object3D | null>(null);
+  const initialRotationRef = useRef(0);
+
+  const cloned = useMemo(() => {
+    const c = cloneSkeleton(scene) as THREE.Object3D;
+    const tintColor = new THREE.Color(tint);
+    const targetBoneName = rotatingBoneName.toLowerCase();
+    boneRef.current = null;
+    initialRotationRef.current = 0;
+
+    c.traverse((child: any) => {
+      const childName = String(child.name ?? "").toLowerCase();
+      if (childName === targetBoneName) {
+        boneRef.current = child;
+        initialRotationRef.current = readEulerAxis(child.rotation, rotationAxis);
+      }
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.1);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = tintColor.clone();
+          adjustable.emissiveIntensity = 0.06;
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+
+    return c;
+  }, [scene, tint, rotatingBoneName, rotationAxis]);
+
+  useFrame(({ clock }) => {
+    const bone = boneRef.current;
+    if (!bone) return;
+    const cycle = Math.max(0.1, secondsPerRotation);
+    const progress = (clock.elapsedTime % cycle) / cycle;
+    writeEulerAxis(
+      bone.rotation,
+      rotationAxis,
+      initialRotationRef.current + progress * Math.PI * 2,
+    );
+    bone.updateMatrixWorld();
+  });
+
+  const scale = useMemo(() => showcaseShipScale(cloned, 3.2), [cloned]);
+
+  return (
+    <group scale={[scale, scale, scale]}>
+      <primitive object={cloned} />
+    </group>
+  );
+}
+
+function AnimatedModelFxStation({ station, tuning, selected }: { station: AnimatedModelStation; tuning: Tuning; selected: boolean }) {
+  return (
+    <group>
+      <EndpointMarker position={station.position} color={tuning.color} selected={selected} />
+      <group position={[station.position[0], 0, station.position[1]]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+          <ringGeometry args={[1.45, 1.62, 64]} />
+          <meshBasicMaterial color={tuning.color} transparent opacity={selected ? 0.9 : 0.42} />
+        </mesh>
+        <group position={[0, 1.35, 0]}>
+          <Suspense fallback={null}>
+            <RotatingBoneShowcaseModel
+              filename={station.modelFilename}
+              tint={tuning.secondaryColor}
+              rotatingBoneName={station.rotatingBoneName}
+              rotationAxis={station.rotationAxis}
+              secondsPerRotation={station.secondsPerRotation}
+            />
+          </Suspense>
+        </group>
+      </group>
+      <StationLabel station={station} selected={selected} />
     </group>
   );
 }
@@ -2634,6 +2788,7 @@ function ShowcaseScene({
         if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
+        if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
       })}
       <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={14} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={[0, 0, 0]} />
@@ -2729,7 +2884,9 @@ function exportPresetFor(station: ShowcaseStation, tuning: Tuning): string {
         ? classifyWeapon(station.weapon)
         : station.kind === "hull-state"
           ? station.mode
-          : station.effect,
+          : station.kind === "animated-model"
+            ? "bone-animation"
+            : station.effect,
       tuning,
     },
     null,
