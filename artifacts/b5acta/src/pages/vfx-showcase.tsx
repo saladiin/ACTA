@@ -1,5 +1,6 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MutableRefObject } from "react";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { Billboard, OrbitControls, Text, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
@@ -32,6 +33,8 @@ type Tuning = {
   projectileShape?: ProjectileShape;
   cylinderLength?: number;
   ribbonEffect?: number;
+  meshSize?: number;
+  flareSize?: number;
 };
 
 type WeaponStation = {
@@ -87,8 +90,17 @@ type SpecialStation = {
     | "rift-shear"
     | "beacon-pulse"
     | "gravity-lens"
-    | "damage-glow-core";
+    | "damage-glow-core"
+    | "cloud-flipbook-damage"
+    | "missile-impact-flipbook-test"
+    | "standalone-flipbook-preview"
+    | "mesh-missile-salvo"
+    | "texture-missile-salvo";
   position: Vec2;
+  to?: Vec2;
+  modelFilename?: string;
+  textureFilename?: string;
+  impactTextureFilename?: string;
   tuning?: Partial<Tuning>;
 };
 
@@ -232,6 +244,130 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           thickness: 2.05,
         },
       },
+      {
+        kind: "special",
+        id: "mesh-missile-salvo",
+        label: "Mesh Missile Salvo",
+        note: "Five missile meshes, each carrying an origin-mounted engine glow and smoke trail.",
+        effect: "mesh-missile-salvo",
+        position: [-18, 16],
+        to: [18, 26],
+        modelFilename: "missile1.glb",
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#fef08a",
+          speed: 1.3,
+          size: 1.15,
+          fade: 1.1,
+          intensity: 1.95,
+          spread: 1.2,
+          count: 5,
+          arc: 2.7,
+          thickness: 0.25,
+          meshSize: 1,
+          flareSize: 4,
+        },
+      },
+      {
+        kind: "special",
+        id: "texture-missile-salvo",
+        label: "Texture Missile Salvo",
+        note: "Same missile mesh, but the engine flare is a texture plane anchored at missile1 origin.",
+        effect: "texture-missile-salvo",
+        position: [-18, 8],
+        to: [18, 18],
+        modelFilename: "missile1.glb",
+        textureFilename: "missileflare.png",
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#fef08a",
+          speed: 1.3,
+          size: 1.15,
+          fade: 1.1,
+          intensity: 1.95,
+          spread: 1.2,
+          count: 5,
+          arc: 2.7,
+          thickness: 0.25,
+          meshSize: 1,
+          flareSize: 4,
+        },
+      },
+      {
+        kind: "special",
+        id: "missile-impact-flipbook-test",
+        label: "Missile Impact Flipbook",
+        note: "Missile Hyperion launches three texture-flare missiles at 0.0s, 0.5s, and 1.2s, each with a 3s flight and Explosion00 impact.",
+        effect: "missile-impact-flipbook-test",
+        position: [-16, 0],
+        to: [6, 0],
+        modelFilename: "missile1.glb",
+        textureFilename: "missileflare.png",
+        impactTextureFilename: "explosion00-5x5-keyed.webp",
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#fef08a",
+          speed: 1.3,
+          size: 0.85,
+          fade: 1,
+          intensity: 1.55,
+          spread: 1,
+          count: 3,
+          arc: 2.2,
+          thickness: 0.25,
+          meshSize: 1,
+          flareSize: 4,
+        },
+      },
+    ],
+  },
+  {
+    id: "flipbook-tests",
+    name: "Flipbook Tests",
+    summary: "Standalone generated 25-frame texture flipbook previews.",
+    stations: [
+      {
+        kind: "special",
+        id: "codex-sci-fi-explosion-1280",
+        label: "Generated 1280 Flipbook",
+        note: "Exact 5x5 sheet at 1280px, 256px per frame, converted to WebP.",
+        effect: "standalone-flipbook-preview",
+        position: [-6, -24],
+        textureFilename: "codex-sci-fi-explosion-5x5-1280.webp",
+        tuning: {
+          color: "#ffffff",
+          secondaryColor: "#60a5fa",
+          speed: 1,
+          size: 1.2,
+          fade: 1,
+          intensity: 1.25,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
+      },
+      {
+        kind: "special",
+        id: "codex-sci-fi-explosion-1254",
+        label: "Generated 1254 Flipbook",
+        note: "Earlier generated 5x5 sheet at 1254px, converted to WebP for comparison.",
+        effect: "standalone-flipbook-preview",
+        position: [6, -24],
+        textureFilename: "codex-sci-fi-explosion-5x5.webp",
+        tuning: {
+          color: "#ffffff",
+          secondaryColor: "#a78bfa",
+          speed: 1,
+          size: 1.2,
+          fade: 1,
+          intensity: 1.25,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
+      },
     ],
   },
   {
@@ -306,6 +442,27 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "smoke",
         position: [0, -18],
         tuning: { color: "#94a3b8", count: 24, speed: 0.7, size: 1, spread: 1.2, fade: 1 },
+      },
+      {
+        kind: "special",
+        id: "cloud-flipbook-damage",
+        label: "Cloud Flipbook Damage",
+        note: "Converted Cloud01 8x8 WebP flipbook as a damage-emitter candidate.",
+        effect: "cloud-flipbook-damage",
+        position: [8, -18],
+        textureFilename: "cloud01-8x8.webp",
+        tuning: {
+          color: "#f8fafc",
+          secondaryColor: "#f97316",
+          speed: 1,
+          size: 1.15,
+          fade: 1.2,
+          intensity: 0.72,
+          spread: 0.9,
+          count: 5,
+          arc: 0.35,
+          thickness: 1,
+        },
       },
       {
         kind: "ambient",
@@ -892,7 +1049,19 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
   "dead-omega.glb": "20260718-231918",
+  "hyperion.glb": "20260719-local",
+  "missile.glb": "20260719-010532",
+  "missile-hyperion.glb": "20260719-local",
+  "missile1.glb": "20260719-013547",
   "omega1.glb": "20260718-223718",
+};
+
+const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
+  "cloud01-8x8.webp": "20260719-032240",
+  "codex-sci-fi-explosion-5x5.webp": "20260719-122000",
+  "codex-sci-fi-explosion-5x5-1280.webp": "20260719-122000",
+  "explosion00-5x5-keyed.webp": "20260719-113000",
+  "missileflare.png": "20260719-011930",
 };
 
 type ShowcaseModelAnchor = {
@@ -1254,6 +1423,100 @@ function DamageGlowCore({ position, tuning }: { position: Vec2; tuning: Tuning }
   );
 }
 
+function CloudFlipbookDamageEmitter({
+  position,
+  tuning,
+  textureFilename,
+  paused,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+  textureFilename: string;
+  paused: boolean;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
+  const sourceTexture = useLoader(THREE.TextureLoader, url);
+  const elapsedRef = useRef(0);
+  const count = clamp(Math.round(tuning.count), 1, 12);
+  const columns = 8;
+  const rows = 8;
+  const frameCount = columns * rows;
+
+  const puffs = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => {
+        const angle = i * 2.399;
+        const radius = (0.18 + (i % 4) * 0.16) * tuning.spread;
+        return {
+          x: Math.cos(angle) * radius,
+          z: Math.sin(angle) * radius,
+          y: 1.1 + (i % 3) * 0.18 + tuning.arc,
+          scale: (1.25 + (i % 4) * 0.24) * tuning.size,
+          phase: i * 7,
+          opacity: (0.24 + (i % 3) * 0.04) * tuning.intensity,
+        };
+      }),
+    [count, tuning.arc, tuning.intensity, tuning.size, tuning.spread],
+  );
+
+  const frameTextures = useMemo(
+    () =>
+      puffs.map(() => {
+        const texture = sourceTexture.clone();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(1 / columns, 1 / rows);
+        texture.needsUpdate = true;
+        return texture;
+      }),
+    [puffs, sourceTexture],
+  );
+
+  useEffect(() => () => {
+    for (const texture of frameTextures) texture.dispose();
+  }, [frameTextures]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const frameRate = 18 * clamp(tuning.speed, 0.25, 3);
+    for (let i = 0; i < frameTextures.length; i += 1) {
+      const texture = frameTextures[i];
+      const frame = Math.floor(elapsedRef.current * frameRate + (puffs[i]?.phase ?? 0)) % frameCount;
+      const column = frame % columns;
+      const row = Math.floor(frame / columns);
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
+  });
+
+  return (
+    <group position={[position[0], 0, position[1]]}>
+      {puffs.map((puff, i) => (
+        <Billboard key={i} position={[puff.x, puff.y, puff.z]}>
+          <mesh scale={[puff.scale, puff.scale, puff.scale]} raycast={() => null}>
+            <planeGeometry args={[2.15, 2.15]} />
+            <meshBasicMaterial
+              map={frameTextures[i]}
+              color={tuning.color}
+              transparent
+              opacity={puff.opacity * tuning.fade}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+              toneMapped={false}
+            />
+          </mesh>
+        </Billboard>
+      ))}
+      <pointLight color={tuning.secondaryColor} intensity={1.2 * tuning.intensity} distance={5 * tuning.spread} position={[0, 1.2, 0]} />
+    </group>
+  );
+}
+
 function ModelAnchorEffect({
   anchor,
   modelScale,
@@ -1556,6 +1819,689 @@ function ProjectilePreview({
           <meshBasicMaterial ref={trailRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
         </mesh>
       )}
+    </group>
+  );
+}
+
+function MissileEngineGlow({
+  position,
+  modelScale,
+  color,
+  secondaryColor,
+  intensity,
+  flareSize,
+}: {
+  position: THREE.Vector3;
+  modelScale: number;
+  color: string;
+  secondaryColor: string;
+  intensity: number;
+  flareSize: number;
+}) {
+  const coreRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 18) + 1) / 2;
+    if (coreRef.current) coreRef.current.opacity = 0.74 + pulse * 0.2;
+    if (haloRef.current) haloRef.current.opacity = (0.18 + pulse * 0.16) * intensity;
+    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.3) * intensity;
+  });
+
+  return (
+    <group position={position.toArray()} scale={[effectScale, effectScale, effectScale]}>
+      <mesh raycast={() => null}>
+        <sphereGeometry args={[0.014 * flareSize, 14, 14]} />
+        <meshBasicMaterial ref={coreRef} color={secondaryColor} transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <mesh raycast={() => null}>
+        <sphereGeometry args={[0.042 * flareSize, 18, 18]} />
+        <meshBasicMaterial ref={haloRef} color={color} transparent opacity={0.2} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <pointLight ref={lightRef} color={color} intensity={0.9} distance={0.38 * flareSize} />
+    </group>
+  );
+}
+
+function MissileTextureFlare({
+  filename,
+  color,
+  intensity,
+  flareSize,
+}: {
+  filename: string;
+  color: string;
+  intensity: number;
+  flareSize: number;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/textures/${filename}?v=${encodeURIComponent(revision)}`;
+  const texture = useLoader(THREE.TextureLoader, url);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const length = 0.34 * flareSize;
+  const height = 0.16 * flareSize;
+
+  useMemo(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 14) + 1) / 2;
+    if (matRef.current) matRef.current.opacity = (0.5 + pulse * 0.22) * intensity;
+    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.1) * intensity;
+  });
+
+  return (
+    <group position={[0, 0, -length / 2]} rotation={[0, Math.PI / 2, 0]}>
+      <mesh raycast={() => null} renderOrder={5}>
+        <planeGeometry args={[length, height]} />
+        <meshBasicMaterial
+          ref={matRef}
+          map={texture}
+          color={color}
+          transparent
+          opacity={0.7 * intensity}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color={color}
+        intensity={1}
+        distance={0.4 * flareSize}
+      />
+    </group>
+  );
+}
+
+function MissileMeshModel({
+  filename,
+  textureFilename,
+  textureFlare,
+  tint,
+  glowColor,
+  glowCoreColor,
+  intensity,
+  targetSize,
+  flareSize,
+}: {
+  filename: string;
+  textureFilename?: string;
+  textureFlare?: boolean;
+  tint: string;
+  glowColor: string;
+  glowCoreColor: string;
+  intensity: number;
+  targetSize: number;
+  flareSize: number;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+  const { scene } = useGLTF(url);
+  const useOriginEngineFlare = filename.toLowerCase() === "missile1.glb";
+
+  const { cloned, scale, engineAnchor } = useMemo(() => {
+    const c = scene.clone(true);
+    const tintColor = new THREE.Color(tint);
+    const anchor = new THREE.Vector3(0, 0, 0);
+    let anchorNode: THREE.Object3D | undefined;
+
+    c.traverse((child: any) => {
+      const childName = String(child.name ?? "").trim().toLowerCase();
+      if (!useOriginEngineFlare && (childName === "engine flare" || childName === "missileflare" || childName === "missile flare")) anchorNode = child;
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.08);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = tintColor.clone();
+          adjustable.emissiveIntensity = 0.04;
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+
+    c.updateMatrixWorld(true);
+    if (anchorNode) {
+      const rootWorld = new THREE.Vector3();
+      const anchorWorld = new THREE.Vector3();
+      c.getWorldPosition(rootWorld);
+      anchorNode.getWorldPosition(anchorWorld);
+      anchor.copy(anchorWorld.sub(rootWorld));
+    }
+    const scaledModel = showcaseShipScale(c, targetSize);
+    const scaledAnchor = anchor.multiplyScalar(scaledModel);
+
+    return {
+      cloned: c,
+      scale: scaledModel,
+      engineAnchor: scaledAnchor,
+    };
+  }, [scene, targetSize, tint, useOriginEngineFlare]);
+
+  return (
+    <group>
+      <primitive object={cloned} scale={[scale, scale, scale]} />
+      {textureFlare && textureFilename ? (
+        <MissileTextureFlare
+          filename={textureFilename}
+          color={glowColor}
+          intensity={intensity}
+          flareSize={flareSize}
+        />
+      ) : (
+        <MissileEngineGlow
+          position={engineAnchor}
+          modelScale={1}
+          color={glowColor}
+          secondaryColor={glowCoreColor}
+          intensity={intensity}
+          flareSize={flareSize}
+        />
+      )}
+    </group>
+  );
+}
+
+const MESH_MISSILE_FLIGHT_SECONDS = 3;
+const MESH_MISSILE_LAUNCH_DELAYS_SECONDS = [0, 0.5, 1.2] as const;
+
+function meshMissileLaunchDelaySeconds(index: number): number {
+  return MESH_MISSILE_LAUNCH_DELAYS_SECONDS[index] ?? MESH_MISSILE_LAUNCH_DELAYS_SECONDS[MESH_MISSILE_LAUNCH_DELAYS_SECONDS.length - 1];
+}
+
+function MeshMissileRound({
+  filename,
+  textureFilename,
+  textureFlare,
+  from,
+  to,
+  tuning,
+  index,
+  paused,
+  timelineRef,
+  cycleDuration,
+}: {
+  filename: string;
+  textureFilename?: string;
+  textureFlare?: boolean;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  tuning: Tuning;
+  index: number;
+  paused: boolean;
+  timelineRef?: MutableRefObject<number>;
+  cycleDuration?: number;
+}) {
+  const missileRef = useRef<THREE.Group>(null);
+  const smokeTrailRef = useRef<THREE.Group>(null);
+  const localElapsedRef = useRef(0);
+  const forward = useMemo(() => new THREE.Vector3(0, 0, 1), []);
+  const smokePuffs = useMemo(
+    () =>
+      Array.from({ length: 21 }, (_, i) => ({
+        lag: 0.025 + i * 0.014,
+        side: ((i % 3) - 1) * 0.035,
+        lift: 0.015 + (i % 2) * 0.012,
+        size: 0.045 + i * 0.005,
+      })),
+    [],
+  );
+
+  const flight = useMemo(() => {
+    const dir = new THREE.Vector3().subVectors(to, from).normalize();
+    const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+    const offsets = [-0.42, -0.14, 0.14, 0.42];
+    const start = from.clone().add(side.multiplyScalar(offsets[index % offsets.length] ?? 0));
+    start.y += 0.12 + (index % 2) * 0.08;
+    const end = to.clone().add(new THREE.Vector3((index - 1.5) * 0.12, 0.08, 0));
+    return { start, end };
+  }, [from, index, to]);
+
+  const pointAt = useCallback(
+    (t: number) => {
+      const p = flight.start.clone().lerp(flight.end, t);
+      p.y += Math.sin(Math.PI * t) * tuning.arc * (1 + (index % 2) * 0.12);
+      return p;
+    },
+    [flight.end, flight.start, index, tuning.arc],
+  );
+
+  const directionAt = useCallback(
+    (t: number) => {
+      const ahead = pointAt(clamp(t + 0.012, 0, 1));
+      const behind = pointAt(clamp(t - 0.012, 0, 1));
+      return ahead.sub(behind).normalize();
+    },
+    [pointAt],
+  );
+
+  useFrame((_, delta) => {
+    const group = missileRef.current;
+    const smokeTrail = smokeTrailRef.current;
+    if (!group || (!textureFlare && !smokeTrail)) return;
+    if (!timelineRef && !paused) localElapsedRef.current += delta;
+
+    const duration = MESH_MISSILE_FLIGHT_SECONDS;
+    const delay = meshMissileLaunchDelaySeconds(index);
+    const cycle = cycleDuration ?? duration + meshMissileLaunchDelaySeconds(2) + 1.4;
+    const timelineSeconds = timelineRef?.current ?? localElapsedRef.current;
+    const elapsed = (timelineSeconds % cycle) - delay;
+    if (elapsed < 0) {
+      group.visible = false;
+      if (smokeTrail) smokeTrail.visible = false;
+      return;
+    }
+
+    const t = clamp(elapsed / duration, 0, 1);
+    const current = pointAt(t);
+    const direction = directionAt(t);
+    const visible = t < 1;
+    group.visible = visible;
+    group.position.copy(current);
+    group.quaternion.setFromUnitVectors(forward, direction);
+
+    if (textureFlare) {
+      if (smokeTrail) smokeTrail.visible = false;
+      return;
+    }
+
+    if (!smokeTrail) return;
+    smokeTrail.visible = visible && t > 0.025;
+    if (smokeTrail.visible) {
+      const side = new THREE.Vector3(-direction.z, 0, direction.x).normalize();
+      smokeTrail.children.forEach((child, puffIndex) => {
+        const puff = smokePuffs[puffIndex];
+        if (!puff) return;
+        const lagT = clamp(t - puff.lag, 0, 1);
+        const smokePoint = pointAt(lagT)
+          .add(side.clone().multiplyScalar(puff.side * (1 + t)))
+          .add(new THREE.Vector3(0, puff.lift + puffIndex * 0.006, 0));
+        child.position.copy(smokePoint);
+        child.scale.setScalar(puff.size * tuning.size * (1 + puffIndex * 0.22));
+        const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        mat.opacity = lagT <= 0 ? 0 : 0.18 * tuning.intensity * (1 - puffIndex / smokePuffs.length);
+      });
+    }
+  });
+
+  return (
+    <>
+      <group ref={missileRef} visible={false}>
+        <Suspense fallback={null}>
+          <MissileMeshModel
+            filename={filename}
+            textureFilename={textureFilename}
+            textureFlare={textureFlare}
+            tint="#d1d5db"
+            glowColor={tuning.color}
+            glowCoreColor={tuning.secondaryColor}
+            intensity={tuning.intensity}
+            targetSize={tuning.meshSize ?? 0.4}
+            flareSize={tuning.flareSize ?? 1}
+          />
+        </Suspense>
+      </group>
+      {textureFlare ? null : (
+        <group ref={smokeTrailRef} visible={false}>
+          {smokePuffs.map((_, smokeIndex) => (
+            <mesh key={smokeIndex} raycast={() => null}>
+              <sphereGeometry args={[1, 12, 10]} />
+              <meshBasicMaterial
+                color="#9ca3af"
+                transparent
+                opacity={0}
+                depthWrite={false}
+              />
+            </mesh>
+          ))}
+        </group>
+      )}
+    </>
+  );
+}
+
+function MeshMissileSalvo({
+  station,
+  tuning,
+  paused,
+  timelineRef,
+  cycleDuration,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+  timelineRef?: MutableRefObject<number>;
+  cycleDuration?: number;
+}) {
+  const from = useMemo(() => toVector3(station.position, 1.28), [station.position]);
+  const targetPosition = station.to ?? [station.position[0] + 18, station.position[1] + 8];
+  const to = useMemo(() => toVector3(targetPosition, 1.15), [targetPosition]);
+  const filename = station.modelFilename ?? "missile.glb";
+  const textureFilename = station.textureFilename;
+  const textureFlare = station.effect === "texture-missile-salvo" || station.effect === "missile-impact-flipbook-test";
+  const count = station.effect === "missile-impact-flipbook-test" ? 3 : clamp(Math.round(tuning.count), 1, 5);
+
+  return (
+    <group>
+      <EndpointMarker position={station.position} color="#38bdf8" />
+      <EndpointMarker position={targetPosition} color="#f97316" />
+      {Array.from({ length: count }).map((_, i) => (
+        <MeshMissileRound
+          key={`${station.id}-${i}`}
+          filename={filename}
+          textureFilename={textureFilename}
+          textureFlare={textureFlare}
+          from={from}
+          to={to}
+          tuning={tuning}
+          index={i}
+          paused={paused}
+          timelineRef={timelineRef}
+          cycleDuration={cycleDuration}
+        />
+      ))}
+    </group>
+  );
+}
+
+function StandaloneFlipbookPreview({
+  position,
+  textureFilename,
+  tuning,
+  paused,
+}: {
+  position: Vec2;
+  textureFilename: string;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
+  const sourceTexture = useLoader(THREE.TextureLoader, url);
+  const elapsedRef = useRef(0);
+  const mainMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const glowMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const columns = 5;
+  const rows = 5;
+  const frameCount = columns * rows;
+
+  const { mainTexture, glowTexture } = useMemo(() => {
+    const configure = (texture: THREE.Texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.repeat.set(1 / columns, 1 / rows);
+      texture.needsUpdate = true;
+      return texture;
+    };
+    return {
+      mainTexture: configure(sourceTexture.clone()),
+      glowTexture: configure(sourceTexture.clone()),
+    };
+  }, [sourceTexture]);
+
+  useEffect(() => () => {
+    mainTexture.dispose();
+    glowTexture.dispose();
+  }, [glowTexture, mainTexture]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const cycle = 1.35 / clamp(tuning.speed, 0.25, 3);
+    const t = (elapsedRef.current % cycle) / cycle;
+    const frame = clamp(Math.floor(t * frameCount), 0, frameCount - 1);
+    const column = frame % columns;
+    const row = Math.floor(frame / columns);
+
+    for (const texture of [mainTexture, glowTexture]) {
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
+
+    const bloom = Math.sin(Math.PI * t);
+    if (mainMatRef.current) mainMatRef.current.opacity = (0.76 + bloom * 0.18) * tuning.intensity;
+    if (glowMatRef.current) glowMatRef.current.opacity = bloom * 0.5 * tuning.intensity;
+    if (lightRef.current) lightRef.current.intensity = (0.9 + bloom * 5.5) * tuning.intensity;
+  });
+
+  const scale = 1.25 * tuning.size;
+  return (
+    <group position={[position[0], 1.6, position[1]]}>
+      <Billboard>
+        <mesh scale={[scale, scale, scale]} raycast={() => null} renderOrder={8}>
+          <planeGeometry args={[2.6, 2.6]} />
+          <meshBasicMaterial
+            ref={mainMatRef}
+            map={mainTexture}
+            color={tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+        <mesh scale={[scale * 0.82, scale * 0.82, scale * 0.82]} raycast={() => null} renderOrder={9}>
+          <planeGeometry args={[2.6, 2.6]} />
+          <meshBasicMaterial
+            ref={glowMatRef}
+            map={glowTexture}
+            color={tuning.secondaryColor}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      </Billboard>
+      <pointLight ref={lightRef} color={tuning.secondaryColor} intensity={0} distance={7 * tuning.spread} />
+    </group>
+  );
+}
+
+function FlipbookExplosionImpact({
+  position,
+  textureFilename,
+  tuning,
+  paused,
+  delaySeconds = MESH_MISSILE_FLIGHT_SECONDS,
+  timelineRef,
+  cycleDuration,
+}: {
+  position: THREE.Vector3;
+  textureFilename: string;
+  tuning: Tuning;
+  paused: boolean;
+  delaySeconds?: number;
+  timelineRef?: MutableRefObject<number>;
+  cycleDuration?: number;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
+  const sourceTexture = useLoader(THREE.TextureLoader, url);
+  const localElapsedRef = useRef(0);
+  const mainMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const glowMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const columns = 5;
+  const rows = 5;
+  const frameCount = columns * rows;
+  const impactDelay = delaySeconds;
+  const activeDuration = 1.25;
+  const cycle = cycleDuration ?? impactDelay + activeDuration + 1.15;
+
+  const { mainTexture, glowTexture } = useMemo(() => {
+    const configure = (texture: THREE.Texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.repeat.set(1 / columns, 1 / rows);
+      texture.needsUpdate = true;
+      return texture;
+    };
+    return {
+      mainTexture: configure(sourceTexture.clone()),
+      glowTexture: configure(sourceTexture.clone()),
+    };
+  }, [sourceTexture]);
+
+  useEffect(() => () => {
+    mainTexture.dispose();
+    glowTexture.dispose();
+  }, [glowTexture, mainTexture]);
+
+  useFrame((_, delta) => {
+    if (!timelineRef && !paused) localElapsedRef.current += delta;
+    const elapsed = (timelineRef?.current ?? localElapsedRef.current) % cycle;
+    const activeT = (elapsed - impactDelay) / activeDuration;
+    const visible = activeT >= 0 && activeT <= 1;
+    const frame = clamp(Math.floor(activeT * frameCount), 0, frameCount - 1);
+    const column = frame % columns;
+    const row = Math.floor(frame / columns);
+
+    for (const texture of [mainTexture, glowTexture]) {
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
+
+    const bloom = visible ? Math.sin(Math.PI * clamp(activeT, 0, 1)) : 0;
+    if (mainMatRef.current) mainMatRef.current.opacity = visible ? (0.78 + bloom * 0.18) * tuning.intensity : 0;
+    if (glowMatRef.current) glowMatRef.current.opacity = visible ? bloom * 0.62 * tuning.intensity : 0;
+    if (lightRef.current) lightRef.current.intensity = visible ? (1.5 + bloom * 8) * tuning.intensity : 0;
+  });
+
+  const scale = 0.775 * tuning.size;
+  return (
+    <group position={position.toArray()}>
+      <Billboard position={[0, 0.35, 0]}>
+        <mesh scale={[scale, scale, scale]} raycast={() => null} renderOrder={8}>
+          <planeGeometry args={[2.3, 2.3]} />
+          <meshBasicMaterial
+            ref={mainMatRef}
+            map={mainTexture}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            depthTest={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+        <mesh scale={[scale * 0.74, scale * 0.74, scale * 0.74]} raycast={() => null} renderOrder={9}>
+          <planeGeometry args={[2.3, 2.3]} />
+          <meshBasicMaterial
+            ref={glowMatRef}
+            map={glowTexture}
+            color={tuning.secondaryColor}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            depthTest={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      </Billboard>
+      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8 * tuning.spread} position={[0, 1.2, 0]} />
+    </group>
+  );
+}
+
+function MissileImpactFlipbookTest({ station, tuning, paused }: { station: SpecialStation; tuning: Tuning; paused: boolean }) {
+  const targetPosition = station.to ?? [station.position[0] + 18, station.position[1]];
+  const targetVector = useMemo(() => toVector3(targetPosition, 1.85), [targetPosition]);
+  const salvoTimelineRef = useRef(0);
+  const missileCount = 3;
+  const cycleDuration = MESH_MISSILE_FLIGHT_SECONDS + meshMissileLaunchDelaySeconds(missileCount - 1) + 1.25 + 1.15;
+  const impactTextureFilename = station.impactTextureFilename;
+  const impactPositions = useMemo(
+    () =>
+      Array.from({ length: missileCount }, (_, i) =>
+        targetVector.clone().add(new THREE.Vector3((i - 1.5) * 0.12, 0.08 + (i % 2) * 0.05, 0)),
+      ),
+    [missileCount, targetVector],
+  );
+  const heading = useMemo(() => {
+    const dx = targetPosition[0] - station.position[0];
+    const dz = targetPosition[1] - station.position[1];
+    return Math.atan2(dx, dz);
+  }, [station.position, targetPosition]);
+
+  useFrame((_, delta) => {
+    if (!paused) salvoTimelineRef.current += delta;
+  });
+
+  return (
+    <group>
+      <group position={[station.position[0], 1.35, station.position[1]]} rotation={[0, heading, 0]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel filename="missile-hyperion.glb" tint="#dbeafe" emissiveColor={tuning.color} emissiveIntensity={0.06} />
+        </Suspense>
+      </group>
+      <group position={[targetPosition[0], 1.35, targetPosition[1]]} rotation={[0, heading + Math.PI, 0]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel filename="hyperion.glb" tint="#dbeafe" emissiveColor={tuning.secondaryColor} emissiveIntensity={0.06} />
+        </Suspense>
+      </group>
+      <MeshMissileSalvo
+        station={station}
+        tuning={tuning}
+        paused={paused}
+        timelineRef={salvoTimelineRef}
+        cycleDuration={cycleDuration}
+      />
+      {impactTextureFilename ? (
+        impactPositions.map((position, i) => (
+          <FlipbookExplosionImpact
+            key={`impact-${i}`}
+            position={position}
+            textureFilename={impactTextureFilename}
+            tuning={tuning}
+            paused={paused}
+            delaySeconds={MESH_MISSILE_FLIGHT_SECONDS + meshMissileLaunchDelaySeconds(i)}
+            timelineRef={salvoTimelineRef}
+            cycleDuration={cycleDuration}
+          />
+        ))
+      ) : null}
     </group>
   );
 }
@@ -2757,7 +3703,17 @@ function PersistentImpactFlashes({ position, tuning }: { position: Vec2; tuning:
   );
 }
 
-function SpecialFxStation({ station, tuning, selected }: { station: SpecialStation; tuning: Tuning; selected: boolean }) {
+function SpecialFxStation({
+  station,
+  tuning,
+  selected,
+  animationPaused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  selected: boolean;
+  animationPaused: boolean;
+}) {
   return (
     <group>
       <EndpointMarker position={station.position} color={tuning.color} selected={selected} />
@@ -2785,6 +3741,19 @@ function SpecialFxStation({ station, tuning, selected }: { station: SpecialStati
       {station.effect === "beacon-pulse" ? <BeaconPulse position={station.position} tuning={tuning} /> : null}
       {station.effect === "gravity-lens" ? <GravityLens position={station.position} tuning={tuning} /> : null}
       {station.effect === "damage-glow-core" ? <DamageGlowCore position={station.position} tuning={tuning} /> : null}
+      {station.effect === "cloud-flipbook-damage" && station.textureFilename ? (
+        <Suspense fallback={null}>
+          <CloudFlipbookDamageEmitter position={station.position} tuning={tuning} textureFilename={station.textureFilename} paused={animationPaused} />
+        </Suspense>
+      ) : null}
+      {station.effect === "standalone-flipbook-preview" && station.textureFilename ? (
+        <Suspense fallback={null}>
+          <StandaloneFlipbookPreview position={station.position} tuning={tuning} textureFilename={station.textureFilename} paused={animationPaused} />
+        </Suspense>
+      ) : null}
+      {station.effect === "missile-impact-flipbook-test" ? <MissileImpactFlipbookTest station={station} tuning={tuning} paused={animationPaused} /> : null}
+      {station.effect === "mesh-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
+      {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       <StationLabel station={station} selected={selected} />
     </group>
   );
@@ -2794,10 +3763,12 @@ function ShowcaseScene({
   board,
   overrides,
   selectedStationId,
+  animationPaused,
 }: {
   board: ShowcaseBoard;
   overrides: TuningOverrides;
   selectedStationId: string;
+  animationPaused: boolean;
 }) {
   return (
     <>
@@ -2812,7 +3783,7 @@ function ShowcaseScene({
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
         if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
-        return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
+        return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} animationPaused={animationPaused} />;
       })}
       <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={14} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={[0, 0, 0]} />
       <EffectComposer>
@@ -2922,6 +3893,7 @@ export default function VfxShowcase() {
   const activeBoard = SHOWCASE_BOARDS.find(board => board.id === activeBoardId) ?? SHOWCASE_BOARDS[0];
   const [selectedStationId, setSelectedStationId] = useState(activeBoard.stations[0]?.id ?? "");
   const [overrides, setOverrides] = useState<TuningOverrides>({});
+  const [animationPaused, setAnimationPaused] = useState(false);
 
   useEffect(() => {
     setSelectedStationId(activeBoard.stations[0]?.id ?? "");
@@ -2931,6 +3903,10 @@ export default function VfxShowcase() {
   const selectedTuning = selectedStation ? effectiveTuning(selectedStation, overrides) : DEFAULT_TUNING;
   const selectedIsArcParticleSpray = selectedStation ? isArcParticleSpray(selectedStation) : false;
   const selectedIsPersistentImpactFlashes = selectedStation ? isPersistentImpactFlashes(selectedStation) : false;
+  const selectedIsMissileSalvo = selectedStation?.kind === "special" && (
+    selectedStation.effect === "mesh-missile-salvo" ||
+    selectedStation.effect === "texture-missile-salvo"
+  );
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -2967,6 +3943,15 @@ export default function VfxShowcase() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={animationPaused ? "default" : "outline"}
+                className="gap-2 uppercase tracking-widest text-xs"
+                onClick={() => setAnimationPaused(prev => !prev)}
+              >
+                {animationPaused ? "Resume Animation" : "Pause Animation"}
+              </Button>
               {SHOWCASE_BOARDS.map(board => (
                 <Button
                   key={board.id}
@@ -2987,7 +3972,12 @@ export default function VfxShowcase() {
         <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_24rem]">
           <div className="relative min-h-[34rem] overflow-hidden bg-black">
             <Canvas camera={{ position: [0, 39, 48], fov: 45 }} shadows>
-              <ShowcaseScene board={activeBoard} overrides={overrides} selectedStationId={selectedStationId} />
+              <ShowcaseScene
+                board={activeBoard}
+                overrides={overrides}
+                selectedStationId={selectedStationId}
+                animationPaused={animationPaused}
+              />
             </Canvas>
           </div>
 
@@ -3044,6 +4034,26 @@ export default function VfxShowcase() {
                   <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
                   <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
                   <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
+                  {selectedIsMissileSalvo ? (
+                    <>
+                      <SliderControl
+                        label="Mesh Size"
+                        value={selectedTuning.meshSize ?? 0.4}
+                        min={0.1}
+                        max={1}
+                        step={0.05}
+                        onChange={meshSize => updateSelected({ meshSize })}
+                      />
+                      <SliderControl
+                        label="Flare Size"
+                        value={selectedTuning.flareSize ?? 1}
+                        min={0.25}
+                        max={4}
+                        step={0.05}
+                        onChange={flareSize => updateSelected({ flareSize })}
+                      />
+                    </>
+                  ) : null}
                   <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
                   <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
                   {supportsRibbonRandomness(selectedStation) ? (

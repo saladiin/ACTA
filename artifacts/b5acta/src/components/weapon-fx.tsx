@@ -1,5 +1,6 @@
-import { useRef, useMemo } from "react";
-import { useFrame } from "@react-three/fiber";
+import { Suspense, useRef, useMemo } from "react";
+import { useFrame, useLoader } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Weapon } from "@workspace/api-client-react";
 
@@ -29,18 +30,26 @@ const TRACER_TUNING = {
   intensity: 1,
   count: 7,
 };
-const MISSILE_BODY_COLOR = "#ff6600";
-const MISSILE_IMPACT_COLOR = "#ff0000";
 const MISSILE_TUNING = {
-  speed: 1.15,
-  size: 0.4,
-  fade: 1,
-  intensity: 0.15,
-  spread: 1.3,
-  count: 8,
-  arc: 1.45,
-  thickness: 2.05,
+  color: "#f97316",
+  secondaryColor: "#fef08a",
+  speed: 1.3,
+  size: 1.15,
+  fade: 1.1,
+  intensity: 1.95,
+  spread: 1.2,
+  count: 3,
+  arc: 2.7,
+  thickness: 0.25,
+  meshSize: 1,
+  flareSize: 4,
 };
+const MISSILE_MODEL_FILENAME = "missile1.glb";
+const MISSILE_MODEL_REVISION = "20260719-013547";
+const MISSILE_FLARE_TEXTURE_FILENAME = "missileflare.png";
+const MISSILE_FLARE_TEXTURE_REVISION = "20260719-011930";
+const MISSILE_FLIGHT_MS = 3000;
+const MISSILE_LAUNCH_DELAYS_MS = [0, 500, 1200] as const;
 const ENERGY_MINE_TUNING = {
   color: "#f5f5f4",
   secondaryColor: "#6e6ce4",
@@ -323,38 +332,198 @@ function TracerSalvoFx({
 }
 
 // ── Missile volley — slower, arcing trajectory ─────────────────────────────
+function modelScaleForTargetSize(object: THREE.Object3D, targetInches: number): number {
+  const box = new THREE.Box3().setFromObject(object);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxHorizontal = Math.max(size.x, size.z);
+  return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
+}
+
+function MissileTextureFlare() {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const url = `${basePath}/api/textures/${MISSILE_FLARE_TEXTURE_FILENAME}?v=${encodeURIComponent(MISSILE_FLARE_TEXTURE_REVISION)}`;
+  const texture = useLoader(THREE.TextureLoader, url);
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const flareSize = MISSILE_TUNING.flareSize;
+  const length = 0.34 * flareSize;
+  const height = 0.16 * flareSize;
+
+  useMemo(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  useFrame(() => {
+    const pulse = (Math.sin(performance.now() * 0.014) + 1) / 2;
+    if (matRef.current) matRef.current.opacity = (0.5 + pulse * 0.22) * MISSILE_TUNING.intensity;
+    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.1) * MISSILE_TUNING.intensity;
+  });
+
+  return (
+    <group position={[0, 0, -length / 2]} rotation={[0, Math.PI / 2, 0]}>
+      <mesh raycast={() => null} renderOrder={5}>
+        <planeGeometry args={[length, height]} />
+        <meshBasicMaterial
+          ref={matRef}
+          map={texture}
+          color={MISSILE_TUNING.color}
+          transparent
+          opacity={0.7 * MISSILE_TUNING.intensity}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color={MISSILE_TUNING.color}
+        intensity={1}
+        distance={0.4 * flareSize}
+      />
+    </group>
+  );
+}
+
+function MissileMeshModel() {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const url = `${basePath}/api/models/${MISSILE_MODEL_FILENAME}?v=${encodeURIComponent(MISSILE_MODEL_REVISION)}`;
+  const { scene } = useGLTF(url);
+
+  const { cloned, scale } = useMemo(() => {
+    const c = scene.clone(true);
+    const tintColor = new THREE.Color("#d1d5db");
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.08);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = tintColor.clone();
+          adjustable.emissiveIntensity = 0.04;
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+    return {
+      cloned: c,
+      scale: modelScaleForTargetSize(c, MISSILE_TUNING.meshSize),
+    };
+  }, [scene]);
+
+  return (
+    <group>
+      <primitive object={cloned} scale={[scale, scale, scale]} />
+      <MissileTextureFlare />
+    </group>
+  );
+}
+
+function MeshMissileRound({
+  from,
+  to,
+  index,
+  startRef,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  index: number;
+  startRef: React.MutableRefObject<number>;
+}) {
+  const missileRef = useRef<THREE.Group>(null);
+  const forward = useMemo(() => new THREE.Vector3(0, 0, 1), []);
+
+  const flight = useMemo(() => {
+    const dir = new THREE.Vector3().subVectors(to, from).normalize();
+    const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+    const offsets = [-0.42, -0.14, 0.14, 0.42, 0];
+    const start = from.clone().add(side.multiplyScalar((offsets[index % offsets.length] ?? 0) * MISSILE_TUNING.spread));
+    start.y += 0.12 + (index % 2) * 0.08;
+    const end = to.clone().add(new THREE.Vector3((index - 2) * 0.12 * MISSILE_TUNING.spread, 0.08, 0));
+    return { start, end };
+  }, [from, index, to]);
+
+  const pointAt = (t: number) => {
+    const p = flight.start.clone().lerp(flight.end, t);
+    p.y += Math.sin(Math.PI * t) * MISSILE_TUNING.arc * (1 + (index % 2) * 0.12);
+    return p;
+  };
+
+  const directionAt = (t: number) => {
+    const ahead = pointAt(Math.min(1, t + 0.012));
+    const behind = pointAt(Math.max(0, t - 0.012));
+    return ahead.sub(behind).normalize();
+  };
+
+  useFrame(() => {
+    const group = missileRef.current;
+    if (!group) return;
+
+    const durationMs = MISSILE_FLIGHT_MS;
+    const delayMs = MISSILE_LAUNCH_DELAYS_MS[index] ?? MISSILE_LAUNCH_DELAYS_MS[MISSILE_LAUNCH_DELAYS_MS.length - 1];
+    const elapsed = performance.now() - startRef.current - delayMs;
+    if (elapsed < 0) {
+      group.visible = false;
+      return;
+    }
+
+    const t = Math.min(1, elapsed / durationMs);
+    const current = pointAt(t);
+    const direction = directionAt(t);
+    const visible = t < 1;
+    group.visible = visible;
+    group.position.copy(current);
+    group.quaternion.setFromUnitVectors(forward, direction);
+  });
+
+  return (
+    <group ref={missileRef} visible={false}>
+      <Suspense fallback={null}>
+        <MissileMeshModel />
+      </Suspense>
+    </group>
+  );
+}
+
 function MissileVolleyFx({
   from,
   to,
-  color,
   count,
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
-  color: string;
   count: number;
 }) {
   const startRef = useRef<number>(performance.now());
-  const n = Math.max(1, Math.min(count, MISSILE_TUNING.count));
-  // Pop missiles into a small arc so they look like a salvo, not a single line.
+  const n = MISSILE_TUNING.count;
   return (
     <>
       {Array.from({ length: n }).map((_, i) => (
-        <TravellingProjectile
+        <MeshMissileRound
           key={i}
           from={from}
           to={to}
-          color={color}
-          delayMs={i * 130}
-          travelMs={1000 / MISSILE_TUNING.speed}
+          index={i}
           startRef={startRef}
-          size={0.066 * MISSILE_TUNING.size}
-          arcHeight={MISSILE_TUNING.arc * MISSILE_TUNING.spread * (1 + (i % 2) * 0.25)}
-          fadeMs={300 * MISSILE_TUNING.fade}
-          intensity={MISSILE_TUNING.intensity}
-          ribbonTrail
-          ribbonLengthT={0.12}
-          ribbonWidth={0.18 * MISSILE_TUNING.thickness}
         />
       ))}
     </>
@@ -572,20 +741,7 @@ export function WeaponFx({
 
   if (kind === "missile") {
     // One missile per attack die looks busy on big racks; clamp inside the FX.
-    return (
-      <>
-        <MissileVolleyFx from={from} to={to} color={MISSILE_BODY_COLOR} count={totalDice} />
-        {Array.from({ length: hits }).map((_, i) => (
-          <ImpactFlash
-            key={i}
-            position={to}
-            color={MISSILE_IMPACT_COLOR}
-            delayMs={1050 + i * 90}
-            size={1.3}
-          />
-        ))}
-      </>
-    );
+    return <MissileVolleyFx from={from} to={to} count={totalDice} />;
   }
 
   if (kind === "energy-mine") {

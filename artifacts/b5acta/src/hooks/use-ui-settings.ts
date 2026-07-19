@@ -17,6 +17,7 @@ const SHIP_MESH_TINTS_STORAGE_KEY = "b5acta.ui.shipMeshTints";
 const SHIP_HULL_NAMES_STORAGE_KEY = "b5acta.ui.shipHullNames";
 const SHIP_STATUS_DISPLAY_MODE_STORAGE_KEY = "b5acta.ui.shipStatusDisplayMode";
 const BOARD_OPACITY_STORAGE_KEY = "b5acta.ui.boardOpacity";
+const BOARD_GRID_STORAGE_KEY = "b5acta.ui.boardGrid";
 const ATTACK_PHASE_PULSE_OPACITY_STORAGE_KEY =
   "b5acta.ui.attackPhasePulseOpacity";
 const ATTACK_PHASE_PULSE_STRENGTH_STORAGE_KEY =
@@ -69,6 +70,11 @@ function readBoardOpacity(): number {
   return Number.isFinite(raw)
     ? Math.max(0, Math.min(100, Math.round(raw)))
     : 100;
+}
+
+function readBoardGridEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(BOARD_GRID_STORAGE_KEY) !== "false";
 }
 
 function readAttackPhasePulseOpacity(): number {
@@ -270,6 +276,30 @@ export function useUiBoardOpacity(): [number, (opacity: number) => void] {
   }, []);
 
   return [opacity, setOpacity];
+}
+
+export function useUiBoardGrid(): [boolean, (enabled: boolean) => void] {
+  const [enabled, setEnabledState] = useState<boolean>(() =>
+    readBoardGridEnabled(),
+  );
+
+  useEffect(() => {
+    const sync = () => setEnabledState(readBoardGridEnabled());
+    window.addEventListener("storage", sync);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, sync);
+    };
+  }, []);
+
+  const setEnabled = useCallback((nextEnabled: boolean) => {
+    window.localStorage.setItem(BOARD_GRID_STORAGE_KEY, String(nextEnabled));
+    setEnabledState(nextEnabled);
+    window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT));
+  }, []);
+
+  return [enabled, setEnabled];
 }
 
 export function useUiAttackPhasePulseOpacity(): [

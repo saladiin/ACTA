@@ -39,6 +39,9 @@ const queryClient = new QueryClient({
 const VfxShowcase = import.meta.env.DEV
   ? lazy(() => import("@/pages/vfx-showcase"))
   : null;
+const NavalId = import.meta.env.DEV
+  ? lazy(() => import("@/pages/naval-id"))
+  : null;
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -230,6 +233,13 @@ function ClerkProviderWithRoutes() {
               <Route path="/vfx-showcase">
                 <Suspense fallback={null}>
                   <ProtectedRoute component={VfxShowcase} />
+                </Suspense>
+              </Route>
+            )}
+            {import.meta.env.DEV && NavalId && (
+              <Route path="/naval-id">
+                <Suspense fallback={null}>
+                  <ProtectedRoute component={NavalId} />
                 </Suspense>
               </Route>
             )}

@@ -26,6 +26,18 @@ function resolveModelsDir(): string {
 
 export const MODELS_DIR = resolveModelsDir();
 
+function resolveTexturesDir(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(here, "..", "public", "textures"),
+    path.resolve(process.cwd(), "public", "textures"),
+    path.resolve(process.cwd(), "artifacts", "api-server", "public", "textures"),
+  ];
+  return candidates.find((dir) => fs.existsSync(dir)) ?? candidates[0];
+}
+
+export const TEXTURES_DIR = resolveTexturesDir();
+
 // Supported 3D model extensions, in preference order. Used to recover when a
 // ship_models row points at a file whose extension no longer matches the asset
 // on disk (e.g. a model re-exported from .obj to .glb).

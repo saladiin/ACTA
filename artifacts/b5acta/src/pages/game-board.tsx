@@ -14,6 +14,7 @@ import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import { WeaponFx } from "@/components/weapon-fx";
 // @ts-ignore
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 // @ts-ignore
 import * as THREE from "three";
 import {
@@ -66,6 +67,7 @@ import {
   useUiAttackPhasePulseOpacity,
   useUiAttackPhasePulseStrength,
   useUiBoardBackgroundMode,
+  useUiBoardGrid,
   useUiBoardOpacity,
   useUiControlMode,
   useUiIsoCameraControls,
@@ -739,7 +741,13 @@ function Skybox({ url }: { url: string }) {
   return null;
 }
 
-function SpaceGrid({ boardOpacity = 100 }: { boardOpacity?: number }) {
+function SpaceGrid({
+  boardOpacity = 100,
+  showGrid = true,
+}: {
+  boardOpacity?: number;
+  showGrid?: boolean;
+}) {
   const planeOpacity = Math.max(0, Math.min(100, boardOpacity)) / 100;
   return (
     <>
@@ -759,16 +767,20 @@ function SpaceGrid({ boardOpacity = 100 }: { boardOpacity?: number }) {
           depthWrite={planeOpacity >= 1}
         />
       </mesh>
-      {/* Fine 1" grid */}
-      <gridHelper
-        args={[72, 72, "#0d1a0d", "#0a140a"]}
-        position={[0, -0.01, 0]}
-      />
-      {/* Bold 6" grid overlay */}
-      <gridHelper
-        args={[72, 12, "#172617", "#172617"]}
-        position={[0, -0.005, 0]}
-      />
+      {showGrid && (
+        <>
+          {/* Fine 1" grid */}
+          <gridHelper
+            args={[72, 72, "#0d1a0d", "#0a140a"]}
+            position={[0, -0.01, 0]}
+          />
+          {/* Bold 6" grid overlay */}
+          <gridHelper
+            args={[72, 12, "#172617", "#172617"]}
+            position={[0, -0.005, 0]}
+          />
+        </>
+      )}
     </>
   );
 }
@@ -1186,11 +1198,26 @@ function ObjModel({
 // arc-math fallbacks below remain available for any one-off legacy upload, but
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
+const OMEGA_ROTATING_MODEL_FILENAME = "omega1.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
+const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
+  "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
+};
+const ROTATING_MODEL_PARTS: Record<
+  string,
+  { nodeName: string; axis: "x" | "y" | "z"; secondsPerRotation: number }
+> = {
+  [OMEGA_ROTATING_MODEL_FILENAME]: {
+    nodeName: "rotatorhull",
+    axis: "z",
+    secondsPerRotation: 30,
+  },
+};
 const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "battlecrab.glb": DEAD_BATTLECRAB_MODEL_FILENAME,
   "hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
+  "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
   "aurora.glb",
@@ -1208,9 +1235,11 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
+  "missile-hyperion.glb": 1.2,
   "avenger.glb": 1.2,
   "olympus.glb": 0.5,
   "omega.glb": 1.5,
+  [OMEGA_ROTATING_MODEL_FILENAME]: 1.5,
   "nova.glb": 1.15,
   "tethys.glb": 0.4,
   "vorchan.glb": 0.5,
@@ -1270,8 +1299,11 @@ function visualModelFilenameForUnit(unit: {
 }): string {
   const shouldUseDeadMesh =
     unit.isDestroyed || unit.damageState === "destroyed";
-  if (!shouldUseDeadMesh) return unit.modelFilename;
-  const deadFilename = DEAD_MODEL_FILENAMES[unit.modelFilename.toLowerCase()];
+  const modelFilenameKey = unit.modelFilename.toLowerCase();
+  if (!shouldUseDeadMesh) {
+    return DEFAULT_VISUAL_MODEL_FILENAMES[modelFilenameKey] ?? unit.modelFilename;
+  }
+  const deadFilename = DEAD_MODEL_FILENAMES[modelFilenameKey];
   if (deadFilename) return deadFilename;
   return unit.modelFilename;
 }
@@ -1294,6 +1326,26 @@ type DamageVfxAnchor = {
   position: [number, number, number];
 };
 
+function readEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z"): number {
+  if (axis === "x") return rotation.x;
+  if (axis === "y") return rotation.y;
+  return rotation.z;
+}
+
+function writeEulerAxis(
+  rotation: THREE.Euler,
+  axis: "x" | "y" | "z",
+  value: number,
+) {
+  if (axis === "x") {
+    rotation.x = value;
+  } else if (axis === "y") {
+    rotation.y = value;
+  } else {
+    rotation.z = value;
+  }
+}
+
 function GlbModel({
   url,
   tint,
@@ -1310,11 +1362,27 @@ function GlbModel({
   damageAnchorEffects?: boolean;
 }) {
   const { scene } = useGLTF(url);
+  const filenameKey = filename.toLowerCase();
+  const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
+  const rotatingPartRef = useRef<THREE.Object3D | null>(null);
+  const rotatingPartInitialRotationRef = useRef(0);
   const { cloned, anchors } = useMemo(() => {
-    const c = scene.clone(true);
+    rotatingPartRef.current = null;
+    rotatingPartInitialRotationRef.current = 0;
+    const c = rotatingPartConfig ? cloneSkeleton(scene) : scene.clone(true);
     const anchorNodes: THREE.Object3D[] = [];
     c.traverse((child: any) => {
       const anchorName = String(child.name ?? "").toLowerCase();
+      if (
+        rotatingPartConfig &&
+        anchorName === rotatingPartConfig.nodeName.toLowerCase()
+      ) {
+        rotatingPartRef.current = child;
+        rotatingPartInitialRotationRef.current = readEulerAxis(
+          child.rotation,
+          rotatingPartConfig.axis,
+        );
+      }
       if (
         anchorName.startsWith("wreck_smoke") ||
         anchorName.startsWith("small_glow")
@@ -1358,7 +1426,18 @@ function GlbModel({
       };
     });
     return { cloned: c, anchors: anchorPoints };
-  }, [scene, tint, opacity, meshTintsEnabled]);
+  }, [scene, tint, opacity, meshTintsEnabled, rotatingPartConfig]);
+  useFrame(({ clock }) => {
+    if (!rotatingPartConfig || !rotatingPartRef.current) return;
+    const cycleSeconds = Math.max(0.1, rotatingPartConfig.secondsPerRotation);
+    const progress = (clock.getElapsedTime() % cycleSeconds) / cycleSeconds;
+    writeEulerAxis(
+      rotatingPartRef.current.rotation,
+      rotatingPartConfig.axis,
+      rotatingPartInitialRotationRef.current + progress * Math.PI * 2,
+    );
+    rotatingPartRef.current.updateMatrixWorld();
+  });
   const s = useMemo(
     () => shipScale(cloned) * modelScaleMultiplier(filename),
     [cloned, filename],
@@ -1422,6 +1501,8 @@ function ShipModelFallback({
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "dead-hyperion.glb": "20260718-163044",
+  "missile-hyperion.glb": "20260719-005010",
+  "vorchan.glb": "20260719-140443",
 };
 
 function useModelExists(url: string): boolean | null {
@@ -4210,6 +4291,227 @@ function cleanApiErrorMessage(
   return cleaned.replace(/^Error:\s*/i, "").trim() || fallback;
 }
 
+function ruleHintForFeedback(message: string | null | undefined): string | null {
+  if (!message) return null;
+  const normalized = message
+    .replace(/^Move rejected:\s*/i, "")
+    .replace(/^Cannot activate [^:]+:\s*/i, "")
+    .trim()
+    .toLowerCase();
+
+  const hints: Array<{ test: RegExp; hint: string }> = [
+    {
+      test: /must move at least .*declare all stop/,
+      hint: "Most ships must move at least half speed. To stay still, declare All Stop before moving.",
+    },
+    {
+      test: /ship must move .* straight .* before|ship must move .* straight .* after/,
+      hint: "Ships must travel straight before each turn. Move the required distance first, then stage the turn.",
+    },
+    {
+      test: /move forward and turn as separate movement steps/,
+      hint: "Movement is staged in pieces: move forward, confirm that step, then stage the turn.",
+    },
+    {
+      test: /all stop forbids turning/,
+      hint: "All Stop holds position and prevents turning this round. All Stop and Pivot requires All Stop from the previous round.",
+    },
+    {
+      test: /current special action forbids turning/,
+      hint: "That Special Action restricts maneuvering this round. Continue straight or end the activation if legal.",
+    },
+    {
+      test: /may make at most .* turn/,
+      hint: "This ship has used its allowed turns for the activation. Move forward or finish the activation.",
+    },
+    {
+      test: /may turn at most .* degrees/,
+      hint: "The turn angle is capped by the ship profile and active Special Actions. Try a smaller turn.",
+    },
+    {
+      test: /may move at most .* this activation/,
+      hint: "The ship has reached its current speed allowance. End the activation or undo and stage a shorter move.",
+    },
+    {
+      test: /move did not change position/,
+      hint: "Movement is staged first. Use F/R or drag to create a preview, then confirm the move.",
+    },
+    {
+      test: /overlap.*base|base overlaps|overlapping bases/,
+      hint: "Final base overlap is illegal. Passing over another base can be okay, but the final resting spot must be clear.",
+    },
+    {
+      test: /inside the board|outside the board/,
+      hint: "The final position must keep the unit's base fully inside the playable board.",
+    },
+    {
+      test: /cannot declare a special action after movement has started|movement already begun/,
+      hint: "Special Actions must be declared before the ship moves or turns.",
+    },
+    {
+      test: /already used a special action/,
+      hint: "A ship can only attempt one Special Action per round.",
+    },
+    {
+      test: /all stop and pivot requires/,
+      hint: "All Stop and Pivot is only available after that ship used All Stop in the previous round.",
+    },
+    {
+      test: /lumbering ships cannot use come about.*extra turn/,
+      hint: "Lumbering ships must use the sharper-turn Come About option instead of the extra-turn option.",
+    },
+    {
+      test: /fighter flights activate after all capital ships|capital ships have finished moving/,
+      hint: "Capital ships and fighters have separate timing. Finish the current segment before activating the other type.",
+    },
+    {
+      test: /fighter flights have already completed|fighter flights attack before capital ships/,
+      hint: "Fighters attack before capital ships in the Firing Phase. Use the current firing segment's eligible units.",
+    },
+    {
+      test: /locked in a dogfight|resolve the dogfight/,
+      hint: "Fighters in base contact with enemy fighters resolve dogfights instead of moving or firing normally.",
+    },
+    {
+      test: /anti-fighter allocation|anti-fighter target|anti-fighter attacker|anti-fighter dice/,
+      hint: "Anti-Fighter is resolved at the end of Movement against eligible nearby fighters. Assign only the available dice.",
+    },
+    {
+      test: /target out of range/,
+      hint: "Pick a closer target or a longer-ranged weapon. Range is measured from the firing unit to the target.",
+    },
+    {
+      test: /target not in .* arc/,
+      hint: "The selected weapon cannot draw arc to that target. Check the colored base arcs or choose another weapon.",
+    },
+    {
+      test: /weapon has already fired/,
+      hint: "Each weapon system can fire once per firing activation.",
+    },
+    {
+      test: /weapon is offline|weapons in the .* arc are offline/,
+      hint: "A critical hit has disabled that weapon or arc. Repair the critical in a later End Phase if possible.",
+    },
+    {
+      test: /running silent/,
+      hint: "Running Silent prevents firing this round as the cost of the Special Action.",
+    },
+    {
+      test: /limits firing to 1 weapon|may fire only one weapon|may fire only one weapon system|one weapon per arc/,
+      hint: "Damage state, crew state, or a Special Action is limiting how many weapons this ship can fire.",
+    },
+    {
+      test: /concentrate all fire-power locks/,
+      hint: "Concentrate All Fire-power locks this ship to the nominated target for the round.",
+    },
+    {
+      test: /cannot target your own ship/,
+      hint: "Choose an enemy unit as the target.",
+    },
+    {
+      test: /target already destroyed|unit is destroyed|attacker is destroyed|ship destroyed/,
+      hint: "Destroyed units cannot be activated or targeted for normal actions.",
+    },
+    {
+      test: /hull is gone|hulked ships/,
+      hint: "A ship with 0 hull is no longer under command for normal actions.",
+    },
+    {
+      test: /no surviving crew|crewless ships/,
+      hint: "A ship with no surviving crew cannot take normal command actions.",
+    },
+    {
+      test: /skeleton crew cannot declare|skeleton crew may fire/,
+      hint: "Skeleton crew restricts Special Actions and firing. The ship is still alive, but command capacity is badly reduced.",
+    },
+    {
+      test: /adrift.*end phase|adrift ship/,
+      hint: "Adrift ships do not maneuver normally. Their drift is handled automatically in the End Phase.",
+    },
+    {
+      test: /pass all is only available|you still have eligible activations/,
+      hint: "Passing is only allowed when the rules leave you nothing eligible to activate in that segment.",
+    },
+    {
+      test: /resolve owned dogfighting fighters before passing/,
+      hint: "Resolve your fighter dogfights before passing the firing segment.",
+    },
+    {
+      test: /fighters launch and recover in the end phase|not your end phase fighter window/,
+      hint: "Carrier fighter launch and recovery happens during your End Phase fighter window.",
+    },
+    {
+      test: /performed a special action cannot launch|cannot launch fighters in its current state|cannot recover fighters in its current state/,
+      hint: "The carrier must be eligible, not blocked by damage or Special Action limits, and have remaining bay capacity.",
+    },
+    {
+      test: /fighters must launch within 3 inches/,
+      hint: "Place launched fighters within 3 inches of their carrier and away from illegal base overlap.",
+    },
+    {
+      test: /fighter must be in base contact with the recovering carrier/,
+      hint: "To recover a fighter, move it into base contact with its carrier before attempting recovery.",
+    },
+    {
+      test: /damage control may only|not your turn to repair|already passed the end phase/,
+      hint: "Damage Control happens during your End Phase repair window before you pass.",
+    },
+    {
+      test: /damage control already attempted/,
+      hint: "A ship usually gets one Damage Control attempt per End Phase unless a rule such as All Hands on Deck allows more.",
+    },
+    {
+      test: /cannot repair a critical the round it was applied/,
+      hint: "New critical effects cannot be repaired until a later End Phase.",
+    },
+    {
+      test: /vital systems cannot be repaired/,
+      hint: "Vital Systems criticals are permanent under the current rules implementation.",
+    },
+    {
+      test: /engineering crit prevents damage control|hull breach prevents damage control/,
+      hint: "That critical effect blocks Damage Control until the rule condition is cleared or no longer applies.",
+    },
+    {
+      test: /scout support must be declared before any weapon fires/,
+      hint: "Scout support is a pre-fire action. Declare it before the first weapon is fired in the phase.",
+    },
+    {
+      test: /counter-stealth requires/,
+      hint: "Counter-Stealth can only target an enemy that currently has the Stealth trait.",
+    },
+    {
+      test: /no unspent scout coordination token|scout coordination cannot/,
+      hint: "Scout coordination needs an unused Scout token and cannot support Beam, Energy Mine, or Twin Linked weapons.",
+    },
+    {
+      test: /not your activation|not your .*window|this unit is not the one you activated/,
+      hint: "Wait for your active window, then select the highlighted active unit before acting.",
+    },
+  ];
+
+  return hints.find(({ test }) => test.test(normalized))?.hint ?? null;
+}
+
+function RuleHint({
+  message,
+  className = "",
+}: {
+  message?: string | null;
+  className?: string;
+}) {
+  const hint = ruleHintForFeedback(message);
+  if (!hint) return null;
+  return (
+    <div
+      className={`mt-1 text-[10px] leading-4 text-cyan-200/90 ${className}`}
+      data-testid="rule-hint"
+    >
+      Hint: {hint}
+    </div>
+  );
+}
+
 // Heading → unit world-space forward vector (accounting for FLIP_MODELS which
 // render their visual nose along local -Z).
 function numberOrNull(value: unknown): number | null {
@@ -6445,6 +6747,7 @@ export default function GameBoard() {
   const [shipHullNamesEnabled] = useUiShipHullNames();
   const [shipStatusDisplayMode] = useUiShipStatusDisplayMode();
   const [boardOpacity] = useUiBoardOpacity();
+  const [boardGridEnabled] = useUiBoardGrid();
   const [attackPulseOpacity] = useUiAttackPhasePulseOpacity();
   const [attackPulseStrength] = useUiAttackPhasePulseStrength();
   const [boardBackgroundMode] = useUiBoardBackgroundMode();
@@ -8104,7 +8407,7 @@ export default function GameBoard() {
     [gameId, qc],
   );
 
-  const confirmMovePlan = useCallback(() => {
+  const commitMovePlan = useCallback((afterSuccess?: () => void) => {
     if (moveConfirmInFlightRef.current || moveUnit.isPending) return;
     const u = units.find((x) => x.id === selectedUnit);
     if (!u || !movePlan) return;
@@ -8322,6 +8625,7 @@ export default function GameBoard() {
           setActivationFeedback(null);
           mergeUpdatedUnitIntoGame(updatedUnit);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          afterSuccess?.();
         },
         // Roll back the optimistic ledger charge on server rejection.
         onError: (err: any) => {
@@ -8347,6 +8651,10 @@ export default function GameBoard() {
     isFighterUnit,
     unitsWithFighterFlags,
   ]);
+
+  const confirmMovePlan = useCallback(() => {
+    commitMovePlan();
+  }, [commitMovePlan]);
 
   const cancelMovePlan = useCallback(() => {
     setMovePlan(null);
@@ -8383,6 +8691,18 @@ export default function GameBoard() {
       if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         if (endActivation.isPending) return;
+        const phase =
+          (game?.phase as
+            | "initiative"
+            | "movement"
+            | "firing"
+            | "end"
+            | undefined) ?? "movement";
+        if (phase === "movement" && movePlan) {
+          setActivationFeedback("Committing staged movement before ending activation...");
+          commitMovePlan(() => setEndActivationConfirmOpen(true));
+          return;
+        }
         setEndActivationConfirmOpen(true);
         return;
       }
@@ -8558,6 +8878,7 @@ export default function GameBoard() {
     selectedUnitData,
     myUserId,
     confirmMovePlan,
+    commitMovePlan,
     cancelMovePlan,
     getLedger,
     movePlan,
@@ -9557,6 +9878,14 @@ export default function GameBoard() {
     currentPhase === "movement" &&
     isSelectedUnitActive &&
     canConfirmMovePlan;
+  const canEndActivationFromPcMovePopover =
+    canUsePcMoveConfirmPopover &&
+    hasActiveUnit &&
+    !canPassPhase &&
+    !minMoveGate.blocked &&
+    !moveUnit.isPending &&
+    !activateUnit.isPending &&
+    !endActivation.isPending;
   useEffect(() => {
     if (!canUsePcMoveConfirmPopover) setMoveConfirmPopover(null);
   }, [canUsePcMoveConfirmPopover]);
@@ -10327,8 +10656,26 @@ export default function GameBoard() {
     // Either ending a real activation OR passing the phase when zero
     // eligible ships remain. Pass authorisation is enforced server-side.
     if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
+    if (
+      hasActiveUnit &&
+      currentPhase === "movement" &&
+      movePlan &&
+      canConfirmMovePlan
+    ) {
+      setActivationFeedback("Committing staged movement before ending activation...");
+      commitMovePlan(() => setEndActivationConfirmOpen(true));
+      return;
+    }
     setEndActivationConfirmOpen(true);
-  }, [hasActiveUnit, canPassPhase, endActivation.isPending]);
+  }, [
+    canConfirmMovePlan,
+    canPassPhase,
+    commitMovePlan,
+    currentPhase,
+    endActivation.isPending,
+    hasActiveUnit,
+    movePlan,
+  ]);
 
   const handleConfirmEndActivation = useCallback(() => {
     if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
@@ -11011,8 +11358,8 @@ export default function GameBoard() {
               if (dx * dx + dy * dy > 100) return;
             }
             const rect = e.currentTarget.getBoundingClientRect();
-            const width = 92;
-            const height = 48;
+            const width = canEndActivationFromPcMovePopover ? 132 : 92;
+            const height = canEndActivationFromPcMovePopover ? 88 : 48;
             setMoveConfirmPopover({
               x: Math.max(8, Math.min(rect.width - width - 8, e.clientX - rect.left)),
               y: Math.max(8, Math.min(rect.height - height - 8, e.clientY - rect.top)),
@@ -11591,6 +11938,7 @@ export default function GameBoard() {
               {antiFighterError && (
                 <div className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-mono text-red-200">
                   {antiFighterError}
+                  <RuleHint message={antiFighterError} />
                 </div>
               )}
               <div className="mt-2 flex justify-end gap-2">
@@ -11754,7 +12102,10 @@ export default function GameBoard() {
                 110,
               ]}
             />
-            <SpaceGrid boardOpacity={boardOpacity} />
+            <SpaceGrid
+              boardOpacity={boardOpacity}
+              showGrid={boardGridEnabled}
+            />
             <AttackPhaseBoardPulse
               active={game.status === "active" && currentPhase === "firing"}
               opacity={attackPulseOpacity}
@@ -12279,7 +12630,7 @@ export default function GameBoard() {
             })()}
           {moveConfirmPopover && canUsePcMoveConfirmPopover && (
             <div
-              className="absolute z-40 flex items-center gap-1 rounded border border-cyan-300/50 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
+              className="absolute z-40 flex flex-col items-stretch gap-1 rounded border border-cyan-300/50 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
               style={{
                 left: moveConfirmPopover.x,
                 top: moveConfirmPopover.y,
@@ -12294,27 +12645,41 @@ export default function GameBoard() {
                 e.stopPropagation();
               }}
             >
-              <button
-                type="button"
-                title="Confirm move"
-                aria-label="Confirm move"
-                disabled={!canConfirmMovePlan}
-                onClick={confirmMovePlan}
-                className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
-                data-testid="button-pc-confirm-move-plan"
-              >
-                <Check className="h-5 w-5" />
-              </button>
-              <button
-                type="button"
-                title="Cancel move"
-                aria-label="Cancel move"
-                onClick={cancelMovePlan}
-                className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25"
-                data-testid="button-pc-cancel-move-plan"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  title="Confirm move"
+                  aria-label="Confirm move"
+                  disabled={!canConfirmMovePlan}
+                  onClick={confirmMovePlan}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-pc-confirm-move-plan"
+                >
+                  <Check className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  title="Cancel move"
+                  aria-label="Cancel move"
+                  onClick={cancelMovePlan}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25"
+                  data-testid="button-pc-cancel-move-plan"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              {canEndActivationFromPcMovePopover && (
+                <button
+                  type="button"
+                  title="End activation"
+                  aria-label="End activation"
+                  onClick={handleRequestEndActivation}
+                  className="flex h-7 w-full items-center justify-center rounded border border-cyan-300/55 bg-cyan-300/10 px-2 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.18)] transition-colors hover:bg-cyan-300/20"
+                  data-testid="button-pc-popover-end-activation"
+                >
+                  End Activation
+                </button>
+              )}
             </div>
           )}
           {touchGameControls &&
@@ -12482,6 +12847,7 @@ export default function GameBoard() {
                   data-testid="hud-activation-feedback"
                 >
                   {activationFeedback}
+                  <RuleHint message={activationFeedback} />
                 </div>
               )}
             {game.status === "active" && !isMyActivation && (
@@ -13602,9 +13968,10 @@ export default function GameBoard() {
                         </div>
                       )}
                       {fighterBayFeedback && (
-                        <p className="text-[10px] font-mono text-muted-foreground">
+                        <div className="text-[10px] font-mono text-muted-foreground">
                           {fighterBayFeedback}
-                        </p>
+                          <RuleHint message={fighterBayFeedback} />
+                        </div>
                       )}
                     </div>
                   )}

@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck, Newspaper, ChevronDown, ChevronUp } from "lucide-react";
+import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck, Newspaper, ChevronDown, ChevronUp, Ship } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { customFetch } from "@workspace/api-client-react";
 import { APP_BUILD_SHA } from "@/lib/build-version";
@@ -126,10 +126,16 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
                 <span className="text-sm font-medium tracking-wide uppercase">Active Ops</span>
               </Link>
               {import.meta.env.DEV && (
-                <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                  <Sparkles className="w-4 h-4" />
-                  <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
-                </Link>
+                <>
+                  <Link onClick={() => mobileChrome && setNavOpen(false)} href="/naval-id" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                    <Ship className="w-4 h-4" />
+                    <span className="text-sm font-medium tracking-wide uppercase">Naval ID</span>
+                  </Link>
+                  <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                    <Sparkles className="w-4 h-4" />
+                    <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
+                  </Link>
+                </>
               )}
               <Link onClick={() => mobileChrome && setNavOpen(false)} href="/credits" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 <ScrollText className="w-4 h-4" />

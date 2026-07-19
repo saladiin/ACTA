@@ -21,6 +21,7 @@ import {
   useUiAttackPhasePulseOpacity,
   useUiAttackPhasePulseStrength,
   useUiBoardBackgroundMode,
+  useUiBoardGrid,
   useUiBoardOpacity,
   useUiControlMode,
   useUiIsoCameraControls,
@@ -157,6 +158,7 @@ export default function Settings() {
   const [shipStatusDisplayMode, setShipStatusDisplayMode] =
     useUiShipStatusDisplayMode();
   const [boardOpacity, setBoardOpacity] = useUiBoardOpacity();
+  const [boardGridEnabled, setBoardGridEnabled] = useUiBoardGrid();
   const [attackPulseOpacity, setAttackPulseOpacity] =
     useUiAttackPhasePulseOpacity();
   const [attackPulseStrength, setAttackPulseStrength] =
@@ -537,6 +539,25 @@ export default function Settings() {
         </section>
 
         <div className="rounded border border-border bg-card/65 p-4">
+          <div className="mb-4 flex items-center justify-between gap-4 border-b border-border pb-4">
+            <div>
+              <Label
+                htmlFor="show-board-grid"
+                className="font-mono text-sm font-bold uppercase tracking-widest"
+              >
+                Show board grid
+              </Label>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Toggles the crossmesh inch grid over the board plane.
+              </p>
+            </div>
+            <Switch
+              id="show-board-grid"
+              checked={boardGridEnabled}
+              onCheckedChange={setBoardGridEnabled}
+              data-testid="switch-board-grid"
+            />
+          </div>
           <div className="mb-4 flex items-center justify-between gap-4">
             <Label
               htmlFor="board-opacity"

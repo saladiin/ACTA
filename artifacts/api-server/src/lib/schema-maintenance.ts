@@ -1041,7 +1041,7 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Missile Cruiser",
     aliases: ["Hyperion Missile Cruiser", "Hyperion-class Missile Cruiser"],
-    filename: "hyperion.glb",
+    filename: "missile-hyperion.glb",
     faction: "Earth Alliance",
     pointCost: 200,
     priorityLevel: "raid",
@@ -2175,6 +2175,15 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         await syncWeaponsForShipModel(shipId, ship.weapons);
       }
     }
+
+    await pool.query(
+      `
+        UPDATE game_units
+        SET model_filename = 'missile-hyperion.glb'
+        WHERE lower(name) IN ('hyperion missile cruiser', 'hyperion-class missile cruiser')
+          AND lower(model_filename) = 'hyperion.glb'
+      `,
+    );
 
     await removeStaleHyperionBaseRows();
 
