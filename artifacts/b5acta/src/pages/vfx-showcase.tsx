@@ -91,6 +91,7 @@ type SpecialStation = {
     | "beacon-pulse"
     | "gravity-lens"
     | "damage-glow-core"
+    | "godot-jump-point-mesh"
     | "cloud-flipbook-damage"
     | "missile-impact-flipbook-test"
     | "standalone-flipbook-preview"
@@ -811,6 +812,16 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [10, 8],
         tuning: { color: "#93c5fd", secondaryColor: "#c084fc", speed: 0.55, size: 1.1, fade: 1.8, intensity: 0.75, spread: 1, count: 4, arc: 2.8, thickness: 1 },
       },
+      {
+        kind: "special",
+        id: "godot-jump-point-mesh",
+        label: "Godot Jump Point Mesh",
+        note: "Mesh-only GLB export rotated sideways 90 degrees; shader rebuild pending.",
+        effect: "godot-jump-point-mesh",
+        position: [0, 8],
+        modelFilename: "_jumppoint.glb",
+        tuning: { color: "#2dd4bf", secondaryColor: "#f97316", speed: 0.8, size: 0.25, fade: 0.65, intensity: 0.9, spread: 0.5, count: 1, arc: 2.15, thickness: 0.25 },
+      },
     ],
   },
   {
@@ -1054,15 +1065,31 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "missile-hyperion.glb": "20260719-local",
   "missile1.glb": "20260719-013547",
   "omega1.glb": "20260718-223718",
+  "_jumppoint.glb": "20260719-192131",
 };
 
 const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
+  "t_noise1_nk.png": "20260719-182302",
   "cloud01-8x8.webp": "20260719-032240",
   "codex-sci-fi-explosion-5x5.webp": "20260719-122000",
   "codex-sci-fi-explosion-5x5-1280.webp": "20260719-122000",
   "explosion00-5x5-keyed.webp": "20260719-113000",
   "missileflare.png": "20260719-011930",
 };
+
+function showcaseModelUrl(filename: string): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  return `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
+function showcaseTextureUrl(filename: string): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  return `${basePath}/api/textures/${filename}?v=${encodeURIComponent(revision)}`;
+}
 
 type ShowcaseModelAnchor = {
   name: string;
@@ -1077,6 +1104,8 @@ function ShowcaseGlbModel({
   emissiveIntensity = 0,
   emissivePulse = false,
   anchorEffects = false,
+  rotation = [0, 0, 0],
+  targetInches = 2.4,
 }: {
   filename: string;
   tint: string;
@@ -1085,11 +1114,10 @@ function ShowcaseGlbModel({
   emissiveIntensity?: number;
   emissivePulse?: boolean;
   anchorEffects?: boolean;
+  rotation?: [number, number, number];
+  targetInches?: number;
 }) {
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const revision =
-    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
-  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+  const url = showcaseModelUrl(filename);
   const { scene } = useGLTF(url);
   const emissiveMaterialsRef = useRef<Array<THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }>>([]);
 
@@ -1152,9 +1180,9 @@ function ShowcaseGlbModel({
     }
   });
 
-  const scale = useMemo(() => showcaseShipScale(cloned), [cloned]);
+  const scale = useMemo(() => showcaseShipScale(cloned, targetInches), [cloned, targetInches]);
   return (
-    <group scale={[scale, scale, scale]}>
+    <group rotation={rotation} scale={[scale, scale, scale]}>
       <primitive object={cloned} />
       {anchorEffects
         ? anchors.map((anchor) => (
@@ -3703,6 +3731,158 @@ function PersistentImpactFlashes({ position, tuning }: { position: Vec2; tuning:
   );
 }
 
+function GodotJumpPointShaderModel({
+  filename,
+  textureFilename,
+  tuning,
+}: {
+  filename: string;
+  textureFilename: string;
+  tuning: Tuning;
+}) {
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const baseTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
+
+  useMemo(() => {
+    baseTexture.wrapS = THREE.RepeatWrapping;
+    baseTexture.wrapT = THREE.RepeatWrapping;
+    baseTexture.colorSpace = THREE.NoColorSpace;
+    baseTexture.needsUpdate = true;
+  }, [baseTexture]);
+
+  const material = useMemo(() => {
+    const shaderMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uBaseMap: { value: baseTexture },
+        uTime: { value: 0 },
+        uOpacity: { value: tuning.intensity },
+        uSpeed: { value: new THREE.Vector2(-0.5, -0.5) },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uBaseMap;
+        uniform float uTime;
+        uniform float uOpacity;
+        uniform vec2 uSpeed;
+        varying vec2 vUv;
+
+        vec4 colorRamp(float value) {
+          vec4 c0 = vec4(0.0, 0.1625, 0.65, 0.0);
+          vec4 c1 = vec4(0.0, 0.1625, 0.65, 1.0);
+          vec4 c2 = vec4(0.093007304, 0.33048636, 1.0, 1.0);
+          vec4 c3 = vec4(0.1748, 0.68402004, 0.92, 1.0);
+          if (value < 0.102564104) {
+            return mix(c0, c1, smoothstep(0.0076923077, 0.102564104, value));
+          }
+          if (value < 0.33076924) {
+            return mix(c1, c2, smoothstep(0.102564104, 0.33076924, value));
+          }
+          return mix(c2, c3, smoothstep(0.33076924, 0.6948718, value));
+        }
+
+        float subtractionMask(vec2 uv) {
+          float diagonal = clamp((uv.x + uv.y) * 0.5, 0.0, 1.0);
+          float nearStart = 1.0 - smoothstep(0.0, 0.07948718, diagonal);
+          float nearEnd = smoothstep(0.94871795, 1.0, diagonal);
+          return max(nearStart, nearEnd) * 0.65;
+        }
+
+        float edgeFade(vec2 uv) {
+          float vertical = smoothstep(0.0, 0.14, uv.y) * (1.0 - smoothstep(0.86, 1.0, uv.y));
+          float horizontal = smoothstep(0.0, 0.035, uv.x) * (1.0 - smoothstep(0.965, 1.0, uv.x));
+          float diagonal = clamp((uv.x + uv.y) * 0.5, 0.0, 1.0);
+          float diagonalGate = smoothstep(0.02, 0.16, diagonal) * (1.0 - smoothstep(0.84, 0.98, diagonal));
+          return vertical * horizontal * mix(0.35, 1.0, diagonalGate);
+        }
+
+        void main() {
+          vec2 pannedUv = fract(vUv + uSpeed * uTime);
+          vec3 baseSample = texture2D(uBaseMap, pannedUv).rgb;
+          float baseValue = max(max(baseSample.r, baseSample.g), baseSample.b);
+          float shaped = clamp(baseValue - subtractionMask(vUv), 0.0, 1.0);
+          shaped = smoothstep(0.02, 0.78, shaped);
+          vec4 ramped = colorRamp(shaped);
+          float alpha = ramped.a * shaped * edgeFade(vUv) * uOpacity;
+          if (alpha < 0.015) discard;
+          gl_FragColor = vec4(ramped.rgb * (1.0 + shaped * 0.8), alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    materialRef.current = shaderMaterial;
+    return shaderMaterial;
+  }, [baseTexture]);
+
+  useFrame(({ clock }) => {
+    if (!materialRef.current) return;
+    materialRef.current.uniforms.uTime.value = clock.elapsedTime * tuning.speed;
+    materialRef.current.uniforms.uOpacity.value = clamp(tuning.intensity, 0, 4);
+  });
+
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.material = material;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.raycast = () => null;
+    });
+    return c;
+  }, [scene, material]);
+
+  const scale = useMemo(() => showcaseShipScale(cloned, 7.5 * tuning.size), [cloned, tuning.size]);
+  return (
+    <group rotation={[Math.PI / 2, 0, 0]} scale={[scale, scale, scale]}>
+      <primitive object={cloned} />
+    </group>
+  );
+}
+
+function GodotJumpPointMesh({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+  const filename = station.modelFilename ?? "_jumppoint.glb";
+  return (
+    <group position={[station.position[0], 2.35, station.position[1]]}>
+      <Suspense fallback={null}>
+        <GodotJumpPointShaderModel
+          filename={filename}
+          textureFilename="T_Noise1_nk.png"
+          tuning={tuning}
+        />
+      </Suspense>
+      <pointLight
+        color={tuning.color}
+        intensity={1.4 * tuning.intensity}
+        distance={8 * tuning.spread}
+        position={[0, 1.2, 0]}
+      />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.33, 0]} raycast={() => null}>
+        <ringGeometry args={[2.45 * tuning.size, 2.65 * tuning.size, 96]} />
+        <meshBasicMaterial
+          color={tuning.color}
+          transparent
+          opacity={0.4}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 function SpecialFxStation({
   station,
   tuning,
@@ -3741,6 +3921,7 @@ function SpecialFxStation({
       {station.effect === "beacon-pulse" ? <BeaconPulse position={station.position} tuning={tuning} /> : null}
       {station.effect === "gravity-lens" ? <GravityLens position={station.position} tuning={tuning} /> : null}
       {station.effect === "damage-glow-core" ? <DamageGlowCore position={station.position} tuning={tuning} /> : null}
+      {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
       {station.effect === "cloud-flipbook-damage" && station.textureFilename ? (
         <Suspense fallback={null}>
           <CloudFlipbookDamageEmitter position={station.position} tuning={tuning} textureFilename={station.textureFilename} paused={animationPaused} />
