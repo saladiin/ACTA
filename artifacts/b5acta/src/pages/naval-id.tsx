@@ -45,6 +45,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "frazi.glb",
 ]);
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "avioki.glb": "20260719-154941",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
   "dead-omega.glb": "20260718-231918",

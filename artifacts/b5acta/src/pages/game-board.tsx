@@ -1500,6 +1500,7 @@ function ShipModelFallback({
 // Cache HEAD-check results so each URL is only fetched once per session
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "avioki.glb": "20260719-154941",
   "dead-hyperion.glb": "20260718-163044",
   "missile-hyperion.glb": "20260719-005010",
   "vorchan.glb": "20260719-140443",
