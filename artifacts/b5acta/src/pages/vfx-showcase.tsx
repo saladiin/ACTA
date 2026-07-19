@@ -349,6 +349,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         tuning: { color: "#38bdf8", secondaryColor: "#f8fafc", speed: 1, size: 1, intensity: 0.4 },
       },
       {
+        kind: "hull-state",
+        id: "omega-destroyed-wreck",
+        label: "Destroyed Omega Wreck",
+        note: "Dead Omega mesh with smoke_light and small_glow emitter empties.",
+        mode: "destroyed",
+        modelFilename: "dead-omega.glb",
+        position: [-9, -10],
+        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 30, spread: 0.95 },
+      },
+      {
+        kind: "hull-state",
+        id: "nova-destroyed-wreck",
+        label: "Destroyed Nova Wreck",
+        note: "Dead Nova mesh with smoke_light and small_glow emitter empties.",
+        mode: "destroyed",
+        modelFilename: "dead-nova.glb",
+        position: [0, -10],
+        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 34, spread: 0.95 },
+      },
+      {
         kind: "weapon",
         id: "minbari-beam",
         label: "Minbari Beam",
@@ -870,6 +890,8 @@ function writeEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z", value: num
 
 const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "dead-hyperion.glb": "20260718-163044",
+  "dead-nova.glb": "20260718-233153",
+  "dead-omega.glb": "20260718-231918",
   "omega1.glb": "20260718-223718",
 };
 
@@ -913,6 +935,7 @@ function ShowcaseGlbModel({
       const anchorName = String(child.name ?? "").toLowerCase();
       if (
         anchorName.startsWith("wreck_smoke") ||
+        anchorName.startsWith("smoke_light") ||
         anchorName.startsWith("small_glow")
       ) {
         anchorPoints.push({
@@ -1238,7 +1261,7 @@ function ModelAnchorEffect({
   anchor: ShowcaseModelAnchor;
   modelScale: number;
 }) {
-  if (anchor.name.startsWith("wreck_smoke")) {
+  if (anchor.name.startsWith("wreck_smoke") || anchor.name.startsWith("smoke_light")) {
     return <ModelAnchorSmoke anchor={anchor} modelScale={modelScale} />;
   }
   if (anchor.name.startsWith("small_glow")) {
