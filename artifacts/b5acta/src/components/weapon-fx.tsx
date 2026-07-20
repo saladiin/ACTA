@@ -41,7 +41,7 @@ const MISSILE_TUNING = {
   count: 3,
   arc: 2.7,
   thickness: 0.25,
-  meshSize: 1,
+  meshSize: 0.4,
   flareSize: 4,
 };
 const MISSILE_MODEL_FILENAME = "missile1.glb";
