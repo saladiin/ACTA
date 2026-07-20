@@ -17,6 +17,7 @@ import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 const LARGE_MODEL_BYTES = 20 * 1024 * 1024;
 const OMEGA_ROTATING_MODEL_FILENAME = "omega1.glb";
+const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
 };
@@ -26,6 +27,12 @@ const ROTATING_MODEL_PARTS: Record<
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
     nodeName: "rotatorhull",
+    axis: "z",
+    secondsPerRotation: 30,
+  },
+  [EXPLORER_ROTATING_MODEL_FILENAME]: {
+    nodeName: "explorerRotate",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
     axis: "z",
     secondsPerRotation: 30,
   },
@@ -50,6 +57,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
   "dead-omega.glb": "20260718-231918",
+  [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260718-223718",

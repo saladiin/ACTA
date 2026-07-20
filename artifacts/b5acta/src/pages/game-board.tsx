@@ -1234,6 +1234,7 @@ function ObjModel({
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
 const OMEGA_ROTATING_MODEL_FILENAME = "omega1.glb";
+const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
@@ -1246,6 +1247,12 @@ const ROTATING_MODEL_PARTS: Record<
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
     nodeName: "rotatorhull",
+    axis: "z",
+    secondsPerRotation: 30,
+  },
+  [EXPLORER_ROTATING_MODEL_FILENAME]: {
+    nodeName: "explorerRotate",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
     axis: "z",
     secondsPerRotation: 30,
   },
@@ -1583,6 +1590,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
+  [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   "vorchan.glb": "20260719-140443",
 };
