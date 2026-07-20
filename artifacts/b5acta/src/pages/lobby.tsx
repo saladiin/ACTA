@@ -222,9 +222,6 @@ export default function Lobby() {
                       <Swords className="w-4 h-4 text-amber-400" />
                       <div>
                         <div className="text-sm font-semibold">{game.challengerName ?? "Unknown Commander"}</div>
-                        <div className="text-sm text-foreground/90">
-                          {game.matchName || "Open engagement"}
-                        </div>
                         <div className="text-xs text-muted-foreground font-mono">
                           {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
                           {isChallenger && game.status === "open" ? " - awaiting opponent" : ""}
@@ -292,7 +289,6 @@ export default function Lobby() {
                         <div className="text-sm font-semibold">
                           {game.challengerName} vs {game.opponentName}
                         </div>
-                        {game.matchName ? <div className="text-sm text-foreground/90">{game.matchName}</div> : null}
                         <div className="text-xs text-muted-foreground font-mono">
                           Turn {game.currentTurn} - {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
                         </div>
@@ -325,10 +321,7 @@ export default function Lobby() {
               {lobby?.recentlyCompleted?.map(game => (
                 <Link key={game.id} href={`/games/${game.id}`}>
                   <div data-testid={`card-completed-${game.id}`} className="flex items-center justify-between border border-border bg-card/50 hover:bg-card rounded-md px-4 py-3 cursor-pointer transition-colors opacity-70 hover:opacity-100">
-                    <div>
-                      <div className="text-sm">{game.challengerName} vs {game.opponentName}</div>
-                      {game.matchName ? <div className="text-xs text-muted-foreground">{game.matchName}</div> : null}
-                    </div>
+                    <div className="text-sm">{game.challengerName} vs {game.opponentName}</div>
                     <div className="flex items-center gap-3">
                       <StatusBadge status={game.status} />
                       <ChevronRight className="w-4 h-4 text-muted-foreground" />

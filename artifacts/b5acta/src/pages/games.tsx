@@ -61,7 +61,6 @@ export default function GamesList() {
                 <div data-testid={`card-game-${game.id}`} className="flex items-center justify-between border border-border bg-card hover:bg-secondary/20 rounded-md px-4 py-3 cursor-pointer transition-colors">
                   <div>
                     <div className="text-sm font-semibold">{game.challengerName ?? "Unknown"} vs {game.opponentName ?? "Unknown"}</div>
-                    {game.matchName ? <div className="text-sm text-foreground/90">{game.matchName}</div> : null}
                     <div className="text-xs text-muted-foreground font-mono">
                       Turn {game.currentTurn} - {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
                     </div>

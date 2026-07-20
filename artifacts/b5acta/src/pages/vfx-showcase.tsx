@@ -12,25 +12,11 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { Weapon } from "@workspace/api-client-react";
 
 type Vec2 = [number, number];
 type ProjectileShape = "sphere" | "cylinder";
-type TexturedSphereVariant =
-  | "diffuse-additive"
-  | "diffuse-alpha"
-  | "alpha-shell"
-  | "emissive-noise"
-  | "dual-diffuse"
-  | "rim-alpha"
-  | "inner-hot-core"
-  | "cool-smoke-mask"
-  | "panning-fire-alpha"
-  | "wind-cutout"
-  | "hard-plasma"
-  | "ghost-shell";
 
 type Tuning = {
   color: string;
@@ -49,9 +35,6 @@ type Tuning = {
   ribbonEffect?: number;
   meshSize?: number;
   flareSize?: number;
-  rotationX?: number;
-  rotationY?: number;
-  rotationZ?: number;
 };
 
 type WeaponStation = {
@@ -59,19 +42,12 @@ type WeaponStation = {
   id: string;
   label: string;
   note: string;
-  effect?: "texture-beam-emitter";
   faction: string;
   weapon: Pick<Weapon, "id" | "name" | "traits" | "attackDice">;
   from: Vec2;
   to: Vec2;
   hits: number;
   totalDice: number;
-  textureFilename?: string;
-  impactTextureFilename?: string;
-  impactFrameColumns?: number;
-  impactFrameRows?: number;
-  targetModelFilename?: string;
-  targetModelSize?: number;
   tuning?: Partial<Tuning>;
 };
 
@@ -109,7 +85,6 @@ type SpecialStation = {
     | "arc-particle-spray"
     | "persistent-impact-flashes"
     | "shockwave-dome"
-    | "praxis-shockwave"
     | "jump-point-aperture"
     | "hyperspace-wake"
     | "rift-shear"
@@ -121,19 +96,12 @@ type SpecialStation = {
     | "missile-impact-flipbook-test"
     | "standalone-flipbook-preview"
     | "mesh-missile-salvo"
-    | "texture-missile-salvo"
-    | "textured-exploding-sphere";
+    | "texture-missile-salvo";
   position: Vec2;
   to?: Vec2;
   modelFilename?: string;
   textureFilename?: string;
-  secondaryTextureFilename?: string;
-  alphaTextureFilename?: string;
-  textureVariant?: TexturedSphereVariant;
-  testNumber?: number;
   impactTextureFilename?: string;
-  frameColumns?: number;
-  frameRows?: number;
   tuning?: Partial<Tuning>;
 };
 
@@ -217,43 +185,17 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     summary: "Primary attack visuals used by weapon resolution.",
     stations: [
       {
-        kind: "special",
-        id: "greenbolt-flipbook-preview",
-        label: "Greenbolt Flipbook",
-        note: "Greenbolt 5x5 flipbook displayed as a normal animated sheet preview.",
-        effect: "standalone-flipbook-preview",
-        position: [-6, -14],
-        textureFilename: "green-bolt.png",
-        tuning: {
-          color: "#20ff6a",
-          secondaryColor: "#c8ffd6",
-          speed: 1.2,
-          size: 1.4,
-          fade: 0.9,
-          intensity: 1.6,
-          spread: 1,
-          count: 25,
-          arc: 0,
-          thickness: 1,
-        },
-      },
-      {
         kind: "weapon",
         id: "earth-beam",
         label: "Earth Beam",
-        note: "Beam trait with red EA color and a stabilized red-orange energy-particle impact.",
+        note: "Beam trait with red EA color.",
         faction: "Earth Alliance",
         weapon: { id: 9001, name: "Heavy Laser Cannon", traits: "Beam; Double Damage", attackDice: 4 },
         from: [-18, -24],
         to: [-4, -24],
         hits: 2,
         totalDice: 4,
-        impactTextureFilename: "energy-impact-particles-flipbook-5x5.png",
-        impactFrameColumns: 5,
-        impactFrameRows: 5,
-        targetModelFilename: "hyperion.glb",
-        targetModelSize: 3.2,
-        tuning: { color: "#ff2a2a", secondaryColor: "#f97316", count: 4, thickness: 1, size: 1.15, intensity: 1.25 },
+        tuning: { color: "#ff2a2a", count: 4, thickness: 1 },
       },
       {
         kind: "weapon",
@@ -348,29 +290,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
       },
       {
         kind: "special",
-        id: "red-spark-flipbook",
-        label: "Red Spark Flipbook",
-        note: "Red radial spark burst, normalized from the local texture sheet with black keyed to alpha.",
-        effect: "standalone-flipbook-preview",
-        position: [-18, -24],
-        textureFilename: "red-spark-flipbook.png",
-        frameColumns: 5,
-        frameRows: 5,
-        tuning: {
-          color: "#ffffff",
-          secondaryColor: "#ff2a2a",
-          speed: 1,
-          size: 1.2,
-          fade: 1,
-          intensity: 1.35,
-          spread: 1,
-          count: 1,
-          arc: 0,
-          thickness: 1,
-        },
-      },
-      {
-        kind: "special",
         id: "codex-sci-fi-explosion-1254",
         label: "Generated 1254 Flipbook",
         note: "Earlier generated 5x5 sheet at 1254px, converted to WebP for comparison.",
@@ -384,75 +303,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           size: 1.2,
           fade: 1,
           intensity: 1.25,
-          spread: 1,
-          count: 1,
-          arc: 0,
-          thickness: 1,
-        },
-      },
-      {
-        kind: "special",
-        id: "scifi-explosion-source",
-        label: "Scifi Explosion Flipbook",
-        note: "New source PNG flipbook sheet staged from the local texture folder.",
-        effect: "standalone-flipbook-preview",
-        position: [18, -24],
-        textureFilename: "scifi-explosion.png",
-        frameColumns: 4,
-        frameRows: 4,
-        tuning: {
-          color: "#ffffff",
-          secondaryColor: "#f97316",
-          speed: 1,
-          size: 1.2,
-          fade: 1,
-          intensity: 1.25,
-          spread: 1,
-          count: 1,
-          arc: 0,
-          thickness: 1,
-        },
-      },
-      {
-        kind: "special",
-        id: "centered-sci-fi-explosion-flipbook",
-        label: "Centered Sci-Fi Explosion",
-        note: "Stabilized 25-frame blue-violet energy explosion with a center-locked blast origin.",
-        effect: "standalone-flipbook-preview",
-        position: [-6, -36],
-        textureFilename: "sci-fi-explosion-flipbook-5x5.png",
-        frameColumns: 5,
-        frameRows: 5,
-        tuning: {
-          color: "#ffffff",
-          secondaryColor: "#60a5fa",
-          speed: 1,
-          size: 1.2,
-          fade: 1,
-          intensity: 1.25,
-          spread: 1,
-          count: 1,
-          arc: 0,
-          thickness: 1,
-        },
-      },
-      {
-        kind: "special",
-        id: "centered-energy-impact-particles-flipbook",
-        label: "Centered Energy Impact Particles",
-        note: "Stabilized 25-frame red-orange radial particle impact without smoke or fire.",
-        effect: "standalone-flipbook-preview",
-        position: [6, -36],
-        textureFilename: "energy-impact-particles-flipbook-5x5.png",
-        frameColumns: 5,
-        frameRows: 5,
-        tuning: {
-          color: "#ffffff",
-          secondaryColor: "#ff5a1f",
-          speed: 1,
-          size: 1.2,
-          fade: 1,
-          intensity: 1.35,
           spread: 1,
           count: 1,
           arc: 0,
@@ -556,193 +406,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         modelFilename: "dead-nova.glb",
         position: [0, -10],
         tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 34, spread: 0.95 },
-      },
-    ],
-  },
-  {
-    id: "orb-texture-tests",
-    name: "Orb Textures",
-    summary: "Exploding Hyperion sphere material tests using local T_ texture maps as diffuse, alpha, emissive, and distortion inputs.",
-    stations: [
-      {
-        kind: "special",
-        id: "orb-fire-diffuse-additive",
-        label: "1 - Fire Diffuse",
-        testNumber: 1,
-        note: "Fire panning texture used directly as an additive color map.",
-        effect: "textured-exploding-sphere",
-        position: [-18, -24],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_FirePanningCyl45.png",
-        secondaryTextureFilename: "T_Noise1_nk.png",
-        alphaTextureFilename: "T_Noise_HU85k.png",
-        textureVariant: "diffuse-additive",
-        tuning: { color: "#ef4444", secondaryColor: "#f97316", speed: 0.8, size: 1, fade: 1, intensity: 1.15, spread: 1, count: 1, arc: 0, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "orb-fire-diffuse-noise-alpha",
-        label: "2 - Fire + Alpha",
-        testNumber: 2,
-        note: "Fire map supplies color while hard noise cuts the shell alpha.",
-        effect: "textured-exploding-sphere",
-        position: [-6, -24],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_FirePanningCyl45.png",
-        secondaryTextureFilename: "T_VFX_WindNoise1.png",
-        alphaTextureFilename: "T_Noise1_nk.png",
-        textureVariant: "diffuse-alpha",
-        tuning: { color: "#ff3b1f", secondaryColor: "#ffd166", speed: 1, size: 1, fade: 1, intensity: 1.05, spread: 1, count: 1, arc: 0, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "orb-noise-alpha-shell",
-        label: "3 - Noise Alpha",
-        testNumber: 3,
-        note: "Solid plasma color with noise texture used mostly as transparency.",
-        effect: "textured-exploding-sphere",
-        position: [6, -24],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_Noise1_nk.png",
-        secondaryTextureFilename: "T_FirePanningCyl45.png",
-        alphaTextureFilename: "T_Noise_HU85k.png",
-        textureVariant: "alpha-shell",
-        tuning: { color: "#ef4444", secondaryColor: "#fef08a", speed: 0.9, size: 1, fade: 1.05, intensity: 1.1, spread: 1, count: 1, arc: 0, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "orb-wind-emissive-noise",
-        label: "4 - Wind Emissive",
-        testNumber: 4,
-        note: "Wind noise acts as animated emissive intensity over a red shell.",
-        effect: "textured-exploding-sphere",
-        position: [18, -24],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_VFX_WindNoise1.png",
-        secondaryTextureFilename: "T_FirePanningCyl45.png",
-        alphaTextureFilename: "T_Noise1_nk.png",
-        textureVariant: "emissive-noise",
-        tuning: { color: "#dc2626", secondaryColor: "#fb923c", speed: 1.2, size: 1, fade: 1, intensity: 1.25, spread: 1, count: 1, arc: 0, thickness: 1.15 },
-      },
-      {
-        kind: "special",
-        id: "orb-fire-wind-dual-diffuse",
-        label: "5 - Dual Diffuse",
-        testNumber: 5,
-        note: "Fire and wind maps are mixed as two animated diffuse layers.",
-        effect: "textured-exploding-sphere",
-        position: [-18, -14],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_FirePanningCyl45.png",
-        secondaryTextureFilename: "T_VFX_WindNoise1.png",
-        alphaTextureFilename: "T_Noise_HU85k.png",
-        textureVariant: "dual-diffuse",
-        tuning: { color: "#f43f5e", secondaryColor: "#facc15", speed: 0.7, size: 1, fade: 1.1, intensity: 1.2, spread: 1, count: 1, arc: 0, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "orb-noise-rim-alpha",
-        label: "6 - Rim Alpha",
-        testNumber: 6,
-        note: "Noise alpha plus fresnel rim to test a hotter sphere silhouette.",
-        effect: "textured-exploding-sphere",
-        position: [-6, -14],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_Noise_HU85k.png",
-        secondaryTextureFilename: "T_FirePanningCyl45.png",
-        alphaTextureFilename: "T_Noise1_nk.png",
-        textureVariant: "rim-alpha",
-        tuning: { color: "#ef4444", secondaryColor: "#fde68a", speed: 0.85, size: 1, fade: 1, intensity: 1.3, spread: 1, count: 1, arc: 0, thickness: 1.3 },
-      },
-      {
-        kind: "special",
-        id: "orb-inner-hot-core",
-        label: "7 - Hot Core",
-        testNumber: 7,
-        note: "Textured shell with an inner hot sphere boosted by the fire map.",
-        effect: "textured-exploding-sphere",
-        position: [6, -14],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_FirePanningCyl45.png",
-        secondaryTextureFilename: "T_Noise_HU85k.png",
-        alphaTextureFilename: "T_VFX_WindNoise1.png",
-        textureVariant: "inner-hot-core",
-        tuning: { color: "#dc2626", secondaryColor: "#fff7ad", speed: 1.05, size: 1, fade: 1, intensity: 1.15, spread: 1, count: 1, arc: 0, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "orb-cool-smoke-mask",
-        label: "8 - Smoke Mask",
-        testNumber: 8,
-        note: "Cooler smoke-toned shell with fire peeking through the mask.",
-        effect: "textured-exploding-sphere",
-        position: [18, -14],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_Noise_HU85k.png",
-        secondaryTextureFilename: "T_VFX_WindNoise1.png",
-        alphaTextureFilename: "T_FirePanningCyl45.png",
-        textureVariant: "cool-smoke-mask",
-        tuning: { color: "#991b1b", secondaryColor: "#fb923c", speed: 0.65, size: 1, fade: 1.2, intensity: 0.95, spread: 1, count: 1, arc: 0, thickness: 0.95 },
-      },
-      {
-        kind: "special",
-        id: "orb-panning-fire-alpha",
-        label: "9 - Panning Alpha",
-        testNumber: 9,
-        note: "Fire map pans across the alpha channel for active flame bands.",
-        effect: "textured-exploding-sphere",
-        position: [-18, -4],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_FirePanningCyl45.png",
-        secondaryTextureFilename: "T_Noise1_nk.png",
-        alphaTextureFilename: "T_FirePanningCyl45.png",
-        textureVariant: "panning-fire-alpha",
-        tuning: { color: "#ef4444", secondaryColor: "#fdba74", speed: 1.35, size: 1, fade: 1, intensity: 1.2, spread: 1, count: 1, arc: 0, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "orb-wind-cutout",
-        label: "10 - Wind Cutout",
-        testNumber: 10,
-        note: "Wind noise creates torn holes through a softer explosion shell.",
-        effect: "textured-exploding-sphere",
-        position: [-6, -4],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_VFX_WindNoise1.png",
-        secondaryTextureFilename: "T_Noise_HU85k.png",
-        alphaTextureFilename: "T_VFX_WindNoise1.png",
-        textureVariant: "wind-cutout",
-        tuning: { color: "#f97316", secondaryColor: "#fef08a", speed: 1.15, size: 1, fade: 1.05, intensity: 1.05, spread: 1, count: 1, arc: 0, thickness: 1.25 },
-      },
-      {
-        kind: "special",
-        id: "orb-hard-plasma",
-        label: "11 - Hard Plasma",
-        testNumber: 11,
-        note: "High-contrast thresholded noise for sharper plasma patches.",
-        effect: "textured-exploding-sphere",
-        position: [6, -4],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_Noise1_nk.png",
-        secondaryTextureFilename: "T_FirePanningCyl45.png",
-        alphaTextureFilename: "T_Noise_HU85k.png",
-        textureVariant: "hard-plasma",
-        tuning: { color: "#ef4444", secondaryColor: "#fff7ed", speed: 0.95, size: 1, fade: 0.95, intensity: 1.35, spread: 1, count: 1, arc: 0, thickness: 1.1 },
-      },
-      {
-        kind: "special",
-        id: "orb-ghost-shell",
-        label: "12 - Ghost Shell",
-        testNumber: 12,
-        note: "Subtle alpha-only shell for testing a less overpowering warning orb.",
-        effect: "textured-exploding-sphere",
-        position: [18, -4],
-        modelFilename: "hyperion.glb",
-        textureFilename: "T_Noise_HU85k.png",
-        secondaryTextureFilename: "T_VFX_WindNoise1.png",
-        alphaTextureFilename: "T_Noise1_nk.png",
-        textureVariant: "ghost-shell",
-        tuning: { color: "#ef4444", secondaryColor: "#fca5a5", speed: 0.55, size: 1, fade: 1.45, intensity: 0.72, spread: 1, count: 1, arc: 0, thickness: 0.75 },
       },
     ],
   },
@@ -891,30 +554,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [10, 8],
         tuning: { color: "#fb7185", secondaryColor: "#fef08a", speed: 0.8, size: 1.1, fade: 1.25, intensity: 0.9, spread: 1, count: 3, arc: 2.8, thickness: 1.2 },
       },
-      {
-        kind: "special",
-        id: "praxis-shockwave",
-        label: "Praxis Shockwave Ring",
-        note: "Top-down textured pressure ring that expands from a point, trails energized edges, and fades at its final diameter.",
-        effect: "praxis-shockwave",
-        position: [0, 10],
-        textureFilename: "praxis.png",
-        tuning: {
-          color: "#8bdcff",
-          secondaryColor: "#ffffff",
-          speed: 1,
-          size: 14,
-          fade: 3,
-          intensity: 1.35,
-          spread: 1,
-          count: 3,
-          arc: 0,
-          thickness: 1,
-          rotationX: -90,
-          rotationY: 0,
-          rotationZ: 0,
-        },
-      },
     ],
   },
   {
@@ -1027,8 +666,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-const SHOWCASE_MESH_ORIGIN_Y = 1.35;
-
 function toVector3([x, z]: Vec2, y = 0.8): THREE.Vector3 {
   return new THREE.Vector3(x, y, z);
 }
@@ -1051,10 +688,6 @@ function isArcParticleSpray(station: ShowcaseStation): boolean {
 
 function isPersistentImpactFlashes(station: ShowcaseStation): boolean {
   return station.kind === "special" && station.effect === "persistent-impact-flashes";
-}
-
-function isTexturedExplodingSphere(station: ShowcaseStation): station is SpecialStation {
-  return station.kind === "special" && station.effect === "textured-exploding-sphere";
 }
 
 function baseTuningFor(station: ShowcaseStation): Tuning {
@@ -1168,21 +801,12 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
 };
 
 const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
-  "t_firepanningcyl45.png": "20260720-121500",
   "t_noise1_nk.png": "20260719-182302",
-  "t_noise_hu85k.png": "20260720-121500",
-  "t_vfx_windnoise1.png": "20260720-121500",
   "cloud01-8x8.webp": "20260719-032240",
   "codex-sci-fi-explosion-5x5.webp": "20260719-122000",
   "codex-sci-fi-explosion-5x5-1280.webp": "20260719-122000",
   "explosion00-5x5-keyed.webp": "20260719-113000",
-  "green-bolt.png": "20260719-211853",
   "missileflare.png": "20260719-011930",
-  "red-spark-flipbook.png": "20260720-001900",
-  "scifi-explosion.png": "20260720-000500",
-  "sci-fi-explosion-flipbook-5x5.png": "20260720-020000",
-  "energy-impact-particles-flipbook-5x5.png": "20260720-114500-stabilized-alpha",
-  "praxis.png": "20260720-120000",
 };
 
 function showcaseModelUrl(filename: string): string {
@@ -1741,457 +1365,6 @@ function ExplodingHullPulse({ position, tuning }: { position: Vec2; tuning: Tuni
   );
 }
 
-type TexturedSphereVariantConfig = {
-  alphaSource: 0 | 1 | 2;
-  alphaFloor: number;
-  alphaStrength: number;
-  secondaryMix: number;
-  emissiveBoost: number;
-  rimBoost: number;
-  rimAlpha: number;
-  fresnelPower: number;
-  threshold: number;
-  pulseAmount: number;
-  primarySpeed: Vec2;
-  secondarySpeed: Vec2;
-  alphaSpeed: Vec2;
-  primaryRepeat: Vec2;
-  secondaryRepeat: Vec2;
-  alphaRepeat: Vec2;
-};
-
-const TEXTURED_SPHERE_VARIANT_CONFIGS: Record<TexturedSphereVariant, TexturedSphereVariantConfig> = {
-  "diffuse-additive": {
-    alphaSource: 0,
-    alphaFloor: 0.2,
-    alphaStrength: 0.45,
-    secondaryMix: 0.15,
-    emissiveBoost: 0.8,
-    rimBoost: 0.35,
-    rimAlpha: 0.08,
-    fresnelPower: 1.4,
-    threshold: 0.18,
-    pulseAmount: 0.28,
-    primarySpeed: [0, -0.18],
-    secondarySpeed: [0.05, 0.08],
-    alphaSpeed: [-0.04, 0.03],
-    primaryRepeat: [1.1, 1.1],
-    secondaryRepeat: [1.8, 1.8],
-    alphaRepeat: [1.3, 1.3],
-  },
-  "diffuse-alpha": {
-    alphaSource: 2,
-    alphaFloor: 0.06,
-    alphaStrength: 0.9,
-    secondaryMix: 0.28,
-    emissiveBoost: 0.55,
-    rimBoost: 0.55,
-    rimAlpha: 0.15,
-    fresnelPower: 1.2,
-    threshold: 0.35,
-    pulseAmount: 0.24,
-    primarySpeed: [0.02, -0.12],
-    secondarySpeed: [-0.06, 0.04],
-    alphaSpeed: [0.04, 0.09],
-    primaryRepeat: [1, 1],
-    secondaryRepeat: [1.6, 1.6],
-    alphaRepeat: [2, 2],
-  },
-  "alpha-shell": {
-    alphaSource: 0,
-    alphaFloor: 0.05,
-    alphaStrength: 1,
-    secondaryMix: 0.08,
-    emissiveBoost: 0.35,
-    rimBoost: 0.7,
-    rimAlpha: 0.22,
-    fresnelPower: 1,
-    threshold: 0.42,
-    pulseAmount: 0.32,
-    primarySpeed: [0.06, 0.03],
-    secondarySpeed: [0, -0.16],
-    alphaSpeed: [-0.03, 0.06],
-    primaryRepeat: [2.2, 2.2],
-    secondaryRepeat: [1, 1],
-    alphaRepeat: [1.4, 1.4],
-  },
-  "emissive-noise": {
-    alphaSource: 2,
-    alphaFloor: 0.14,
-    alphaStrength: 0.65,
-    secondaryMix: 0.2,
-    emissiveBoost: 1.25,
-    rimBoost: 0.4,
-    rimAlpha: 0.1,
-    fresnelPower: 1.6,
-    threshold: 0.25,
-    pulseAmount: 0.38,
-    primarySpeed: [-0.12, 0.02],
-    secondarySpeed: [0, -0.15],
-    alphaSpeed: [0.07, 0.04],
-    primaryRepeat: [1.5, 1.5],
-    secondaryRepeat: [1, 1],
-    alphaRepeat: [1.8, 1.8],
-  },
-  "dual-diffuse": {
-    alphaSource: 2,
-    alphaFloor: 0.16,
-    alphaStrength: 0.58,
-    secondaryMix: 0.45,
-    emissiveBoost: 0.95,
-    rimBoost: 0.3,
-    rimAlpha: 0.09,
-    fresnelPower: 1.8,
-    threshold: 0.24,
-    pulseAmount: 0.26,
-    primarySpeed: [0, -0.1],
-    secondarySpeed: [0.09, 0.02],
-    alphaSpeed: [-0.03, 0.05],
-    primaryRepeat: [1, 1],
-    secondaryRepeat: [1.3, 1.3],
-    alphaRepeat: [1.9, 1.9],
-  },
-  "rim-alpha": {
-    alphaSource: 2,
-    alphaFloor: 0.04,
-    alphaStrength: 0.72,
-    secondaryMix: 0.1,
-    emissiveBoost: 0.45,
-    rimBoost: 1.1,
-    rimAlpha: 0.36,
-    fresnelPower: 0.8,
-    threshold: 0.38,
-    pulseAmount: 0.35,
-    primarySpeed: [0.04, 0.04],
-    secondarySpeed: [0, -0.14],
-    alphaSpeed: [-0.05, 0.08],
-    primaryRepeat: [1.8, 1.8],
-    secondaryRepeat: [1, 1],
-    alphaRepeat: [2.1, 2.1],
-  },
-  "inner-hot-core": {
-    alphaSource: 2,
-    alphaFloor: 0.1,
-    alphaStrength: 0.66,
-    secondaryMix: 0.32,
-    emissiveBoost: 1.3,
-    rimBoost: 0.5,
-    rimAlpha: 0.12,
-    fresnelPower: 1.4,
-    threshold: 0.22,
-    pulseAmount: 0.42,
-    primarySpeed: [0, -0.2],
-    secondarySpeed: [0.04, 0.06],
-    alphaSpeed: [-0.08, 0.03],
-    primaryRepeat: [1.15, 1.15],
-    secondaryRepeat: [1.7, 1.7],
-    alphaRepeat: [1.5, 1.5],
-  },
-  "cool-smoke-mask": {
-    alphaSource: 2,
-    alphaFloor: 0.08,
-    alphaStrength: 0.62,
-    secondaryMix: 0.52,
-    emissiveBoost: 0.45,
-    rimBoost: 0.2,
-    rimAlpha: 0.1,
-    fresnelPower: 1.7,
-    threshold: 0.5,
-    pulseAmount: 0.18,
-    primarySpeed: [0.03, 0.02],
-    secondarySpeed: [-0.05, 0.07],
-    alphaSpeed: [0, -0.12],
-    primaryRepeat: [1.7, 1.7],
-    secondaryRepeat: [1.35, 1.35],
-    alphaRepeat: [1.05, 1.05],
-  },
-  "panning-fire-alpha": {
-    alphaSource: 2,
-    alphaFloor: 0.02,
-    alphaStrength: 0.95,
-    secondaryMix: 0.2,
-    emissiveBoost: 0.9,
-    rimBoost: 0.45,
-    rimAlpha: 0.16,
-    fresnelPower: 1.2,
-    threshold: 0.44,
-    pulseAmount: 0.34,
-    primarySpeed: [0, -0.16],
-    secondarySpeed: [0.06, 0.04],
-    alphaSpeed: [0, -0.28],
-    primaryRepeat: [1, 1],
-    secondaryRepeat: [2.1, 2.1],
-    alphaRepeat: [1.25, 1.25],
-  },
-  "wind-cutout": {
-    alphaSource: 2,
-    alphaFloor: 0.03,
-    alphaStrength: 0.88,
-    secondaryMix: 0.34,
-    emissiveBoost: 0.62,
-    rimBoost: 0.7,
-    rimAlpha: 0.2,
-    fresnelPower: 1.05,
-    threshold: 0.48,
-    pulseAmount: 0.28,
-    primarySpeed: [-0.1, 0.06],
-    secondarySpeed: [0.05, 0.03],
-    alphaSpeed: [-0.14, 0.04],
-    primaryRepeat: [1.8, 1.8],
-    secondaryRepeat: [1.3, 1.3],
-    alphaRepeat: [1.9, 1.9],
-  },
-  "hard-plasma": {
-    alphaSource: 0,
-    alphaFloor: 0.04,
-    alphaStrength: 1,
-    secondaryMix: 0.18,
-    emissiveBoost: 1.1,
-    rimBoost: 0.55,
-    rimAlpha: 0.11,
-    fresnelPower: 1.5,
-    threshold: 0.62,
-    pulseAmount: 0.3,
-    primarySpeed: [0.06, 0.05],
-    secondarySpeed: [0, -0.12],
-    alphaSpeed: [-0.04, 0.04],
-    primaryRepeat: [2.8, 2.8],
-    secondaryRepeat: [1, 1],
-    alphaRepeat: [1.6, 1.6],
-  },
-  "ghost-shell": {
-    alphaSource: 2,
-    alphaFloor: 0.02,
-    alphaStrength: 0.44,
-    secondaryMix: 0.38,
-    emissiveBoost: 0.28,
-    rimBoost: 0.5,
-    rimAlpha: 0.18,
-    fresnelPower: 1.1,
-    threshold: 0.56,
-    pulseAmount: 0.16,
-    primarySpeed: [0.02, 0.02],
-    secondarySpeed: [-0.04, 0.06],
-    alphaSpeed: [0.05, -0.03],
-    primaryRepeat: [2, 2],
-    secondaryRepeat: [1.6, 1.6],
-    alphaRepeat: [2.4, 2.4],
-  },
-};
-
-function configureSphereTexture(texture: THREE.Texture, colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace): void {
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.colorSpace = colorSpace;
-  texture.needsUpdate = true;
-}
-
-function TexturedExplodingSphereStation({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
-  const sphereGroupRef = useRef<THREE.Group>(null);
-  const coreRef = useRef<THREE.Mesh>(null);
-  const lightRef = useRef<THREE.PointLight>(null);
-  const primaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.textureFilename ?? "T_FirePanningCyl45.png"));
-  const secondaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.secondaryTextureFilename ?? "T_Noise1_nk.png"));
-  const alphaTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.alphaTextureFilename ?? "T_Noise_HU85k.png"));
-  const variant = station.textureVariant ?? "diffuse-additive";
-  const config = TEXTURED_SPHERE_VARIANT_CONFIGS[variant];
-  const sphereCount = clamp(Math.round(tuning.count), 1, 16);
-  const randomPlacement = (tuning.randomness ?? 0) >= 0.5;
-  const sphereOffsets = useMemo<[number, number, number][]>(
-    () => Array.from({ length: sphereCount }, (_, index) => {
-      if (index === 0) return [0, 0, 0];
-
-      if (randomPlacement) {
-        const angle = seededUnit(index * 3.17 + 0.4) * Math.PI * 2;
-        const radius = (0.45 + seededUnit(index * 5.31 + 1.7) * 1.1) * tuning.spread;
-        const height = (seededUnit(index * 7.13 + 2.9) - 0.5) * 1.4 * tuning.spread;
-        return [Math.cos(angle) * radius, height, Math.sin(angle) * radius];
-      }
-
-      const clusterIndex = index - 1;
-      const ring = Math.floor(clusterIndex / 6);
-      const angle = (clusterIndex % 6) / 6 * Math.PI * 2 + ring * 0.42;
-      const radius = (0.68 + ring * 0.5) * tuning.spread;
-      const height = ((clusterIndex % 3) - 1) * 0.12 * tuning.spread;
-      return [Math.cos(angle) * radius, height, Math.sin(angle) * radius];
-    }),
-    [randomPlacement, sphereCount, tuning.spread],
-  );
-
-  useMemo(() => {
-    configureSphereTexture(primaryTexture);
-    configureSphereTexture(secondaryTexture);
-    configureSphereTexture(alphaTexture, THREE.NoColorSpace);
-  }, [alphaTexture, primaryTexture, secondaryTexture]);
-
-  const uniforms = useMemo(
-    () => ({
-      uPrimaryMap: { value: primaryTexture },
-      uSecondaryMap: { value: secondaryTexture },
-      uAlphaMap: { value: alphaTexture },
-      uTime: { value: 0 },
-      uColor: { value: new THREE.Color(tuning.color) },
-      uSecondaryColor: { value: new THREE.Color(tuning.secondaryColor) },
-      uIntensity: { value: tuning.intensity },
-      uFade: { value: tuning.fade },
-      uAlphaSource: { value: config.alphaSource },
-      uAlphaFloor: { value: config.alphaFloor },
-      uAlphaStrength: { value: config.alphaStrength },
-      uSecondaryMix: { value: config.secondaryMix },
-      uEmissiveBoost: { value: config.emissiveBoost },
-      uRimBoost: { value: config.rimBoost },
-      uRimAlpha: { value: config.rimAlpha },
-      uFresnelPower: { value: config.fresnelPower },
-      uThreshold: { value: config.threshold },
-      uPulseAmount: { value: config.pulseAmount },
-      uPrimarySpeed: { value: new THREE.Vector2(...config.primarySpeed) },
-      uSecondarySpeed: { value: new THREE.Vector2(...config.secondarySpeed) },
-      uAlphaSpeed: { value: new THREE.Vector2(...config.alphaSpeed) },
-      uPrimaryRepeat: { value: new THREE.Vector2(...config.primaryRepeat) },
-      uSecondaryRepeat: { value: new THREE.Vector2(...config.secondaryRepeat) },
-      uAlphaRepeat: { value: new THREE.Vector2(...config.alphaRepeat) },
-    }),
-    [alphaTexture, config, primaryTexture, secondaryTexture, tuning.color, tuning.fade, tuning.intensity, tuning.secondaryColor],
-  );
-
-  useFrame(({ clock }) => {
-    const elapsed = clock.elapsedTime * clamp(tuning.speed, 0.25, 3);
-    const pulse = (Math.sin(elapsed * 4.2) + 1) / 2;
-    sphereGroupRef.current?.children.forEach((child, index) => {
-      const sizeVariation = randomPlacement && index > 0 ? 0.82 + seededUnit(index * 4.71 + 3.2) * 0.34 : 1;
-      child.scale.setScalar((1.16 + pulse * 0.16) * tuning.size * sizeVariation);
-    });
-    if (coreRef.current) coreRef.current.scale.setScalar((0.38 + pulse * 0.08) * tuning.size);
-    if (lightRef.current) lightRef.current.intensity = (1.4 + pulse * 3.8) * tuning.intensity;
-    uniforms.uTime.value = elapsed;
-    uniforms.uColor.value.set(tuning.color);
-    uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
-    uniforms.uIntensity.value = tuning.intensity;
-    uniforms.uFade.value = tuning.fade;
-  });
-
-  return (
-    <group position={[station.position[0], 0, station.position[1]]}>
-      {station.testNumber ? (
-        <Billboard position={[0, 4.25, 0]} follow>
-          <Text
-            fontSize={0.9}
-            color="#f8fafc"
-            anchorX="center"
-            anchorY="middle"
-            outlineWidth={0.055}
-            outlineColor="#020617"
-          >
-            {station.testNumber}
-          </Text>
-        </Billboard>
-      ) : null}
-      <group position={[0, 1.35, 0]}>
-        <Suspense fallback={null}>
-          <ShowcaseGlbModel
-            filename={station.modelFilename ?? "hyperion.glb"}
-            tint="#dbeafe"
-            opacity={0.74}
-            emissiveColor={tuning.color}
-            emissiveIntensity={0.12 * tuning.intensity}
-          />
-        </Suspense>
-        <group ref={sphereGroupRef}>
-          {sphereOffsets.map((offset, index) => (
-            <mesh key={index} position={offset} raycast={() => null}>
-              <sphereGeometry args={[1.45, 48, 28]} />
-              <shaderMaterial
-                uniforms={uniforms}
-                vertexShader={`
-              varying vec2 vUv;
-              varying vec3 vWorldNormal;
-              varying vec3 vViewDir;
-              void main() {
-                vUv = uv;
-                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-                vWorldNormal = normalize(mat3(modelMatrix) * normal);
-                vViewDir = normalize(cameraPosition - worldPosition.xyz);
-                gl_Position = projectionMatrix * viewMatrix * worldPosition;
-              }
-            `}
-                fragmentShader={`
-              uniform sampler2D uPrimaryMap;
-              uniform sampler2D uSecondaryMap;
-              uniform sampler2D uAlphaMap;
-              uniform float uTime;
-              uniform vec3 uColor;
-              uniform vec3 uSecondaryColor;
-              uniform float uIntensity;
-              uniform float uFade;
-              uniform float uAlphaSource;
-              uniform float uAlphaFloor;
-              uniform float uAlphaStrength;
-              uniform float uSecondaryMix;
-              uniform float uEmissiveBoost;
-              uniform float uRimBoost;
-              uniform float uRimAlpha;
-              uniform float uFresnelPower;
-              uniform float uThreshold;
-              uniform float uPulseAmount;
-              uniform vec2 uPrimarySpeed;
-              uniform vec2 uSecondarySpeed;
-              uniform vec2 uAlphaSpeed;
-              uniform vec2 uPrimaryRepeat;
-              uniform vec2 uSecondaryRepeat;
-              uniform vec2 uAlphaRepeat;
-              varying vec2 vUv;
-              varying vec3 vWorldNormal;
-              varying vec3 vViewDir;
-
-              void main() {
-                vec4 primary = texture2D(uPrimaryMap, vUv * uPrimaryRepeat + uPrimarySpeed * uTime);
-                vec4 secondary = texture2D(uSecondaryMap, vUv * uSecondaryRepeat + uSecondarySpeed * uTime);
-                vec4 alphaTex = texture2D(uAlphaMap, vUv * uAlphaRepeat + uAlphaSpeed * uTime);
-                float alphaSample = primary.r;
-                if (uAlphaSource > 0.5 && uAlphaSource < 1.5) {
-                  alphaSample = secondary.r;
-                } else if (uAlphaSource >= 1.5) {
-                  alphaSample = alphaTex.r;
-                }
-                float cut = smoothstep(uThreshold - 0.16, uThreshold + 0.16, alphaSample);
-                float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), uFresnelPower);
-                float pulse = 1.0 + sin(uTime * 4.2) * uPulseAmount;
-                vec3 mappedColor = uColor * (0.38 + primary.rgb * 1.25);
-                mappedColor = mix(mappedColor, uSecondaryColor * (0.32 + secondary.rgb * 1.25), uSecondaryMix);
-                mappedColor += uSecondaryColor * alphaTex.r * uEmissiveBoost;
-                mappedColor += uSecondaryColor * fresnel * uRimBoost;
-                float alpha = (uAlphaFloor + cut * uAlphaStrength + fresnel * uRimAlpha) * uIntensity * uFade * pulse;
-                gl_FragColor = vec4(mappedColor * uIntensity, clamp(alpha, 0.0, 0.92));
-              }
-            `}
-                transparent
-                blending={THREE.AdditiveBlending}
-                depthWrite={false}
-                side={THREE.DoubleSide}
-                toneMapped={false}
-              />
-            </mesh>
-          ))}
-        </group>
-        {variant === "inner-hot-core" || variant === "hard-plasma" ? (
-          <mesh ref={coreRef} raycast={() => null}>
-            <sphereGeometry args={[0.72, 32, 18]} />
-            <meshBasicMaterial
-              color={tuning.secondaryColor}
-              transparent
-              opacity={0.24 * tuning.intensity}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </mesh>
-        ) : null}
-        <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8 * tuning.thickness} />
-      </group>
-    </group>
-  );
-}
-
 function ExplodingOriginSmoke({ tuning }: { tuning: Tuning }) {
   const groupRef = useRef<THREE.Group>(null);
   const plumeColors = ["#ef4444", "#f97316", "#facc15", "#fde68a"];
@@ -2338,129 +1511,6 @@ function BeamPreview({ from, to, tuning }: { from: THREE.Vector3; to: THREE.Vect
         <cylinderGeometry args={[thickness * 3.8, thickness * 3.8, len, 12, 1]} />
         <meshBasicMaterial ref={haloRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
       </mesh>
-    </group>
-  );
-}
-
-function TexturedBeamEmitterPreview({
-  from,
-  to,
-  tuning,
-  textureFilename,
-}: {
-  from: THREE.Vector3;
-  to: THREE.Vector3;
-  tuning: Tuning;
-  textureFilename: string;
-}) {
-  const planeMatRef = useRef<THREE.MeshBasicMaterial>(null);
-  const crossMatRef = useRef<THREE.MeshBasicMaterial>(null);
-  const coreRef = useRef<THREE.MeshBasicMaterial>(null);
-  const haloRef = useRef<THREE.MeshBasicMaterial>(null);
-  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
-  const { mid, quat, len } = useMemo(() => {
-    const dir = new THREE.Vector3().subVectors(to, from);
-    const length = dir.length();
-    const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-    return { mid: midpoint, quat: q, len: length };
-  }, [from, to]);
-  const [mainTexture, crossTexture] = useMemo(() => {
-    const configure = (texture: THREE.Texture) => {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.wrapS = THREE.ClampToEdgeWrapping;
-      texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.minFilter = THREE.LinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.repeat.set(1 / 5, 1 / 5);
-      texture.needsUpdate = true;
-      return texture;
-    };
-    return [configure(sourceTexture.clone()), configure(sourceTexture.clone())] as const;
-  }, [sourceTexture]);
-
-  useEffect(() => {
-    return () => {
-      mainTexture.dispose();
-      crossTexture.dispose();
-    };
-  }, [crossTexture, mainTexture]);
-
-  useFrame(({ clock }) => {
-    const frameCount = 25;
-    const frame = Math.floor(clock.elapsedTime * 18 * clamp(tuning.speed, 0.25, 3)) % frameCount;
-    const column = frame % 5;
-    const row = Math.floor(frame / 5);
-    for (const texture of [mainTexture, crossTexture]) {
-      texture.offset.x = column / 5;
-      texture.offset.y = 1 - (row + 1) / 5;
-    }
-    const cycle = 2.2 / clamp(tuning.speed, 0.25, 3);
-    const t = (clock.elapsedTime % cycle) / cycle;
-    const alpha = phaseAlpha(t, tuning.fade) * clamp(tuning.intensity, 0.1, 3);
-    if (planeMatRef.current) planeMatRef.current.opacity = 0.78 * alpha;
-    if (crossMatRef.current) crossMatRef.current.opacity = 0.44 * alpha;
-    if (coreRef.current) coreRef.current.opacity = 0.82 * alpha;
-    if (haloRef.current) haloRef.current.opacity = 0.22 * alpha;
-  });
-
-  const width = 0.8 * tuning.size * tuning.thickness;
-  const coreThickness = 0.018 * tuning.size * tuning.thickness;
-  return (
-    <group position={mid.toArray()} quaternion={quat}>
-      <mesh raycast={() => null}>
-        <planeGeometry args={[width, len]} />
-        <meshBasicMaterial
-          ref={planeMatRef}
-          map={mainTexture}
-          color={tuning.color}
-          transparent
-          opacity={0}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      <mesh rotation={[0, Math.PI / 2, 0]} raycast={() => null}>
-        <planeGeometry args={[width * 0.72, len]} />
-        <meshBasicMaterial
-          ref={crossMatRef}
-          map={crossTexture}
-          color={tuning.secondaryColor}
-          transparent
-          opacity={0}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      <mesh raycast={() => null}>
-        <cylinderGeometry args={[coreThickness, coreThickness, len, 8, 1]} />
-        <meshBasicMaterial
-          ref={coreRef}
-          color={tuning.secondaryColor}
-          transparent
-          opacity={0}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      <mesh raycast={() => null}>
-        <cylinderGeometry args={[coreThickness * 7.5, coreThickness * 7.5, len, 16, 1]} />
-        <meshBasicMaterial
-          ref={haloRef}
-          color={tuning.color}
-          transparent
-          opacity={0}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      <pointLight color={tuning.color} intensity={4.2 * tuning.intensity} distance={10} />
     </group>
   );
 }
@@ -2981,15 +2031,11 @@ function MeshMissileSalvo({
 function StandaloneFlipbookPreview({
   position,
   textureFilename,
-  frameColumns,
-  frameRows,
   tuning,
   paused,
 }: {
   position: Vec2;
   textureFilename: string;
-  frameColumns?: number;
-  frameRows?: number;
   tuning: Tuning;
   paused: boolean;
 }) {
@@ -3002,8 +2048,8 @@ function StandaloneFlipbookPreview({
   const mainMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const glowMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const columns = frameColumns ?? 5;
-  const rows = frameRows ?? 5;
+  const columns = 5;
+  const rows = 5;
   const frameCount = columns * rows;
 
   const { mainTexture, glowTexture } = useMemo(() => {
@@ -3011,10 +2057,7 @@ function StandaloneFlipbookPreview({
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      const image = texture.image as { width?: number; height?: number } | undefined;
-      const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
-      const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
-      texture.repeat.set(Math.max(0.001, 1 / columns - insetU * 2), Math.max(0.001, 1 / rows - insetV * 2));
+      texture.repeat.set(1 / columns, 1 / rows);
       texture.needsUpdate = true;
       return texture;
     };
@@ -3022,7 +2065,7 @@ function StandaloneFlipbookPreview({
       mainTexture: configure(sourceTexture.clone()),
       glowTexture: configure(sourceTexture.clone()),
     };
-  }, [columns, rows, sourceTexture]);
+  }, [sourceTexture]);
 
   useEffect(() => () => {
     mainTexture.dispose();
@@ -3038,11 +2081,8 @@ function StandaloneFlipbookPreview({
     const row = Math.floor(frame / columns);
 
     for (const texture of [mainTexture, glowTexture]) {
-      const image = texture.image as { width?: number; height?: number } | undefined;
-      const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
-      const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
-      texture.offset.x = column / columns + insetU;
-      texture.offset.y = 1 - (row + 1) / rows + insetV;
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
     }
 
     const bloom = Math.sin(Math.PI * t);
@@ -3092,8 +2132,6 @@ function StandaloneFlipbookPreview({
 function FlipbookExplosionImpact({
   position,
   textureFilename,
-  frameColumns,
-  frameRows,
   tuning,
   paused,
   delaySeconds = MESH_MISSILE_FLIGHT_SECONDS,
@@ -3102,8 +2140,6 @@ function FlipbookExplosionImpact({
 }: {
   position: THREE.Vector3;
   textureFilename: string;
-  frameColumns?: number;
-  frameRows?: number;
   tuning: Tuning;
   paused: boolean;
   delaySeconds?: number;
@@ -3119,8 +2155,8 @@ function FlipbookExplosionImpact({
   const mainMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const glowMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const columns = frameColumns ?? 5;
-  const rows = frameRows ?? 5;
+  const columns = 5;
+  const rows = 5;
   const frameCount = columns * rows;
   const impactDelay = delaySeconds;
   const activeDuration = 1.25;
@@ -3131,10 +2167,7 @@ function FlipbookExplosionImpact({
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      const image = texture.image as { width?: number; height?: number } | undefined;
-      const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
-      const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
-      texture.repeat.set(Math.max(0.001, 1 / columns - insetU * 2), Math.max(0.001, 1 / rows - insetV * 2));
+      texture.repeat.set(1 / columns, 1 / rows);
       texture.needsUpdate = true;
       return texture;
     };
@@ -3142,7 +2175,7 @@ function FlipbookExplosionImpact({
       mainTexture: configure(sourceTexture.clone()),
       glowTexture: configure(sourceTexture.clone()),
     };
-  }, [columns, rows, sourceTexture]);
+  }, [sourceTexture]);
 
   useEffect(() => () => {
     mainTexture.dispose();
@@ -3159,11 +2192,8 @@ function FlipbookExplosionImpact({
     const row = Math.floor(frame / columns);
 
     for (const texture of [mainTexture, glowTexture]) {
-      const image = texture.image as { width?: number; height?: number } | undefined;
-      const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
-      const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
-      texture.offset.x = column / columns + insetU;
-      texture.offset.y = 1 - (row + 1) / rows + insetV;
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
     }
 
     const bloom = visible ? Math.sin(Math.PI * clamp(activeT, 0, 1)) : 0;
@@ -3183,7 +2213,6 @@ function FlipbookExplosionImpact({
             map={mainTexture}
             transparent
             opacity={0}
-            blending={THREE.AdditiveBlending}
             depthWrite={false}
             depthTest={false}
             side={THREE.DoubleSide}
@@ -3297,67 +2326,26 @@ function ImpactPulse({ position, tuning, delay = 0 }: { position: THREE.Vector3;
   );
 }
 
-function TunableWeaponStation({ station, tuning, selected, showLabel, paused }: { station: WeaponStation; tuning: Tuning; selected: boolean; showLabel: boolean; paused: boolean }) {
+function TunableWeaponStation({ station, tuning, selected, showLabel }: { station: WeaponStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
+  const from = useMemo(() => toVector3(station.from), [station.from]);
+  const to = useMemo(() => toVector3(station.to), [station.to]);
   const weaponKind = classifyWeapon(station.weapon);
-  const endpointY = weaponKind === "beam" ? SHOWCASE_MESH_ORIGIN_Y : 0.8;
-  const from = useMemo(() => toVector3(station.from, endpointY), [endpointY, station.from]);
-  const to = useMemo(() => toVector3(station.to, endpointY), [endpointY, station.to]);
   const count = clamp(Math.round(tuning.count), 1, weaponKind === "beam" ? 1 : 14);
-  const heading = useMemo(() => {
-    const dx = station.to[0] - station.from[0];
-    const dz = station.to[1] - station.from[1];
-    return Math.atan2(dx, dz);
-  }, [station.from, station.to]);
-  const targetModelPosition = useMemo(() => toVector3(station.to, SHOWCASE_MESH_ORIGIN_Y), [station.to]);
 
   return (
     <group>
       <EndpointMarker position={station.from} color="#38bdf8" selected={selected} />
       <EndpointMarker position={station.to} color="#f97316" selected={selected} />
-      {station.targetModelFilename ? (
-        <group position={targetModelPosition.toArray()} rotation={[0, heading + Math.PI, 0]}>
-          <Suspense fallback={null}>
-            <ShowcaseGlbModel
-              filename={station.targetModelFilename}
-              tint="#dbeafe"
-              emissiveColor={tuning.secondaryColor}
-              emissiveIntensity={0.06}
-              targetInches={station.targetModelSize ?? 3.2}
-            />
-          </Suspense>
-        </group>
-      ) : null}
       {weaponKind === "beam" ? (
-        station.effect === "texture-beam-emitter" && station.textureFilename ? (
-          <Suspense fallback={null}>
-            <TexturedBeamEmitterPreview from={from} to={to} tuning={tuning} textureFilename={station.textureFilename} />
-          </Suspense>
-        ) : (
-          <BeamPreview from={from} to={to} tuning={tuning} />
-        )
+        <BeamPreview from={from} to={to} tuning={tuning} />
       ) : (
         Array.from({ length: count }).map((_, i) => (
           <ProjectilePreview key={i} from={from} to={to} tuning={tuning} index={i} missile={weaponKind === "missile"} />
         ))
       )}
-      {station.impactTextureFilename ? (
-        <Suspense fallback={null}>
-          <FlipbookExplosionImpact
-            position={to}
-            textureFilename={station.impactTextureFilename}
-            frameColumns={station.impactFrameColumns}
-            frameRows={station.impactFrameRows}
-            tuning={tuning}
-            paused={paused}
-            delaySeconds={0}
-            cycleDuration={2.7 / clamp(tuning.speed, 0.25, 3)}
-          />
-        </Suspense>
-      ) : (
-        Array.from({ length: clamp(Math.round(station.hits), 1, 6) }).map((_, i) => (
-          <ImpactPulse key={i} position={to} tuning={tuning} delay={i * 0.12} />
-        ))
-      )}
+      {Array.from({ length: clamp(Math.round(station.hits), 1, 6) }).map((_, i) => (
+        <ImpactPulse key={i} position={to} tuning={tuning} delay={i * 0.12} />
+      ))}
       {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
@@ -4266,87 +3254,6 @@ function ShockwaveDome({ position, tuning }: { position: Vec2; tuning: Tuning })
   );
 }
 
-function PraxisShockwave({
-  position,
-  tuning,
-  textureFilename,
-  paused,
-}: {
-  position: Vec2;
-  tuning: Tuning;
-  textureFilename: string;
-  paused: boolean;
-}) {
-  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
-  const elapsedRef = useRef(0);
-  const ringGroupRef = useRef<THREE.Group>(null);
-  const repetitionCount = clamp(Math.round(tuning.count), 1, 8);
-  const lifetime = clamp(tuning.fade, 0.25, 8);
-  const endDiameter = clamp(tuning.size, 1, 30);
-  const ringRotation: [number, number, number] = [
-    THREE.MathUtils.degToRad(tuning.rotationX ?? -90),
-    THREE.MathUtils.degToRad(tuning.rotationY ?? 0),
-    THREE.MathUtils.degToRad(tuning.rotationZ ?? 0),
-  ];
-
-  useEffect(() => {
-    sourceTexture.colorSpace = THREE.SRGBColorSpace;
-    sourceTexture.wrapS = THREE.ClampToEdgeWrapping;
-    sourceTexture.wrapT = THREE.ClampToEdgeWrapping;
-    sourceTexture.minFilter = THREE.LinearFilter;
-    sourceTexture.magFilter = THREE.LinearFilter;
-    sourceTexture.needsUpdate = true;
-  }, [sourceTexture]);
-
-  useFrame((_, delta) => {
-    if (!paused) elapsedRef.current += delta;
-    if (!ringGroupRef.current) return;
-
-    ringGroupRef.current.children.forEach((child, index) => {
-      const mesh = child as THREE.Mesh;
-      const material = mesh.material as THREE.MeshBasicMaterial;
-      const phase = ((elapsedRef.current / lifetime - index / repetitionCount) % 1 + 1) % 1;
-      const easedExpansion = 1 - Math.pow(1 - phase, 2.2);
-      const diameter = Math.max(0.02, easedExpansion * endDiameter);
-      const fadeIn = clamp(phase / 0.055, 0, 1);
-      const fadeOut = Math.pow(1 - phase, 1.35);
-
-      mesh.scale.set(diameter, diameter, 1);
-      material.opacity = fadeIn * fadeOut * clamp(tuning.intensity, 0.1, 5);
-    });
-  });
-
-  return (
-    <group position={[position[0], SHOWCASE_MESH_ORIGIN_Y, position[1]]}>
-      <ShowcaseGlbModel
-        filename="hyperion.glb"
-        tint="#dbeafe"
-        emissiveColor={tuning.color}
-        emissiveIntensity={0.04}
-        targetInches={3.2}
-      />
-      <group ref={ringGroupRef} position={[0, 0.04, 0]} rotation={ringRotation}>
-        {Array.from({ length: repetitionCount }).map((_, index) => (
-          <mesh key={index} raycast={() => null} renderOrder={6 + index}>
-            <planeGeometry args={[1, 1]} />
-            <meshBasicMaterial
-              map={sourceTexture}
-              color={tuning.color}
-              transparent
-              opacity={0}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              depthTest
-              side={THREE.DoubleSide}
-              toneMapped={false}
-            />
-          </mesh>
-        ))}
-      </group>
-    </group>
-  );
-}
-
 function HyperspaceWake({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 2, 9);
@@ -4749,16 +3656,6 @@ function SpecialFxStation({
       {station.effect === "arc-particle-spray" ? <ArcParticleSpray position={station.position} tuning={tuning} /> : null}
       {station.effect === "persistent-impact-flashes" ? <PersistentImpactFlashes position={station.position} tuning={tuning} /> : null}
       {station.effect === "shockwave-dome" ? <ShockwaveDome position={station.position} tuning={tuning} /> : null}
-      {station.effect === "praxis-shockwave" && station.textureFilename ? (
-        <Suspense fallback={null}>
-          <PraxisShockwave
-            position={station.position}
-            tuning={tuning}
-            textureFilename={station.textureFilename}
-            paused={animationPaused}
-          />
-        </Suspense>
-      ) : null}
       {station.effect === "jump-point-aperture" ? <HorizontalJumpVortex position={station.position} tuning={tuning} /> : null}
       {station.effect === "hyperspace-wake" ? <HyperspaceWake position={station.position} tuning={tuning} /> : null}
       {station.effect === "rift-shear" ? <RiftShear position={station.position} tuning={tuning} /> : null}
@@ -4773,24 +3670,12 @@ function SpecialFxStation({
       ) : null}
       {station.effect === "standalone-flipbook-preview" && station.textureFilename ? (
         <Suspense fallback={null}>
-          <StandaloneFlipbookPreview
-            position={station.position}
-            tuning={tuning}
-            textureFilename={station.textureFilename}
-            frameColumns={station.frameColumns}
-            frameRows={station.frameRows}
-            paused={animationPaused}
-          />
+          <StandaloneFlipbookPreview position={station.position} tuning={tuning} textureFilename={station.textureFilename} paused={animationPaused} />
         </Suspense>
       ) : null}
       {station.effect === "missile-impact-flipbook-test" ? <MissileImpactFlipbookTest station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "mesh-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
-      {station.effect === "textured-exploding-sphere" ? (
-        <Suspense fallback={null}>
-          <TexturedExplodingSphereStation station={station} tuning={tuning} />
-        </Suspense>
-      ) : null}
       {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
@@ -4816,8 +3701,8 @@ function ShowcaseScene({
       {board.stations.map(station => {
         const tuning = effectiveTuning(station, overrides);
         const selected = station.id === selectedStationId;
-        const showLabel = board.id !== "damage-states" && board.id !== "orb-texture-tests";
-        if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
+        const showLabel = board.id !== "damage-states";
+        if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
@@ -4854,27 +3739,6 @@ function SliderControl({
       </div>
       <Slider value={[value]} min={min} max={max} step={step} onValueChange={values => onChange(values[0] ?? value)} />
     </label>
-  );
-}
-
-function ToggleControl({
-  id,
-  label,
-  checked,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <label htmlFor={id} className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-        {label}
-      </label>
-      <Switch id={id} checked={checked} onCheckedChange={onChange} />
-    </div>
   );
 }
 
@@ -4962,8 +3826,6 @@ export default function VfxShowcase() {
   const selectedTuning = selectedStation ? effectiveTuning(selectedStation, overrides) : DEFAULT_TUNING;
   const selectedIsArcParticleSpray = selectedStation ? isArcParticleSpray(selectedStation) : false;
   const selectedIsPersistentImpactFlashes = selectedStation ? isPersistentImpactFlashes(selectedStation) : false;
-  const selectedIsTexturedSphere = selectedStation ? isTexturedExplodingSphere(selectedStation) : false;
-  const selectedIsPraxisShockwave = selectedStation?.kind === "special" && selectedStation.effect === "praxis-shockwave";
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -4989,8 +3851,8 @@ export default function VfxShowcase() {
 
   return (
     <Layout title="VFX Showcase">
-      <div className="flex min-h-[calc(100dvh-4rem)] flex-col lg:h-[calc(100dvh-4rem)] lg:min-h-0 lg:overflow-hidden">
-        <section className="shrink-0 border-b border-border bg-background/75 px-4 py-3 md:px-5">
+      <div className="flex h-full min-h-[calc(100dvh-4rem)] flex-col overflow-hidden">
+        <section className="border-b border-border bg-background/75 px-4 py-3 md:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 items-center gap-3">
               <Sparkles className="h-5 w-5 shrink-0 text-primary" />
@@ -5026,8 +3888,8 @@ export default function VfxShowcase() {
           </div>
         </section>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_24rem] lg:overflow-hidden">
-          <div className="relative min-h-[34rem] overflow-hidden bg-black lg:min-h-0">
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_24rem]">
+          <div className="relative min-h-[34rem] overflow-hidden bg-black">
             <Canvas camera={{ position: [0, 39, 48], fov: 45 }} shadows>
               <ShowcaseScene
                 board={activeBoard}
@@ -5038,10 +3900,7 @@ export default function VfxShowcase() {
             </Canvas>
           </div>
 
-          <aside
-            className="border-t border-border bg-card/65 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:border-l lg:border-t-0"
-            data-testid="vfx-control-panel"
-          >
+          <aside className="overflow-y-auto border-t border-border bg-card/65 lg:border-l lg:border-t-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Target className="h-4 w-4 text-primary" />
@@ -5085,48 +3944,17 @@ export default function VfxShowcase() {
 
                 <div className="grid gap-4">
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                    <ColorControl label={selectedIsPraxisShockwave ? "Ring Color" : "Primary Color"} value={selectedTuning.color} onChange={color => updateSelected({ color })} />
-                    {!selectedIsPraxisShockwave ? (
-                      <ColorControl label={selectedIsArcParticleSpray ? "Outline Color" : "Accent Color"} value={selectedTuning.secondaryColor} onChange={secondaryColor => updateSelected({ secondaryColor })} />
-                    ) : null}
+                    <ColorControl label="Primary Color" value={selectedTuning.color} onChange={color => updateSelected({ color })} />
+                    <ColorControl label={selectedIsArcParticleSpray ? "Outline Color" : "Accent Color"} value={selectedTuning.secondaryColor} onChange={secondaryColor => updateSelected({ secondaryColor })} />
                   </div>
-                  {selectedIsPraxisShockwave ? (
-                    <>
-                      <SliderControl label="Repetitions" value={selectedTuning.count} min={1} max={8} step={1} onChange={count => updateSelected({ count })} />
-                      <SliderControl label="End Size" value={selectedTuning.size} min={1} max={30} step={0.5} onChange={size => updateSelected({ size })} />
-                      <SliderControl label="Ring Lifetime" value={selectedTuning.fade} min={0.25} max={8} step={0.05} onChange={fade => updateSelected({ fade })} />
-                      <SliderControl label="Emissive" value={selectedTuning.intensity} min={0.1} max={5} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Rotation X" value={selectedTuning.rotationX ?? -90} min={-180} max={180} step={1} onChange={rotationX => updateSelected({ rotationX })} />
-                      <SliderControl label="Rotation Y" value={selectedTuning.rotationY ?? 0} min={-180} max={180} step={1} onChange={rotationY => updateSelected({ rotationY })} />
-                      <SliderControl label="Rotation Z" value={selectedTuning.rotationZ ?? 0} min={-180} max={180} step={1} onChange={rotationZ => updateSelected({ rotationZ })} />
-                    </>
-                  ) : (
-                    <>
-                      <SliderControl label="Speed" value={selectedTuning.speed} min={0.25} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
-                      <SliderControl
-                        label="Size"
-                        value={selectedTuning.size}
-                        min={selectedIsTexturedSphere ? 0.01 : 0.25}
-                        max={3}
-                        step={selectedIsTexturedSphere ? 0.01 : 0.05}
-                        onChange={size => updateSelected({ size })}
-                      />
-                      <SliderControl label="Fade" value={selectedTuning.fade} min={0.25} max={3} step={0.05} onChange={fade => updateSelected({ fade })} />
-                      <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
-                      <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
-                      <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
-                      <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
-                    </>
-                  )}
-                  {selectedIsTexturedSphere ? (
-                    <ToggleControl
-                      id="vfx-random-sphere-placement"
-                      label="Random Placement"
-                      checked={(selectedTuning.randomness ?? 0) >= 0.5}
-                      onChange={enabled => updateSelected({ randomness: enabled ? 1 : 0 })}
-                    />
-                  ) : null}
+                  <SliderControl label="Speed" value={selectedTuning.speed} min={0.25} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
+                  <SliderControl label="Size" value={selectedTuning.size} min={0.25} max={3} step={0.05} onChange={size => updateSelected({ size })} />
+                  <SliderControl label="Fade" value={selectedTuning.fade} min={0.25} max={3} step={0.05} onChange={fade => updateSelected({ fade })} />
+                  <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
+                  <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
+                  <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
+                  <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
+                  <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
                   {supportsRibbonRandomness(selectedStation) ? (
                     <SliderControl
                       label="Randomness"

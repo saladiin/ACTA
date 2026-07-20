@@ -844,7 +844,6 @@ components:
         opponentKind: { type: string, enum: [human, ai], description: "human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation." }
         challengerName: { type: ["string", "null"] }
         opponentName:   { type: ["string", "null"] }
-        matchName:      { type: ["string", "null"], maxLength: 80, description: "Player-authored title or desired conditions for the engagement." }
         status:       { type: string, enum: [open, pending, deploying, active, completed, declined] }
         winnerId:     { type: ["string", "null"] }
         currentTurn:  { type: integer }
@@ -881,7 +880,6 @@ components:
         allocationPoints: { type: integer, minimum: 1, maximum: 99 }
         visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
         opponentKind: { type: string, enum: [human, ai], default: human, description: "Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation." }
-        matchName:  { type: ["string", "null"], maxLength: 80, description: "Optional title or desired match conditions shown beneath the host commander's name." }
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
         fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge." }

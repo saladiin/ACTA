@@ -186,12 +186,6 @@ export interface Game {
   challengerName?: string | null;
   /** @nullable */
   opponentName?: string | null;
-  /**
-     * Player-authored title or desired conditions for the engagement.
-     * @maxLength 80
-     * @nullable
-     */
-  matchName?: string | null;
   status: GameStatus;
   /** @nullable */
   winnerId?: string | null;
@@ -315,12 +309,6 @@ export interface GameInput {
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
   /**
-     * Optional title or desired match conditions shown beneath the host commander's name.
-     * @maxLength 80
-     * @nullable
-     */
-  matchName?: string | null;
-  /**
      * Required when visibility=private. Stored hashed; required again on accept.
      * @nullable
      */
@@ -361,12 +349,17 @@ export const GameUnitDamageState = {
   destroyed: 'destroyed',
 } as const;
 
-export type GameUnitCarriedFightersItem = {
+/**
+ * Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.
+ */
+export type GameUnitSlowLoadingWeaponCooldowns = {[key: string]: number};
+
+/**
+ * Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.
+ */
+export interface GameUnitCarriedFighter {
   name: string;
-  /**
-     * Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.
-     * @nullable
-     */
+  /** Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog. */
   shipModelId: number | null;
   /** @minimum 0 */
   total: number;
@@ -378,12 +371,7 @@ export type GameUnitCarriedFightersItem = {
   recovered: number;
   /** @minimum 0 */
   destroyed: number;
-};
-
-/**
- * Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.
- */
-export type GameUnitSlowLoadingWeaponCooldowns = {[key: string]: number};
+}
 
 export interface CriticalEffect {
   id: number;
@@ -449,20 +437,17 @@ export interface GameUnit {
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
   damageState?: GameUnitDamageState;
   /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
-  isCrippled?: boolean;
-  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
-  isSkeletonCrew?: boolean;
   /** Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array. */
-  carriedFighters: GameUnitCarriedFightersItem[];
-  /**
-     * Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.
-     * @nullable
-     */
+  carriedFighters: GameUnitCarriedFighter[];
+  /** Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters. */
   launchedFromUnitId?: number | null;
   /** Round number for the current fighter bay operation counter. */
   fighterBayOperationsRound?: number;
   /** Launch/recovery operations used by this unit in fighterBayOperationsRound. */
   fighterBayOperationsUsed?: number;
+  isCrippled?: boolean;
+  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
+  isSkeletonCrew?: boolean;
   /** Unrepaired critical effects, oldest first. */
   criticals?: CriticalEffect[];
   hexQ: number;
@@ -561,8 +546,8 @@ export interface ShipPlacement {
   crewQuality?: number;
   /**
      * Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.
-     * @minimum 0
      * @nullable
+     * @minimum 0
      */
   launchedFromPlacementIndex?: number | null;
 }
@@ -798,7 +783,7 @@ export const SpecialActionInputAction = {
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
   'all-hands-on-deck': 'all-hands-on-deck',
-  scramble: 'scramble',
+  'scramble': 'scramble',
 } as const;
 
 export interface SpecialActionInput {
@@ -877,29 +862,6 @@ export interface MoveUnitInput {
   toHexQ: number;
   toHexR: number;
   newHeading: number;
-}
-
-export interface LaunchFighterInput {
-  /** Fighter ship_model id from the carrier's carriedFighters entry. */
-  shipModelId: number;
-  hexQ: number;
-  hexR: number;
-  heading?: number;
-}
-
-export interface RecoverFighterInput {
-  /** Friendly carrier unit in base contact with the launched fighter. */
-  carrierUnitId: number;
-}
-
-export interface FighterLaunchResult {
-  carrier: GameUnit;
-  fighter: GameUnit;
-}
-
-export interface FighterRecoveryResult {
-  carrier: GameUnit;
-  recoveredUnitId: number;
 }
 
 export interface TurnInput {

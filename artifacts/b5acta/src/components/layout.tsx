@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { customFetch } from "@workspace/api-client-react";
 import { APP_BUILD_SHA } from "@/lib/build-version";
 import { useInputProfile } from "@/hooks/use-input-profile";
-import { isLocalToolingHost } from "@/lib/local-tooling";
 import { clearTemporaryUsername, temporaryUsernameAuthEnabled } from "@/lib/temporary-user";
 
 type AdminMeResponse = {
@@ -42,8 +41,6 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
   });
   const showAdminNav = adminMe?.isAdmin === true;
   const updateAvailable = Boolean(appVersion?.buildSha && appVersion.buildSha !== APP_BUILD_SHA);
-  const localToolingHost = isLocalToolingHost(window.location.hostname);
-  const showLocalToolingNav = import.meta.env.DEV || localToolingHost;
 
   useEffect(() => {
     setNavOpen(!mobileChrome);
@@ -129,16 +126,16 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
                 <span className="text-sm font-medium tracking-wide uppercase">Active Ops</span>
               </Link>
               {import.meta.env.DEV && (
-                <Link onClick={() => mobileChrome && setNavOpen(false)} href="/naval-id" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                  <Ship className="w-4 h-4" />
-                  <span className="text-sm font-medium tracking-wide uppercase">Naval ID</span>
-                </Link>
-              )}
-              {showLocalToolingNav && (
-                <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                  <Sparkles className="w-4 h-4" />
-                  <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
-                </Link>
+                <>
+                  <Link onClick={() => mobileChrome && setNavOpen(false)} href="/naval-id" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                    <Ship className="w-4 h-4" />
+                    <span className="text-sm font-medium tracking-wide uppercase">Naval ID</span>
+                  </Link>
+                  <Link onClick={() => mobileChrome && setNavOpen(false)} href="/vfx-showcase" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                    <Sparkles className="w-4 h-4" />
+                    <span className="text-sm font-medium tracking-wide uppercase">VFX Range</span>
+                  </Link>
+                </>
               )}
               <Link onClick={() => mobileChrome && setNavOpen(false)} href="/credits" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 <ScrollText className="w-4 h-4" />

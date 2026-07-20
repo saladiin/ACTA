@@ -24,12 +24,6 @@ export interface Game {
   challengerName?: string | null;
   /** @nullable */
   opponentName?: string | null;
-  /**
-     * Player-authored title or desired conditions for the engagement.
-     * @maxLength 80
-     * @nullable
-     */
-  matchName?: string | null;
   status: GameStatus;
   /** @nullable */
   winnerId?: string | null;
