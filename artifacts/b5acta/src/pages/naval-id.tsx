@@ -16,7 +16,7 @@ import { APP_BUILD_SHA } from "@/lib/build-version";
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 const LARGE_MODEL_BYTES = 20 * 1024 * 1024;
-const OMEGA_ROTATING_MODEL_FILENAME = "omega1.glb";
+const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
@@ -26,7 +26,7 @@ const ROTATING_MODEL_PARTS: Record<
   { nodeName: string; axis: "x" | "y" | "z"; secondsPerRotation: number }
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
-    nodeName: "rotatorhull",
+    nodeName: "omg_rotator",
     axis: "z",
     secondsPerRotation: 30,
   },
@@ -62,7 +62,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
-  [OMEGA_ROTATING_MODEL_FILENAME]: "20260718-223718",
+  [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
 };
 
 type ModelProbe = {
