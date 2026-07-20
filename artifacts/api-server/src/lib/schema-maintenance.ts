@@ -829,7 +829,7 @@ async function syncWeaponsForShipModel(
   return synced;
 }
 
-const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
+const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Heavy Cruiser",
     aliases: [
@@ -1238,6 +1238,74 @@ const HYPERION_VARIANTS: ShipMaintenanceSeed[] = [
         range: 8,
         attackDice: 6,
         traits: "Armor Piercing",
+      },
+    ],
+  },
+  {
+    name: "Explorer Survey Ship",
+    aliases: [
+      "Explorer Survey Ship",
+      "Explorer-class Survey Ship",
+      "Explorer",
+    ],
+    filename: "explorer.glb",
+    faction: "Earth Alliance",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Survey Ship",
+    hull: 4,
+    troops: 10,
+    damage: 140,
+    damageThreshold: 40,
+    hullRating: 4,
+    crew: 65,
+    crewThreshold: 15,
+    speed: 4,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Anti-Fighter 6; Command +1; Interceptors 3; Jump Engine; Lumbering; Scout",
+    smallCraft: "Aurora Starfury Flight (6)",
+    weaponRange: 12,
+    weaponDamage: 6,
+    description:
+      "Earth Alliance Explorer-class survey ship with command, scout, and long-range exploration systems",
+    weapons: [
+      {
+        name: "Heavy Pulse Cannon",
+        arc: "Forward",
+        range: 12,
+        attackDice: 6,
+        traits: "Double Damage; Twin Linked",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Forward",
+        range: 10,
+        attackDice: 6,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Aft",
+        range: 10,
+        attackDice: 6,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Port",
+        range: 10,
+        attackDice: 6,
+        traits: "",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Starboard",
+        range: 10,
+        attackDice: 6,
+        traits: "",
       },
     ],
   },
@@ -2083,7 +2151,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       );
     }
 
-    for (const ship of HYPERION_VARIANTS) {
+    for (const ship of SHIP_MAINTENANCE_SEEDS) {
       const shipResult = await pool.query<{ id: number }>(
         `
           WITH target AS (
