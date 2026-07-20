@@ -9,7 +9,7 @@ import React, {
 import { useParams, Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Canvas, useLoader, useThree, useFrame } from "@react-three/fiber";
-import { OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
+import { Billboard, OrbitControls, Text, useGLTF, Line } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import { WeaponFx } from "@/components/weapon-fx";
 // @ts-ignore
@@ -1199,6 +1199,7 @@ function ObjModel({
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
 const OMEGA_ROTATING_MODEL_FILENAME = "omega1.glb";
+const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
@@ -1217,6 +1218,7 @@ const ROTATING_MODEL_PARTS: Record<
 const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "battlecrab.glb": DEAD_BATTLECRAB_MODEL_FILENAME,
   "hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
+  [COMMAND_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
   "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
@@ -1235,6 +1237,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
+  [COMMAND_HYPERION_MODEL_FILENAME]: 1.2,
   "missile-hyperion.glb": 1.2,
   "avenger.glb": 1.2,
   "olympus.glb": 0.5,
@@ -1326,6 +1329,47 @@ type DamageVfxAnchor = {
   position: [number, number, number];
 };
 
+type BoardSmokeTuning = {
+  color: string;
+  secondaryColor: string;
+  speed: number;
+  size: number;
+  fade: number;
+  intensity: number;
+  spread: number;
+  count: number;
+  arc: number;
+  thickness: number;
+};
+
+const BOARD_SMOKE_TEXTURE_FILENAME = "cloud01-8x8.webp";
+const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
+  [BOARD_SMOKE_TEXTURE_FILENAME]: "20260719-032240",
+};
+const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
+  color: "#f8fafc",
+  secondaryColor: "#f97316",
+  speed: 2.45,
+  size: 0.25,
+  fade: 1.3,
+  intensity: 1.35,
+  spread: 0.3,
+  count: 5,
+  arc: 0.35,
+  thickness: 0.95,
+};
+
+function clampSmokeValue(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function boardTextureUrl(filename: string): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    BOARD_TEXTURE_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
+  return `${basePath}/api/textures/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
 function readEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z"): number {
   if (axis === "x") return rotation.x;
   if (axis === "y") return rotation.y;
@@ -1385,6 +1429,7 @@ function GlbModel({
       }
       if (
         anchorName.startsWith("wreck_smoke") ||
+        anchorName.startsWith("smoke_light") ||
         anchorName.startsWith("small_glow")
       ) {
         anchorNodes.push(child);
@@ -1501,6 +1546,7 @@ function ShipModelFallback({
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
+  [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   "missile-hyperion.glb": "20260719-005010",
   "vorchan.glb": "20260719-140443",
@@ -2121,6 +2167,117 @@ function BoardModelVisual({
   );
 }
 
+function LiveCloudFlipbookSmoke({
+  position = [0, 0, 0],
+  modelScale = 1,
+  intensityScale = 1,
+  spreadScale = 1,
+}: {
+  position?: [number, number, number];
+  modelScale?: number;
+  intensityScale?: number;
+  spreadScale?: number;
+}) {
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    boardTextureUrl(BOARD_SMOKE_TEXTURE_FILENAME),
+  );
+  const elapsedRef = useRef(0);
+  const tuning = DEFAULT_BOARD_SMOKE_TUNING;
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+  const count = clampSmokeValue(Math.round(tuning.count), 1, 12);
+  const columns = 8;
+  const rows = 8;
+  const frameCount = columns * rows;
+  const puffs = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => {
+        const angle = i * 2.399;
+        const radius =
+          (0.18 + (i % 4) * 0.16) * tuning.spread * spreadScale;
+        return {
+          x: Math.cos(angle) * radius,
+          z: Math.sin(angle) * radius,
+          y: tuning.arc + (i % 3) * 0.18,
+          scale: (1.25 + (i % 4) * 0.24) * tuning.size,
+          phase: i * 7,
+          opacity:
+            (0.24 + (i % 3) * 0.04) *
+            tuning.intensity *
+            intensityScale,
+        };
+      }),
+    [count, intensityScale, spreadScale, tuning],
+  );
+  const frameTextures = useMemo(
+    () =>
+      puffs.map(() => {
+        const texture = sourceTexture.clone();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(1 / columns, 1 / rows);
+        texture.needsUpdate = true;
+        return texture;
+      }),
+    [puffs, sourceTexture],
+  );
+
+  useEffect(
+    () => () => {
+      for (const texture of frameTextures) texture.dispose();
+    },
+    [frameTextures],
+  );
+
+  useFrame((_, delta) => {
+    elapsedRef.current += delta;
+    const frameRate = 18 * clampSmokeValue(tuning.speed, 0.25, 3);
+    for (let i = 0; i < frameTextures.length; i += 1) {
+      const texture = frameTextures[i];
+      const frame =
+        Math.floor(elapsedRef.current * frameRate + (puffs[i]?.phase ?? 0)) %
+        frameCount;
+      const column = frame % columns;
+      const row = Math.floor(frame / columns);
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
+  });
+
+  return (
+    <group position={position} scale={[effectScale, effectScale, effectScale]}>
+      {puffs.map((puff, i) => (
+        <Billboard key={i} position={[puff.x, puff.y, puff.z]}>
+          <mesh
+            scale={[puff.scale, puff.scale, puff.scale]}
+            raycast={() => null}
+            renderOrder={10}
+          >
+            <planeGeometry args={[2.15, 2.15]} />
+            <meshBasicMaterial
+              map={frameTextures[i]}
+              color={tuning.color}
+              transparent
+              opacity={puff.opacity * tuning.fade}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+              toneMapped={false}
+            />
+          </mesh>
+        </Billboard>
+      ))}
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.2 * tuning.intensity * intensityScale}
+        distance={5 * tuning.spread * spreadScale}
+        position={[0, 1.2, 0]}
+      />
+    </group>
+  );
+}
+
 function LiveAnchorSmoke({
   anchor,
   modelScale,
@@ -2128,62 +2285,11 @@ function LiveAnchorSmoke({
   anchor: DamageVfxAnchor;
   modelScale: number;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
-  const particles = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, i) => ({
-        angle: i * 2.21,
-        radius: 0.05 + (i % 3) * 0.025,
-        speed: 0.18 + (i % 4) * 0.025,
-        offset: i * 0.17,
-        size: (0.14 + (i % 3) * 0.045) * 0.36,
-      })),
-    [],
-  );
-
-  useFrame(({ clock }) => {
-    const group = groupRef.current;
-    if (!group) return;
-    group.children.forEach((child, i) => {
-      const particle = particles[i];
-      if (!particle) return;
-      const local =
-        (clock.elapsedTime * particle.speed + particle.offset) % 1;
-      child.position.set(
-        Math.cos(particle.angle + local) *
-          particle.radius *
-          (1 + local * 1.5),
-        local * 0.42,
-        Math.sin(particle.angle + local) *
-          particle.radius *
-          (1 + local * 1.5),
-      );
-      child.scale.setScalar(particle.size * (0.7 + local * 1.1));
-      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.32 * (1 - local);
-    });
-  });
-
   return (
-    <group
-      ref={groupRef}
+    <LiveCloudFlipbookSmoke
       position={anchor.position}
-      scale={[effectScale, effectScale, effectScale]}
-    >
-      {particles.map((_, i) => (
-        <mesh key={i} raycast={() => null}>
-          <sphereGeometry args={[1, 10, 10]} />
-          <meshBasicMaterial
-            color="#cbd5e1"
-            transparent
-            opacity={0}
-            depthWrite={false}
-            depthTest={false}
-          />
-        </mesh>
-      ))}
-    </group>
+      modelScale={modelScale}
+    />
   );
 }
 
@@ -2242,7 +2348,10 @@ function LiveDamageAnchorEffect({
   anchor: DamageVfxAnchor;
   modelScale: number;
 }) {
-  if (anchor.name.startsWith("wreck_smoke")) {
+  if (
+    anchor.name.startsWith("wreck_smoke") ||
+    anchor.name.startsWith("smoke_light")
+  ) {
     return <LiveAnchorSmoke anchor={anchor} modelScale={modelScale} />;
   }
   if (anchor.name.startsWith("small_glow")) {
@@ -2852,7 +2961,6 @@ function GameUnit3D({
         {!hasPreview && showGenericDestroyedSmoke && (
           <DestroyedSmoke
             intensity={visuallyDestroyed ? 1 : 0.45}
-            puffCount={visuallyDestroyed ? 12 : 5}
             spread={visuallyDestroyed ? 1 : 0.45}
           />
         )}
@@ -2985,82 +3093,20 @@ function GameUnit3D({
   );
 }
 
-// ── Destroyed-ship smoke puffs ────────────────────────────────────────────────
-// Tiny animated smoke effect for destroyed hulls. Each puff is a billboarded
-// soft sprite that rises slowly and fades. Total horizontal travel is capped
-// at 0.5" from the ship's mesh center per the spec; puffs respawn at the
-// origin when their lifetime expires.
-const SMOKE_PUFF_COUNT = 5;
-const SMOKE_MAX_RADIUS = 0.5; // inches from mesh center (horizontal cap)
-const SMOKE_MAX_RISE = 0.5; // inches above mesh center (vertical cap)
-const SMOKE_LIFETIME = 2.2; // seconds per puff
+// Default destroyed-ship smoke uses the Cloud Flipbook Damage preset from the
+// VFX range so live smoke matches the tuned flipbook look.
 function DestroyedSmoke({
   intensity = 1,
-  puffCount = SMOKE_PUFF_COUNT,
   spread = 1,
 }: {
   intensity?: number;
-  puffCount?: number;
   spread?: number;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const smokeIntensity = Math.max(0, Math.min(1, intensity));
-  const smokeSpread = Math.max(0.2, Math.min(1.4, spread));
-  // Per-puff state: random horizontal drift direction + phase offset so puffs
-  // don't all bloom in lockstep. Allocated once.
-  const puffs = useMemo(() => {
-    return Array.from({ length: puffCount }, (_, i) => {
-      const originAngle = Math.random() * Math.PI * 2;
-      const originRadius = Math.random() * SMOKE_MAX_RADIUS * 0.7 * smokeSpread;
-      return {
-        angle: Math.random() * Math.PI * 2,
-        originX: Math.cos(originAngle) * originRadius,
-        originZ: Math.sin(originAngle) * originRadius,
-        driftRadius: (0.12 + Math.random() * 0.28) * smokeSpread,
-        phase: (i / puffCount) * SMOKE_LIFETIME + Math.random() * 0.3,
-        scale: (0.18 + Math.random() * 0.16) * (0.85 + smokeSpread * 0.25),
-      };
-    });
-  }, [puffCount, smokeSpread]);
-  useFrame(({ clock }) => {
-    const g = groupRef.current;
-    if (!g) return;
-    const t = clock.getElapsedTime();
-    for (let i = 0; i < puffs.length; i++) {
-      const p = puffs[i]!;
-      const local = ((t + p.phase) % SMOKE_LIFETIME) / SMOKE_LIFETIME; // 0..1
-      const child = g.children[i] as THREE.Mesh | undefined;
-      if (!child) continue;
-      // Horizontal drift eases out; rise is linear; opacity fades quadratically.
-      const drift = Math.min(p.driftRadius * local, SMOKE_MAX_RADIUS);
-      const smokeX = p.originX + Math.cos(p.angle) * drift;
-      const smokeZ = p.originZ + Math.sin(p.angle) * drift;
-      const smokeRadius = Math.hypot(smokeX, smokeZ);
-      const cap = SMOKE_MAX_RADIUS * smokeSpread;
-      const clamp = smokeRadius > cap ? cap / smokeRadius : 1;
-      child.position.x = smokeX * clamp;
-      child.position.z = smokeZ * clamp;
-      child.position.y = local * SMOKE_MAX_RISE;
-      const s = p.scale * (0.6 + local * 0.8);
-      child.scale.set(s, s, s);
-      const mat = child.material as THREE.MeshBasicMaterial;
-      mat.opacity = (1 - local) * (1 - local) * 0.55 * smokeIntensity;
-    }
-  });
   return (
-    <group ref={groupRef}>
-      {puffs.map((_, i) => (
-        <mesh key={i} renderOrder={10}>
-          <sphereGeometry args={[1, 8, 8]} />
-          <meshBasicMaterial
-            color="#1f2937"
-            transparent
-            opacity={0}
-            depthWrite={false}
-          />
-        </mesh>
-      ))}
-    </group>
+    <LiveCloudFlipbookSmoke
+      intensityScale={clampSmokeValue(intensity, 0, 1)}
+      spreadScale={clampSmokeValue(spread, 0.2, 1.4)}
+    />
   );
 }
 

@@ -158,6 +158,19 @@ const DEFAULT_TUNING: Tuning = {
   thickness: 1,
 };
 
+const CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING: Tuning = {
+  color: "#f8fafc",
+  secondaryColor: "#f97316",
+  speed: 2.45,
+  size: 0.25,
+  fade: 1.3,
+  intensity: 1.35,
+  spread: 0.3,
+  count: 5,
+  arc: 0.35,
+  thickness: 0.95,
+};
+
 const FACTION_COLORS: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
   "Minbari Federation": "#22ff66",
@@ -219,79 +232,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           count: 7,
           arc: 2.5,
           thickness: 1,
-        },
-      },
-      {
-        kind: "weapon",
-        id: "missile-volley",
-        label: "Missile Volley",
-        note: "Arcing rack salvo with orange impact.",
-        faction: "Earth Alliance",
-        weapon: { id: 9004, name: "Missile Rack", traits: "Precise; Slow Loading; Super Armor Piercing", attackDice: 5 },
-        from: [4, -4],
-        to: [20, 6],
-        hits: 2,
-        totalDice: 5,
-        tuning: {
-          color: "#ff6600",
-          secondaryColor: "#ff0000",
-          speed: 1.15,
-          size: 0.4,
-          fade: 1,
-          intensity: 0.15,
-          spread: 1.3,
-          count: 8,
-          arc: 1.45,
-          thickness: 2.05,
-        },
-      },
-      {
-        kind: "special",
-        id: "mesh-missile-salvo",
-        label: "Mesh Missile Salvo",
-        note: "Five missile meshes, each carrying an origin-mounted engine glow and smoke trail.",
-        effect: "mesh-missile-salvo",
-        position: [-18, 16],
-        to: [18, 26],
-        modelFilename: "missile1.glb",
-        tuning: {
-          color: "#f97316",
-          secondaryColor: "#fef08a",
-          speed: 1.3,
-          size: 1.15,
-          fade: 1.1,
-          intensity: 1.95,
-          spread: 1.2,
-          count: 5,
-          arc: 2.7,
-          thickness: 0.25,
-          meshSize: 0.4,
-          flareSize: 4,
-        },
-      },
-      {
-        kind: "special",
-        id: "texture-missile-salvo",
-        label: "Texture Missile Salvo",
-        note: "Same missile mesh, but the engine flare is a texture plane anchored at missile1 origin.",
-        effect: "texture-missile-salvo",
-        position: [-18, 8],
-        to: [18, 18],
-        modelFilename: "missile1.glb",
-        textureFilename: "missileflare.png",
-        tuning: {
-          color: "#f97316",
-          secondaryColor: "#fef08a",
-          speed: 1.3,
-          size: 1.15,
-          fade: 1.1,
-          intensity: 1.95,
-          spread: 1.2,
-          count: 5,
-          arc: 2.7,
-          thickness: 0.25,
-          meshSize: 0.4,
-          flareSize: 4,
         },
       },
       {
@@ -378,16 +318,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     stations: [
       {
         kind: "hull-state",
-        id: "hyperion-intact-reference",
-        label: "Intact Hyperion",
-        note: "Baseline mesh reference for comparing hull-zero states.",
-        mode: "intact",
-        modelFilename: "hyperion.glb",
-        position: [-18, -26],
-        tuning: { color: "#38bdf8", secondaryColor: "#f8fafc", intensity: 0.35 },
-      },
-      {
-        kind: "hull-state",
         id: "hyperion-adrift-tumble",
         label: "Adrift Tumble",
         note: "Powerless hull with slow visual-only roll and pitch drift.",
@@ -436,15 +366,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         tuning: { color: "#ff7a18", secondaryColor: "#ffd166", speed: 1.1, size: 0.75, fade: 1, intensity: 0.8, spread: 0.45, count: 16, arc: 0.15, thickness: 0.9 },
       },
       {
-        kind: "ambient",
-        id: "destroyed-smoke",
-        label: "Destroyed Smoke",
-        note: "Slow smoke column for wrecked units.",
-        effect: "smoke",
-        position: [0, -18],
-        tuning: { color: "#94a3b8", count: 24, speed: 0.7, size: 1, spread: 1.2, fade: 1 },
-      },
-      {
         kind: "special",
         id: "cloud-flipbook-damage",
         label: "Cloud Flipbook Damage",
@@ -452,47 +373,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "cloud-flipbook-damage",
         position: [8, -18],
         textureFilename: "cloud01-8x8.webp",
-        tuning: {
-          color: "#f8fafc",
-          secondaryColor: "#f97316",
-          speed: 1,
-          size: 1.15,
-          fade: 1.2,
-          intensity: 0.72,
-          spread: 0.9,
-          count: 5,
-          arc: 0.35,
-          thickness: 1,
-        },
-      },
-      {
-        kind: "ambient",
-        id: "energy-impact",
-        label: "Impact Flash",
-        note: "Looping hit bloom without a projectile.",
-        effect: "impact",
-        position: [16, -18],
-        tuning: { color: "#67e8f9", speed: 1, size: 1.2, fade: 1, intensity: 1.25 },
-      },
-      {
-        kind: "special",
-        id: "dead-hyperion-glow-core-detail",
-        label: "Glow Core Detail",
-        note: "Magnified standalone core from the dead Hyperion small_glow anchor.",
-        effect: "damage-glow-core",
-        position: [18, -10],
-        tuning: {
-          color: "#ef4444",
-          secondaryColor: "#fef08a",
-          speed: 0.9,
-          size: 1,
-          fade: 1,
-          intensity: 1.2,
-          spread: 1,
-          count: 1,
-          arc: 0,
-          thickness: 1,
-        },
+        tuning: CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING,
       },
       {
         kind: "animated-model",
@@ -525,32 +406,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         modelFilename: "dead-nova.glb",
         position: [0, -10],
         tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 34, spread: 0.95 },
-      },
-      {
-        kind: "weapon",
-        id: "minbari-beam",
-        label: "Minbari Beam",
-        note: "Faction-colored green beam.",
-        faction: "Minbari Federation",
-        weapon: { id: 9005, name: "Neutron Laser", traits: "Beam; Precise; Triple Damage", attackDice: 4 },
-        from: [-18, 10],
-        to: [-4, 20],
-        hits: 2,
-        totalDice: 4,
-        tuning: { color: "#22ff66", thickness: 1, count: 4 },
-      },
-      {
-        kind: "weapon",
-        id: "matter-cannon",
-        label: "Matter Cannon",
-        note: "Non-beam cannon visual with heavier hit count.",
-        faction: "Centauri Republic",
-        weapon: { id: 9006, name: "Matter Cannon", traits: "Armor Piercing; Double Damage", attackDice: 6 },
-        from: [5, 10],
-        to: [20, 20],
-        hits: 4,
-        totalDice: 6,
-        tuning: { color: "#ffa040", count: 6, size: 1.1, speed: 0.9, projectileShape: "sphere", cylinderLength: 1.3 },
       },
     ],
   },
@@ -603,67 +458,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "stealth-shimmer",
         position: [10, 8],
         tuning: { color: "#c4b5fd", secondaryColor: "#67e8f9", speed: 0.75, size: 1, fade: 1.5, intensity: 0.85 },
-      },
-    ],
-  },
-  {
-    id: "vortex-lab",
-    name: "Vortex Lab",
-    summary: "Non-spherical vortex treatments for anomalies, jump turbulence, and exotic weapon aftermath.",
-    stations: [
-      {
-        kind: "special",
-        id: "vortex-ribbons",
-        label: "Twisting Ribbons",
-        note: "Helical translucent strips for a controlled energy funnel.",
-        effect: "vortex-ribbons",
-        position: [-17, -22],
-        tuning: { color: "#2dd4bf", secondaryColor: "#01c7fc", speed: 0.9, size: 0.95, fade: 1.25, intensity: 0.95, spread: 1.25, count: 16, arc: 3.6, thickness: 4, randomness: 0.35 },
-      },
-      {
-        kind: "special",
-        id: "jump-vortex",
-        label: "Hyperspace Jump Vortex",
-        note: "Horizontal ribbon vortex: base is the origin, far end is the portal.",
-        effect: "jump-vortex",
-        position: [-8, -22],
-        tuning: { color: "#2dd4bf", secondaryColor: "#01c7fc", speed: 3, size: 1, fade: 1.55, intensity: 2.9, spread: 1.5, count: 16, arc: 2.7, thickness: 4, randomness: 1 },
-      },
-      {
-        kind: "special",
-        id: "vortex-helix-lines",
-        label: "Helical Lines",
-        note: "Clean spiral trails for gravity wells or energy drains.",
-        effect: "vortex-helix-lines",
-        position: [0, -22],
-        tuning: { color: "#67e8f9", secondaryColor: "#a78bfa", speed: 1.15, size: 1, fade: 1.4, intensity: 1.15, spread: 1.15, count: 7, arc: 4, thickness: 0.8 },
-      },
-      {
-        kind: "special",
-        id: "vortex-cone-shell",
-        label: "Cone Shell",
-        note: "A transparent rotating funnel silhouette without particle clutter.",
-        effect: "vortex-cone-shell",
-        position: [17, -22],
-        tuning: { color: "#c084fc", secondaryColor: "#f0abfc", speed: 0.75, size: 1.1, fade: 1.2, intensity: 0.8, spread: 1, count: 5, arc: 3.8, thickness: 0.7 },
-      },
-      {
-        kind: "special",
-        id: "vortex-noise-sheets",
-        label: "Noise Sheets",
-        note: "Stacked translucent planes for smoky spatial distortion.",
-        effect: "vortex-noise-sheets",
-        position: [-9, 8],
-        tuning: { color: "#94a3b8", secondaryColor: "#22d3ee", speed: 0.7, size: 1.15, fade: 1.6, intensity: 0.7, spread: 1.05, count: 6, arc: 3.4, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "vortex-ring-compression",
-        label: "Ring Compression",
-        note: "Rising shrinking rings that imply a funnel from top-down view.",
-        effect: "vortex-ring-compression",
-        position: [10, 8],
-        tuning: { color: "#facc15", secondaryColor: "#fb7185", speed: 1, size: 1, fade: 1.15, intensity: 1.05, spread: 1.1, count: 8, arc: 3.8, thickness: 1.1 },
       },
     ],
   },
@@ -763,68 +557,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     ],
   },
   {
-    id: "hyperspace-events",
-    name: "Hyperspace Events",
-    summary: "Jump-point and spatial transition samples for arrivals, exits, wakes, and rift markers.",
-    stations: [
-      {
-        kind: "special",
-        id: "jump-point-aperture",
-        label: "Jump Point Aperture",
-        note: "Horizontal ribbon vortex with origin at the base and portal at the far end.",
-        effect: "jump-point-aperture",
-        position: [-12, -22],
-        tuning: { color: "#2dd4bf", secondaryColor: "#01c7fc", speed: 3, size: 1, fade: 1.55, intensity: 2.9, spread: 1.5, count: 16, arc: 2.7, thickness: 4, randomness: 1 },
-      },
-      {
-        kind: "special",
-        id: "hyperspace-wake",
-        label: "Hyperspace Wake",
-        note: "Trailing curved ribbons for a ship exiting hyperspace.",
-        effect: "hyperspace-wake",
-        position: [0, -22],
-        tuning: { color: "#fb923c", secondaryColor: "#38bdf8", speed: 0.9, size: 1, fade: 1.35, intensity: 1, spread: 1.1, count: 5, arc: 3.4, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "rift-shear",
-        label: "Rift Shear",
-        note: "Crossed translucent planes for unstable spatial tearing.",
-        effect: "rift-shear",
-        position: [13, -22],
-        tuning: { color: "#f97316", secondaryColor: "#67e8f9", speed: 1.1, size: 1, fade: 1.45, intensity: 0.95, spread: 1, count: 5, arc: 3.6, thickness: 0.9 },
-      },
-      {
-        kind: "special",
-        id: "beacon-pulse",
-        label: "Beacon Pulse",
-        note: "Vertical navigation marker with synchronized pulse rings.",
-        effect: "beacon-pulse",
-        position: [-7, 8],
-        tuning: { color: "#fde047", secondaryColor: "#22d3ee", speed: 0.8, size: 1, fade: 1.2, intensity: 1.1, spread: 1.05, count: 5, arc: 3, thickness: 0.9 },
-      },
-      {
-        kind: "special",
-        id: "gravity-lens",
-        label: "Gravity Lens",
-        note: "Transparent lens shell for distortion fields or jump residue.",
-        effect: "gravity-lens",
-        position: [10, 8],
-        tuning: { color: "#93c5fd", secondaryColor: "#c084fc", speed: 0.55, size: 1.1, fade: 1.8, intensity: 0.75, spread: 1, count: 4, arc: 2.8, thickness: 1 },
-      },
-      {
-        kind: "special",
-        id: "godot-jump-point-mesh",
-        label: "Godot Jump Point Mesh",
-        note: "Mesh-only GLB export rotated sideways 90 degrees; shader rebuild pending.",
-        effect: "godot-jump-point-mesh",
-        position: [0, 8],
-        modelFilename: "_jumppoint.glb",
-        tuning: { color: "#2dd4bf", secondaryColor: "#f97316", speed: 0.8, size: 0.25, fade: 0.65, intensity: 0.9, spread: 0.5, count: 1, arc: 2.15, thickness: 0.25 },
-      },
-    ],
-  },
-  {
     id: "command-status",
     name: "Command Status",
     summary: "Readable activation, command, and defensive-state candidates for live board feedback.",
@@ -897,7 +629,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Low-opacity drifting haze for sensor-obscuring terrain.",
         effect: "smoke",
         position: [0, -22],
-        tuning: { color: "#64748b", secondaryColor: "#94a3b8", speed: 0.38, size: 1.45, fade: 1.9, intensity: 0.45, spread: 1.85, count: 38, arc: 1, thickness: 1 },
+        tuning: CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING,
       },
       {
         kind: "special",
@@ -1283,7 +1015,7 @@ function RotatingBoneShowcaseModel({
   );
 }
 
-function AnimatedModelFxStation({ station, tuning, selected }: { station: AnimatedModelStation; tuning: Tuning; selected: boolean }) {
+function AnimatedModelFxStation({ station, tuning, selected, showLabel }: { station: AnimatedModelStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
   return (
     <group>
       <EndpointMarker position={station.position} color={tuning.color} selected={selected} />
@@ -1304,7 +1036,7 @@ function AnimatedModelFxStation({ station, tuning, selected }: { station: Animat
           </Suspense>
         </group>
       </group>
-      <StationLabel station={station} selected={selected} />
+      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
 }
@@ -1316,51 +1048,86 @@ function ModelAnchorSmoke({
   anchor: ShowcaseModelAnchor;
   modelScale: number;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl("cloud01-8x8.webp"),
+  );
+  const elapsedRef = useRef(0);
+  const tuning = CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING;
   const effectScale = modelScale > 0 ? 1 / modelScale : 1;
-  const particles = useMemo(
+  const count = clamp(Math.round(tuning.count), 1, 12);
+  const columns = 8;
+  const rows = 8;
+  const frameCount = columns * rows;
+  const puffs = useMemo(
     () =>
-      Array.from({ length: 7 }, (_, i) => ({
-        angle: i * 2.21,
-        radius: 0.05 + (i % 3) * 0.025,
-        speed: 0.18 + (i % 4) * 0.025,
-        offset: i * 0.17,
-        size: (0.14 + (i % 3) * 0.045) * 0.36,
-      })),
-    [],
+      Array.from({ length: count }, (_, i) => {
+        const angle = i * 2.399;
+        const radius = (0.18 + (i % 4) * 0.16) * tuning.spread;
+        return {
+          x: Math.cos(angle) * radius,
+          z: Math.sin(angle) * radius,
+          y: tuning.arc + (i % 3) * 0.18,
+          scale: (1.25 + (i % 4) * 0.24) * tuning.size,
+          phase: i * 7,
+          opacity: (0.24 + (i % 3) * 0.04) * tuning.intensity,
+        };
+      }),
+    [count, tuning],
+  );
+  const frameTextures = useMemo(
+    () =>
+      puffs.map(() => {
+        const texture = sourceTexture.clone();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(1 / columns, 1 / rows);
+        texture.needsUpdate = true;
+        return texture;
+      }),
+    [puffs, sourceTexture],
   );
 
-  useFrame(({ clock }) => {
-    if (!groupRef.current) return;
-    groupRef.current.children.forEach((child, i) => {
-      const p = particles[i];
-      if (!p) return;
-      const t = (clock.elapsedTime * p.speed + p.offset) % 1;
-      child.position.set(
-        Math.cos(p.angle + t) * p.radius * (1 + t * 1.5),
-        t * 0.42,
-        Math.sin(p.angle + t) * p.radius * (1 + t * 1.5),
-      );
-      child.scale.setScalar(p.size * (0.7 + t * 1.1));
-      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.32 * (1 - t);
-    });
+  useEffect(() => () => {
+    for (const texture of frameTextures) texture.dispose();
+  }, [frameTextures]);
+
+  useFrame((_, delta) => {
+    elapsedRef.current += delta;
+    const frameRate = 18 * clamp(tuning.speed, 0.25, 3);
+    for (let i = 0; i < frameTextures.length; i += 1) {
+      const texture = frameTextures[i];
+      const frame =
+        Math.floor(elapsedRef.current * frameRate + (puffs[i]?.phase ?? 0)) %
+        frameCount;
+      const column = frame % columns;
+      const row = Math.floor(frame / columns);
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
   });
 
   return (
-    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]} ref={groupRef}>
-      {particles.map((_, i) => (
-        <mesh key={i} raycast={() => null}>
-          <sphereGeometry args={[1, 10, 10]} />
-          <meshBasicMaterial
-            color="#cbd5e1"
-            transparent
-            opacity={0}
-            depthWrite={false}
-            depthTest={false}
-          />
-        </mesh>
+    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]}>
+      {puffs.map((puff, i) => (
+        <Billboard key={i} position={[puff.x, puff.y, puff.z]}>
+          <mesh scale={[puff.scale, puff.scale, puff.scale]} raycast={() => null}>
+            <planeGeometry args={[2.15, 2.15]} />
+            <meshBasicMaterial
+              map={frameTextures[i]}
+              color={tuning.color}
+              transparent
+              opacity={puff.opacity * tuning.fade}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+              toneMapped={false}
+            />
+          </mesh>
+        </Billboard>
       ))}
+      <pointLight color={tuning.secondaryColor} intensity={1.2 * tuning.intensity} distance={5 * tuning.spread} position={[0, 1.2, 0]} />
     </group>
   );
 }
@@ -1649,7 +1416,7 @@ function ExplodingOriginSmoke({ tuning }: { tuning: Tuning }) {
   );
 }
 
-function HullStateFxStation({ station, tuning, selected }: { station: HullStateStation; tuning: Tuning; selected: boolean }) {
+function HullStateFxStation({ station, tuning, selected, showLabel }: { station: HullStateStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
   const modelGroupRef = useRef<THREE.Group>(null);
   const staticRotation = useMemo<[number, number, number]>(() => {
     if (station.mode === "adrift-askew") return [THREE.MathUtils.degToRad(18), 0, THREE.MathUtils.degToRad(-23)];
@@ -1709,7 +1476,7 @@ function HullStateFxStation({ station, tuning, selected }: { station: HullStateS
           <ExplodingHullPulse position={station.position} tuning={tuning} />
         </>
       ) : null}
-      <StationLabel station={station} selected={selected} />
+      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
 }
@@ -2559,7 +2326,7 @@ function ImpactPulse({ position, tuning, delay = 0 }: { position: THREE.Vector3;
   );
 }
 
-function TunableWeaponStation({ station, tuning, selected }: { station: WeaponStation; tuning: Tuning; selected: boolean }) {
+function TunableWeaponStation({ station, tuning, selected, showLabel }: { station: WeaponStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
   const from = useMemo(() => toVector3(station.from), [station.from]);
   const to = useMemo(() => toVector3(station.to), [station.to]);
   const weaponKind = classifyWeapon(station.weapon);
@@ -2579,7 +2346,7 @@ function TunableWeaponStation({ station, tuning, selected }: { station: WeaponSt
       {Array.from({ length: clamp(Math.round(station.hits), 1, 6) }).map((_, i) => (
         <ImpactPulse key={i} position={to} tuning={tuning} delay={i * 0.12} />
       ))}
-      <StationLabel station={station} selected={selected} />
+      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
 }
@@ -2627,45 +2394,17 @@ function FireColumn({ position, tuning }: { position: Vec2; tuning: Tuning }) {
 }
 
 function SmokeColumn({ position, tuning }: { position: Vec2; tuning: Tuning }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const count = clamp(Math.round(tuning.count), 4, 46);
-  const particles = useMemo(
-    () => Array.from({ length: count }, (_, i) => ({
-      angle: i * 2.1,
-      radius: (0.2 + (i % 6) * 0.09) * tuning.spread,
-      speed: (0.17 + (i % 5) * 0.035) * tuning.speed,
-      offset: i * 0.11,
-      size: (0.34 + (i % 4) * 0.1) * tuning.size,
-    })),
-    [count, tuning.size, tuning.speed, tuning.spread],
-  );
-
-  useFrame(({ clock }) => {
-    if (!groupRef.current) return;
-    groupRef.current.children.forEach((child, i) => {
-      const p = particles[i];
-      if (!p) return;
-      const t = (clock.elapsedTime * p.speed + p.offset) % 1;
-      child.position.set(Math.cos(p.angle + t) * p.radius * (1 + t * 1.8), 0.28 + t * 3.2 * tuning.spread, Math.sin(p.angle + t) * p.radius * (1 + t * 1.8));
-      child.scale.setScalar(p.size * (0.75 + t * 1.2));
-      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.26 * (1 - t / tuning.fade) * tuning.intensity;
-    });
-  });
-
   return (
-    <group position={[position[0], 0.1, position[1]]} ref={groupRef}>
-      {particles.map((_, i) => (
-        <mesh key={i} raycast={() => null}>
-          <sphereGeometry args={[1, 12, 12]} />
-          <meshBasicMaterial color={tuning.color} transparent opacity={0} depthWrite={false} />
-        </mesh>
-      ))}
-    </group>
+    <CloudFlipbookDamageEmitter
+      position={position}
+      tuning={tuning}
+      textureFilename="cloud01-8x8.webp"
+      paused={false}
+    />
   );
 }
 
-function AmbientFxStation({ station, tuning, selected }: { station: AmbientStation; tuning: Tuning; selected: boolean }) {
+function AmbientFxStation({ station, tuning, selected, showLabel }: { station: AmbientStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
   const position = toVector3(station.position, 0.85);
   return (
     <group>
@@ -2673,7 +2412,7 @@ function AmbientFxStation({ station, tuning, selected }: { station: AmbientStati
       {station.effect === "fire" ? <FireColumn position={station.position} tuning={tuning} /> : null}
       {station.effect === "smoke" ? <SmokeColumn position={station.position} tuning={tuning} /> : null}
       {station.effect === "impact" ? <ImpactPulse position={position} tuning={tuning} /> : null}
-      <StationLabel station={station} selected={selected} />
+      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
 }
@@ -3888,11 +3627,13 @@ function SpecialFxStation({
   tuning,
   selected,
   animationPaused,
+  showLabel,
 }: {
   station: SpecialStation;
   tuning: Tuning;
   selected: boolean;
   animationPaused: boolean;
+  showLabel: boolean;
 }) {
   return (
     <group>
@@ -3935,7 +3676,7 @@ function SpecialFxStation({
       {station.effect === "missile-impact-flipbook-test" ? <MissileImpactFlipbookTest station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "mesh-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
-      <StationLabel station={station} selected={selected} />
+      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
     </group>
   );
 }
@@ -3960,11 +3701,12 @@ function ShowcaseScene({
       {board.stations.map(station => {
         const tuning = effectiveTuning(station, overrides);
         const selected = station.id === selectedStationId;
-        if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} />;
-        if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
-        if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
-        if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} />;
-        return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} animationPaused={animationPaused} />;
+        const showLabel = board.id !== "damage-states";
+        if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
+        if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
+        if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
+        if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
+        return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} animationPaused={animationPaused} showLabel={showLabel} />;
       })}
       <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={14} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={[0, 0, 0]} />
       <EffectComposer>
@@ -4084,10 +3826,6 @@ export default function VfxShowcase() {
   const selectedTuning = selectedStation ? effectiveTuning(selectedStation, overrides) : DEFAULT_TUNING;
   const selectedIsArcParticleSpray = selectedStation ? isArcParticleSpray(selectedStation) : false;
   const selectedIsPersistentImpactFlashes = selectedStation ? isPersistentImpactFlashes(selectedStation) : false;
-  const selectedIsMissileSalvo = selectedStation?.kind === "special" && (
-    selectedStation.effect === "mesh-missile-salvo" ||
-    selectedStation.effect === "texture-missile-salvo"
-  );
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -4215,26 +3953,6 @@ export default function VfxShowcase() {
                   <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
                   <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
                   <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
-                  {selectedIsMissileSalvo ? (
-                    <>
-                      <SliderControl
-                        label="Mesh Size"
-                        value={selectedTuning.meshSize ?? 0.4}
-                        min={0.1}
-                        max={1}
-                        step={0.05}
-                        onChange={meshSize => updateSelected({ meshSize })}
-                      />
-                      <SliderControl
-                        label="Flare Size"
-                        value={selectedTuning.flareSize ?? 1}
-                        min={0.25}
-                        max={4}
-                        step={0.05}
-                        onChange={flareSize => updateSelected({ flareSize })}
-                      />
-                    </>
-                  ) : null}
                   <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
                   <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
                   {supportsRibbonRandomness(selectedStation) ? (
@@ -4256,22 +3974,6 @@ export default function VfxShowcase() {
                       step={0.05}
                       onChange={ribbonEffect => updateSelected({ ribbonEffect })}
                     />
-                  ) : null}
-                  {selectedStation.id === "matter-cannon" ? (
-                    <>
-                      <ProjectileShapeControl
-                        value={selectedTuning.projectileShape ?? "sphere"}
-                        onChange={projectileShape => updateSelected({ projectileShape })}
-                      />
-                      <SliderControl
-                        label="Cylinder Length"
-                        value={selectedTuning.cylinderLength ?? 1.3}
-                        min={0.2}
-                        max={5}
-                        step={0.05}
-                        onChange={cylinderLength => updateSelected({ cylinderLength })}
-                      />
-                    </>
                   ) : null}
                 </div>
 
