@@ -38,6 +38,8 @@ const ROTATING_MODEL_PARTS: Record<
   },
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
+  EXPLORER_ROTATING_MODEL_FILENAME,
+  "command-hyperion.glb",
   "aurora.glb",
   "thunderbolt.glb",
   "tiger.glb",

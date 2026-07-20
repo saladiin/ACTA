@@ -1264,6 +1264,8 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
+  EXPLORER_ROTATING_MODEL_FILENAME,
+  COMMAND_HYPERION_MODEL_FILENAME,
   "aurora.glb",
   "thunderbolt.glb",
   "tiger.glb",
