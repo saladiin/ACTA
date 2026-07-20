@@ -50,6 +50,50 @@ const MISSILE_FLARE_TEXTURE_FILENAME = "missileflare.png";
 const MISSILE_FLARE_TEXTURE_REVISION = "20260719-011930";
 const MISSILE_FLIGHT_MS = 3000;
 const MISSILE_LAUNCH_DELAYS_MS = [0, 500, 1200] as const;
+const TARGET_IMPACT_TEXTURE_FILENAME = "T_FirePanningCyl45.png";
+const TARGET_IMPACT_TEXTURE_REVISION = "20260720-121500";
+const TARGET_IMPACT_TUNING = {
+  color: "#ef4444",
+  secondaryColor: "#f97316",
+  speed: 0.75,
+  size: 0.31,
+  fade: 1,
+  intensity: 1.4,
+  spread: 0.5,
+  count: 4,
+  thickness: 1.35,
+  expansionCycle: 3.2,
+};
+
+function impactFadeEnvelope(t: number): number {
+  const clamped = THREE.MathUtils.clamp(t, 0, 1);
+  const attack = THREE.MathUtils.clamp(clamped / 0.14, 0, 1);
+  const release = THREE.MathUtils.clamp(1 - (clamped - 0.42) / 0.58, 0, 1);
+  return attack * release;
+}
+
+function impactClusterOffsets(count: number, spread: number, seed = 0): [number, number, number][] {
+  const spacing = Math.max(0.625, spread * 1.125);
+  const wobble = seed * 0.13;
+  const pattern: [number, number, number][] = [
+    [-0.56, -0.06, -0.12],
+    [0.5, 0.04, 0.08],
+    [-0.04, 0.08, -0.58],
+    [0.14, -0.02, 0.54],
+    [-0.72, 0.05, 0.42],
+    [0.7, -0.04, -0.36],
+    [-0.2, 0.1, 0.78],
+    [0.28, -0.08, -0.76],
+  ];
+  return Array.from({ length: count }, (_, index) => {
+    const base = pattern[index % pattern.length];
+    const ring = Math.floor(index / pattern.length);
+    const angle = wobble + ring * 0.47;
+    const x = base[0] * Math.cos(angle) - base[2] * Math.sin(angle);
+    const z = base[0] * Math.sin(angle) + base[2] * Math.cos(angle);
+    return [x * spacing, base[1] * spacing, z * spacing];
+  });
+}
 const ENERGY_MINE_TUNING = {
   color: "#f5f5f4",
   secondaryColor: "#6e6ce4",
@@ -646,49 +690,152 @@ function EnergyMineDetonationRing({
   );
 }
 
-function ImpactFlash({
+function TargetImpactFx({
   position,
-  color,
   delayMs = 0,
-  lifeMs = 380,
-  size = 0.8,
+  seed = 0,
 }: {
   position: THREE.Vector3;
-  color: string;
   delayMs?: number;
-  lifeMs?: number;
-  size?: number;
+  seed?: number;
 }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const groupRef = useRef<THREE.Group>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
+  const materialRefs = useRef<Array<THREE.ShaderMaterial | null>>([]);
   const startRef = useRef<number>(performance.now());
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const textureUrl = `${basePath}/api/textures/${TARGET_IMPACT_TEXTURE_FILENAME}?v=${encodeURIComponent(TARGET_IMPACT_TEXTURE_REVISION)}`;
+  const texture = useLoader(THREE.TextureLoader, textureUrl);
+  const sphereOffsets = useMemo<[number, number, number][]>(
+    () => impactClusterOffsets(TARGET_IMPACT_TUNING.count, TARGET_IMPACT_TUNING.spread, seed),
+    [seed],
+  );
+
+  useMemo(() => {
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  const uniforms = useMemo(
+    () => ({
+      uMap: { value: texture },
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(TARGET_IMPACT_TUNING.color) },
+      uSecondaryColor: {
+        value: new THREE.Color(TARGET_IMPACT_TUNING.secondaryColor),
+      },
+      uAlpha: { value: 0 },
+      uIntensity: { value: TARGET_IMPACT_TUNING.intensity },
+    }),
+    [texture],
+  );
 
   useFrame(() => {
     const elapsed = performance.now() - startRef.current - delayMs;
-    if (!meshRef.current || !matRef.current) return;
+    const group = groupRef.current;
+    if (!group) return;
     if (elapsed < 0) {
-      meshRef.current.scale.setScalar(0.001);
-      matRef.current.opacity = 0;
+      group.visible = false;
       if (lightRef.current) lightRef.current.intensity = 0;
+      if (coreMatRef.current) coreMatRef.current.opacity = 0;
+      materialRefs.current.forEach(material => {
+        if (material) material.uniforms.uAlpha.value = 0;
+      });
       return;
     }
+    const lifeMs = TARGET_IMPACT_TUNING.expansionCycle * 1000;
+    if (elapsed > lifeMs) {
+      group.visible = false;
+      if (lightRef.current) lightRef.current.intensity = 0;
+      if (coreMatRef.current) coreMatRef.current.opacity = 0;
+      materialRefs.current.forEach(material => {
+        if (material) material.uniforms.uAlpha.value = 0;
+      });
+      return;
+    }
+    group.visible = true;
     const t = Math.min(1, elapsed / lifeMs);
-    // Quick expansion + alpha falloff.
-    const scale = size * (0.25 + t * 1.8);
-    const alpha = 1 - t;
-    meshRef.current.scale.setScalar(scale);
-    matRef.current.opacity = alpha;
-    if (lightRef.current) lightRef.current.intensity = alpha * 5;
+    const alpha = impactFadeEnvelope(t) * TARGET_IMPACT_TUNING.fade;
+    const pulse = (Math.sin(elapsed * 0.012 * TARGET_IMPACT_TUNING.speed) + 1) / 2;
+    const scale =
+      (0.55 + t * 1.75 + pulse * 0.12) * TARGET_IMPACT_TUNING.size;
+    group.children.forEach((child, index) => {
+      child.scale.setScalar(scale * (index === 0 ? 1 : 0.82 + index * 0.08));
+    });
+    if (coreRef.current) coreRef.current.scale.setScalar(scale * 0.72);
+    if (coreMatRef.current) {
+      coreMatRef.current.opacity = alpha * 0.2 * TARGET_IMPACT_TUNING.intensity;
+    }
+    materialRefs.current.forEach(material => {
+      if (!material) return;
+      material.uniforms.uTime.value = elapsed * 0.001 * TARGET_IMPACT_TUNING.speed;
+      material.uniforms.uAlpha.value = alpha * TARGET_IMPACT_TUNING.intensity;
+    });
+    if (lightRef.current) {
+      lightRef.current.intensity = alpha * 4.5 * TARGET_IMPACT_TUNING.intensity;
+    }
   });
 
   return (
-    <group position={position.toArray()}>
-      <mesh ref={meshRef} raycast={() => null}>
-        <sphereGeometry args={[1, 12, 12]} />
+    <group ref={groupRef} position={position.toArray()} visible={false}>
+      {sphereOffsets.map((offset, index) => (
+        <mesh key={index} position={offset} raycast={() => null}>
+          <sphereGeometry args={[1.08, 32, 18]} />
+          <shaderMaterial
+            ref={material => {
+              materialRefs.current[index] = material;
+            }}
+            uniforms={uniforms}
+            vertexShader={`
+              varying vec2 vUv;
+              varying vec3 vWorldNormal;
+              varying vec3 vViewDir;
+              void main() {
+                vUv = uv;
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                vViewDir = normalize(cameraPosition - worldPosition.xyz);
+                gl_Position = projectionMatrix * viewMatrix * worldPosition;
+              }
+            `}
+            fragmentShader={`
+              uniform sampler2D uMap;
+              uniform float uTime;
+              uniform vec3 uColor;
+              uniform vec3 uSecondaryColor;
+              uniform float uAlpha;
+              uniform float uIntensity;
+              varying vec2 vUv;
+              varying vec3 vWorldNormal;
+              varying vec3 vViewDir;
+              void main() {
+                vec4 fire = texture2D(uMap, vUv * vec2(1.1, 1.1) + vec2(0.0, -0.18) * uTime);
+                float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), 1.4);
+                float cut = smoothstep(0.02, 0.72, fire.r);
+                vec3 mappedColor = uColor * (0.38 + fire.rgb * 1.25);
+                mappedColor += uSecondaryColor * fire.r * 0.8;
+                mappedColor += uSecondaryColor * fresnel * 0.35;
+                float alpha = (0.2 + cut * 0.45 + fresnel * 0.08) * uAlpha;
+                gl_FragColor = vec4(mappedColor * uIntensity, clamp(alpha, 0.0, 0.92));
+              }
+            `}
+            transparent
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+      <mesh ref={coreRef} raycast={() => null}>
+        <sphereGeometry args={[0.72, 24, 16]} />
         <meshBasicMaterial
-          ref={matRef}
-          color={color}
+          ref={coreMatRef}
+          color={TARGET_IMPACT_TUNING.secondaryColor}
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -696,7 +843,13 @@ function ImpactFlash({
           toneMapped={false}
         />
       </mesh>
-      <pointLight ref={lightRef} color={color} distance={8} decay={2} intensity={0} />
+      <pointLight
+        ref={lightRef}
+        color={TARGET_IMPACT_TUNING.color}
+        distance={8 * TARGET_IMPACT_TUNING.thickness}
+        decay={2}
+        intensity={0}
+      />
     </group>
   );
 }
@@ -727,12 +880,11 @@ export function WeaponFx({
       <>
         <BeamFx from={from} to={to} color={color} />
         {Array.from({ length: hits }).map((_, i) => (
-          <ImpactFlash
+          <TargetImpactFx
             key={i}
             position={to}
-            color={color}
             delayMs={250 + i * 70}
-            size={0.7}
+            seed={i}
           />
         ))}
       </>
@@ -740,8 +892,24 @@ export function WeaponFx({
   }
 
   if (kind === "missile") {
-    // One missile per attack die looks busy on big racks; clamp inside the FX.
-    return <MissileVolleyFx from={from} to={to} count={totalDice} />;
+    const missileImpactCount = Math.max(0, Math.min(hits, MISSILE_TUNING.count));
+    return (
+      <>
+        <MissileVolleyFx from={from} to={to} count={totalDice} />
+        {Array.from({ length: missileImpactCount }).map((_, i) => (
+          <TargetImpactFx
+            key={i}
+            position={to}
+            delayMs={
+              MISSILE_FLIGHT_MS +
+              (MISSILE_LAUNCH_DELAYS_MS[i] ??
+                MISSILE_LAUNCH_DELAYS_MS[MISSILE_LAUNCH_DELAYS_MS.length - 1])
+            }
+            seed={i + 20}
+          />
+        ))}
+      </>
+    );
   }
 
   if (kind === "energy-mine") {
@@ -754,12 +922,11 @@ export function WeaponFx({
     <>
       <TracerSalvoFx from={from} to={to} color={tracerColors.color} count={totalDice} />
       {Array.from({ length: hits }).map((_, i) => (
-        <ImpactFlash
+        <TargetImpactFx
           key={i}
           position={to}
-          color={tracerColors.impact}
-          delayMs={380 + i * 70}
-          size={0.5}
+          delayMs={340 / TRACER_TUNING.speed + i * 70}
+          seed={i + 40}
         />
       ))}
     </>
