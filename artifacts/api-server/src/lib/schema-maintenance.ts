@@ -20,6 +20,8 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Tloth Assault Cruiser", priority: "raid" },
   { name: "Var'Nic Long Range Destroyer", priority: "raid" },
   { name: "Varnic Long Range Destroyer", priority: "raid" },
+  { name: "Thentus-class Frigate", priority: "skirmish" },
+  { name: "Thentus Frigate", priority: "skirmish" },
   { name: "Omega Destroyer", priority: "battle" },
   { name: "Omega Class Destroyer", priority: "battle" },
   { name: "Primus Battle Cruiser", priority: "battle" },
@@ -344,6 +346,50 @@ const GQUAN_WEAPONS = [
   },
 ];
 
+const THENTUS_WEAPONS = [
+  {
+    name: "Burst Beam",
+    arc: "Forward",
+    range: 12,
+    attackDice: 2,
+    traits: "Beam",
+  },
+  {
+    name: "Medium Laser Cannon",
+    arc: "Boresight Forward",
+    range: 15,
+    attackDice: 2,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 5,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 2,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+];
 const TLOTH_WEAPONS = [
   {
     name: "Plasma Cannon",
@@ -2638,6 +2684,73 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       await syncWeaponsForShipModel(gquanId, GQUAN_WEAPONS);
     }
 
+    const thentus = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'Thentus-class Frigate',
+            filename = 'thentus.glb',
+            faction = 'Narn Regime',
+            point_cost = 150,
+            priority_level = 'skirmish',
+            ship_class = 'Frigate',
+            hull = 5,
+            troops = 4,
+            damage = 24,
+            damage_threshold = 5,
+            hull_rating = 5,
+            crew = 28,
+            crew_threshold = 6,
+            speed = 8,
+            turns = 2,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Anti-Fighter 1',
+            small_craft = NULL,
+            base_radius_inches = $1,
+            hull_points = 24,
+            weapon_range = 15,
+            weapon_damage = 5,
+            description = 'Narn Regime Thentus-class frigate for anti-fighter support and light patrol duty'
+          WHERE lower(filename) = 'thentus.glb'
+            OR lower(name) IN ('thentus', 'thentus frigate', 'thentus-class frigate')
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'Thentus-class Frigate', 'thentus.glb', 'Narn Regime', 150,
+            'skirmish', 'Frigate', 5, 4, 24, 5, 5, 28, 6, 8, 2, 45,
+            'Regular', 0, 0, 0,
+            'Anti-Fighter 1',
+            NULL, 24,
+            $1, 15, 5,
+            'Narn Regime Thentus-class frigate for anti-fighter support and light patrol duty'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+
+    const thentusId = thentus.rows[0]?.id;
+    if (thentusId) {
+      await syncWeaponsForShipModel(thentusId, THENTUS_WEAPONS);
+    }
     const tloth = await pool.query<{ id: number }>(
       `
         WITH updated AS (
