@@ -186,6 +186,12 @@ export interface Game {
   challengerName?: string | null;
   /** @nullable */
   opponentName?: string | null;
+  /**
+   * Player-authored title or desired conditions for the engagement.
+   * @maxLength 80
+   * @nullable
+   */
+  matchName?: string | null;
   status: GameStatus;
   /** @nullable */
   winnerId?: string | null;
@@ -308,6 +314,12 @@ export interface GameInput {
   visibility: GameInputVisibility;
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
+  /**
+   * Optional title or desired match conditions shown beneath the host commander's name.
+   * @maxLength 80
+   * @nullable
+   */
+  matchName?: string | null;
   /**
      * Required when visibility=private. Stored hashed; required again on accept.
      * @nullable

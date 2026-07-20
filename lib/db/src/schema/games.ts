@@ -28,6 +28,7 @@ export const gamesTable = pgTable("games", {
   opponentKind: text("opponent_kind").notNull().default("human"),
   challengerName: text("challenger_name"),
   opponentName: text("opponent_name"),
+  matchName: text("match_name"),
   status: text("status").notNull().default("pending"),
   winnerId: text("winner_id"),
   currentTurn: integer("current_turn").notNull().default(0),
@@ -74,6 +75,11 @@ export const gamesTable = pgTable("games", {
   // their short edge of the 48"×72" board. Constrained to 4..30 (creation
   // is validated server-side). Dev mode bypasses this on the client.
   deploymentDepth: integer("deployment_depth").notNull().default(12),
+  // Optional structured deployment regions. Old games with null config fall
+  // back to the depth-only short-edge strips above.
+  deploymentConfig: jsonb("deployment_config")
+    .$type<Record<string, unknown> | null>()
+    .default(null),
   // Crew Quality assignment policy for this engagement.
   // "standard" → every ship is locked to CQ 4 (Veteran) and the deploy UI
   // hides the per-ship picker. "custom" → each ship's CQ is chosen during
