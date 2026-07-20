@@ -2352,37 +2352,64 @@ export async function ensureActaAllocationSchema(): Promise<void> {
 
     const sagittarius = await pool.query<{ id: number }>(
       `
-        UPDATE ship_models
-        SET
-          name = 'Sagittarius Missile Cruiser',
-          filename = 'sagittarius.glb',
-          faction = 'Earth Alliance',
-          point_cost = 175,
-          priority_level = 'skirmish',
-          ship_class = 'Cruiser',
-          hull = 4,
-          troops = 1,
-          damage = 23,
-          damage_threshold = 6,
-          hull_rating = 4,
-          crew = 24,
-          crew_threshold = 6,
-          speed = 6,
-          turns = 1,
-          turn_angle = 45,
-          crew_quality = 'Regular',
-          shield = 0,
-          shield_max = 0,
-          shield_regen_rate = 0,
-          traits = 'Anti-Fighter 1; Interceptors 2',
-          small_craft = NULL,
-          hull_points = 23,
-          weapon_range = 30,
-          weapon_damage = 6,
-          description = 'Early Earth Alliance mobile missile artillery platform'
-        WHERE lower(name) IN ('sagittarius', 'sagittarius missile cruiser')
-        RETURNING id
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'Sagittarius Missile Cruiser',
+            filename = 'sagittarius.glb',
+            faction = 'Earth Alliance',
+            point_cost = 175,
+            priority_level = 'skirmish',
+            ship_class = 'Cruiser',
+            hull = 4,
+            troops = 1,
+            damage = 23,
+            damage_threshold = 6,
+            hull_rating = 4,
+            crew = 24,
+            crew_threshold = 6,
+            speed = 6,
+            turns = 1,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Anti-Fighter 1; Interceptors 2',
+            small_craft = NULL,
+            hull_points = 23,
+            weapon_range = 30,
+            weapon_damage = 6,
+            description = 'Early Earth Alliance mobile missile artillery platform'
+          WHERE lower(name) IN ('sagittarius', 'sagittarius missile cruiser')
+            OR lower(filename) = 'sagittarius.glb'
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'Sagittarius Missile Cruiser', 'sagittarius.glb', 'Earth Alliance', 175,
+            'skirmish', 'Cruiser', 4, 1, 23, 6, 4, 24, 6, 6, 1, 45,
+            'Regular', 0, 0, 0,
+            'Anti-Fighter 1; Interceptors 2',
+            NULL, 23,
+            $1, 30, 6,
+            'Early Earth Alliance mobile missile artillery platform'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
       `,
+      [CAPITAL_BASE_RADIUS_INCHES],
     );
 
     const sagittariusId = sagittarius.rows[0]?.id;
