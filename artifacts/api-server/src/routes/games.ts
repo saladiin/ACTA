@@ -5359,6 +5359,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     Math.min(99, Math.trunc(parsed.data.allocationPoints ?? Math.max(1, Math.round(legacyPointLimit / 100)))),
   );
   const shouldAutoDeployAiOpponent = opponentKind === "ai" && shouldAutoDeployAiOpponentOnCreate();
+  const matchName = parsed.data.matchName?.trim() || null;
 
   const [game] = await db.insert(gamesTable).values({
     challengerId: userId,
@@ -5366,6 +5367,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     opponentKind,
     challengerName: challenger?.username ?? null,
     opponentName: opponentKind === "ai" ? AI_OPPONENT_NAME : null,
+    matchName,
     challengerFleetId: fleetId,
     pointLimit: allocationPoints * 100,
     priorityLevel,

@@ -25,6 +25,8 @@ import type {
   DamageControlInput,
   DamageControlResult,
   DeploymentInput,
+  FighterLaunchResult,
+  FighterRecoveryResult,
   FireWeaponInput,
   FireWeaponResult,
   Fleet,
@@ -34,9 +36,11 @@ import type {
   GameInput,
   GameUnit,
   HealthStatus,
+  LaunchFighterInput,
   LobbyState,
   MoveUnitInput,
   PlayerProfile,
+  RecoverFighterInput,
   ScoutActionInput,
   ScoutActionResult,
   SearchPlayersParams,
@@ -2252,6 +2256,154 @@ export const useMoveUnit = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getMoveUnitMutationOptions(options));
+    }
+
+export const getLaunchFighterUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/launch-fighter`
+}
+
+/**
+ * @summary Launch one carried fighter flight from a carrier during the End Phase
+ */
+export const launchFighter = async (gameId: number,
+    unitId: number,
+    launchFighterInput: LaunchFighterInput, options?: RequestInit): Promise<FighterLaunchResult> => {
+
+  return customFetch<FighterLaunchResult>(getLaunchFighterUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      launchFighterInput,)
+  }
+);}
+
+
+
+
+export const getLaunchFighterMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof launchFighter>>, TError,{gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof launchFighter>>, TError,{gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}, TContext> => {
+
+const mutationKey = ['launchFighter'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof launchFighter>>, {gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  launchFighter(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LaunchFighterMutationResult = NonNullable<Awaited<ReturnType<typeof launchFighter>>>
+    export type LaunchFighterMutationBody = BodyType<LaunchFighterInput>
+    export type LaunchFighterMutationError = ErrorType<void>
+
+    /**
+ * @summary Launch one carried fighter flight from a carrier during the End Phase
+ */
+export const useLaunchFighter = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof launchFighter>>, TError,{gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof launchFighter>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<LaunchFighterInput>},
+        TContext
+      > => {
+      return useMutation(getLaunchFighterMutationOptions(options));
+    }
+
+export const getRecoverFighterUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/recover-fighter`
+}
+
+/**
+ * @summary Recover one launched fighter flight into a carrier during the End Phase
+ */
+export const recoverFighter = async (gameId: number,
+    unitId: number,
+    recoverFighterInput: RecoverFighterInput, options?: RequestInit): Promise<FighterRecoveryResult> => {
+
+  return customFetch<FighterRecoveryResult>(getRecoverFighterUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      recoverFighterInput,)
+  }
+);}
+
+
+
+
+export const getRecoverFighterMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recoverFighter>>, TError,{gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recoverFighter>>, TError,{gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}, TContext> => {
+
+const mutationKey = ['recoverFighter'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recoverFighter>>, {gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  recoverFighter(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecoverFighterMutationResult = NonNullable<Awaited<ReturnType<typeof recoverFighter>>>
+    export type RecoverFighterMutationBody = BodyType<RecoverFighterInput>
+    export type RecoverFighterMutationError = ErrorType<void>
+
+    /**
+ * @summary Recover one launched fighter flight into a carrier during the End Phase
+ */
+export const useRecoverFighter = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recoverFighter>>, TError,{gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recoverFighter>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<RecoverFighterInput>},
+        TContext
+      > => {
+      return useMutation(getRecoverFighterMutationOptions(options));
     }
 
 export const getGetLobbyUrl = () => {

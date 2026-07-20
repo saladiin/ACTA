@@ -25,6 +25,7 @@ export default function NewGame() {
   const [allocationPoints, setAllocationPoints] = useState("5");
   const [deploymentDepth, setDeploymentDepth] = useState<number>(12);
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
+  const [matchName, setMatchName] = useState("");
 
   const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
@@ -46,6 +47,7 @@ export default function NewGame() {
           allocationPoints: fap,
           visibility,
           opponentKind,
+          matchName: matchName.trim() || null,
           password: visibility === "private" ? password : null,
           fleetId: selectedFleet ? parseInt(selectedFleet) : null,
           deploymentDepth,
@@ -73,7 +75,22 @@ export default function NewGame() {
     <Layout title="Launch Engagement">
       <div className="p-6 max-w-xl mx-auto space-y-8">
         <section>
-          {sectionHeader(1, "Priority Level")}
+          {sectionHeader(1, "Match Name")}
+          <Input
+            data-testid="input-match-name"
+            value={matchName}
+            onChange={(event) => setMatchName(event.target.value)}
+            maxLength={80}
+            placeholder="e.g. 5 FAP pickup - no Ancients"
+            className="bg-background"
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground font-mono">
+            Optional title or desired conditions displayed to commanders in the lobby.
+          </p>
+        </section>
+
+        <section>
+          {sectionHeader(2, "Priority Level")}
           <Select value={priorityLevel} onValueChange={(value) => setPriorityLevel(value as PriorityLevel)}>
             <SelectTrigger data-testid="select-priority-level" className="bg-background">
               <SelectValue />
@@ -90,7 +107,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(2, "Fleet Allocation Points")}
+          {sectionHeader(3, "Fleet Allocation Points")}
           <Select value={allocationPoints} onValueChange={setAllocationPoints}>
             <SelectTrigger data-testid="select-allocation-points" className="bg-background">
               <SelectValue />
@@ -108,7 +125,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(3, "Visibility")}
+          {sectionHeader(4, "Visibility")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -159,7 +176,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(4, "Opponent")}
+          {sectionHeader(5, "Opponent")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -194,7 +211,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(5, `Deployment Zone Depth - ${deploymentDepth}"`)}
+          {sectionHeader(6, `Deployment Zone Depth - ${deploymentDepth}"`)}
           <input
             type="range"
             min={4}
@@ -213,7 +230,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(6, "Crew Quality")}
+          {sectionHeader(7, "Crew Quality")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -245,7 +262,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(7, "Your Starting Fleet (optional)")}
+          {sectionHeader(8, "Your Starting Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
               <SelectValue placeholder="Choose your fleet now, or place ships later..." />

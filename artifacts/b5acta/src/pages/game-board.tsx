@@ -163,6 +163,13 @@ function hexToWorld(q: number, r: number): [number, number, number] {
   return [q, 0, r];
 }
 
+const UNIT_MESH_ORIGIN_Y = 2;
+
+function unitMeshOriginWorld(unit: { hexQ: number; hexR: number }): THREE.Vector3 {
+  const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
+  return new THREE.Vector3(x, UNIT_MESH_ORIGIN_Y, z);
+}
+
 // Board is 48" wide × 72" deep, 1 world unit = 1 inch
 const BOARD_W = 48;
 const BOARD_D = 72;
@@ -1343,8 +1350,10 @@ type BoardSmokeTuning = {
 };
 
 const BOARD_SMOKE_TEXTURE_FILENAME = "cloud01-8x8.webp";
+const CENTAURI_END_MESSAGE_TEXTURE_FILENAME = "centauri_end_message.png";
 const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   [BOARD_SMOKE_TEXTURE_FILENAME]: "20260719-032240",
+  [CENTAURI_END_MESSAGE_TEXTURE_FILENAME]: "20260719-220533",
 };
 const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
   color: "#f8fafc",
@@ -4139,6 +4148,166 @@ const DOGFIGHT_IMPACT_TUNING = {
   randomness: 0,
 };
 
+function isCentauriFaction(faction?: string | null): boolean {
+  return /\bcentauri\b/i.test(faction ?? "");
+}
+
+function GameCompleteBanner({
+  title,
+  detail,
+  winnerFaction,
+}: {
+  title: string;
+  detail: string;
+  winnerFaction?: string | null;
+}) {
+  const centauri = isCentauriFaction(winnerFaction);
+
+  if (centauri) {
+    return (
+      <div
+        className="pointer-events-auto absolute left-1/2 top-1/2 z-50 w-[min(900px,calc(100%-1rem))] -translate-x-1/2 -translate-y-1/2"
+        data-testid="game-complete-banner"
+      >
+        <div className="relative aspect-video drop-shadow-[0_0_36px_rgba(249,115,22,0.42)]">
+          <img
+            src={boardTextureUrl(CENTAURI_END_MESSAGE_TEXTURE_FILENAME)}
+            alt=""
+            className="pointer-events-none absolute inset-0 h-full w-full object-contain select-none"
+            draggable={false}
+          />
+          <div className="absolute left-[18%] right-[18%] top-[45%] flex flex-col items-center text-center">
+            <p className="text-4xl font-black uppercase tracking-[0.22em] text-yellow-200 drop-shadow-[0_0_18px_rgba(250,204,21,0.38)] sm:text-5xl">
+              {title}
+            </p>
+            <p className="mt-5 max-w-[34rem] font-mono text-base leading-relaxed text-zinc-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] sm:text-xl">
+              {detail}
+            </p>
+            <Link
+              href="/lobby"
+              className="mt-7 inline-flex h-12 items-center justify-center rounded-md border-2 border-yellow-300 bg-black/65 px-6 font-mono text-xs font-bold uppercase tracking-[0.22em] text-yellow-100 shadow-[0_0_18px_rgba(250,204,21,0.24)] transition-colors hover:bg-yellow-300/15"
+              data-testid="link-game-complete-lobby"
+            >
+              Return to Lobby
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="pointer-events-auto absolute left-1/2 top-1/2 z-50 w-[min(760px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2"
+      data-testid="game-complete-banner"
+    >
+      <div className="relative overflow-visible rounded-[24px] border border-yellow-300/60 bg-black/88 px-5 pb-5 pt-14 text-center shadow-2xl shadow-yellow-950/40 backdrop-blur-md sm:px-10 sm:pb-8 sm:pt-20">
+        <div className="pointer-events-none absolute inset-2 rounded-[18px] border border-yellow-300/40" />
+        <div className="relative">
+          <p className="font-mono text-[11px] font-bold uppercase tracking-[0.5em] text-yellow-200/90">
+            Game Over
+          </p>
+          <p className="mt-4 text-4xl font-black uppercase tracking-[0.22em] text-yellow-200 drop-shadow-[0_0_18px_rgba(250,204,21,0.32)] sm:text-5xl">
+            {title}
+          </p>
+          <p className="mx-auto mt-5 max-w-[32rem] font-mono text-base leading-relaxed text-zinc-100 sm:text-xl">
+            {detail}
+          </p>
+          <Link
+            href="/lobby"
+            className="mt-8 inline-flex h-12 items-center justify-center rounded-md border-2 border-yellow-300 bg-black/60 px-6 font-mono text-xs font-bold uppercase tracking-[0.22em] text-yellow-100 shadow-[0_0_18px_rgba(250,204,21,0.22)] transition-colors hover:bg-yellow-300/15"
+            data-testid="link-game-complete-lobby"
+          >
+            Return to Lobby
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DevEndgamePreviewControls({
+  commanderName,
+  resultTitle,
+  winnerFaction,
+  onCommanderNameChange,
+  onResultTitleChange,
+  onWinnerFactionChange,
+}: {
+  commanderName: string;
+  resultTitle: string;
+  winnerFaction: string;
+  onCommanderNameChange: (value: string) => void;
+  onResultTitleChange: (value: string) => void;
+  onWinnerFactionChange: (value: string) => void;
+}) {
+  return (
+    <div
+      className="pointer-events-auto absolute right-4 top-4 z-[60] w-[min(320px,calc(100%-2rem))] rounded border border-cyan-400/40 bg-black/90 p-3 font-mono shadow-2xl shadow-cyan-950/40 backdrop-blur-md"
+      data-testid="dev-endgame-preview-controls"
+    >
+      <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.28em] text-cyan-200">
+        Local Endgame Preview
+      </div>
+      <label className="block space-y-1">
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Commander
+        </span>
+        <Input
+          value={commanderName}
+          onChange={(event) => onCommanderNameChange(event.target.value)}
+          className="h-8 border-cyan-400/30 bg-black/70 font-mono text-xs"
+          data-testid="input-dev-endgame-commander"
+        />
+      </label>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <label className="block space-y-1">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            Result
+          </span>
+          <Select value={resultTitle} onValueChange={onResultTitleChange}>
+            <SelectTrigger
+              className="h-8 border-cyan-400/30 bg-black/70 font-mono text-xs"
+              data-testid="select-dev-endgame-result"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Victory">Victory</SelectItem>
+              <SelectItem value="Defeat">Defeat</SelectItem>
+              <SelectItem value="Engagement Complete">
+                Complete
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            Faction
+          </span>
+          <Select value={winnerFaction} onValueChange={onWinnerFactionChange}>
+            <SelectTrigger
+              className="h-8 border-cyan-400/30 bg-black/70 font-mono text-xs"
+              data-testid="select-dev-endgame-faction"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Centauri Republic">Centauri</SelectItem>
+              <SelectItem value="Earth Alliance">Earth</SelectItem>
+              <SelectItem value="Minbari Federation">Minbari</SelectItem>
+              <SelectItem value="Narn Regime">Narn</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+      </div>
+      <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
+        URL: add <span className="text-cyan-200">?previewEndgame=centauri&name=Your%20Name</span>
+      </p>
+    </div>
+  );
+}
+
 type SplitFirePlan = {
   weapon: Weapon;
   attackerUnitId: number;
@@ -6891,6 +7060,29 @@ export default function GameBoard() {
   const surrenderGame = useSurrenderGame();
   const concedeGame = useConcedeGame();
   const [, setLocation] = useLocation();
+  const initialEndgamePreview = useMemo(() => {
+    if (!import.meta.env.DEV || typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("previewEndgame");
+    if (!requested) return null;
+    const normalizedFaction =
+      requested.toLowerCase() === "centauri"
+        ? "Centauri Republic"
+        : (params.get("faction") ?? requested);
+    return {
+      commanderName: params.get("name") ?? "Commander Robert",
+      resultTitle: params.get("result") ?? "Victory",
+      winnerFaction: normalizedFaction,
+    };
+  }, []);
+  const [previewEndgameCommanderName, setPreviewEndgameCommanderName] =
+    useState(initialEndgamePreview?.commanderName ?? "Commander Robert");
+  const [previewEndgameResultTitle, setPreviewEndgameResultTitle] = useState(
+    initialEndgamePreview?.resultTitle ?? "Victory",
+  );
+  const [previewEndgameWinnerFaction, setPreviewEndgameWinnerFaction] =
+    useState(initialEndgamePreview?.winnerFaction ?? "Centauri Republic");
+  const endgamePreviewEnabled = Boolean(initialEndgamePreview);
   const [confirmingSurrender, setConfirmingSurrender] = useState(false);
   const [confirmingConcede, setConfirmingConcede] = useState(false);
   const [confirmingAbandon, setConfirmingAbandon] = useState(false);
@@ -11247,6 +11439,33 @@ export default function GameBoard() {
       : completedWinnerName
         ? `${completedWinnerName} wins.`
         : "Both fleets have been eliminated.";
+  const completedWinnerFaction =
+    game.status === "completed" && game.winnerId
+      ? Array.from(
+          units
+            .filter((unit) => unit.ownerId === game.winnerId && unit.faction)
+            .reduce((counts, unit) => {
+              const faction = unit.faction ?? "";
+              counts.set(faction, (counts.get(faction) ?? 0) + 1);
+              return counts;
+            }, new Map<string, number>())
+            .entries(),
+        ).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+      : null;
+  const previewCommanderName =
+    previewEndgameCommanderName.trim() || "Unnamed Commander";
+  const gameCompleteBannerTitle = endgamePreviewEnabled
+    ? previewEndgameResultTitle
+    : completedResultTitle;
+  const gameCompleteBannerDetail = endgamePreviewEnabled
+    ? `${previewCommanderName} wins.`
+    : (completedResultDetail ?? "");
+  const gameCompleteBannerFaction = endgamePreviewEnabled
+    ? previewEndgameWinnerFaction
+    : completedWinnerFaction;
+  const showGameCompleteBanner =
+    endgamePreviewEnabled ||
+    (game.status === "completed" && Boolean(completedResultTitle));
   const gameChatPanel = canUseGameChat ? (
     <div className="border-b border-border" data-testid="game-chat-panel">
       <button
@@ -12083,28 +12302,22 @@ export default function GameBoard() {
               </div>
             </div>
           )}
-          {game.status === "completed" && completedResultTitle && (
-            <div
-              className="pointer-events-auto absolute left-1/2 top-1/2 z-50 w-[min(420px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded border border-yellow-300/60 bg-black/88 px-5 py-4 text-center shadow-2xl shadow-yellow-950/40 backdrop-blur-md"
-              data-testid="game-complete-banner"
-            >
-              <p className="font-mono text-[11px] uppercase tracking-[0.32em] text-yellow-200/80">
-                Game Over
-              </p>
-              <p className="mt-2 text-2xl font-bold uppercase tracking-[0.18em] text-yellow-200">
-                {completedResultTitle}
-              </p>
-              <p className="mt-2 text-sm font-mono text-muted-foreground">
-                {completedResultDetail}
-              </p>
-              <Link
-                href="/lobby"
-                className="mt-4 inline-flex h-9 items-center justify-center rounded border border-yellow-300/50 bg-yellow-300/10 px-3 font-mono text-[11px] uppercase tracking-widest text-yellow-100 transition-colors hover:bg-yellow-300/20"
-                data-testid="link-game-complete-lobby"
-              >
-                Return to Lobby
-              </Link>
-            </div>
+          {endgamePreviewEnabled && (
+            <DevEndgamePreviewControls
+              commanderName={previewEndgameCommanderName}
+              resultTitle={previewEndgameResultTitle}
+              winnerFaction={previewEndgameWinnerFaction}
+              onCommanderNameChange={setPreviewEndgameCommanderName}
+              onResultTitleChange={setPreviewEndgameResultTitle}
+              onWinnerFactionChange={setPreviewEndgameWinnerFaction}
+            />
+          )}
+          {showGameCompleteBanner && gameCompleteBannerTitle && (
+            <GameCompleteBanner
+              title={gameCompleteBannerTitle}
+              detail={gameCompleteBannerDetail}
+              winnerFaction={gameCompleteBannerFaction}
+            />
           )}
           {isoCameraControlsEnabled && (
             <TacticalCameraControls
@@ -12476,11 +12689,8 @@ export default function GameBoard() {
               );
               const target = units.find((u) => u.id === diceModal.targetId);
               if (!attacker || !target) return null;
-              const [ax, , az] = hexToWorld(attacker.hexQ, attacker.hexR);
-              const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
-              // Ship models sit at y≈2; aim the beam at hull-center.
-              const from = new THREE.Vector3(ax, 2, az);
-              const to = new THREE.Vector3(tx, 2, tz);
+              const from = unitMeshOriginWorld(attacker);
+              const to = unitMeshOriginWorld(target);
               const hits = diceModal.result?.hits ?? 0;
               return (
                 <WeaponFx
@@ -12507,13 +12717,11 @@ export default function GameBoard() {
                 (w) => w.id === aiWeaponFxReplay.weaponId,
               );
               if (!weapon) return null;
-              const [ax, , az] = hexToWorld(attacker.hexQ, attacker.hexR);
-              const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
               return (
                 <WeaponFx
                   key={aiWeaponFxReplay.key}
-                  from={new THREE.Vector3(ax, 2, az)}
-                  to={new THREE.Vector3(tx, 2, tz)}
+                  from={unitMeshOriginWorld(attacker)}
+                  to={unitMeshOriginWorld(target)}
                   weapon={weapon}
                   attackerFaction={attacker.faction}
                   hits={aiWeaponFxReplay.hits}

@@ -28,6 +28,7 @@ export const gamesTable = pgTable("games", {
   opponentKind: text("opponent_kind").notNull().default("human"),
   challengerName: text("challenger_name"),
   opponentName: text("opponent_name"),
+  matchName: text("match_name"),
   status: text("status").notNull().default("pending"),
   winnerId: text("winner_id"),
   currentTurn: integer("current_turn").notNull().default(0),
