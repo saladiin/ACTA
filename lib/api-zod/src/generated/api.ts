@@ -250,6 +250,10 @@ export const CreateGameBody = zod.object({
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
   "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.'),
   "deploymentDepth": zod.number().min(createGameBodyDeploymentDepthMin).max(createGameBodyDeploymentDepthMax).describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge.'),
+  "deploymentPreset": zod.enum(['standard-short-edge', 'standard-long-edge', 'ambush-center']).optional().describe('Deployment zone preset. Defaults to standard short-edge deployment.'),
+  "ambushPlayer": zod.enum(['challenger', 'opponent']).optional().describe('For ambush-center deployment, which player deploys in the center box.'),
+  "ambushBoxWidth": zod.number().min(6).max(40).optional().describe('For ambush-center deployment, center box width in inches.'),
+  "ambushBoxDepth": zod.number().min(6).max(56).optional().describe('For ambush-center deployment, center box depth in inches.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).describe('standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.')
 })
 
@@ -297,6 +301,7 @@ export const GetGameResponse = zod.object({
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),

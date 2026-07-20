@@ -1892,6 +1892,10 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS deployment_config jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE games
       ADD COLUMN IF NOT EXISTS archived_at timestamp with time zone
     `);
     await pool.query(`

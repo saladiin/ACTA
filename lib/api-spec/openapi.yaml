@@ -864,6 +864,10 @@ components:
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
+        deploymentConfig:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: "Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment."
         crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy." }
         aiProfile: { type: ["string", "null"], description: "AI strategy profile selected for this game. Null for human games." }
         aiState: { type: object, additionalProperties: true, description: "Latest AI setup/action diagnostic state. Empty for human games." }
@@ -885,6 +889,10 @@ components:
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
         fleetId:    { type: ["integer", "null"], description: "Optional prefab fleet to commit at creation time; may also be chosen later during deploy." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge." }
+        deploymentPreset: { type: string, enum: [standard-short-edge, standard-long-edge, ambush-center], description: "Deployment zone preset. Defaults to standard short-edge deployment." }
+        ambushPlayer: { type: string, enum: [challenger, opponent], description: "For ambush-center deployment, which player deploys in the center box." }
+        ambushBoxWidth: { type: number, minimum: 6, maximum: 40, description: "For ambush-center deployment, center box width in inches." }
+        ambushBoxDepth: { type: number, minimum: 6, maximum: 56, description: "For ambush-center deployment, center box depth in inches." }
         crewQualityMode: { type: string, enum: [standard, custom], description: "standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship." }
 
     AcceptGameInput:

@@ -76,6 +76,8 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
+  /** Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment. */
+  deploymentConfig?: Record<string, unknown> | null;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**

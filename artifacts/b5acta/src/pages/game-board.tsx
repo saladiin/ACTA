@@ -81,6 +81,14 @@ import {
 } from "@/hooks/use-ui-settings";
 import { APP_BUILD_SHA } from "@/lib/build-version";
 import {
+  clampPointToDeploymentZone,
+  defaultDeploymentPoint,
+  deploymentSideConfig,
+  normalizeDeploymentConfig,
+  type DeploymentConfig,
+  type DeploymentSide,
+} from "@/lib/deployment-zones";
+import {
   ALLOCATION_TICKS_PER_FAP,
   PRIORITY_LEVELS,
   allocationTicksForShip,
@@ -918,49 +926,76 @@ function ConcentrateFireTargetLines({
   );
 }
 
-// Translucent floor quads marking each player's deployment zone. The
-// challenger's zone hugs the +Z short edge; the opponent's hugs -Z. Depth (in
-// inches) is configured at game creation (4..30) and enforced server-side.
+// Translucent floor quads marking each player's configured deployment zones.
+// Server-side validation uses the same normalized config and base footprint.
 function DeploymentZones({
-  depth,
+  config,
   mySide,
 }: {
-  depth: number;
-  mySide: "challenger" | "opponent" | null;
+  config: DeploymentConfig;
+  mySide: DeploymentSide | null;
 }) {
-  const hd = BOARD_D / 2; // 36
-  const w = BOARD_W;
-  // Player zones: centred at z = ±(36 - depth/2), depth tall, full board wide.
-  const challengerZ = hd - depth / 2;
-  const opponentZ = -hd + depth / 2;
+  const renderSide = (side: DeploymentSide) => {
+    const deployment = deploymentSideConfig(config, side);
+    const own = mySide === side;
+    return (
+      <React.Fragment key={side}>
+        {deployment.zones.map((zone, index) => {
+          const width = zone.xMax - zone.xMin;
+          const depth = zone.zMax - zone.zMin;
+          return (
+            <mesh
+              key={`${side}-zone-${index}`}
+              position={[
+                (zone.xMin + zone.xMax) / 2,
+                0.001,
+                (zone.zMin + zone.zMax) / 2,
+              ]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              renderOrder={1}
+            >
+              <planeGeometry args={[width, depth]} />
+              <meshBasicMaterial
+                color={own ? "#f59e0b" : "#7c2d12"}
+                transparent
+                opacity={own ? 0.13 : 0.055}
+                depthWrite={false}
+              />
+            </mesh>
+          );
+        })}
+        {(deployment.exclusions ?? []).map((zone, index) => {
+          const width = zone.xMax - zone.xMin;
+          const depth = zone.zMax - zone.zMin;
+          return (
+            <mesh
+              key={`${side}-exclusion-${index}`}
+              position={[
+                (zone.xMin + zone.xMax) / 2,
+                0.003,
+                (zone.zMin + zone.zMax) / 2,
+              ]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              renderOrder={2}
+            >
+              <planeGeometry args={[width, depth]} />
+              <meshBasicMaterial
+                color="#ef4444"
+                transparent
+                opacity={own ? 0.12 : 0.04}
+                depthWrite={false}
+              />
+            </mesh>
+          );
+        })}
+      </React.Fragment>
+    );
+  };
+
   return (
     <>
-      <mesh
-        position={[0, 0.001, challengerZ]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        renderOrder={1}
-      >
-        <planeGeometry args={[w, depth]} />
-        <meshBasicMaterial
-          color={mySide === "challenger" ? "#f59e0b" : "#7c2d12"}
-          transparent
-          opacity={mySide === "challenger" ? 0.12 : 0.06}
-          depthWrite={false}
-        />
-      </mesh>
-      <mesh
-        position={[0, 0.001, opponentZ]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        renderOrder={1}
-      >
-        <planeGeometry args={[w, depth]} />
-        <meshBasicMaterial
-          color={mySide === "opponent" ? "#f59e0b" : "#7c2d12"}
-          transparent
-          opacity={mySide === "opponent" ? 0.12 : 0.06}
-          depthWrite={false}
-        />
-      </mesh>
+      {renderSide("challenger")}
+      {renderSide("opponent")}
     </>
   );
 }
@@ -5988,7 +6023,7 @@ function StagedUnit3D({
           anchorX="center"
           anchorY="middle"
         >
-          {`${Math.round(unit.heading)}°  R / ⇧R`}
+          {`${Math.round(unit.heading)}°  Q / E`}
         </CameraFacingText>
       )}
     </group>
@@ -6981,6 +7016,46 @@ export default function GameBoard() {
   const [tapPlacementShip, setTapPlacementShip] = useState<ShipModel | null>(
     null,
   );
+  const selectedStagedUnit = useMemo(
+    () =>
+      selectedStagedId
+        ? (currentStagedUnits.find((u) => u.id === selectedStagedId) ?? null)
+        : null,
+    [currentStagedUnits, selectedStagedId],
+  );
+  const rotateSelectedStagedUnit = useCallback(
+    (delta: number) => {
+      if (!selectedStagedId) return;
+      setStagedUnits((prev) =>
+        prev.map((u) => {
+          if (u.id !== selectedStagedId || u.locked) return u;
+          return { ...u, heading: (((u.heading + delta) % 360) + 360) % 360 };
+        }),
+      );
+    },
+    [selectedStagedId],
+  );
+  const toggleSelectedStagedLock = useCallback(() => {
+    if (!selectedStagedId) return;
+    setStagedUnits((prev) =>
+      prev.map((u) =>
+        u.id === selectedStagedId ? { ...u, locked: !u.locked } : u,
+      ),
+    );
+  }, [selectedStagedId]);
+  const removeSelectedStagedUnit = useCallback(() => {
+    if (!selectedStagedId) return;
+    setStagedUnits((prev) => {
+      const target = prev.find((u) => u.id === selectedStagedId);
+      if (target?.locked) return prev;
+      return prev.filter(
+        (u) =>
+          u.id !== selectedStagedId &&
+          u.launchedFromStagedId !== selectedStagedId,
+      );
+    });
+    setSelectedStagedId(null);
+  }, [selectedStagedId]);
   // Password an accepter types to join a private engagement (only shown when
   // the open challenge has hasPassword=true).
   const [joinPassword, setJoinPassword] = useState("");
@@ -7007,10 +7082,15 @@ export default function GameBoard() {
             u.id === selectedStagedId ? { ...u, locked: !u.locked } : u,
           ),
         );
-      } else if (e.key === "r" || e.key === "R") {
+      } else if (
+        e.key === "e" ||
+        e.key === "E" ||
+        e.key === "q" ||
+        e.key === "Q"
+      ) {
         e.preventDefault();
-        // R = clockwise, Shift+R = counter-clockwise (15° per press)
-        const delta = e.shiftKey ? -15 : 15;
+        // E = clockwise, Q = counter-clockwise (15° per press)
+        const delta = e.key === "q" || e.key === "Q" ? 15 : -15;
         setStagedUnits((prev) =>
           prev.map((u) => {
             if (u.id !== selectedStagedId || u.locked) return u;
@@ -7767,30 +7847,36 @@ export default function GameBoard() {
     );
 
   // Deployment-zone clamp for staged ship placement during the deploy phase.
-  // Challenger deploys from the +Z short edge, opponent from -Z. The server
-  // enforces the same zone rules, and silently snapping drops to the legal
-  // strip is much friendlier than letting the user stage ships that will
-  // fail on commit.
+  // Existing games without structured config fall back to the classic
+  // short-edge strips; new scenario presets can use asymmetric rectangles.
   const deploymentDepth = game?.deploymentDepth ?? 12;
+  const deploymentConfig = useMemo(
+    () => normalizeDeploymentConfig(game?.deploymentConfig, deploymentDepth),
+    [game?.deploymentConfig, deploymentDepth],
+  );
+  const mySide: DeploymentSide | null = !game
+    ? null
+    : myUserId === game.challengerId
+      ? "challenger"
+      : myUserId === game.opponentId
+        ? "opponent"
+        : null;
   const clampToDeployZone = useCallback(
-    (x: number, z: number): [number, number] => {
+    (x: number, z: number, baseRadius = 0): [number, number] => {
       const cx = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, x));
       if (!game) return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
-      const mine: "challenger" | "opponent" | null =
-        myUserId === game.challengerId
-          ? "challenger"
-          : myUserId === game.opponentId
-            ? "opponent"
-            : null;
-      if (mine === "challenger") {
-        return [cx, Math.max(36 - deploymentDepth, Math.min(36, z))];
-      }
-      if (mine === "opponent") {
-        return [cx, Math.max(-36, Math.min(-36 + deploymentDepth, z))];
+      if (mySide) {
+        return clampPointToDeploymentZone(
+          x,
+          z,
+          mySide,
+          deploymentConfig,
+          baseRadius,
+        );
       }
       return [cx, Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, z))];
     },
-    [game, myUserId, deploymentDepth],
+    [deploymentConfig, game, mySide],
   );
   const clampToCarriedFighterDeployCircle = useCallback(
     (
@@ -7800,7 +7886,11 @@ export default function GameBoard() {
       fighter?: { baseRadiusInches?: number | null },
     ): [number, number] => {
       const radius = carriedFighterDeployCenterRadius(carrier, fighter);
-      let [x, z] = clampToDeployZone(rawX, rawZ);
+      let [x, z] = clampToDeployZone(
+        rawX,
+        rawZ,
+        fighter?.baseRadiusInches ?? 0,
+      );
       for (let i = 0; i < 4; i += 1) {
         const dx = x - carrier.x;
         const dz = z - carrier.z;
@@ -7809,19 +7899,12 @@ export default function GameBoard() {
           x = carrier.x + (dx / dist) * radius;
           z = carrier.z + (dz / dist) * radius;
         }
-        [x, z] = clampToDeployZone(x, z);
+        [x, z] = clampToDeployZone(x, z, fighter?.baseRadiusInches ?? 0);
       }
       return [x, z];
     },
     [clampToDeployZone],
   );
-  const mySide: "challenger" | "opponent" | null = !game
-    ? null
-    : myUserId === game.challengerId
-      ? "challenger"
-      : myUserId === game.opponentId
-        ? "opponent"
-        : null;
   const deploymentBoardTitle = aiDeploymentControlActive
     ? "Deploy AI fleet"
     : "Deploy your fleet";
@@ -7931,16 +8014,15 @@ export default function GameBoard() {
       total: number,
       stagedName = ship.name,
     ): StagedUnitData => {
-      const columns = Math.min(3, Math.max(1, total));
-      const row = Math.floor(index / columns);
-      const col = index % columns;
-      const rowCount = Math.ceil(total / columns);
-      const rowColumns =
-        row === rowCount - 1 ? total - row * columns || columns : columns;
-      const x = (col - (rowColumns - 1) / 2) * 5;
-      const zInset = Math.min(deploymentDepth - 2, 3 + row * 4);
-      const z = mySide === "challenger" ? 36 - zInset : -36 + zInset;
-      const [cx, cz] = clampToDeployZone(x, z);
+      const side = mySide ?? "challenger";
+      const [cx, cz] = defaultDeploymentPoint(
+        side,
+        deploymentConfig,
+        index,
+        total,
+        ship.baseRadiusInches,
+      );
+      const deployment = deploymentSideConfig(deploymentConfig, side);
 
       return {
         id: `staged-template-${Date.now()}-${ship.id}-${index}`,
@@ -7964,16 +8046,20 @@ export default function GameBoard() {
         launchedFromStagedId: null,
         x: cx,
         z: cz,
-        heading: mySide === "challenger" ? 180 : 0,
+        heading: deployment.defaultHeading,
         locked: false,
         crewQuality: 4,
       };
     },
-    [clampToDeployZone, deploymentDepth, mySide, myUserId, shipModels],
+    [deploymentConfig, mySide, myUserId, shipModels],
   );
   const stageShipAtBoardPoint = useCallback(
     (ship: ShipModel, rawX: number, rawZ: number) => {
-      const [x, z] = clampToDeployZone(rawX, rawZ);
+      const [x, z] = clampToDeployZone(
+        rawX,
+        rawZ,
+        ship.baseRadiusInches,
+      );
       const candidate: UiBaseFootprint = {
         id: `candidate-${ship.id}`,
         x,
@@ -8010,7 +8096,9 @@ export default function GameBoard() {
           launchedFromStagedId: null,
           x,
           z,
-          heading: mySide === "challenger" ? 180 : 0,
+          heading: mySide
+            ? deploymentSideConfig(deploymentConfig, mySide).defaultHeading
+            : 0,
           locked: false,
           crewQuality: 4,
         },
@@ -8023,6 +8111,7 @@ export default function GameBoard() {
     },
     [
       clampToDeployZone,
+      deploymentConfig,
       deploymentPlacementOverlaps,
       mySide,
       myUserId,
@@ -11481,7 +11570,7 @@ export default function GameBoard() {
                   : null;
                 const [x, z] = carrier
                   ? clampToCarriedFighterDeployCircle(rx, rz, carrier, moving)
-                  : clampToDeployZone(rx, rz);
+                  : clampToDeployZone(rx, rz, moving.baseRadiusInches);
                 const ignoredStagedIds = new Set([
                   moving.id,
                   ...prev
@@ -11888,6 +11977,109 @@ export default function GameBoard() {
               </button>
             </div>
           )}
+          {game.status === "deploying" &&
+            !myDeploymentLocked &&
+            isTouchInput &&
+            selectedStagedUnit && (
+              <div
+                className="pointer-events-auto absolute bottom-16 left-1/2 z-30 w-[min(360px,calc(100%-1.5rem))] -translate-x-1/2 rounded border border-primary/45 bg-black/90 p-2 shadow-xl shadow-black/50 backdrop-blur"
+                data-testid="mobile-deployment-controls"
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[10px] font-mono uppercase tracking-widest text-primary">
+                      {selectedStagedUnit.name}
+                    </p>
+                    <p className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+                      Heading {Math.round(selectedStagedUnit.heading)} deg
+                    </p>
+                  </div>
+                  {selectedStagedUnit.locked && (
+                    <span className="shrink-0 rounded border border-amber-300/40 bg-amber-300/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-widest text-amber-200">
+                      locked
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-5 gap-1.5">
+                  <button
+                    type="button"
+                    aria-label="Rotate staged ship left"
+                    disabled={selectedStagedUnit.locked}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      rotateSelectedStagedUnit(-15);
+                    }}
+                    className="flex h-11 items-center justify-center rounded border border-cyan-300/60 bg-cyan-300/10 text-cyan-100 disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                    data-testid="button-mobile-deploy-rotate-left"
+                  >
+                    <ArrowLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Rotate staged ship right"
+                    disabled={selectedStagedUnit.locked}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      rotateSelectedStagedUnit(15);
+                    }}
+                    className="flex h-11 items-center justify-center rounded border border-cyan-300/60 bg-cyan-300/10 text-cyan-100 disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                    data-testid="button-mobile-deploy-rotate-right"
+                  >
+                    <ArrowRight className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={
+                      selectedStagedUnit.locked
+                        ? "Unlock staged ship"
+                        : "Lock staged ship"
+                    }
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleSelectedStagedLock();
+                    }}
+                    className="flex h-11 items-center justify-center rounded border border-amber-300/60 bg-amber-300/10 text-amber-100"
+                    data-testid="button-mobile-deploy-lock"
+                  >
+                    {selectedStagedUnit.locked ? (
+                      <Unlock className="h-5 w-5" />
+                    ) : (
+                      <Lock className="h-5 w-5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Remove staged ship"
+                    disabled={selectedStagedUnit.locked}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      removeSelectedStagedUnit();
+                    }}
+                    className="flex h-11 items-center justify-center rounded border border-red-300/50 bg-red-500/10 text-red-100 disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                    data-testid="button-mobile-deploy-remove"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Deselect staged ship"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedStagedId(null);
+                    }}
+                    className="flex h-11 items-center justify-center rounded border border-slate-400/60 bg-slate-900/90 px-1 text-[10px] font-mono uppercase tracking-wider text-slate-100"
+                    data-testid="button-mobile-deploy-deselect"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
           {pendingFighterLaunchPlacement && (
             <div className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded border border-sky-300/55 bg-black/88 px-2 py-1.5 shadow-lg shadow-sky-500/15 backdrop-blur-sm">
               <span className="min-w-0 truncate text-[10px] font-mono uppercase tracking-wider text-sky-100">
@@ -12163,7 +12355,7 @@ export default function GameBoard() {
             )}
             <BoardBoundary />
             {game.status === "deploying" && (
-              <DeploymentZones depth={deploymentDepth} mySide={mySide} />
+              <DeploymentZones config={deploymentConfig} mySide={mySide} />
             )}
             {game.status === "deploying" &&
               carriedFighterDeploymentGuideCarrier && (

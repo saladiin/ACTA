@@ -39,6 +39,14 @@ import {
   normalizeShipAiProfile,
 } from "../lib/ai-opponent";
 import {
+  clampPointToDeploymentZone,
+  createDeploymentConfig,
+  deploymentSideConfig,
+  isPointInDeploymentZone,
+  normalizeDeploymentConfig,
+  type DeploymentSide,
+} from "../lib/deployment-zones";
+import {
   CreateGameBody,
   GetGameParams,
   AcceptGameParams,
@@ -2025,8 +2033,15 @@ async function autoDeployAiOpponent(gameId: number): Promise<typeof gamesTable.$
       name: model.name,
     }).returning();
 
-    const deploymentDepth = Math.max(4, Math.min(30, game.deploymentDepth));
-    const inset = Math.max(2, Math.min(deploymentDepth - 1, Math.ceil(deploymentDepth / 2)));
+    const deploymentConfig = normalizeDeploymentConfig(game.deploymentConfig, game.deploymentDepth);
+    const [deployX, deployZ] = clampPointToDeploymentZone(
+      0,
+      0,
+      "opponent",
+      deploymentConfig,
+      model.baseRadiusInches ?? 0,
+    );
+    const deploymentHeading = deploymentSideConfig(deploymentConfig, "opponent").defaultHeading;
     const [unit] = await tx.insert(gameUnitsTable).values({
       gameId: game.id,
       ownerId: AI_OPPONENT_ID,
@@ -2038,9 +2053,9 @@ async function autoDeployAiOpponent(gameId: number): Promise<typeof gamesTable.$
       hullPoints: model.hullPoints,
       maxHullPoints: model.hullPoints,
       damageThreshold: model.damageThreshold ?? Math.ceil(model.hullPoints / 2),
-      hexQ: 0,
-      hexR: -36 + inset,
-      heading: 0,
+      hexQ: deployX,
+      hexR: deployZ,
+      heading: deploymentHeading,
       speed: model.speed,
       turnAngle: model.turnAngle ?? 45,
       turns: model.turns ?? 1,
@@ -5347,6 +5362,13 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
   // Clamp belt-and-braces; the Zod schema already enforces 4..30 but the DB
   // would otherwise accept anything an attacker could sneak past the spec.
   const deploymentDepth = Math.max(4, Math.min(30, Math.trunc(parsed.data.deploymentDepth)));
+  const deploymentConfig = createDeploymentConfig({
+    preset: parsed.data.deploymentPreset,
+    deploymentDepth,
+    ambushPlayer: parsed.data.ambushPlayer,
+    ambushBoxWidth: parsed.data.ambushBoxWidth,
+    ambushBoxDepth: parsed.data.ambushBoxDepth,
+  });
   // crewQualityMode: belt-and-braces validation. Zod schema already restricts
   // to the enum, but if a future codegen drift relaxes the type we still want
   // to reject anything outside the two known modes rather than silently
@@ -5375,6 +5397,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     visibility,
     passwordHash,
     deploymentDepth,
+    deploymentConfig,
     crewQualityMode,
     aiProfile: opponentKind === "ai" ? DEFAULT_AI_PROFILE : null,
     aiState: opponentKind === "ai"
@@ -6352,17 +6375,20 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         ), { status: 400 });
       }
 
-      // Zone validation: challenger deploys from +Z short edge, opponent from -Z.
-      // hexQ/hexR are stored as world inches (see game-board.tsx handleYardsDeploy).
-      // Board is 48"×72"; placements must stay inside the player's deployment zone.
-      const D = game.deploymentDepth;
-      const zoneMinR = isChallenger ? 36 - D : -36;
-      const zoneMaxR = isChallenger ? 36 : -36 + D;
-      for (const placement of parsed.data.placements) {
-        if (placement.hexQ < -24 || placement.hexQ > 24 || placement.hexR < zoneMinR || placement.hexR > zoneMaxR) {
-          req.log.warn({ placement, isChallenger, zoneMinR, zoneMaxR, D }, "placement outside zone");
+      // Zone validation: hexQ/hexR are world inches. Deployment config is
+      // authoritative; legacy games without JSON fall back to depth-only
+      // short-edge strips. Validate the full base footprint, not just center.
+      const deploymentConfig = normalizeDeploymentConfig(game.deploymentConfig, game.deploymentDepth);
+      const deploymentSide: DeploymentSide = isChallenger ? "challenger" : "opponent";
+      for (let index = 0; index < parsed.data.placements.length; index += 1) {
+        const placement = parsed.data.placements[index]!;
+        const ship = placedShips[index];
+        const model = ship ? placedModelByShipId.get(ship.id) : undefined;
+        const baseRadius = model ? rulesBaseRadius(model) : 0;
+        if (!isPointInDeploymentZone(placement.hexQ, placement.hexR, deploymentSide, deploymentConfig, baseRadius)) {
+          req.log.warn({ placement, deploymentSide, deploymentConfig, baseRadius }, "placement outside deployment zone");
           throw Object.assign(new Error(
-            `Placement (${placement.hexQ}, ${placement.hexR}) is outside your ${D}\" deployment zone (allowed: hexQ ∈ [-24, 24], hexR ∈ [${zoneMinR}, ${zoneMaxR}]).`,
+            `Placement (${placement.hexQ}, ${placement.hexR}) is outside your deployment zone or overlaps an excluded deployment area.`,
           ), { status: 400 });
         }
       }

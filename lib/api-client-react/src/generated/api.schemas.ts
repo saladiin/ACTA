@@ -238,6 +238,8 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
+  /** Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment. */
+  deploymentConfig?: Record<string, unknown> | null;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**
@@ -336,6 +338,22 @@ export interface GameInput {
      * @maximum 30
      */
   deploymentDepth: number;
+  /** Deployment zone preset. Defaults to standard short-edge deployment. */
+  deploymentPreset?: 'standard-short-edge' | 'standard-long-edge' | 'ambush-center';
+  /** For ambush-center deployment, which player deploys in the center box. */
+  ambushPlayer?: 'challenger' | 'opponent';
+  /**
+     * For ambush-center deployment, center box width in inches.
+     * @minimum 6
+     * @maximum 40
+     */
+  ambushBoxWidth?: number;
+  /**
+     * For ambush-center deployment, center box depth in inches.
+     * @minimum 6
+     * @maximum 56
+     */
+  ambushBoxDepth?: number;
   /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship. */
   crewQualityMode: GameInputCrewQualityMode;
 }

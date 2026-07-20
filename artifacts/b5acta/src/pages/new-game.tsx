@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Swords, Globe2, Lock, UserRound, Cpu } from "lucide-react";
 import { PRIORITY_LEVELS, type PriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
+import type { DeploymentPreset, DeploymentSide } from "@/lib/deployment-zones";
 
 export default function NewGame() {
   const [, setLocation] = useLocation();
@@ -24,6 +25,12 @@ export default function NewGame() {
   const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>("raid");
   const [allocationPoints, setAllocationPoints] = useState("5");
   const [deploymentDepth, setDeploymentDepth] = useState<number>(12);
+  const [deploymentPreset, setDeploymentPreset] =
+    useState<DeploymentPreset>("standard-short-edge");
+  const [ambushPlayer, setAmbushPlayer] =
+    useState<DeploymentSide>("challenger");
+  const [ambushBoxWidth, setAmbushBoxWidth] = useState<number>(16);
+  const [ambushBoxDepth, setAmbushBoxDepth] = useState<number>(16);
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
   const [matchName, setMatchName] = useState("");
 
@@ -51,6 +58,13 @@ export default function NewGame() {
           password: visibility === "private" ? password : null,
           fleetId: selectedFleet ? parseInt(selectedFleet) : null,
           deploymentDepth,
+          deploymentPreset,
+          ambushPlayer:
+            deploymentPreset === "ambush-center" ? ambushPlayer : undefined,
+          ambushBoxWidth:
+            deploymentPreset === "ambush-center" ? ambushBoxWidth : undefined,
+          ambushBoxDepth:
+            deploymentPreset === "ambush-center" ? ambushBoxDepth : undefined,
           crewQualityMode,
         },
       },
@@ -211,22 +225,111 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(6, `Deployment Zone Depth - ${deploymentDepth}"`)}
-          <input
-            type="range"
-            min={4}
-            max={30}
-            step={1}
-            value={deploymentDepth}
-            onChange={(e) => setDeploymentDepth(parseInt(e.target.value))}
-            data-testid="input-deployment-depth"
-            className="w-full accent-primary"
-          />
-          <div className="flex justify-between text-[10px] font-mono text-muted-foreground tracking-wider mt-1">
-            <span>4"</span>
-            <span>Each commander deploys within this depth of their short edge.</span>
-            <span>30"</span>
-          </div>
+          {sectionHeader(6, "Deployment Zones")}
+          <Select
+            value={deploymentPreset}
+            onValueChange={(value) =>
+              setDeploymentPreset(value as DeploymentPreset)
+            }
+          >
+            <SelectTrigger data-testid="select-deployment-preset" className="bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              <SelectItem value="standard-short-edge">Standard short edges</SelectItem>
+              <SelectItem value="standard-long-edge">Long edges</SelectItem>
+              <SelectItem value="ambush-center">Ambush center</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {deploymentPreset !== "ambush-center" && (
+            <div className="mt-4">
+              <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
+                Zone depth - {deploymentDepth}"
+              </div>
+              <input
+                type="range"
+                min={4}
+                max={30}
+                step={1}
+                value={deploymentDepth}
+                onChange={(e) => setDeploymentDepth(parseInt(e.target.value))}
+                data-testid="input-deployment-depth"
+                className="w-full accent-primary"
+              />
+              <div className="flex justify-between text-[10px] font-mono text-muted-foreground tracking-wider mt-1">
+                <span>4"</span>
+                <span>
+                  {deploymentPreset === "standard-long-edge"
+                    ? "Each commander deploys along a long board edge."
+                    : "Each commander deploys along a short board edge."}
+                </span>
+                <span>30"</span>
+              </div>
+            </div>
+          )}
+
+          {deploymentPreset === "ambush-center" && (
+            <div className="mt-4 space-y-4">
+              <div>
+                <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
+                  Center player
+                </div>
+                <Select
+                  value={ambushPlayer}
+                  onValueChange={(value) =>
+                    setAmbushPlayer(value as DeploymentSide)
+                  }
+                >
+                  <SelectTrigger data-testid="select-ambush-player" className="bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-card border-border">
+                    <SelectItem value="challenger">Host in center</SelectItem>
+                    <SelectItem value="opponent">Opponent in center</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
+                  Center box width - {ambushBoxWidth}"
+                </div>
+                <input
+                  type="range"
+                  min={6}
+                  max={40}
+                  step={1}
+                  value={ambushBoxWidth}
+                  onChange={(e) => setAmbushBoxWidth(parseInt(e.target.value))}
+                  data-testid="input-ambush-box-width"
+                  className="w-full accent-primary"
+                />
+              </div>
+
+              <div>
+                <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
+                  Center box depth - {ambushBoxDepth}"
+                </div>
+                <input
+                  type="range"
+                  min={6}
+                  max={56}
+                  step={1}
+                  value={ambushBoxDepth}
+                  onChange={(e) => setAmbushBoxDepth(parseInt(e.target.value))}
+                  data-testid="input-ambush-box-depth"
+                  className="w-full accent-primary"
+                />
+              </div>
+            </div>
+          )}
+
+          <p className="mt-2 text-[11px] text-muted-foreground font-mono">
+            The server validates the whole base inside the selected zone. Red
+            deployment exclusions are blocked even if a ship center appears
+            legal.
+          </p>
         </section>
 
         <section>
