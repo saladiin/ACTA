@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { Billboard, OrbitControls, Text, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
@@ -31,6 +31,13 @@ type TexturedSphereVariant =
   | "wind-cutout"
   | "hard-plasma"
   | "ghost-shell";
+type OrganicSkinVariant =
+  | "static-reference"
+  | "single-drift"
+  | "counterflow"
+  | "flow-warp"
+  | "normal-crawl"
+  | "layered-crawl";
 
 type Tuning = {
   color: string;
@@ -194,11 +201,23 @@ type AnimatedModelStation = {
 };
 
 type ShowcaseStation =
+type OrganicSkinStation = {
+  kind: "organic-skin";
+  id: string;
+  label: string;
+  note: string;
+  modelFilename: string;
+  position: Vec2;
+  variant: OrganicSkinVariant;
+  tuning?: Partial<Tuning>;
+};
+
   | WeaponStation
   | AmbientStation
   | SpecialStation
   | HullStateStation
-  | AnimatedModelStation;
+  | AnimatedModelStation
+  | OrganicSkinStation;
 
 type ShowcaseBoard = {
   id: string;
@@ -740,6 +759,33 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [-9, 8],
         tuning: { color: "#f472b6", secondaryColor: "#fde68a", speed: 0.85, size: 1.15, fade: 1, thickness: 1.2 },
       },
+  {
+    id: "organic-skin-tests",
+    name: "Organic Skin",
+    summary: "Single-drift organic hull motion on the Spitfire and Shadow Battlecrab, preserving the source texture's black and grey palette.",
+    stations: [
+      {
+        kind: "organic-skin",
+        id: "organic-single-drift",
+        label: "Spitfire - Single Drift",
+        note: "The original fighter reference using the selected single-drift tuning.",
+        modelFilename: "spitfire.glb",
+        position: [-9, 0],
+        variant: "single-drift",
+        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
+      },
+      {
+        kind: "organic-skin",
+        id: "organic-single-drift-battlecrab",
+        label: "Battlecrab - Single Drift",
+        note: "The same grayscale UV drift applied to the replacement Battlecrab mesh.",
+        modelFilename: "battlecrab.glb",
+        position: [9, 0],
+        variant: "single-drift",
+        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
+      },
+    ],
+  },
       {
         kind: "special",
         id: "stealth-shimmer",
@@ -1015,9 +1061,14 @@ function isTexturedSphereSampleOne(station: ShowcaseStation): boolean {
 }
 
 function baseTuningFor(station: ShowcaseStation): Tuning {
-  const stationColor = station.kind === "weapon"
-    ? FACTION_COLORS[station.faction] ?? DEFAULT_TUNING.color
-    : DEFAULT_TUNING.color;
+  const stationColor = station.kind === "organic-skin"
+    ? "#151515"
+    : station.kind === "weapon"
+      ? FACTION_COLORS[station.faction] ?? DEFAULT_TUNING.color
+      : DEFAULT_TUNING.color;
+  const secondaryColor = station.kind === "organic-skin"
+    ? "#737373"
+    : DEFAULT_TUNING.secondaryColor;
   return {
     ...DEFAULT_TUNING,
     color: stationColor,
@@ -1031,6 +1082,7 @@ function effectiveTuning(station: ShowcaseStation, overrides: TuningOverrides): 
 }
 
 function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): "beam" | "tracer" | "missile" {
+  if (station.kind === "organic-skin") return "organic skin";
   const name = (weapon.name ?? "").toLowerCase();
   const traits = (weapon.traits ?? "").toLowerCase();
   if (name.includes("missile")) return "missile";
@@ -1062,6 +1114,7 @@ function BoardPlane() {
     </group>
   );
 }
+    secondaryColor,
 
 function StationLabel({ station, selected }: { station: ShowcaseStation; selected: boolean }) {
   const [x, z] = station.kind === "weapon"
@@ -1163,6 +1216,8 @@ function ShowcaseGlbModel({
   filename,
   tint,
   opacity = 1,
+  "spitfire.glb": "20260720-210100",
+  "battlecrab.glb": "20260720-214405-organic",
   emissiveColor,
   emissiveIntensity = 0,
   emissivePulse = false,
@@ -1179,6 +1234,12 @@ function ShowcaseGlbModel({
   anchorEffects?: boolean;
   rotation?: [number, number, number];
   targetInches?: number;
+  "shadow_flesh_alpha.png": "20260720-organic-v1",
+  "shadow_flesh_base_tile.png": "20260720-organic-v1",
+  "shadow_flesh_distortion.png": "20260720-organic-v1",
+  "shadow_flesh_flow.png": "20260720-organic-v1",
+  "shadow_flesh_normal.png": "20260720-organic-v1",
+  "shadow_flesh_roughness.png": "20260720-organic-v1",
 }) {
   const url = showcaseModelUrl(filename);
   const { scene } = useGLTF(url);
@@ -1301,6 +1362,288 @@ function RotatingBoneShowcaseModel({
         ? child.material
         : [child.material];
       const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+const ORGANIC_SKIN_VARIANT_INDEX: Record<OrganicSkinVariant, number> = {
+  "static-reference": 0,
+  "single-drift": 1,
+  counterflow: 2,
+  "flow-warp": 3,
+  "normal-crawl": 4,
+  "layered-crawl": 5,
+};
+
+type OrganicSkinShader = {
+  uniforms: Record<string, { value: unknown }>;
+};
+
+function configureOrganicTexture(
+  texture: THREE.Texture,
+  colorSpace: THREE.ColorSpace,
+): THREE.Texture {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.flipY = false;
+  texture.colorSpace = colorSpace;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function OrganicSkinShowcaseModel({
+  filename,
+  variant,
+  tuning,
+  paused,
+}: {
+  filename: string;
+  variant: OrganicSkinVariant;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const textureUrls = useMemo(
+    () => [
+      showcaseTextureUrl("shadow_flesh_base_tile.png"),
+      showcaseTextureUrl("shadow_flesh_normal.png"),
+      showcaseTextureUrl("shadow_flesh_roughness.png"),
+      showcaseTextureUrl("shadow_flesh_alpha.png"),
+      showcaseTextureUrl("shadow_flesh_distortion.png"),
+      showcaseTextureUrl("shadow_flesh_flow.png"),
+    ],
+    [],
+  );
+  const [
+    baseSource,
+    normalSource,
+    roughnessSource,
+    alphaSource,
+    distortionSource,
+    flowSource,
+  ] = useLoader(THREE.TextureLoader, textureUrls) as THREE.Texture[];
+  const shaderRefs = useRef<OrganicSkinShader[]>([]);
+  const materialRefs = useRef<THREE.MeshStandardMaterial[]>([]);
+  const elapsedRef = useRef(0);
+  const tuningRef = useRef(tuning);
+  tuningRef.current = tuning;
+
+  const organic = useMemo(() => {
+    configureOrganicTexture(baseSource, THREE.SRGBColorSpace);
+    configureOrganicTexture(alphaSource, THREE.NoColorSpace);
+    configureOrganicTexture(distortionSource, THREE.NoColorSpace);
+    configureOrganicTexture(flowSource, THREE.NoColorSpace);
+
+    const normalTexture = configureOrganicTexture(
+      normalSource.clone(),
+      THREE.NoColorSpace,
+    );
+    const roughnessTexture = configureOrganicTexture(
+      roughnessSource.clone(),
+      THREE.NoColorSpace,
+    );
+    const variantIndex = ORGANIC_SKIN_VARIANT_INDEX[variant];
+    const cloned = scene.clone(true);
+    const materials: THREE.MeshStandardMaterial[] = [];
+    shaderRefs.current = [];
+
+    cloned.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const material = new THREE.MeshStandardMaterial({
+        color: "#ffffff",
+        map: baseSource,
+        normalMap: normalTexture,
+        normalScale: new THREE.Vector2(0.7, 0.7),
+        roughness: 0.86,
+        roughnessMap: roughnessTexture,
+        metalness: 0,
+        side: THREE.DoubleSide,
+      });
+      material.onBeforeCompile = shader => {
+        shader.uniforms.uOrganicTime = { value: elapsedRef.current };
+        shader.uniforms.uOrganicSpeed = { value: tuningRef.current.speed };
+        shader.uniforms.uOrganicRepeat = { value: tuningRef.current.spread };
+        shader.uniforms.uOrganicMotion = { value: tuningRef.current.intensity };
+        shader.uniforms.uOrganicDistortion = { value: tuningRef.current.arc };
+        shader.uniforms.uOrganicVariant = { value: variantIndex };
+        shader.uniforms.uOrganicAlphaMap = { value: alphaSource };
+        shader.uniforms.uOrganicDistortionMap = { value: distortionSource };
+        shader.uniforms.uOrganicFlowMap = { value: flowSource };
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "void main() {",
+          `
+uniform float uOrganicTime;
+uniform float uOrganicSpeed;
+uniform float uOrganicRepeat;
+uniform float uOrganicMotion;
+uniform float uOrganicDistortion;
+uniform int uOrganicVariant;
+uniform sampler2D uOrganicAlphaMap;
+uniform sampler2D uOrganicDistortionMap;
+uniform sampler2D uOrganicFlowMap;
+
+void main() {
+          `,
+        );
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <map_fragment>",
+          `
+#ifdef USE_MAP
+  vec2 organicUv = vMapUv * max(uOrganicRepeat, 0.25);
+  float organicTravel = uOrganicTime * uOrganicSpeed * uOrganicMotion;
+  vec2 organicDriftA = vec2(0.018, 0.006) * organicTravel;
+  vec2 organicDriftB = vec2(-0.009, 0.014) * organicTravel;
+  vec2 organicUvA = organicUv + organicDriftA;
+  vec2 organicUvB = organicUv * 1.43 + organicDriftB;
+  vec4 organicStatic = texture2D(map, organicUv);
+  vec4 organicMovingA = texture2D(map, organicUvA);
+  vec4 organicMovingB = texture2D(map, organicUvB);
+  float organicMaskB = texture2D(uOrganicAlphaMap, organicUvB).r;
+  vec2 organicFlow = texture2D(
+    uOrganicFlowMap,
+    organicUv * 0.72 + organicDriftB * 0.3
+  ).rg * 2.0 - 1.0;
+  float organicWarp = texture2D(
+    uOrganicDistortionMap,
+    organicUv * 0.88 + organicDriftB
+  ).r * 2.0 - 1.0;
+  vec2 organicWarpedUv = organicUvA
+    + organicFlow * organicWarp * uOrganicDistortion * uOrganicMotion;
+
+  vec4 sampledDiffuseColor = organicStatic;
+  if (uOrganicVariant == 1) {
+    sampledDiffuseColor = organicMovingA;
+  } else if (uOrganicVariant == 2) {
+    sampledDiffuseColor = mix(
+      organicMovingA,
+      organicMovingB,
+      clamp(organicMaskB * 0.55 * uOrganicMotion, 0.0, 0.72)
+    );
+  } else if (uOrganicVariant == 3) {
+    sampledDiffuseColor = texture2D(map, organicWarpedUv);
+  } else if (uOrganicVariant == 5) {
+    float organicFineMask = smoothstep(0.15, 0.78, organicMaskB);
+    sampledDiffuseColor = mix(
+      organicMovingA,
+      organicMovingB,
+      clamp(organicFineMask * 0.48 * uOrganicMotion, 0.0, 0.64)
+    );
+  }
+
+  float organicGray = dot(
+    sampledDiffuseColor.rgb,
+    vec3(0.2126, 0.7152, 0.0722)
+  );
+  organicGray = clamp(organicGray * 1.42 + 0.01, 0.0, 0.72);
+  sampledDiffuseColor.rgb = vec3(organicGray);
+  diffuseColor *= sampledDiffuseColor;
+#endif
+          `,
+        );
+        shaderRefs.current.push(shader as OrganicSkinShader);
+      };
+      material.customProgramCacheKey = () => `organic-skin-${variant}`;
+      materials.push(material);
+      child.material = material;
+    });
+
+    const bounds = new THREE.Box3().setFromObject(cloned);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const originOffset = new THREE.Vector3(-center.x, -bounds.min.y, -center.z);
+
+    materialRefs.current = materials;
+    return { cloned, materials, normalTexture, roughnessTexture, originOffset };
+  }, [
+    alphaSource,
+    baseSource,
+    distortionSource,
+    flowSource,
+    normalSource,
+    roughnessSource,
+    scene,
+    variant,
+  ]);
+
+  useEffect(
+    () => () => {
+      organic.materials.forEach(material => material.dispose());
+      organic.normalTexture.dispose();
+      organic.roughnessTexture.dispose();
+    },
+    [organic],
+  );
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const current = tuningRef.current;
+    const variantIndex = ORGANIC_SKIN_VARIANT_INDEX[variant];
+    for (const shader of shaderRefs.current) {
+      shader.uniforms.uOrganicTime.value = elapsedRef.current;
+      shader.uniforms.uOrganicSpeed.value = current.speed;
+      shader.uniforms.uOrganicRepeat.value = current.spread;
+      shader.uniforms.uOrganicMotion.value = current.intensity;
+      shader.uniforms.uOrganicDistortion.value = current.arc;
+      shader.uniforms.uOrganicVariant.value = variantIndex;
+    }
+
+    const repeat = Math.max(0.25, current.spread);
+    const travel = elapsedRef.current * current.speed * current.intensity;
+    const movingNormals = variant !== "static-reference";
+    organic.normalTexture.repeat.set(repeat, repeat);
+    organic.roughnessTexture.repeat.set(repeat, repeat);
+    organic.normalTexture.offset.set(
+      movingNormals ? travel * 0.018 : 0,
+      movingNormals ? travel * 0.006 : 0,
+    );
+    organic.roughnessTexture.offset.copy(organic.normalTexture.offset);
+    const normalStrength = Math.max(0, current.thickness);
+    for (const material of materialRefs.current) {
+      material.normalScale.set(normalStrength, normalStrength);
+    }
+  });
+
+  const scale = useMemo(
+    () => showcaseShipScale(organic.cloned, 11.2 * tuning.size),
+    [organic.cloned, tuning.size],
+  );
+
+  return (
+    <group scale={[scale, scale, scale]}>
+      <primitive object={organic.cloned} position={organic.originOffset} />
+    </group>
+  );
+}
+
+function OrganicSkinFxStation({
+  station,
+  tuning,
+  selected,
+  showLabel,
+  paused,
+}: {
+  station: OrganicSkinStation;
+  tuning: Tuning;
+  selected: boolean;
+  showLabel: boolean;
+  paused: boolean;
+}) {
+  return (
+    <group>
+      <group position={[station.position[0], 0.12, station.position[1]]}>
+        <Suspense fallback={null}>
+          <OrganicSkinShowcaseModel
+            filename={station.modelFilename}
+            variant={station.variant}
+            tuning={tuning}
+            paused={paused}
+          />
+        </Suspense>
+        <pointLight color="#e5e7eb" intensity={2.2} distance={15} position={[0, 6, 2]} />
+      </group>
+      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+    </group>
+  );
+}
+
         const clonedMaterial = material?.clone
           ? material.clone()
           : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
@@ -5178,7 +5521,7 @@ function ShowcaseScene({
       {board.stations.map(station => {
         const tuning = effectiveTuning(station, overrides);
         const selected = station.id === selectedStationId;
-        const showLabel = board.id !== "damage-states" && board.id !== "orb-texture-tests";
+        const showLabel = board.id !== "damage-states" && board.id !== "orb-texture-tests" && board.id !== "organic-skin-tests";
         if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
@@ -5301,7 +5644,9 @@ function exportPresetFor(station: ShowcaseStation, tuning: Tuning): string {
           ? station.mode
           : station.kind === "animated-model"
             ? "bone-animation"
-            : station.effect,
+            : station.kind === "organic-skin"
+              ? station.variant
+              : station.effect,
       tuning,
     },
     null,
@@ -5345,6 +5690,24 @@ export default function VfxShowcase() {
       return next;
     });
   };
+function ShowcaseCameraRig({ boardId }: { boardId: string }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    if (boardId === "organic-skin-tests") {
+      const canvasAspect = size.width / Math.max(size.height, 1);
+      const framingDistance = 43 * Math.max(1, 1.35 / canvasAspect);
+      camera.position.set(0, Math.min(framingDistance, 100), 0.1);
+    } else {
+      camera.position.set(0, 39, 48);
+    }
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+  }, [boardId, camera, size.height, size.width]);
+
+  return null;
+}
+
 
   const copyPreset = async () => {
     await navigator.clipboard.writeText(exportText);
@@ -5362,6 +5725,7 @@ export default function VfxShowcase() {
                 <p className="mt-1 text-sm text-muted-foreground">{activeBoard.summary}</p>
               </div>
             </div>
+      <ShowcaseCameraRig boardId={board.id} />
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -5370,6 +5734,7 @@ export default function VfxShowcase() {
                 className="gap-2 uppercase tracking-widest text-xs"
                 onClick={() => setAnimationPaused(prev => !prev)}
               >
+        if (station.kind === "organic-skin") return <OrganicSkinFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
                 {animationPaused ? "Resume Animation" : "Pause Animation"}
               </Button>
               {SHOWCASE_BOARDS.map(board => (
@@ -5447,13 +5812,24 @@ export default function VfxShowcase() {
                 </div>
 
                 <div className="grid gap-4">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                    <ColorControl label={selectedIsPraxisShockwave ? "Ring Color" : "Primary Color"} value={selectedTuning.color} onChange={color => updateSelected({ color })} />
-                    {!selectedIsPraxisShockwave ? (
-                      <ColorControl label={selectedIsArcParticleSpray ? "Outline Color" : "Accent Color"} value={selectedTuning.secondaryColor} onChange={secondaryColor => updateSelected({ secondaryColor })} />
-                    ) : null}
-                  </div>
-                  {selectedIsPraxisShockwave ? (
+                  {!selectedIsOrganicSkin ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                      <ColorControl label={selectedIsPraxisShockwave ? "Ring Color" : "Primary Color"} value={selectedTuning.color} onChange={color => updateSelected({ color })} />
+                      {!selectedIsPraxisShockwave ? (
+                        <ColorControl label={selectedIsArcParticleSpray ? "Outline Color" : "Accent Color"} value={selectedTuning.secondaryColor} onChange={secondaryColor => updateSelected({ secondaryColor })} />
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {selectedIsOrganicSkin ? (
+                    <>
+                      <SliderControl label="Motion Speed" value={selectedTuning.speed} min={0} max={2} step={0.01} onChange={speed => updateSelected({ speed })} />
+                      <SliderControl label="Pattern Scale" value={selectedTuning.spread} min={0.5} max={5} step={0.05} onChange={spread => updateSelected({ spread })} />
+                      <SliderControl label="Motion Amount" value={selectedTuning.intensity} min={0} max={1.5} step={0.01} onChange={intensity => updateSelected({ intensity })} />
+                      <SliderControl label="Flow Distortion" value={selectedTuning.arc} min={0} max={0.15} step={0.005} onChange={arc => updateSelected({ arc })} />
+                      <SliderControl label="Normal Strength" value={selectedTuning.thickness} min={0} max={2} step={0.05} onChange={thickness => updateSelected({ thickness })} />
+                      <SliderControl label="Model Size" value={selectedTuning.size} min={0.5} max={1.5} step={0.05} onChange={size => updateSelected({ size })} />
+                    </>
+                  ) : selectedIsPraxisShockwave ? (
                     <>
                       <SliderControl label="Repetitions" value={selectedTuning.count} min={1} max={8} step={1} onChange={count => updateSelected({ count })} />
                       <SliderControl label="End Size" value={selectedTuning.size} min={1} max={30} step={0.5} onChange={size => updateSelected({ size })} />
@@ -5514,6 +5890,7 @@ export default function VfxShowcase() {
                     <SliderControl
                       label="Ribbon Effect"
                       value={selectedTuning.ribbonEffect ?? 0.7}
+  const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
                       min={0}
                       max={2}
                       step={0.05}
