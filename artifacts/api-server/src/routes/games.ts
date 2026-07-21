@@ -3282,6 +3282,8 @@ async function chooseAiFirePlan(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.ownerId, game.challengerId),
     eq(gameUnitsTable.isDestroyed, false),
+    sql`${gameUnitsTable.hullPoints} > 0`,
+    sql`(${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`,
   ));
   const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
   if (shipModelIsFighter(attackerModel)) {
@@ -3516,6 +3518,11 @@ async function resolveBasicAiWeaponFire(
   winnerId: string | null;
   gameCompleted: boolean;
 }> {
+  // Zero-hull and crewless wrecks can remain isDestroyed=false while an
+  // adrift/exploding result is pending. They are no longer legal targets.
+  if (!unitCountsForVictory(target)) {
+    throw new Error("AI target is no longer combat effective");
+  }
   const [attackerShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, attacker.shipId));
   if (!attackerShip) throw new Error("AI attacker ship record missing");
   const [attackerModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, attackerShip.shipModelId));
