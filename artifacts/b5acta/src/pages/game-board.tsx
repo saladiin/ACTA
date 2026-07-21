@@ -1391,8 +1391,18 @@ type BoardSmokeTuning = {
 };
 
 const BOARD_SMOKE_TEXTURE_FILENAME = "cloud01-8x8.webp";
+const ORGANIC_BATTLECRAB_MODEL_FILENAME = "battlecrab.glb";
+const ORGANIC_BATTLECRAB_TUNING = {
+  speed: 2,
+  intensity: 1.19,
+  spread: 1.15,
+  normalStrength: 0.9,
+} as const;
 const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   [BOARD_SMOKE_TEXTURE_FILENAME]: "20260719-032240",
+  "shadow_flesh_base_tile.png": "20260720-organic-v1",
+  "shadow_flesh_normal.png": "20260720-organic-v1",
+  "shadow_flesh_roughness.png": "20260720-organic-v1",
 };
 const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
   color: "#f8fafc",
@@ -1416,6 +1426,152 @@ function boardTextureUrl(filename: string): string {
   const revision =
     BOARD_TEXTURE_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
   return `${basePath}/api/textures/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
+type OrganicBattlecrabShader = {
+  uniforms: Record<string, { value: number }>;
+};
+
+function configureOrganicBattlecrabTexture(
+  texture: THREE.Texture,
+  colorSpace: THREE.ColorSpace,
+) {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.flipY = false;
+  texture.colorSpace = colorSpace;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+}
+
+function OrganicBattlecrabGlbModel({
+  url,
+  filename,
+  opacity,
+}: {
+  url: string;
+  filename: string;
+  opacity: number;
+}) {
+  const { scene } = useGLTF(url);
+  const [baseTexture, normalTexture, roughnessTexture] = useLoader(
+    THREE.TextureLoader,
+    [
+      boardTextureUrl("shadow_flesh_base_tile.png"),
+      boardTextureUrl("shadow_flesh_normal.png"),
+      boardTextureUrl("shadow_flesh_roughness.png"),
+    ],
+  ) as THREE.Texture[];
+  const elapsedRef = useRef(0);
+  const shaderRefs = useRef<OrganicBattlecrabShader[]>([]);
+
+  const organic = useMemo(() => {
+    configureOrganicBattlecrabTexture(baseTexture, THREE.SRGBColorSpace);
+    configureOrganicBattlecrabTexture(normalTexture, THREE.NoColorSpace);
+    configureOrganicBattlecrabTexture(roughnessTexture, THREE.NoColorSpace);
+    normalTexture.repeat.set(
+      ORGANIC_BATTLECRAB_TUNING.spread,
+      ORGANIC_BATTLECRAB_TUNING.spread,
+    );
+    roughnessTexture.repeat.copy(normalTexture.repeat);
+
+    const cloned = scene.clone(true);
+    const materials: THREE.MeshStandardMaterial[] = [];
+    shaderRefs.current = [];
+    cloned.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const material = new THREE.MeshStandardMaterial({
+        color: "#ffffff",
+        map: baseTexture,
+        normalMap: normalTexture,
+        normalScale: new THREE.Vector2(
+          ORGANIC_BATTLECRAB_TUNING.normalStrength,
+          ORGANIC_BATTLECRAB_TUNING.normalStrength,
+        ),
+        roughness: 0.86,
+        roughnessMap: roughnessTexture,
+        metalness: 0,
+        side: THREE.DoubleSide,
+        transparent: opacity < 1,
+        opacity,
+      });
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uOrganicTime = { value: elapsedRef.current };
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "void main() {",
+          `
+uniform float uOrganicTime;
+
+void main() {
+          `,
+        );
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <map_fragment>",
+          `
+#ifdef USE_MAP
+  vec2 organicUv = vMapUv * ${ORGANIC_BATTLECRAB_TUNING.spread.toFixed(2)};
+  float organicTravel = uOrganicTime
+    * ${ORGANIC_BATTLECRAB_TUNING.speed.toFixed(2)}
+    * ${ORGANIC_BATTLECRAB_TUNING.intensity.toFixed(2)};
+  vec2 organicDrift = vec2(0.018, 0.006) * organicTravel;
+  vec4 sampledDiffuseColor = texture2D(map, organicUv + organicDrift);
+  float organicGray = dot(
+    sampledDiffuseColor.rgb,
+    vec3(0.2126, 0.7152, 0.0722)
+  );
+  organicGray = clamp(organicGray * 1.42 + 0.01, 0.0, 0.72);
+  sampledDiffuseColor.rgb = vec3(organicGray);
+  diffuseColor *= sampledDiffuseColor;
+#endif
+          `,
+        );
+        shaderRefs.current.push(shader as OrganicBattlecrabShader);
+      };
+      material.customProgramCacheKey = () =>
+        "live-battlecrab-organic-single-drift-v1";
+      materials.push(material);
+      child.material = material;
+    });
+
+    const bounds = new THREE.Box3().setFromObject(cloned);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const originOffset = new THREE.Vector3(-center.x, -bounds.min.y, -center.z);
+    return { cloned, materials, originOffset };
+  }, [baseTexture, normalTexture, opacity, roughnessTexture, scene]);
+
+  useEffect(
+    () => () => organic.materials.forEach((material) => material.dispose()),
+    [organic],
+  );
+
+  useFrame((_, delta) => {
+    elapsedRef.current += delta;
+    for (const shader of shaderRefs.current) {
+      shader.uniforms.uOrganicTime.value = elapsedRef.current;
+    }
+    const travel =
+      elapsedRef.current *
+      ORGANIC_BATTLECRAB_TUNING.speed *
+      ORGANIC_BATTLECRAB_TUNING.intensity;
+    normalTexture.offset.set(travel * 0.018, travel * 0.006);
+    roughnessTexture.offset.copy(normalTexture.offset);
+  });
+
+  const scale = useMemo(
+    () => shipScale(organic.cloned) * modelScaleMultiplier(filename),
+    [filename, organic.cloned],
+  );
+  const visualFlip = VISUAL_ROTATE_180_MODELS.has(filename.toLowerCase());
+  return (
+    <group
+      scale={[scale, scale, scale]}
+      rotation={[0, visualFlip ? Math.PI : 0, 0]}
+    >
+      <primitive object={organic.cloned} position={organic.originOffset} />
+    </group>
+  );
 }
 
 function readEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z"): number {
@@ -1594,6 +1750,7 @@ function ShipModelFallback({
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
+  [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
@@ -1653,6 +1810,15 @@ function ShipModel3D({
         opacity={opacity}
       />
     );
+  if (isGlb && filename.toLowerCase() === ORGANIC_BATTLECRAB_MODEL_FILENAME) {
+    return (
+      <OrganicBattlecrabGlbModel
+        url={url}
+        filename={filename}
+        opacity={opacity}
+      />
+    );
+  }
   if (isGlb)
     return (
       <GlbModel
