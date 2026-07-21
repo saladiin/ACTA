@@ -877,6 +877,55 @@ async function syncWeaponsForShipModel(
 
 const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
+    name: "Orion Space Station",
+    aliases: [
+      "Orion Space Station",
+      "Orion-class Space Station",
+      "Orion Starbase",
+      "Orion Starbase, Alpha Version (Variant)",
+    ],
+    filename: "orion-space-station.glb",
+    faction: "Earth Alliance",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Border Station",
+    hull: 4,
+    troops: 15,
+    damage: 75,
+    // The current model has one cripple threshold. The station's separate
+    // Heavily Damaged threshold (40) is tracked in the implementation plan.
+    damageThreshold: 20,
+    hullRating: 4,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 0,
+    turns: 0,
+    turnAngle: 0,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 4; Immobile; Interceptors 5; Space Station",
+    smallCraft: null,
+    weaponRange: 45,
+    weaponDamage: 5,
+    description:
+      "Earth Alliance Orion-class Raid-level Border Station from Powers & Principalities",
+    weapons: [
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Turret",
+        range: 15,
+        attackDice: 5,
+        traits: "Twin-Linked",
+      },
+      {
+        name: "Missile Rack",
+        arc: "Turret",
+        range: 45,
+        attackDice: 5,
+        traits: "Precise; Slow-Loading; Super AP",
+      },
+    ],
+  },
+  {
     name: "Hyperion Heavy Cruiser",
     aliases: [
       "Hyperion Cruiser",
