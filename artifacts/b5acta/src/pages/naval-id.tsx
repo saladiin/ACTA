@@ -19,6 +19,7 @@ const LARGE_MODEL_BYTES = 20 * 1024 * 1024;
 const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
+const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
 };
@@ -40,6 +41,12 @@ const ROTATING_MODEL_PARTS: Record<
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: {
     nodeName: "rotate_psihull",
     // This armature uses the same Blender Y -> glTF local Z export as Explorer.
+    axis: "z",
+    secondsPerRotation: 30,
+  },
+  [ORION_SPACE_STATION_MODEL_FILENAME]: {
+    nodeName: "orion_rotate",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
     axis: "z",
     secondsPerRotation: 30,
   },
@@ -73,6 +80,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-190419",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
 };
 

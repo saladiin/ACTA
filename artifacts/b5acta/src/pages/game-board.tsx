@@ -1236,6 +1236,7 @@ const FLIP_MODELS: Set<string> = new Set();
 const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
+const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
@@ -1260,6 +1261,12 @@ const ROTATING_MODEL_PARTS: Record<
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: {
     nodeName: "rotate_psihull",
     // This armature uses the same Blender Y -> glTF local Z export as Explorer.
+    axis: "z",
+    secondsPerRotation: 30,
+  },
+  [ORION_SPACE_STATION_MODEL_FILENAME]: {
+    nodeName: "orion_rotate",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
     axis: "z",
     secondsPerRotation: 30,
   },
@@ -1766,6 +1773,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-190419",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
   "vorchan.glb": "20260719-140443",
 };
