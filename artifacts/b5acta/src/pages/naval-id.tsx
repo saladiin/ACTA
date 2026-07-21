@@ -25,7 +25,12 @@ const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
 };
 const ROTATING_MODEL_PARTS: Record<
   string,
-  { nodeName: string; axis: "x" | "y" | "z"; secondsPerRotation: number }
+  {
+    nodeName: string;
+    axis: "x" | "y" | "z";
+    secondsPerRotation: number;
+    rotationMode?: "euler" | "local-axis";
+  }
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
     nodeName: "omg_rotator",
@@ -46,9 +51,10 @@ const ROTATING_MODEL_PARTS: Record<
   },
   [ORION_SPACE_STATION_MODEL_FILENAME]: {
     nodeName: "orion_rotate",
-    // Blender Y is exported as this bone's local Z in glTF/Three.js.
-    axis: "z",
+    // Preserve the exported bind rotation and spin around the bone's Blender Y axis.
+    axis: "y",
     secondsPerRotation: 30,
+    rotationMode: "local-axis",
   },
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
@@ -80,7 +86,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
-  [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-190419",
+  [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
 };
 
@@ -181,6 +187,9 @@ function NavalModel({ url, filename }: { url: string; filename: string }) {
   const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
   const rotatingPartRef = useRef<THREE.Object3D | null>(null);
   const rotatingPartInitialRotationRef = useRef(0);
+  const rotatingPartInitialQuaternionRef = useRef(new THREE.Quaternion());
+  const rotatingPartDeltaQuaternionRef = useRef(new THREE.Quaternion());
+  const rotatingPartLocalAxisRef = useRef(new THREE.Vector3(0, 1, 0));
 
   const { cloned, scale, center } = useMemo(() => {
     rotatingPartRef.current = null;
@@ -191,6 +200,12 @@ function NavalModel({ url, filename }: { url: string; filename: string }) {
       if (rotatingPartConfig && childName === rotatingPartConfig.nodeName.toLowerCase()) {
         rotatingPartRef.current = child;
         rotatingPartInitialRotationRef.current = readEulerAxis(child.rotation, rotatingPartConfig.axis);
+        rotatingPartInitialQuaternionRef.current.copy(child.quaternion);
+        rotatingPartLocalAxisRef.current.set(
+          rotatingPartConfig.axis === "x" ? 1 : 0,
+          rotatingPartConfig.axis === "y" ? 1 : 0,
+          rotatingPartConfig.axis === "z" ? 1 : 0,
+        );
       }
       if (!child.isMesh) return;
       child.castShadow = true;
@@ -227,11 +242,21 @@ function NavalModel({ url, filename }: { url: string; filename: string }) {
     if (!rotatingPartConfig || !rotatingPartRef.current) return;
     const cycleSeconds = Math.max(0.1, rotatingPartConfig.secondsPerRotation);
     const progress = (clock.getElapsedTime() % cycleSeconds) / cycleSeconds;
-    writeEulerAxis(
-      rotatingPartRef.current.rotation,
-      rotatingPartConfig.axis,
-      rotatingPartInitialRotationRef.current + progress * Math.PI * 2,
-    );
+    if (rotatingPartConfig.rotationMode === "local-axis") {
+      rotatingPartDeltaQuaternionRef.current.setFromAxisAngle(
+        rotatingPartLocalAxisRef.current,
+        progress * Math.PI * 2,
+      );
+      rotatingPartRef.current.quaternion
+        .copy(rotatingPartInitialQuaternionRef.current)
+        .multiply(rotatingPartDeltaQuaternionRef.current);
+    } else {
+      writeEulerAxis(
+        rotatingPartRef.current.rotation,
+        rotatingPartConfig.axis,
+        rotatingPartInitialRotationRef.current + progress * Math.PI * 2,
+      );
+    }
     rotatingPartRef.current.updateMatrixWorld();
   });
 

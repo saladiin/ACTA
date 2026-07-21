@@ -1245,7 +1245,12 @@ const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
 };
 const ROTATING_MODEL_PARTS: Record<
   string,
-  { nodeName: string; axis: "x" | "y" | "z"; secondsPerRotation: number }
+  {
+    nodeName: string;
+    axis: "x" | "y" | "z";
+    secondsPerRotation: number;
+    rotationMode?: "euler" | "local-axis";
+  }
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
     nodeName: "omg_rotator",
@@ -1266,9 +1271,10 @@ const ROTATING_MODEL_PARTS: Record<
   },
   [ORION_SPACE_STATION_MODEL_FILENAME]: {
     nodeName: "orion_rotate",
-    // Blender Y is exported as this bone's local Z in glTF/Three.js.
-    axis: "z",
+    // Preserve the exported bind rotation and spin around the bone's Blender Y axis.
+    axis: "y",
     secondsPerRotation: 30,
+    rotationMode: "local-axis",
   },
 };
 const DEAD_MODEL_FILENAMES: Record<string, string> = {
@@ -1630,6 +1636,9 @@ function GlbModel({
   const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
   const rotatingPartRef = useRef<THREE.Object3D | null>(null);
   const rotatingPartInitialRotationRef = useRef(0);
+  const rotatingPartInitialQuaternionRef = useRef(new THREE.Quaternion());
+  const rotatingPartDeltaQuaternionRef = useRef(new THREE.Quaternion());
+  const rotatingPartLocalAxisRef = useRef(new THREE.Vector3(0, 1, 0));
   const { cloned, anchors } = useMemo(() => {
     rotatingPartRef.current = null;
     rotatingPartInitialRotationRef.current = 0;
@@ -1645,6 +1654,12 @@ function GlbModel({
         rotatingPartInitialRotationRef.current = readEulerAxis(
           child.rotation,
           rotatingPartConfig.axis,
+        );
+        rotatingPartInitialQuaternionRef.current.copy(child.quaternion);
+        rotatingPartLocalAxisRef.current.set(
+          rotatingPartConfig.axis === "x" ? 1 : 0,
+          rotatingPartConfig.axis === "y" ? 1 : 0,
+          rotatingPartConfig.axis === "z" ? 1 : 0,
         );
       }
       if (
@@ -1696,11 +1711,21 @@ function GlbModel({
     if (!rotatingPartConfig || !rotatingPartRef.current) return;
     const cycleSeconds = Math.max(0.1, rotatingPartConfig.secondsPerRotation);
     const progress = (clock.getElapsedTime() % cycleSeconds) / cycleSeconds;
-    writeEulerAxis(
-      rotatingPartRef.current.rotation,
-      rotatingPartConfig.axis,
-      rotatingPartInitialRotationRef.current + progress * Math.PI * 2,
-    );
+    if (rotatingPartConfig.rotationMode === "local-axis") {
+      rotatingPartDeltaQuaternionRef.current.setFromAxisAngle(
+        rotatingPartLocalAxisRef.current,
+        progress * Math.PI * 2,
+      );
+      rotatingPartRef.current.quaternion
+        .copy(rotatingPartInitialQuaternionRef.current)
+        .multiply(rotatingPartDeltaQuaternionRef.current);
+    } else {
+      writeEulerAxis(
+        rotatingPartRef.current.rotation,
+        rotatingPartConfig.axis,
+        rotatingPartInitialRotationRef.current + progress * Math.PI * 2,
+      );
+    }
     rotatingPartRef.current.updateMatrixWorld();
   });
   const s = useMemo(
@@ -1773,7 +1798,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
-  [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-190419",
+  [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
   "vorchan.glb": "20260719-140443",
 };
