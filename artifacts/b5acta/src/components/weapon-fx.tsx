@@ -30,6 +30,31 @@ const TRACER_TUNING = {
   intensity: 1,
   count: 7,
 };
+const FIGHTER_PROJECTILE_MODEL_FILENAME = "projectile_mesh.glb";
+const FIGHTER_PROJECTILE_TEXTURE_FILENAME = "T_FirePanningCyl45.png";
+const FIGHTER_PROJECTILE_SECONDARY_TEXTURE_FILENAME = "T_VFX_WindNoise1.png";
+const FIGHTER_PROJECTILE_ALPHA_TEXTURE_FILENAME = "T_Noise_HU85k.png";
+const FIGHTER_PROJECTILE_FLIGHT_MS = 950;
+const FIGHTER_PROJECTILE_LAUNCH_DELAYS_MS = [0, 200, 400, 300, 500, 700] as const;
+const FIGHTER_PROJECTILE_TUNING = {
+  color: "#fcfcfd",
+  secondaryColor: "#3a13fb",
+  speed: 1.15,
+  size: 0.5,
+  fade: 1.1,
+  intensity: 1.2,
+  spread: 0.2,
+  count: 3,
+  arc: 0.35,
+  thickness: 0.6,
+  meshSize: 0.15,
+};
+const SHADOW_FIGHTER_PROJECTILE_TUNING = {
+  ...FIGHTER_PROJECTILE_TUNING,
+  color: "#a655f7",
+  secondaryColor: "#c800ff",
+  count: 6,
+};
 const MISSILE_TUNING = {
   color: "#f97316",
   secondaryColor: "#fef08a",
@@ -132,6 +157,21 @@ function tracerColorsFor(faction: string, weapon?: Pick<Weapon, "name">): { colo
     return { color: TRACER_COLOR, impact: TRACER_IMPACT_COLOR };
   }
   return { color: TRACER_COLOR, impact: TRACER_IMPACT_COLOR };
+}
+
+function isFighterAttacker(attackerName?: string, attackerModelFilename?: string): boolean {
+  const text = `${attackerName ?? ""} ${attackerModelFilename ?? ""}`.toLowerCase();
+  return /\b(fighter|flight|starfury|nial|flyer|sentri|frazi|spitfire)\b/.test(text);
+}
+
+function isShadowFighterAttacker(
+  attackerFaction: string,
+  attackerName?: string,
+  attackerModelFilename?: string,
+): boolean {
+  if (!isFighterAttacker(attackerName, attackerModelFilename)) return false;
+  const text = `${attackerFaction} ${attackerName ?? ""} ${attackerModelFilename ?? ""}`.toLowerCase();
+  return text.includes("shadow") || text.includes("spitfire");
 }
 
 // Common envelope: short ramp-up, plateau, then fade. Returns 0..1.
@@ -382,6 +422,280 @@ function modelScaleForTargetSize(object: THREE.Object3D, targetInches: number): 
   box.getSize(size);
   const maxHorizontal = Math.max(size.x, size.z);
   return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
+}
+
+type FighterProjectileTuning = typeof FIGHTER_PROJECTILE_TUNING;
+
+const FIGHTER_PROJECTILE_SHADER_CONFIG = {
+  alphaSource: 2,
+  alphaFloor: 0.16,
+  alphaStrength: 0.58,
+  secondaryMix: 0.45,
+  emissiveBoost: 0.95,
+  rimBoost: 0.3,
+  rimAlpha: 0.09,
+  fresnelPower: 1.8,
+  threshold: 0.24,
+  pulseAmount: 0.26,
+  primarySpeed: [0, -0.1] as const,
+  secondarySpeed: [0.09, 0.02] as const,
+  alphaSpeed: [-0.03, 0.05] as const,
+  primaryRepeat: [1, 1] as const,
+  secondaryRepeat: [1.3, 1.3] as const,
+  alphaRepeat: [1.9, 1.9] as const,
+};
+
+function configureProjectileTexture(texture: THREE.Texture, colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace): void {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = colorSpace;
+  texture.needsUpdate = true;
+}
+
+function assetUrl(kind: "models" | "textures", filename: string): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  return `${basePath}/api/${kind}/${filename}`;
+}
+
+function MeshFighterProjectileRound({
+  from,
+  to,
+  tuning,
+  index,
+  startRef,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  tuning: FighterProjectileTuning;
+  index: number;
+  startRef: React.MutableRefObject<number>;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const forward = useMemo(() => new THREE.Vector3(0, 0, -1), []);
+  const { scene } = useGLTF(assetUrl("models", FIGHTER_PROJECTILE_MODEL_FILENAME));
+  const primaryTexture = useLoader(THREE.TextureLoader, assetUrl("textures", FIGHTER_PROJECTILE_TEXTURE_FILENAME));
+  const secondaryTexture = useLoader(THREE.TextureLoader, assetUrl("textures", FIGHTER_PROJECTILE_SECONDARY_TEXTURE_FILENAME));
+  const alphaTexture = useLoader(THREE.TextureLoader, assetUrl("textures", FIGHTER_PROJECTILE_ALPHA_TEXTURE_FILENAME));
+
+  useMemo(() => {
+    configureProjectileTexture(primaryTexture);
+    configureProjectileTexture(secondaryTexture);
+    configureProjectileTexture(alphaTexture, THREE.NoColorSpace);
+  }, [alphaTexture, primaryTexture, secondaryTexture]);
+
+  const uniforms = useMemo(
+    () => ({
+      uPrimaryMap: { value: primaryTexture },
+      uSecondaryMap: { value: secondaryTexture },
+      uAlphaMap: { value: alphaTexture },
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(tuning.color) },
+      uSecondaryColor: { value: new THREE.Color(tuning.secondaryColor) },
+      uIntensity: { value: tuning.intensity },
+      uOpacity: { value: 0 },
+      uAlphaSource: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.alphaSource },
+      uAlphaFloor: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.alphaFloor },
+      uAlphaStrength: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.alphaStrength },
+      uSecondaryMix: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.secondaryMix },
+      uEmissiveBoost: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.emissiveBoost },
+      uRimBoost: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.rimBoost },
+      uRimAlpha: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.rimAlpha },
+      uFresnelPower: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.fresnelPower },
+      uThreshold: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.threshold },
+      uPulseAmount: { value: FIGHTER_PROJECTILE_SHADER_CONFIG.pulseAmount },
+      uPrimarySpeed: { value: new THREE.Vector2(...FIGHTER_PROJECTILE_SHADER_CONFIG.primarySpeed) },
+      uSecondarySpeed: { value: new THREE.Vector2(...FIGHTER_PROJECTILE_SHADER_CONFIG.secondarySpeed) },
+      uAlphaSpeed: { value: new THREE.Vector2(...FIGHTER_PROJECTILE_SHADER_CONFIG.alphaSpeed) },
+      uPrimaryRepeat: { value: new THREE.Vector2(...FIGHTER_PROJECTILE_SHADER_CONFIG.primaryRepeat) },
+      uSecondaryRepeat: { value: new THREE.Vector2(...FIGHTER_PROJECTILE_SHADER_CONFIG.secondaryRepeat) },
+      uAlphaRepeat: { value: new THREE.Vector2(...FIGHTER_PROJECTILE_SHADER_CONFIG.alphaRepeat) },
+    }),
+    [alphaTexture, primaryTexture, secondaryTexture, tuning.color, tuning.intensity, tuning.secondaryColor],
+  );
+
+  const { cloned, scale } = useMemo(() => {
+    const material = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vWorldNormal;
+        varying vec3 vViewDir;
+        void main() {
+          vUv = uv;
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vViewDir = normalize(cameraPosition - worldPosition.xyz);
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uPrimaryMap;
+        uniform sampler2D uSecondaryMap;
+        uniform sampler2D uAlphaMap;
+        uniform float uTime;
+        uniform vec3 uColor;
+        uniform vec3 uSecondaryColor;
+        uniform float uIntensity;
+        uniform float uOpacity;
+        uniform float uAlphaSource;
+        uniform float uAlphaFloor;
+        uniform float uAlphaStrength;
+        uniform float uSecondaryMix;
+        uniform float uEmissiveBoost;
+        uniform float uRimBoost;
+        uniform float uRimAlpha;
+        uniform float uFresnelPower;
+        uniform float uThreshold;
+        uniform float uPulseAmount;
+        uniform vec2 uPrimarySpeed;
+        uniform vec2 uSecondarySpeed;
+        uniform vec2 uAlphaSpeed;
+        uniform vec2 uPrimaryRepeat;
+        uniform vec2 uSecondaryRepeat;
+        uniform vec2 uAlphaRepeat;
+        varying vec2 vUv;
+        varying vec3 vWorldNormal;
+        varying vec3 vViewDir;
+
+        void main() {
+          vec4 primary = texture2D(uPrimaryMap, vUv * uPrimaryRepeat + uPrimarySpeed * uTime);
+          vec4 secondary = texture2D(uSecondaryMap, vUv * uSecondaryRepeat + uSecondarySpeed * uTime);
+          vec4 alphaTex = texture2D(uAlphaMap, vUv * uAlphaRepeat + uAlphaSpeed * uTime);
+          float alphaSample = primary.r;
+          if (uAlphaSource > 0.5 && uAlphaSource < 1.5) {
+            alphaSample = secondary.r;
+          } else if (uAlphaSource >= 1.5) {
+            alphaSample = alphaTex.r;
+          }
+          float cut = smoothstep(uThreshold - 0.16, uThreshold + 0.16, alphaSample);
+          float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), uFresnelPower);
+          float pulse = 1.0 + sin(uTime * 4.2) * uPulseAmount;
+          vec3 mappedColor = uColor * (0.38 + primary.rgb * 1.25);
+          mappedColor = mix(mappedColor, uSecondaryColor * (0.32 + secondary.rgb * 1.25), uSecondaryMix);
+          mappedColor += uSecondaryColor * alphaTex.r * uEmissiveBoost;
+          mappedColor += uSecondaryColor * fresnel * uRimBoost;
+          float alpha = (uAlphaFloor + cut * uAlphaStrength + fresnel * uRimAlpha) * uIntensity * uOpacity * pulse;
+          gl_FragColor = vec4(mappedColor * uIntensity, clamp(alpha, 0.0, 0.92));
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    materialRef.current = material;
+
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.material = material;
+    });
+
+    return {
+      cloned: c,
+      scale: modelScaleForTargetSize(c, tuning.meshSize),
+    };
+  }, [scene, tuning.meshSize, uniforms]);
+
+  const flight = useMemo(() => {
+    const dir = new THREE.Vector3().subVectors(to, from).normalize();
+    const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
+    const row = index < 3 ? -1 : 1;
+    const column = index % 3;
+    const sideOffset = ((column - 1) * 0.09 + row * 0.16) * tuning.spread;
+    const verticalOffset = row > 0 ? 0.08 : -0.03;
+    const start = from.clone().add(side.clone().multiplyScalar(sideOffset));
+    const end = to.clone().add(side.clone().multiplyScalar(sideOffset * 0.28));
+    start.y += verticalOffset;
+    end.y += verticalOffset * 0.5;
+    return { start, end };
+  }, [from, index, to, tuning.spread]);
+
+  const pointAt = (t: number) => {
+    const p = flight.start.clone().lerp(flight.end, t);
+    p.y += Math.sin(Math.PI * t) * tuning.arc * 0.25;
+    return p;
+  };
+
+  const directionAt = (t: number) => {
+    const ahead = pointAt(THREE.MathUtils.clamp(t + 0.012, 0, 1));
+    const behind = pointAt(THREE.MathUtils.clamp(t - 0.012, 0, 1));
+    return ahead.sub(behind).normalize();
+  };
+
+  useFrame(() => {
+    const group = groupRef.current;
+    const material = materialRef.current;
+    if (!group || !material) return;
+
+    const durationMs = FIGHTER_PROJECTILE_FLIGHT_MS / THREE.MathUtils.clamp(tuning.speed, 0.25, 3);
+    const delayMs = FIGHTER_PROJECTILE_LAUNCH_DELAYS_MS[index] ?? index * 200;
+    const elapsed = performance.now() - startRef.current - delayMs;
+    if (elapsed < 0 || elapsed > durationMs) {
+      group.visible = false;
+      material.uniforms.uOpacity.value = 0;
+      return;
+    }
+
+    const t = THREE.MathUtils.clamp(elapsed / durationMs, 0, 1);
+    const current = pointAt(t);
+    const direction = directionAt(t);
+    const fadeIn = THREE.MathUtils.clamp(t / 0.08, 0, 1);
+    const fadeOut = THREE.MathUtils.clamp((1 - t) / 0.12, 0, 1);
+
+    group.visible = true;
+    group.position.copy(current);
+    group.quaternion.setFromUnitVectors(forward, direction);
+    material.uniforms.uTime.value = (performance.now() - startRef.current) * 0.001 * tuning.speed;
+    material.uniforms.uOpacity.value = fadeIn * fadeOut * tuning.fade;
+    material.uniforms.uColor.value.set(tuning.color);
+    material.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
+    material.uniforms.uIntensity.value = tuning.intensity;
+  });
+
+  return (
+    <group ref={groupRef} visible={false}>
+      <primitive object={cloned} scale={[scale, scale, scale]} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.7 * tuning.intensity}
+        distance={2.4 * tuning.thickness}
+      />
+    </group>
+  );
+}
+
+function MeshFighterProjectileSalvoFx({
+  from,
+  to,
+  shadow,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  shadow: boolean;
+}) {
+  const startRef = useRef<number>(performance.now());
+  const tuning = shadow ? SHADOW_FIGHTER_PROJECTILE_TUNING : FIGHTER_PROJECTILE_TUNING;
+  const count = Math.max(1, Math.min(tuning.count, 6));
+  return (
+    <>
+      {Array.from({ length: count }).map((_, i) => (
+        <Suspense key={i} fallback={null}>
+          <MeshFighterProjectileRound
+            from={from}
+            to={to}
+            tuning={tuning}
+            index={i}
+            startRef={startRef}
+          />
+        </Suspense>
+      ))}
+    </>
+  );
 }
 
 function MissileTextureFlare() {
@@ -862,6 +1176,8 @@ export function WeaponFx({
   to,
   weapon,
   attackerFaction,
+  attackerName,
+  attackerModelFilename,
   hits,
   totalDice,
 }: {
@@ -869,6 +1185,8 @@ export function WeaponFx({
   to: THREE.Vector3;
   weapon: Pick<Weapon, "id" | "name" | "traits" | "attackDice">;
   attackerFaction: string;
+  attackerName?: string;
+  attackerModelFilename?: string;
   hits: number;
   totalDice: number;
 }) {
@@ -917,6 +1235,35 @@ export function WeaponFx({
   }
 
   // Tracer (cannons / mass drivers / ion / pulse).
+  const fighterProjectile = isFighterAttacker(attackerName, attackerModelFilename);
+  const shadowFighterProjectile = isShadowFighterAttacker(
+    attackerFaction,
+    attackerName,
+    attackerModelFilename,
+  );
+  if (fighterProjectile) {
+    const travelMs =
+      FIGHTER_PROJECTILE_FLIGHT_MS /
+      THREE.MathUtils.clamp(FIGHTER_PROJECTILE_TUNING.speed, 0.25, 3);
+    return (
+      <>
+        <MeshFighterProjectileSalvoFx
+          from={from}
+          to={to}
+          shadow={shadowFighterProjectile}
+        />
+        {Array.from({ length: hits }).map((_, i) => (
+          <TargetImpactFx
+            key={i}
+            position={to}
+            delayMs={travelMs + i * 70}
+            seed={i + 40}
+          />
+        ))}
+      </>
+    );
+  }
+
   const tracerColors = tracerColorsFor(attackerFaction, weapon);
   return (
     <>

@@ -12781,6 +12781,8 @@ export default function GameBoard() {
                   to={to}
                   weapon={diceModal.weapon}
                   attackerFaction={attacker.faction}
+                  attackerName={attacker.name}
+                  attackerModelFilename={attacker.modelFilename}
                   hits={hits}
                   totalDice={diceModal.attackDice}
                 />
@@ -12808,6 +12810,8 @@ export default function GameBoard() {
                   to={new THREE.Vector3(tx, 2, tz)}
                   weapon={weapon}
                   attackerFaction={attacker.faction}
+                  attackerName={attacker.name}
+                  attackerModelFilename={attacker.modelFilename}
                   hits={aiWeaponFxReplay.hits}
                   totalDice={weapon.attackDice}
                 />
