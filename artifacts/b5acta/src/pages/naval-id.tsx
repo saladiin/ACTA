@@ -18,6 +18,7 @@ import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 const LARGE_MODEL_BYTES = 20 * 1024 * 1024;
 const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
+const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
 };
@@ -36,9 +37,17 @@ const ROTATING_MODEL_PARTS: Record<
     axis: "z",
     secondsPerRotation: 30,
   },
+  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: {
+    nodeName: "rotate_psihull",
+    // This armature uses the same Blender Y -> glTF local Z export as Explorer.
+    axis: "z",
+    secondsPerRotation: 30,
+  },
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
   EXPLORER_ROTATING_MODEL_FILENAME,
+  PSI_CORPS_MOTHERSHIP_MODEL_FILENAME,
+  "black-omega.glb",
   "command-hyperion.glb",
   "aurora.glb",
   "thunderbolt.glb",
@@ -55,6 +64,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
+  "black-omega.glb": "20260721-183649",
   "command-hyperion.glb": "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
@@ -63,6 +73,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
 };
 
 type ModelProbe = {

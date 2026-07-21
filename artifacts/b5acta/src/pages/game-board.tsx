@@ -1235,6 +1235,7 @@ function ObjModel({
 const FLIP_MODELS: Set<string> = new Set();
 const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
+const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
@@ -1256,6 +1257,12 @@ const ROTATING_MODEL_PARTS: Record<
     axis: "z",
     secondsPerRotation: 30,
   },
+  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: {
+    nodeName: "rotate_psihull",
+    // This armature uses the same Blender Y -> glTF local Z export as Explorer.
+    axis: "z",
+    secondsPerRotation: 30,
+  },
 };
 const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "battlecrab.glb": DEAD_BATTLECRAB_MODEL_FILENAME,
@@ -1265,7 +1272,9 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
   EXPLORER_ROTATING_MODEL_FILENAME,
+  PSI_CORPS_MOTHERSHIP_MODEL_FILENAME,
   COMMAND_HYPERION_MODEL_FILENAME,
+  "black-omega.glb",
   "aurora.glb",
   "thunderbolt.glb",
   "tiger.glb",
@@ -1750,12 +1759,14 @@ function ShipModelFallback({
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
+  "black-omega.glb": "20260721-183649",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
   "vorchan.glb": "20260719-140443",
 };
 

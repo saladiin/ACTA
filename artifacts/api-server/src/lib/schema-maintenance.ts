@@ -1337,6 +1337,67 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     ],
   },
   {
+    name: "Psi Corps Mothership",
+    aliases: [
+      "Psi Corps Mothership",
+      "Psi-Corps Mothership",
+      "Mothership",
+    ],
+    filename: "psicorpmother.glb",
+    faction: "Psi Corps",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Mothership",
+    hull: 4,
+    troops: 4,
+    damage: 38,
+    damageThreshold: 6,
+    hullRating: 4,
+    crew: 36,
+    crewThreshold: 5,
+    speed: 4,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Advanced Jump Engine; Anti-Fighter 6; Interceptors 4; Lumbering; Psychic Crew 5; Stealth +4",
+    smallCraft: "Black Omega Starfury Flight (4)",
+    weaponRange: 30,
+    weaponDamage: 8,
+    description:
+      "Psi Corps hyperspace fortress and telepathic command ship",
+    weapons: [
+      {
+        name: "Heavy Laser",
+        arc: "Boresight Forward",
+        range: 30,
+        attackDice: 4,
+        traits: "Beam; Double Damage",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Forward",
+        range: 10,
+        attackDice: 8,
+        traits: "Twin Linked",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Port",
+        range: 10,
+        attackDice: 8,
+        traits: "Twin Linked",
+      },
+      {
+        name: "Medium Pulse Cannon",
+        arc: "Starboard",
+        range: 10,
+        attackDice: 8,
+        traits: "Twin Linked",
+      },
+    ],
+  },
+  {
     name: "Explorer Survey Ship",
     aliases: [
       "Explorer Survey Ship",
@@ -1423,6 +1484,34 @@ const FIGHTER_FLIGHTS = [
       "Aurora Starfury Flight",
       "Aurora Starfury Wing",
       "Starfury Flight",
+    ],
+    weapons: [
+      {
+        name: "Uni-Pulse Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "Twin Linked",
+      },
+    ],
+  },
+  {
+    name: "Black Omega Starfury Flight",
+    filename: "black-omega.glb",
+    faction: "Psi Corps",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 5,
+    speed: 14,
+    traits:
+      "Dodge 2+; Dogfight +3; Fighter; Psychic Crew; Super Maneuverable",
+    weaponRange: 2,
+    weaponDamage: 2,
+    description: "Psi Corps telepath-piloted Black Omega Starfury flight",
+    aliases: [
+      "Black Omega Starfury Flight",
+      "Black Omega Starfury Wing",
+      "Black Omega Flight",
     ],
     weapons: [
       {
