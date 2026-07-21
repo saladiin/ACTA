@@ -3208,6 +3208,7 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
 type AiFirePlan = {
   weapon: typeof weaponsTable.$inferSelect;
   target: typeof gameUnitsTable.$inferSelect;
+  targetPriority: number;
   distance: number;
   score: number;
   breakdown: Record<string, unknown>;
@@ -3220,6 +3221,7 @@ type AiFireCandidateLog = {
   weaponName: string;
   targetId: number;
   targetName: string;
+  targetPriority: number;
   distance: number;
   score: number;
   breakdown: Record<string, unknown>;
@@ -3262,6 +3264,7 @@ async function chooseAiFirePlan(
   if (!attackerShip) return null;
   const [attackerModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, attackerShip.shipModelId));
   if (!attackerModel) return null;
+  const attackerIsFighter = shipModelIsFighter(attackerModel);
   const attackerAiProfile = shipAiProfileForModel(attackerModel);
   const attackerCritRows = await tx.select().from(unitCriticalEffectsTable)
     .where(eq(unitCriticalEffectsTable.gameUnitId, attacker.id));
@@ -3286,7 +3289,7 @@ async function chooseAiFirePlan(
     sql`(${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`,
   ));
   const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
-  if (shipModelIsFighter(attackerModel)) {
+  if (attackerIsFighter) {
     const attackerFootprint: UnitFootprint = {
       id: attacker.id,
       ownerId: attacker.ownerId,
@@ -3354,7 +3357,8 @@ async function chooseAiFirePlan(
         rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: "target-model-record-missing" });
         continue;
       }
-      if (shipModelIsFighter(targetModel) && await fighterIsLockedInDogfight(tx, game.id, target)) {
+      const targetIsFighter = shipModelIsFighter(targetModel);
+      if (targetIsFighter && await fighterIsLockedInDogfight(tx, game.id, target)) {
         rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: "target-locked-in-dogfight" });
         continue;
       }
@@ -3368,12 +3372,12 @@ async function chooseAiFirePlan(
         x: aPos.x,
         z: aPos.z,
         baseRadiusInches: rulesBaseRadius(attacker),
-        isFighter: shipModelIsFighter(attackerModel),
+        isFighter: attackerIsFighter,
       }, {
         x: tPos.x,
         z: tPos.z,
         baseRadiusInches: rulesBaseRadius(target),
-        isFighter: shipModelIsFighter(targetModel),
+        isFighter: targetIsFighter,
       });
       if (distance > weapon.range) {
         rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: `out-of-range-${distance.toFixed(1)}-gt-${weapon.range}` });
@@ -3424,7 +3428,7 @@ async function chooseAiFirePlan(
             x: target.hexQ,
             z: target.hexR,
             baseRadiusInches: rulesBaseRadius(target),
-            isFighter: shipModelIsFighter(targetModel),
+            isFighter: targetIsFighter,
             heading: target.heading,
             flipped: FLIP_MODELS.has(target.modelFilename),
             weapons: targetWeapons,
@@ -3439,6 +3443,7 @@ async function chooseAiFirePlan(
         })
         : null;
       const apexPredatorBonus = apexPredator ? apexPredator.score * 0.75 : 0;
+      const targetPriority = !attackerIsFighter && targetIsFighter ? 1 : 0;
       const score =
         expectedDamage * 14 +
         expectedHits * 4 +
@@ -3471,6 +3476,8 @@ async function chooseAiFirePlan(
         apexPredatorBonus: Number(apexPredatorBonus.toFixed(2)),
         apexPredatorBreakdown: apexPredator?.breakdown ?? null,
         attackerAiProfile,
+        targetClass: targetIsFighter ? "fighter" : "capital",
+        targetPriority: targetPriority === 0 ? "primary" : "fighter-fallback",
         rangePenalty: Number(rangePenalty.toFixed(2)),
         overkillPenalty: Number(overkillPenalty.toFixed(2)),
         slowLoadingPenalty,
@@ -3480,17 +3487,18 @@ async function chooseAiFirePlan(
         weaponName: weapon.name,
         targetId: target.id,
         targetName: target.name,
+        targetPriority,
         distance: Number(distance.toFixed(2)),
         score: Number(score.toFixed(2)),
         breakdown,
       };
       candidates.push(candidate);
-      plans.push({ weapon, target, distance, score, breakdown, topCandidates: [], rejected: [] });
+      plans.push({ weapon, target, targetPriority, distance, score, breakdown, topCandidates: [], rejected: [] });
     }
   }
 
-  plans.sort((a, b) => b.score - a.score || a.target.hullPoints - b.target.hullPoints || a.distance - b.distance);
-  candidates.sort((a, b) => b.score - a.score || a.distance - b.distance);
+  plans.sort((a, b) => a.targetPriority - b.targetPriority || b.score - a.score || a.target.hullPoints - b.target.hullPoints || a.distance - b.distance);
+  candidates.sort((a, b) => a.targetPriority - b.targetPriority || b.score - a.score || a.distance - b.distance);
   const selected = plans[0] ?? null;
   if (!selected) return null;
   return {
