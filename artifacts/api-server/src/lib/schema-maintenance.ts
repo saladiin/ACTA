@@ -1553,6 +1553,40 @@ const FIGHTER_FLIGHTS = [
       },
     ],
   },
+  {
+    name: "Shadow Fighter Flight",
+    filename: "spitfire.glb",
+    faction: "Shadows",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 5,
+    speed: 12,
+    traits: "Atmospheric; Dodge 3+; Dogfight +0; Fighter; Shields 1/1; Super Maneuverable",
+    shield: 1,
+    shieldMax: 1,
+    shieldRegenRate: 1,
+    weaponRange: 2,
+    weaponDamage: 3,
+    description: "Shadow Fighter flight using the Spitfire mesh",
+    aliases: [
+      "Shadow Fighter Flight",
+      "Shadow Fighter",
+      "Shadow Fighters",
+      "Spitfire Flight",
+      "Spitfire Fighter Flight",
+      "Shadow Spitfire Flight",
+      "Shadow Spitfire",
+    ],
+    weapons: [
+      {
+        name: "Polarity Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 3,
+        traits: "Armor Piercing; Double Damage",
+      },
+    ],
+  },
 ];
 
 type CsvShipSeed = {
@@ -2341,9 +2375,9 @@ export async function ensureActaAllocationSchema(): Promise<void> {
               turns = 0,
               turn_angle = 360,
               crew_quality = 'N/A',
-              shield = 0,
-              shield_max = 0,
-              shield_regen_rate = 0,
+              shield = $14,
+              shield_max = $15,
+              shield_regen_rate = $16,
               traits = $8,
               small_craft = NULL,
               base_radius_inches = $13,
@@ -2366,8 +2400,8 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             SELECT
               $1, $2, $3, $4, 'patrol', $5,
               $6, 0, NULL, NULL, $6, NULL,
-              NULL, $7, 0, 360, 'N/A', 0,
-              0, 0, $8, NULL, 1, $13,
+              NULL, $7, 0, 360, 'N/A', $14,
+              $15, $16, $8, NULL, 1, $13,
               $9, $10, $11
             WHERE NOT EXISTS (SELECT 1 FROM updated)
             RETURNING id
@@ -2391,6 +2425,9 @@ export async function ensureActaAllocationSchema(): Promise<void> {
           fighter.description,
           fighter.aliases.map((alias) => alias.toLowerCase()),
           FIGHTER_BASE_RADIUS_INCHES,
+          "shield" in fighter ? fighter.shield : 0,
+          "shieldMax" in fighter ? fighter.shieldMax : 0,
+          "shieldRegenRate" in fighter ? fighter.shieldRegenRate : 0,
         ],
       );
 
