@@ -647,6 +647,33 @@ const ARCS: Record<string, { center: number; half: number } | null> = {
   "Turret":            { center: 0,            half: Math.PI }, // 360°
 };
 
+function canonicalWeaponArc(arcName: string): string {
+  const normalized = arcName.trim().replace(/\s+/g, " ").toLowerCase();
+  switch (normalized) {
+    case "forward":
+    case "front":
+      return "Forward";
+    case "aft":
+    case "rear":
+      return "Aft";
+    case "port":
+      return "Port";
+    case "starboard":
+    case "stbd":
+      return "Starboard";
+    case "turret":
+      return "Turret";
+    case "boresight forward":
+    case "boresight fwd":
+      return "Boresight Forward";
+    case "boresight aft":
+    case "boresight rear":
+      return "Boresight Aft";
+    default:
+      return arcName.trim();
+  }
+}
+
 function angleDelta(a: number, b: number): number {
   // shortest signed difference in (-π, π]
   let d = a - b;
@@ -660,7 +687,7 @@ function isInArc(
   target:   { x: number; z: number },
   arcName: string,
 ): boolean {
-  const arc = ARCS[arcName];
+  const arc = ARCS[canonicalWeaponArc(arcName)];
   if (!arc) return false; // unknown arc → reject
   const dx = target.x - attacker.x;
   const dz = target.z - attacker.z;

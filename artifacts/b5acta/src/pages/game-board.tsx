@@ -3739,6 +3739,33 @@ const ARC_LABELS: Record<
   "Boresight Aft": { pos: [0, 0.07, -1.72], label: "BS-A" },
 };
 
+function canonicalWeaponArc(arcName: string): string {
+  const normalized = arcName.trim().replace(/\s+/g, " ").toLowerCase();
+  switch (normalized) {
+    case "forward":
+    case "front":
+      return "Forward";
+    case "aft":
+    case "rear":
+      return "Aft";
+    case "port":
+      return "Port";
+    case "starboard":
+    case "stbd":
+      return "Starboard";
+    case "turret":
+      return "Turret";
+    case "boresight forward":
+    case "boresight fwd":
+      return "Boresight Forward";
+    case "boresight aft":
+    case "boresight rear":
+      return "Boresight Aft";
+    default:
+      return arcName.trim();
+  }
+}
+
 const BASE_ORIENTATION_ARCS = [
   "Forward",
   "Port",
@@ -3776,9 +3803,10 @@ function arcDisplayColor(
   scheme: UiArcColorScheme,
   side: "friendly" | "enemy" | null,
 ): string {
+  const canonicalArc = canonicalWeaponArc(arc);
   if (scheme === "side" && side)
-    return SIDE_ARC_COLORS[side][arc] ?? ARC_DEFS[arc]?.color ?? "#ffffff";
-  return ARC_DEFS[arc]?.color ?? "#ffffff";
+    return SIDE_ARC_COLORS[side][canonicalArc] ?? ARC_DEFS[canonicalArc]?.color ?? "#ffffff";
+  return ARC_DEFS[canonicalArc]?.color ?? "#ffffff";
 }
 
 function angleDeltaRadians(a: number, b: number): number {
@@ -3798,7 +3826,7 @@ function isTargetInWeaponArc(
   target: { hexQ: number; hexR: number },
   arcName: string,
 ): boolean {
-  const arc = ARC_DEFS[arcName];
+  const arc = ARC_DEFS[canonicalWeaponArc(arcName)];
   if (!arc) return false;
   const dx = target.hexQ - attacker.hexQ;
   const dz = target.hexR - attacker.hexR;
@@ -3936,8 +3964,9 @@ function RangeArcOverlay({
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
 }) {
-  const def = ARC_DEFS[arc];
-  const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+  const canonicalArc = canonicalWeaponArc(arc);
+  const def = ARC_DEFS[canonicalArc];
+  const color = arcDisplayColor(canonicalArc, arcColorScheme, arcSide);
   const geo = useMemo(() => {
     if (!def) return null;
     const segments = def.halfAngle < 0.3 ? 16 : 64;
@@ -4020,8 +4049,9 @@ function WeaponRangeProjectionDisplay({
   const maxByArc = useMemo(() => {
     const grouped = new Map<string, number>();
     for (const item of arcs) {
-      if (!ARC_DEFS[item.arc] || item.range <= 0) continue;
-      grouped.set(item.arc, Math.max(grouped.get(item.arc) ?? 0, item.range));
+      const canonicalArc = canonicalWeaponArc(item.arc);
+      if (!ARC_DEFS[canonicalArc] || item.range <= 0) continue;
+      grouped.set(canonicalArc, Math.max(grouped.get(canonicalArc) ?? 0, item.range));
     }
     return [...grouped.entries()].map(([arc, range]) => ({ arc, range }));
   }, [arcs]);
@@ -4047,11 +4077,12 @@ function arcLabelPosition(
   baseRadius: number,
   pos: [number, number, number],
 ): [number, number, number] {
+  const canonicalArc = canonicalWeaponArc(arc);
   const radial = Math.hypot(pos[0], pos[2]);
   if (radial < 0.001) return pos;
   const targetRadius =
     ARC_DISPLAY_BASE_RADIUS_INCHES +
-    (arc.startsWith("Boresight") ? 0.72 : 0.42);
+    (canonicalArc.startsWith("Boresight") ? 0.72 : 0.42);
   const scale = targetRadius / radial;
   return [pos[0] * scale, pos[1], pos[2] * scale];
 }
@@ -4072,7 +4103,7 @@ function WeaponArcDisplay({
   arcSide?: "friendly" | "enemy" | null;
 }) {
   const uniqueArcs = useMemo(
-    () => [...new Set(weapons.map((w) => w.arc))],
+    () => [...new Set(weapons.map((w) => canonicalWeaponArc(w.arc)))],
     [weapons],
   );
   const weaponArcColor = muted ? "#8a93a1" : null;

@@ -1,4 +1,4 @@
-import { pool } from "@workspace/db";
+﻿import { pool } from "@workspace/db";
 import fs from "node:fs";
 import path from "node:path";
 import { SHIP_AI_PROFILE_SEEDS } from "./ai-opponent";
@@ -128,7 +128,7 @@ Minbari,Tinashi,Warship,Fusion Cannon,Forward,18,8,Mini-beam; Twin-linked,,,,,,,
 Minbari,Tinashi,Warship,Fusion Cannon,Port,18,6,Mini-beam; Twin-linked,,,,,,,,,,
 Minbari,Tinashi,Warship,Fusion Cannon,Starboard,18,6,Mini-beam; Twin-linked,,,,,,,,,,
 Minbari,Tinashi,Warship,Fusion Cannon,Rear,18,6,Mini-beam; Twin-linked,,,,,,,,,,
-Earth Alliance,Oracle Cruiser,Scout Cruiser,Medium Laser Cannon,Boresight forward,15,2,Beam,,,,,,,,,,
+Earth Alliance,Oracle Cruiser,Scout Cruiser,Medium Laser Cannon,Boresight Forward,15,2,Beam,,,,,,,,,,
 Earth Alliance,Oracle Cruiser,Scout Cruiser,Missile Rack,Turret,30,1,Precise; Slow Loading; Super Armor Piercing,,,,,,,,,,
 Earth Alliance,Oracle Cruiser,Scout Cruiser,Light Pulse Cannon,Forward,8,2,Twin-Linked,,,,,,,,,,
 Earth Alliance,Oracle Cruiser,Scout Cruiser,Light Pulse Cannon,Port,8,2,Twin-Linked,,,,,,,,,,
@@ -1647,6 +1647,33 @@ function parseCsvLine(line: string): string[] {
   return cells;
 }
 
+function canonicalWeaponArc(arc: string): string {
+  const normalized = arc.trim().replace(/\s+/g, " ").toLowerCase();
+  switch (normalized) {
+    case "forward":
+    case "front":
+      return "Forward";
+    case "aft":
+    case "rear":
+      return "Aft";
+    case "port":
+      return "Port";
+    case "starboard":
+    case "stbd":
+      return "Starboard";
+    case "turret":
+      return "Turret";
+    case "boresight forward":
+    case "boresight fwd":
+      return "Boresight Forward";
+    case "boresight aft":
+    case "boresight rear":
+      return "Boresight Aft";
+    default:
+      return arc.trim() || "Forward";
+  }
+}
+
 function intCell(value: string | undefined, fallback = 0): number {
   const parsed = Number.parseInt((value ?? "").trim(), 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -1743,7 +1770,7 @@ function readActaShipCsv(): {
       const weapon: CsvWeaponSeed = {
         shipName: second,
         name: cells[3] || "Weapon",
-        arc: cells[4] || "Forward",
+        arc: canonicalWeaponArc(cells[4] || "Forward"),
         range: intCell(cells[5], 0),
         attackDice: intCell(cells[6], 0),
         traits: cells[7] ?? "",
