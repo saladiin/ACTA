@@ -2808,7 +2808,7 @@ function GameUnit3D({
   const usesAdriftVisual = unit.damageState === "adrift" && !isFighter;
   const usesExplodingVisual =
     unit.damageState === "exploding-end-of-next" && !isFighter;
-  const showGenericDamageFire =
+  const showGenericDamageSparks =
     !usesAdriftVisual &&
     !usesExplodingVisual &&
     !usesDeadHyperionVisual &&
@@ -2995,14 +2995,17 @@ function GameUnit3D({
           )}
         </group>
         {!hasPreview &&
-          showGenericDamageFire &&
+          showGenericDamageSparks &&
           (useShadowDamageVfx ? (
             <ShadowDamageParticleSpray
               level={fireLevel}
               destroyed={visuallyDestroyed}
             />
           ) : (
-            <ShipDamageFire level={fireLevel} destroyed={visuallyDestroyed} />
+            <ShipDamagePointSparks
+              level={fireLevel}
+              destroyed={visuallyDestroyed}
+            />
           ))}
         {!hasPreview && showGenericDestroyedSmoke && (
           <DestroyedSmoke
@@ -3297,18 +3300,19 @@ function DogfightImpactFlashes({
   );
 }
 
-// Showcase hull-fire tuning, anchored to the ship hull for damage states.
-const HULL_FIRE_TUNING = {
-  color: "#ff7a18",
-  secondaryColor: "#ffd166",
-  speed: 1.1,
-  size: 0.3,
-  fade: 1,
-  intensity: 0.8,
-  spread: 0.45,
-  count: 16,
-  arc: 0.15,
-  thickness: 0.9,
+// Default hull-damage effect for non-Shadow ships.
+const HULL_DAMAGE_SPARK_TUNING = {
+  color: "#fb923c",
+  secondaryColor: "#fef3c7",
+  speed: 2.8,
+  size: 1.5,
+  fade: 1.45,
+  intensity: 1.9,
+  spread: 0.85,
+  count: 55,
+  arc: 0.55,
+  thickness: 0.8,
+  randomness: 0.25,
 };
 
 const SHADOW_DAMAGE_SPRAY_TUNING = {
@@ -3474,94 +3478,166 @@ function ShadowDamageParticleSpray({
   );
 }
 
-function ShipDamageFire({
+type ShipDamageSparkSeed = {
+  origin: [number, number, number];
+  velocity: [number, number, number];
+  phase: number;
+  life: number;
+  wobble: number;
+  colorMix: number;
+};
+
+function seededDamageSparkNoise(index: number, salt: number): number {
+  const value = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453123;
+  return value - Math.floor(value);
+}
+
+function ShipDamagePointSparks({
   level,
   destroyed,
 }: {
   level: number;
   destroyed: boolean;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
+  const timeRef = useRef(0);
   const lightRef = useRef<THREE.PointLight>(null);
   const fireLevel = Math.max(0, Math.min(1, level));
-  const flames = useMemo(() => {
-    return Array.from({ length: HULL_FIRE_TUNING.count }, (_, i) => {
-      const angle = i * 2.399 + Math.random() * 0.18;
-      const radius =
-        (0.13 + (i % 5) * 0.08) *
-        HULL_FIRE_TUNING.spread *
-        (destroyed ? 1.15 : 0.82);
+  const particleCount = Math.max(
+    8,
+    Math.min(
+      220,
+      Math.round(
+        HULL_DAMAGE_SPARK_TUNING.count * (0.55 + fireLevel * 0.65),
+      ),
+    ),
+  );
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    g.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    return g;
+  }, [particleCount]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const seeds = useMemo<ShipDamageSparkSeed[]>(() => {
+    const plumeWidth = HULL_DAMAGE_SPARK_TUNING.spread;
+    const lift = HULL_DAMAGE_SPARK_TUNING.arc;
+    const randomness = HULL_DAMAGE_SPARK_TUNING.randomness;
+    return Array.from({ length: particleCount }, (_, index) => {
+      const a = seededDamageSparkNoise(index, 0.11);
+      const b = seededDamageSparkNoise(index, 1.73);
+      const c = seededDamageSparkNoise(index, 4.41);
+      const d = seededDamageSparkNoise(index, 8.19);
+      const side = (a - 0.5) * (0.65 + plumeWidth * 0.7);
+      const originY = -0.18 + b * (0.3 + randomness * 0.44);
+      const originZ = -0.78 - c * (0.55 + randomness * 0.7);
+      const driftX = side * (0.42 + randomness * 0.8);
+      const driftY = 0.12 + lift * (0.35 + d * 0.72);
+      const driftZ = -(1.35 + b * 2.4) * (0.55 + plumeWidth * 0.52);
       return {
-        angle,
-        radius,
-        speed: (0.48 + (i % 4) * 0.12) * HULL_FIRE_TUNING.speed,
-        phase: i * 0.19 + Math.random() * 0.08,
-        size:
-          (0.18 + (i % 3) * 0.08) *
-          HULL_FIRE_TUNING.size *
-          (destroyed ? 1.12 : 0.88),
-        color:
-          i % 3 === 0
-            ? HULL_FIRE_TUNING.secondaryColor
-            : HULL_FIRE_TUNING.color,
+        origin: [side * 0.72, originY, originZ],
+        velocity: [driftX, driftY, driftZ],
+        phase: a * 7.5,
+        life: 2.8 + b * 3.4 + HULL_DAMAGE_SPARK_TUNING.fade * 0.55,
+        wobble: 0.25 + c * (0.7 + randomness * 1.1),
+        colorMix: d,
       };
     });
-  }, [destroyed]);
+  }, [particleCount]);
+  const primary = useMemo(
+    () => new THREE.Color(HULL_DAMAGE_SPARK_TUNING.color),
+    [],
+  );
+  const secondary = useMemo(
+    () => new THREE.Color(HULL_DAMAGE_SPARK_TUNING.secondaryColor),
+    [],
+  );
+  const workingColorRef = useRef(new THREE.Color());
+  const sparkSize =
+    0.055 *
+    HULL_DAMAGE_SPARK_TUNING.size *
+    HULL_DAMAGE_SPARK_TUNING.thickness *
+    (destroyed ? 1.12 : 1);
 
-  useFrame(({ clock }) => {
-    const g = groupRef.current;
-    if (!g) return;
-    const t = clock.getElapsedTime();
-    for (let i = 0; i < flames.length; i++) {
-      const f = flames[i]!;
-      const child = g.children[i] as THREE.Mesh | undefined;
-      if (!child) continue;
-      const local = (t * f.speed + f.phase) % 1;
-      const radius = f.radius * (1 + local * (0.35 + HULL_FIRE_TUNING.arc));
-      child.position.set(
-        Math.cos(f.angle) * radius + Math.sin(t * 9 + i) * 0.025 * fireLevel,
-        0.08 + local * 1.7 * HULL_FIRE_TUNING.spread * (0.8 + fireLevel * 0.45),
-        Math.sin(f.angle) * radius + Math.cos(t * 10 + i) * 0.025 * fireLevel,
+  useFrame((_, delta) => {
+    timeRef.current += delta * HULL_DAMAGE_SPARK_TUNING.speed;
+    const positions = geometry.getAttribute("position").array as Float32Array;
+    const colors = geometry.getAttribute("color").array as Float32Array;
+    const time = timeRef.current;
+    for (let i = 0; i < seeds.length; i++) {
+      const seed = seeds[i]!;
+      const local = ((time + seed.phase) % seed.life) / seed.life;
+      const fadeIn = Math.max(0, Math.min(1, local / 0.16));
+      const fadeOut = Math.max(0, Math.min(1, 1 - (local - 0.48) / 0.52));
+      const brightness =
+        fadeIn *
+        fadeOut *
+        (0.38 +
+          Math.sin((time + seed.phase) * (5.5 + seed.wobble * 4)) * 0.22 +
+          seed.colorMix * 0.55);
+      const wobbleX =
+        Math.sin(time * 1.7 + seed.phase) * 0.08 * seed.wobble;
+      const wobbleZ =
+        Math.cos(time * 1.2 + seed.phase * 0.7) * 0.05 * seed.wobble;
+      const driftBoost = 0.72 + fireLevel * 0.55 + (destroyed ? 0.22 : 0);
+      const idx = i * 3;
+      positions[idx] =
+        seed.origin[0] + seed.velocity[0] * local * driftBoost + wobbleX;
+      positions[idx + 1] =
+        seed.origin[1] + seed.velocity[1] * local * (0.82 + fireLevel * 0.35);
+      positions[idx + 2] =
+        seed.origin[2] + seed.velocity[2] * local * driftBoost + wobbleZ;
+      const color = workingColorRef.current
+        .copy(primary)
+        .lerp(secondary, seed.colorMix * 0.85);
+      color.multiplyScalar(
+        Math.max(
+          0.04,
+          Math.min(
+            2.4,
+            brightness *
+              HULL_DAMAGE_SPARK_TUNING.intensity *
+              (0.45 + fireLevel * 0.75),
+          ),
+        ),
       );
-      child.scale.setScalar(
-        f.size * (1.4 - local * 0.45) * (0.7 + fireLevel * 0.55),
-      );
-      const mat = child.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(
-        0,
-        0.9 *
-          (1 - local / HULL_FIRE_TUNING.fade) *
-          HULL_FIRE_TUNING.intensity *
-          (0.4 + fireLevel * 0.75),
-      );
+      colors[idx] = color.r;
+      colors[idx + 1] = color.g;
+      colors[idx + 2] = color.b;
     }
+    geometry.getAttribute("position").needsUpdate = true;
+    geometry.getAttribute("color").needsUpdate = true;
     if (lightRef.current) {
       lightRef.current.intensity =
-        (1.2 + Math.sin(t * 16) * 0.25) *
-        HULL_FIRE_TUNING.intensity *
+        (0.65 + Math.sin(time * 6) * 0.12) *
+        HULL_DAMAGE_SPARK_TUNING.intensity *
         fireLevel;
-      lightRef.current.distance = 3 + fireLevel * 3;
+      lightRef.current.distance = 2.5 + fireLevel * 3.5;
     }
   });
 
   return (
-    <group ref={groupRef} position={[0, destroyed ? 0.05 : 0.15, 0]}>
-      {flames.map((f, i) => (
-        <mesh key={i} raycast={() => null} renderOrder={11}>
-          <sphereGeometry args={[1, 10, 10]} />
-          <meshBasicMaterial
-            color={f.color}
-            transparent
-            opacity={0}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      ))}
+    <group position={[0, destroyed ? 0.05 : 0.15, 0]}>
+      <points geometry={geometry} raycast={() => null} renderOrder={11}>
+        <pointsMaterial
+          size={sparkSize}
+          sizeAttenuation
+          transparent
+          opacity={0.86}
+          vertexColors
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
       <pointLight
         ref={lightRef}
-        color={HULL_FIRE_TUNING.color}
+        color={HULL_DAMAGE_SPARK_TUNING.color}
         distance={3}
         decay={2}
         intensity={0}
