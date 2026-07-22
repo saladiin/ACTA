@@ -728,7 +728,7 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter
     || /\bfighter\b/i.test(model.shipClass ?? "")
     || /fighter flight/i.test(model.name ?? "")
-    || /\b(?:aurora|thunderbolt|tiger|nial|sentri|frazi|flyer)\b/i.test(identity);
+    || /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer)\b/i.test(identity);
 }
 
 function movementTraitsForModel(
@@ -753,6 +753,24 @@ const SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   tiger: "Tiger Starfury Flight",
   "tiger starfury": "Tiger Starfury Flight",
   "tiger starfury flight": "Tiger Starfury Flight",
+  "black omega": "Black Omega Starfury Flight",
+  "black omega flight": "Black Omega Starfury Flight",
+  "black omega starfury": "Black Omega Starfury Flight",
+  "black omega starfury flight": "Black Omega Starfury Flight",
+  "black-omega": "Black Omega Starfury Flight",
+  "black-omega flight": "Black Omega Starfury Flight",
+  "black-omega starfury": "Black Omega Starfury Flight",
+  "black-omega starfury flight": "Black Omega Starfury Flight",
+  blackomega: "Black Omega Starfury Flight",
+  "blackomega flight": "Black Omega Starfury Flight",
+  "blackomega starfury": "Black Omega Starfury Flight",
+  "blackomega starfury flight": "Black Omega Starfury Flight",
+  "psi corps starfury": "Black Omega Starfury Flight",
+  "psi corps starfury flight": "Black Omega Starfury Flight",
+  "psi-corps starfury": "Black Omega Starfury Flight",
+  "psi-corps starfury flight": "Black Omega Starfury Flight",
+  "psicorp starfury": "Black Omega Starfury Flight",
+  "psicorp starfury flight": "Black Omega Starfury Flight",
   nial: "Nial Heavy Fighter Flight",
   "nial fighter": "Nial Heavy Fighter Flight",
   "nial fighter flight": "Nial Heavy Fighter Flight",

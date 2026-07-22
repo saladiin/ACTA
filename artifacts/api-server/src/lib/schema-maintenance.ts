@@ -1512,6 +1512,10 @@ const FIGHTER_FLIGHTS = [
       "Black Omega Starfury Flight",
       "Black Omega Starfury Wing",
       "Black Omega Flight",
+      "Blackomega Starfury Flight",
+      "Psi Corps Starfury Flight",
+      "Psi-Corps Starfury Flight",
+      "PsiCorp Starfury Flight",
     ],
     weapons: [
       {

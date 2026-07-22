@@ -1249,6 +1249,7 @@ const ROTATING_MODEL_PARTS: Record<
     nodeName: string;
     axis: "x" | "y" | "z";
     secondsPerRotation: number;
+    pivotModelPosition?: [number, number, number];
     rotationMode?: "euler" | "local-axis";
   }
 > = {
@@ -1268,6 +1269,9 @@ const ROTATING_MODEL_PARTS: Record<
     // This armature uses the same Blender Y -> glTF local Z export as Explorer.
     axis: "z",
     secondsPerRotation: 30,
+    // Weighted center of the rotating hull section. The exported bone origin is
+    // offset from this point, causing the section to orbit instead of spin.
+    pivotModelPosition: [-0.9458505291, 2.1391551393, -0.1529859525],
   },
   [ORION_SPACE_STATION_MODEL_FILENAME]: {
     nodeName: "orion_rotate",
@@ -1289,6 +1293,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   COMMAND_HYPERION_MODEL_FILENAME,
   "black-omega.glb",
   "aurora.glb",
+  "black-omega.glb",
   "thunderbolt.glb",
   "tiger.glb",
   "nial.glb",
@@ -1324,6 +1329,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
   [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
   "aurora.glb": 0.165,
+  "black-omega.glb": 0.165,
   "thunderbolt.glb": 0.165,
   "tiger.glb": 0.165,
   "nial.glb": 0.165,
@@ -1344,6 +1350,12 @@ const FIGHTER_SQUADRON_MODELS = new Set([
 ]);
 const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   aurora: "aurora.glb",
+  "black omega": "black-omega.glb",
+  "black-omega": "black-omega.glb",
+  blackomega: "black-omega.glb",
+  "psi corps starfury": "black-omega.glb",
+  "psi-corps starfury": "black-omega.glb",
+  "psicorp starfury": "black-omega.glb",
   thunderbolt: "thunderbolt.glb",
   tiger: "tiger.glb",
   nial: "nial.glb",
@@ -1354,7 +1366,7 @@ const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   "shadow fighter": "spitfire.glb",
 };
 const FIGHTER_IDENTITY_PATTERN =
-  /\b(?:aurora|thunderbolt|tiger|nial|flyer|sentri|frazi|spitfire)\b/i;
+  /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire)\b/i;
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -1616,6 +1628,28 @@ function writeEulerAxis(
   }
 }
 
+function applyRotatingPartPivotOverride(
+  root: THREE.Object3D,
+  rotatingPart: THREE.Object3D,
+  pivotModelPosition?: [number, number, number],
+) {
+  if (!pivotModelPosition || !rotatingPart.parent) return;
+  root.updateMatrixWorld(true);
+  const targetWorld = new THREE.Vector3(...pivotModelPosition);
+  root.localToWorld(targetWorld);
+  rotatingPart.position.copy(rotatingPart.parent.worldToLocal(targetWorld));
+  root.updateMatrixWorld(true);
+
+  const patchedSkeletons = new Set<THREE.Skeleton>();
+  root.traverse((child: any) => {
+    const skeleton = child.isSkinnedMesh ? child.skeleton as THREE.Skeleton : null;
+    if (!skeleton || patchedSkeletons.has(skeleton)) return;
+    if (!skeleton.bones.includes(rotatingPart as THREE.Bone)) return;
+    skeleton.calculateInverses();
+    patchedSkeletons.add(skeleton);
+  });
+}
+
 function GlbModel({
   url,
   tint,
@@ -1694,6 +1728,13 @@ function GlbModel({
           : materials[0];
       }
     });
+    if (rotatingPartConfig && rotatingPartRef.current) {
+      applyRotatingPartPivotOverride(
+        c,
+        rotatingPartRef.current,
+        rotatingPartConfig.pivotModelPosition,
+      );
+    }
     c.updateMatrixWorld(true);
     const rootInverse = new THREE.Matrix4().copy(c.matrixWorld).invert();
     const anchorPoints = anchorNodes.map((node) => {
@@ -1791,7 +1832,7 @@ function ShipModelFallback({
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
-  "black-omega.glb": "20260721-183649",
+  "black-omega.glb": "20260721-192023",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
@@ -2006,6 +2047,24 @@ type StagedFighterInventoryItem = {
 const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "aurora starfury": "Aurora Starfury Flight",
   "aurora starfury flight": "Aurora Starfury Flight",
+  "black omega": "Black Omega Starfury Flight",
+  "black omega flight": "Black Omega Starfury Flight",
+  "black omega starfury": "Black Omega Starfury Flight",
+  "black omega starfury flight": "Black Omega Starfury Flight",
+  "black-omega": "Black Omega Starfury Flight",
+  "black-omega flight": "Black Omega Starfury Flight",
+  "black-omega starfury": "Black Omega Starfury Flight",
+  "black-omega starfury flight": "Black Omega Starfury Flight",
+  blackomega: "Black Omega Starfury Flight",
+  "blackomega flight": "Black Omega Starfury Flight",
+  "blackomega starfury": "Black Omega Starfury Flight",
+  "blackomega starfury flight": "Black Omega Starfury Flight",
+  "psi corps starfury": "Black Omega Starfury Flight",
+  "psi corps starfury flight": "Black Omega Starfury Flight",
+  "psi-corps starfury": "Black Omega Starfury Flight",
+  "psi-corps starfury flight": "Black Omega Starfury Flight",
+  "psicorp starfury": "Black Omega Starfury Flight",
+  "psicorp starfury flight": "Black Omega Starfury Flight",
   thunderbolt: "Thunderbolt Starfury Flight",
   "thunderbolt starfury": "Thunderbolt Starfury Flight",
   "thunderbolt starfury flight": "Thunderbolt Starfury Flight",

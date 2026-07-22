@@ -29,6 +29,7 @@ const ROTATING_MODEL_PARTS: Record<
     nodeName: string;
     axis: "x" | "y" | "z";
     secondsPerRotation: number;
+    pivotModelPosition?: [number, number, number];
     rotationMode?: "euler" | "local-axis";
   }
 > = {
@@ -48,6 +49,9 @@ const ROTATING_MODEL_PARTS: Record<
     // This armature uses the same Blender Y -> glTF local Z export as Explorer.
     axis: "z",
     secondsPerRotation: 30,
+    // Weighted center of the rotating hull section. The exported bone origin is
+    // offset from this point, causing the section to orbit instead of spin.
+    pivotModelPosition: [-0.9458505291, 2.1391551393, -0.1529859525],
   },
   [ORION_SPACE_STATION_MODEL_FILENAME]: {
     nodeName: "orion_rotate",
@@ -77,7 +81,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
-  "black-omega.glb": "20260721-183649",
+  "black-omega.glb": "20260721-192023",
   "command-hyperion.glb": "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
@@ -172,6 +176,28 @@ function writeEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z", value: num
   else rotation.z = value;
 }
 
+function applyRotatingPartPivotOverride(
+  root: THREE.Object3D,
+  rotatingPart: THREE.Object3D,
+  pivotModelPosition?: [number, number, number],
+) {
+  if (!pivotModelPosition || !rotatingPart.parent) return;
+  root.updateMatrixWorld(true);
+  const targetWorld = new THREE.Vector3(...pivotModelPosition);
+  root.localToWorld(targetWorld);
+  rotatingPart.position.copy(rotatingPart.parent.worldToLocal(targetWorld));
+  root.updateMatrixWorld(true);
+
+  const patchedSkeletons = new Set<THREE.Skeleton>();
+  root.traverse((child: any) => {
+    const skeleton = child.isSkinnedMesh ? child.skeleton as THREE.Skeleton : null;
+    if (!skeleton || patchedSkeletons.has(skeleton)) return;
+    if (!skeleton.bones.includes(rotatingPart as THREE.Bone)) return;
+    skeleton.calculateInverses();
+    patchedSkeletons.add(skeleton);
+  });
+}
+
 function ModelFallback() {
   return (
     <mesh>
@@ -224,6 +250,13 @@ function NavalModel({ url, filename }: { url: string; filename: string }) {
       );
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
+    if (rotatingPartConfig && rotatingPartRef.current) {
+      applyRotatingPartPivotOverride(
+        c,
+        rotatingPartRef.current,
+        rotatingPartConfig.pivotModelPosition,
+      );
+    }
     c.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(c);
     const size = new THREE.Vector3();

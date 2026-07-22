@@ -24,6 +24,7 @@ export const SHIP_AI_PROFILE_SEEDS: Array<{ name: string; aiProfile: ShipAiProfi
   { name: "Sagittarius", aiProfile: "standoff" },
   { name: "Sagittarius Missile Cruiser", aiProfile: "standoff" },
   { name: "Aurora Starfury Flight", aiProfile: "brawler" },
+  { name: "Black Omega Starfury Flight", aiProfile: "brawler" },
   { name: "Thunderbolt Starfury Flight", aiProfile: "brawler" },
   { name: "Shadow Battlecrab", aiProfile: "apex-predator" },
   { name: "Battlecrab", aiProfile: "apex-predator" },
