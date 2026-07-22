@@ -1437,6 +1437,9 @@ const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "shadow_flesh_base_tile.png": "20260720-organic-v1",
   "shadow_flesh_normal.png": "20260720-organic-v1",
   "shadow_flesh_roughness.png": "20260720-organic-v1",
+  "T_FirePanningCyl45.png": "20260722-hard-plasma",
+  "T_Noise1_nk.png": "20260722-hard-plasma",
+  "T_Noise_HU85k.png": "20260722-hard-plasma",
 };
 const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
   color: "#f8fafc",
@@ -2744,25 +2747,168 @@ function LiveExplodingOriginPlume() {
   );
 }
 
+function configureExplodingOrbTexture(
+  texture: THREE.Texture,
+  colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace,
+): void {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = colorSpace;
+  texture.needsUpdate = true;
+}
+
 function LiveExplodingCorePulse() {
   const meshRef = useRef<THREE.Mesh>(null);
-  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
+  const [primaryTexture, secondaryTexture, alphaTexture] = useLoader(
+    THREE.TextureLoader,
+    [
+      boardTextureUrl("T_Noise1_nk.png"),
+      boardTextureUrl("T_FirePanningCyl45.png"),
+      boardTextureUrl("T_Noise_HU85k.png"),
+    ],
+  ) as THREE.Texture[];
+  const orbSize = 0.27;
+  const intensity = 1.35;
+  const fade = 0.95;
+
+  useMemo(() => {
+    configureExplodingOrbTexture(primaryTexture);
+    configureExplodingOrbTexture(secondaryTexture);
+    configureExplodingOrbTexture(alphaTexture, THREE.NoColorSpace);
+  }, [alphaTexture, primaryTexture, secondaryTexture]);
+
+  const uniforms = useMemo(
+    () => ({
+      uPrimaryMap: { value: primaryTexture },
+      uSecondaryMap: { value: secondaryTexture },
+      uAlphaMap: { value: alphaTexture },
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color("#ef4444") },
+      uSecondaryColor: { value: new THREE.Color("#fff7ed") },
+      uIntensity: { value: intensity },
+      uFade: { value: fade },
+      uAlphaSource: { value: 0 },
+      uAlphaFloor: { value: 0.04 },
+      uAlphaStrength: { value: 1 },
+      uSecondaryMix: { value: 0.18 },
+      uEmissiveBoost: { value: 1.1 },
+      uRimBoost: { value: 0.55 },
+      uRimAlpha: { value: 0.11 },
+      uFresnelPower: { value: 1.5 },
+      uThreshold: { value: 0.62 },
+      uPulseAmount: { value: 0.3 },
+      uPrimarySpeed: { value: new THREE.Vector2(0.06, 0.05) },
+      uSecondarySpeed: { value: new THREE.Vector2(0, -0.12) },
+      uAlphaSpeed: { value: new THREE.Vector2(-0.04, 0.04) },
+      uPrimaryRepeat: { value: new THREE.Vector2(2.8, 2.8) },
+      uSecondaryRepeat: { value: new THREE.Vector2(1, 1) },
+      uAlphaRepeat: { value: new THREE.Vector2(1.6, 1.6) },
+    }),
+    [alphaTexture, primaryTexture, secondaryTexture],
+  );
 
   useFrame(({ clock }) => {
-    const pulse = (Math.sin(clock.elapsedTime * 5.2) + 1) / 2;
-    if (meshRef.current) meshRef.current.scale.setScalar(0.74 + pulse * 0.12);
-    if (matRef.current) matRef.current.opacity = 0.08 + pulse * 0.22;
-    if (lightRef.current) lightRef.current.intensity = 1.2 + pulse * 4.5;
+    const elapsed = clock.elapsedTime * 0.95;
+    const pulse = (Math.sin(elapsed * 4.2) + 1) / 2;
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar((1.16 + pulse * 0.16) * orbSize);
+    }
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar((0.38 + pulse * 0.08) * orbSize);
+    }
+    if (coreMatRef.current) {
+      coreMatRef.current.opacity = 0.24 * intensity;
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = (1.4 + pulse * 3.8) * intensity;
+    }
+    uniforms.uTime.value = elapsed;
+    uniforms.uFade.value = fade;
   });
 
   return (
     <group>
       <mesh ref={meshRef} raycast={() => null}>
-        <sphereGeometry args={[1.45, 32, 16]} />
+        <sphereGeometry args={[1.45, 48, 28]} />
+        <shaderMaterial
+          uniforms={uniforms}
+          vertexShader={`
+            varying vec2 vUv;
+            varying vec3 vWorldNormal;
+            varying vec3 vViewDir;
+            void main() {
+              vUv = uv;
+              vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+              vWorldNormal = normalize(mat3(modelMatrix) * normal);
+              vViewDir = normalize(cameraPosition - worldPosition.xyz);
+              gl_Position = projectionMatrix * viewMatrix * worldPosition;
+            }
+          `}
+          fragmentShader={`
+            uniform sampler2D uPrimaryMap;
+            uniform sampler2D uSecondaryMap;
+            uniform sampler2D uAlphaMap;
+            uniform float uTime;
+            uniform vec3 uColor;
+            uniform vec3 uSecondaryColor;
+            uniform float uIntensity;
+            uniform float uFade;
+            uniform float uAlphaSource;
+            uniform float uAlphaFloor;
+            uniform float uAlphaStrength;
+            uniform float uSecondaryMix;
+            uniform float uEmissiveBoost;
+            uniform float uRimBoost;
+            uniform float uRimAlpha;
+            uniform float uFresnelPower;
+            uniform float uThreshold;
+            uniform float uPulseAmount;
+            uniform vec2 uPrimarySpeed;
+            uniform vec2 uSecondarySpeed;
+            uniform vec2 uAlphaSpeed;
+            uniform vec2 uPrimaryRepeat;
+            uniform vec2 uSecondaryRepeat;
+            uniform vec2 uAlphaRepeat;
+            varying vec2 vUv;
+            varying vec3 vWorldNormal;
+            varying vec3 vViewDir;
+
+            void main() {
+              vec4 primary = texture2D(uPrimaryMap, vUv * uPrimaryRepeat + uPrimarySpeed * uTime);
+              vec4 secondary = texture2D(uSecondaryMap, vUv * uSecondaryRepeat + uSecondarySpeed * uTime);
+              vec4 alphaTex = texture2D(uAlphaMap, vUv * uAlphaRepeat + uAlphaSpeed * uTime);
+              float alphaSample = primary.r;
+              if (uAlphaSource > 0.5 && uAlphaSource < 1.5) {
+                alphaSample = secondary.r;
+              } else if (uAlphaSource >= 1.5) {
+                alphaSample = alphaTex.r;
+              }
+              float cut = smoothstep(uThreshold - 0.16, uThreshold + 0.16, alphaSample);
+              float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), uFresnelPower);
+              float pulse = 1.0 + sin(uTime * 4.2) * uPulseAmount;
+              vec3 mappedColor = uColor * (0.38 + primary.rgb * 1.25);
+              mappedColor = mix(mappedColor, uSecondaryColor * (0.32 + secondary.rgb * 1.25), uSecondaryMix);
+              mappedColor += uSecondaryColor * alphaTex.r * uEmissiveBoost;
+              mappedColor += uSecondaryColor * fresnel * uRimBoost;
+              float alpha = (uAlphaFloor + cut * uAlphaStrength + fresnel * uRimAlpha) * uIntensity * uFade * pulse;
+              gl_FragColor = vec4(mappedColor * uIntensity, clamp(alpha, 0.0, 0.92));
+            }
+          `}
+          transparent
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh ref={coreRef} raycast={() => null}>
+        <sphereGeometry args={[0.72, 32, 18]} />
         <meshBasicMaterial
-          ref={matRef}
-          color="#ef4444"
+          ref={coreMatRef}
+          color="#fff7ed"
           transparent
           opacity={0}
           blending={THREE.AdditiveBlending}
@@ -2770,12 +2916,7 @@ function LiveExplodingCorePulse() {
           toneMapped={false}
         />
       </mesh>
-      <pointLight
-        ref={lightRef}
-        color="#ef4444"
-        intensity={0}
-        distance={8}
-      />
+      <pointLight ref={lightRef} color="#ef4444" intensity={0} distance={8} />
     </group>
   );
 }
