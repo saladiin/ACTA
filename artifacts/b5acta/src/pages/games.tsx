@@ -1,10 +1,13 @@
 import { Link } from "wouter";
+import { useUser } from "@clerk/react";
 import { useListGames } from "@workspace/api-client-react";
 import { Layout } from "@/components/layout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Plus, ChevronRight, Target } from "lucide-react";
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
+import { useDevUserId } from "@/lib/dev-user";
+import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
@@ -21,8 +24,54 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+type TurnSummaryGame = {
+  activePlayerId?: string | null;
+  challengerId: string;
+  challengerName?: string | null;
+  opponentId?: string | null;
+  opponentName?: string | null;
+  status?: string;
+};
+
+function turnSummaryFor(game: TurnSummaryGame, myUserId: string): { label: string; mine: boolean } {
+  if (!game.activePlayerId) return { label: "Turn pending", mine: false };
+  if (game.activePlayerId === myUserId) return { label: "Your turn", mine: true };
+  if (game.activePlayerId === game.challengerId) {
+    return { label: `${game.challengerName ?? "Opponent"}'s turn`, mine: false };
+  }
+  if (game.activePlayerId === game.opponentId) {
+    return { label: `${game.opponentName ?? "Opponent"}'s turn`, mine: false };
+  }
+  return { label: "Opponent's turn", mine: false };
+}
+
+function TurnBadge({ game, myUserId }: { game: TurnSummaryGame; myUserId: string }) {
+  if (game.status !== "active" && game.status !== "deploying") return null;
+  if (!game.activePlayerId) return null;
+  const summary = turnSummaryFor(game, myUserId);
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono tracking-widest uppercase border ${
+        summary.mine
+          ? "border-green-400/60 bg-green-400/15 text-green-300"
+          : "border-amber-400/40 bg-amber-400/10 text-amber-300"
+      }`}
+      data-testid={`badge-turn-${summary.mine ? "mine" : "opponent"}-${game.activePlayerId ?? "pending"}`}
+    >
+      {summary.label}
+    </span>
+  );
+}
+
 export default function GamesList() {
   const { data: games, isLoading } = useListGames();
+  const { user } = useUser();
+  const devUserId = useDevUserId();
+  const temporaryUsername = useTemporaryUsername();
+  void temporaryUsername;
+  const myUserId = temporaryUsernameAuthEnabled
+    ? getTemporaryUserId() ?? ""
+    : import.meta.env.DEV ? devUserId : (user?.id ?? "");
 
   return (
     <Layout title="Active Operations">
@@ -68,6 +117,7 @@ export default function GamesList() {
                   </div>
                   <div className="flex items-center gap-3">
                     <StatusBadge status={game.status} />
+                    <TurnBadge game={game} myUserId={myUserId} />
                     <ChevronRight className="w-4 h-4 text-muted-foreground" />
                   </div>
                 </div>
