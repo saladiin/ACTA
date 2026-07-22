@@ -3586,7 +3586,7 @@ function DogfightImpactFlashes({
 const HULL_DAMAGE_SPARK_TUNING = {
   color: "#fb923c",
   secondaryColor: "#fef3c7",
-  speed: 2.8,
+  speed: 0.15,
   size: 1.5,
   fade: 1.45,
   intensity: 1.9,
