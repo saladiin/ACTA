@@ -2,6 +2,7 @@ SHIP STATS,,,,,,,,,,,,,,,,,
   Faction,Name,Class,Hull,Troops,Damage,Damage Threshold,Crew,Crew Threshold,Speed,Turns,Turn Angle (deg),Crew Quality,Shield,Shield Max,Shield Regen Rate,Ship Traits,Small craft
   Shadows,Shadow Cruiser (Ancient),Dreadnought,6,0,150,38,0,0,8,0,0,N/A,20,20,10,Super Maneuverable; Self Repair:3d6,
   Earth Alliance,Hyperion Cruiser,Heavy Cruiser,5,3,28,6,32,6,8,2,45,Veteran,0,0,0,Anti-Fighter 2; Interceptors 2; Jump Engine,Aurora Starfury (1)
+  Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,5,30,500,125,0,0,0,0,0,Regular,0,0,0,Carrier 3; Command +1; Defence Network 4; Immobile; Interceptors 6; Space Station; Targets 3,Aurora Starfury (12)
   Minbari,Sharlin War Cruiser,Warcruiser,5,5,60,20,66,22,8,1,45,Elite,0,0,0,Advanced Anti-Fighter 5; Advanced Jump Engine; Flight Computer; Lumbering; Stealth +5,"Nial (4), Flyer (1)"
   Earth Alliance,Olympus Corvette,Corvette,5,1,18,4,20,4,8,2,45,Regular,0,0,0,Interceptors 1,
   Minbari,Tinashi,Warship,5,4,38,12,42,14,10,2,45,Regular,0,0,0,Advanced Anti-Fighter 4; Advanced Jump Engine; Flight Computer; Stealth +5,
@@ -23,6 +24,9 @@ League of Nonaligned Worlds,Avioki,Heavy Cruiser,6,4,64,10,68,10,6,1,45,Regular,
   Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Starboard,10,8,,,,,,,,,,,
   Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Aft,10,2,,,,,,,,,,,
   Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Heavy Laser Cannon,Boresight Aft,18,2,Beam; Double Damage,,,,,,,,,,
+  Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,Heavy Pulse Cannon,Turret,20,10,,,,,,,,,,
+  Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,Medium Pulse Cannon,Turret,18,6,Twin-Linked,,,,,,,,,,
+  Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,Missile Racks,Turret,35,4,Precise; Slow Loading; Super Armor Piercing,,,,,,,,,,
   Minbari,Sharlin War Cruiser,Warcruiser,Neutron Laser,Forward,30,8,Beam; Double Damage; Precise,,,,,,,,,,
   Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Forward,18,8,Mini Beam,,,,,,,,,,
   Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Port,18,8,Mini Beam,,,,,,,,,,

@@ -61,6 +61,12 @@ export interface GameInput {
      * @maximum 56
      */
   ambushBoxDepth?: number;
+  /** Optional terrain package for this engagement. */
+  terrain?: 'none' | 'asteroid-fields';
+  /** Number of asteroid fields to generate when terrain=asteroid-fields. Supported values: 3, 6, or 9. */
+  asteroidFieldCount?: number;
+  /** Optional station package for this engagement. */
+  stations?: 'none' | 'enabled';
   /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship. */
   crewQualityMode: GameInputCrewQualityMode;
 }

@@ -80,6 +80,18 @@ export const gamesTable = pgTable("games", {
   deploymentConfig: jsonb("deployment_config")
     .$type<Record<string, unknown> | null>()
     .default(null),
+  // Persisted terrain/scenery setup generated at engagement creation. Terrain
+  // is rules-authoritative only through server-normalized footprints, not
+  // through render meshes.
+  terrainConfig: jsonb("terrain_config")
+    .$type<Record<string, unknown> | null>()
+    .default(null),
+  // Persisted station/scenery setup selected at engagement creation. This
+  // currently flags station-enabled scenarios and leaves object placement for
+  // dedicated station deployment/rules flows.
+  stationConfig: jsonb("station_config")
+    .$type<Record<string, unknown> | null>()
+    .default(null),
   // Crew Quality assignment policy for this engagement.
   // "standard" → every ship is locked to CQ 4 (Veteran) and the deploy UI
   // hides the per-ship picker. "custom" → each ship's CQ is chosen during

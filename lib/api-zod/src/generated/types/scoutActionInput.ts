@@ -10,6 +10,6 @@ import type { ScoutActionInputAction } from './scoutActionInputAction';
 export interface ScoutActionInput {
   /** counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons). */
   action: ScoutActionInputAction;
-  /** Enemy unit id to support against. Must be within 36" of the Scout. */
-  targetUnitId: number;
+  /** Enemy unit id to support against. Must be within 36" of the Scout. Omit during Movement to declare the Scout mode before resolving at Firing start. */
+  targetUnitId?: number;
 }

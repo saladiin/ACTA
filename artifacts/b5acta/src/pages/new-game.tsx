@@ -31,6 +31,9 @@ export default function NewGame() {
     useState<DeploymentSide>("challenger");
   const [ambushBoxWidth, setAmbushBoxWidth] = useState<number>(16);
   const [ambushBoxDepth, setAmbushBoxDepth] = useState<number>(16);
+  const [terrain, setTerrain] = useState<"none" | "asteroid-fields">("none");
+  const [asteroidFieldCount, setAsteroidFieldCount] = useState<3 | 6 | 9>(3);
+  const [stations, setStations] = useState<"none" | "enabled">("none");
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
   const [matchName, setMatchName] = useState("");
 
@@ -65,6 +68,10 @@ export default function NewGame() {
             deploymentPreset === "ambush-center" ? ambushBoxWidth : undefined,
           ambushBoxDepth:
             deploymentPreset === "ambush-center" ? ambushBoxDepth : undefined,
+          terrain,
+          asteroidFieldCount:
+            terrain === "asteroid-fields" ? asteroidFieldCount : undefined,
+          stations,
           crewQualityMode,
         },
       },
@@ -333,7 +340,74 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(7, "Crew Quality")}
+          {sectionHeader(7, "Terrain")}
+          <Select
+            value={terrain}
+            onValueChange={(value) =>
+              setTerrain(value as "none" | "asteroid-fields")
+            }
+          >
+            <SelectTrigger data-testid="select-terrain" className="bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="asteroid-fields">Asteroid fields</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {terrain === "asteroid-fields" && (
+            <div className="mt-3">
+              <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
+                Asteroid fields
+              </div>
+              <Select
+                value={String(asteroidFieldCount)}
+                onValueChange={(value) =>
+                  setAsteroidFieldCount(Number(value) as 3 | 6 | 9)
+                }
+              >
+                <SelectTrigger data-testid="select-asteroid-field-count" className="bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border">
+                  <SelectItem value="3">3 fields</SelectItem>
+                  <SelectItem value="6">6 fields</SelectItem>
+                  <SelectItem value="9">9 fields</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <p className="mt-2 text-[11px] text-muted-foreground font-mono">
+            Asteroid fields are placed by the server before deployment. Standard
+            setups exclude deployment zones; ambush setups exclude the center box.
+          </p>
+        </section>
+
+        <section>
+          {sectionHeader(8, "Stations")}
+          <Select
+            value={stations}
+            onValueChange={(value) =>
+              setStations(value as "none" | "enabled")
+            }
+          >
+            <SelectTrigger data-testid="select-stations" className="bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="enabled">Stations enabled</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-2 text-[11px] text-muted-foreground font-mono">
+            Station-enabled games are flagged in the lobby before a commander joins.
+          </p>
+        </section>
+
+        <section>
+          {sectionHeader(9, "Crew Quality")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -365,7 +439,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(8, "Your Starting Fleet (optional)")}
+          {sectionHeader(10, "Your Starting Fleet (optional)")}
           <Select value={selectedFleet} onValueChange={setSelectedFleet}>
             <SelectTrigger data-testid="select-fleet" className="bg-background">
               <SelectValue placeholder="Choose your fleet now, or place ships later..." />

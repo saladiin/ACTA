@@ -863,11 +863,17 @@ components:
         allocationPoints: { type: integer, minimum: 1, description: "Fleet Allocation Points available to each commander." }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
+        hasTerrain:   { type: boolean, description: "True if this engagement includes generated terrain/scenery." }
+        hasStation:   { type: boolean, description: "True if this engagement has station play enabled." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
         deploymentConfig:
           type: ["object", "null"]
           additionalProperties: true
           description: "Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment."
+        terrainConfig:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: "Structured terrain objects generated for this engagement."
         crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy." }
         aiProfile: { type: ["string", "null"], description: "AI strategy profile selected for this game. Null for human games." }
         aiState: { type: object, additionalProperties: true, description: "Latest AI setup/action diagnostic state. Empty for human games." }
@@ -893,6 +899,9 @@ components:
         ambushPlayer: { type: string, enum: [challenger, opponent], description: "For ambush-center deployment, which player deploys in the center box." }
         ambushBoxWidth: { type: number, minimum: 6, maximum: 40, description: "For ambush-center deployment, center box width in inches." }
         ambushBoxDepth: { type: number, minimum: 6, maximum: 56, description: "For ambush-center deployment, center box depth in inches." }
+        terrain: { type: string, enum: [none, asteroid-fields], description: "Optional terrain package for this engagement." }
+        asteroidFieldCount: { type: integer, enum: [3, 6, 9], description: "Number of asteroid fields to generate when terrain=asteroid-fields." }
+        stations: { type: string, enum: [none, enabled], description: "Optional station package for this engagement." }
         crewQualityMode: { type: string, enum: [standard, custom], description: "standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship." }
 
     AcceptGameInput:

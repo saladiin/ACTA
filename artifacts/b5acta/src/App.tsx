@@ -25,6 +25,7 @@ import AdminPage from "@/pages/admin";
 import NotFound from "@/pages/not-found";
 import { DevModeToggle } from "@/components/dev-mode-toggle";
 import { getDevUserId } from "@/lib/dev-user";
+import { isLocalToolingHost } from "@/lib/local-tooling";
 import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
 
 // `refetchOnWindowFocus` disabled globally: while the dice-roll modal is
@@ -36,17 +37,24 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },
 });
 
-const VfxShowcase = import.meta.env.DEV
+const localToolingRoutesEnabled = import.meta.env.DEV || isLocalToolingHost(window.location.hostname);
+
+const VfxShowcase = localToolingRoutesEnabled
   ? lazy(() => import("@/pages/vfx-showcase"))
+  : null;
+const LosTest = localToolingRoutesEnabled
+  ? lazy(() => import("@/pages/los-test"))
   : null;
 const NavalId = import.meta.env.DEV
   ? lazy(() => import("@/pages/naval-id"))
   : null;
 
-const clerkPubKey = publishableKeyFromHost(
-  window.location.hostname,
-  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
-);
+const clerkPubKey = localToolingRoutesEnabled
+  ? import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
+  : publishableKeyFromHost(
+      window.location.hostname,
+      import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
+    );
 
 const configuredClerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
 const clerkProxyUrl = clerkPubKey.startsWith("pk_test_") || temporaryUsernameAuthEnabled ? undefined : configuredClerkProxyUrl;
@@ -65,7 +73,7 @@ if (!clerkPubKey) {
 if (temporaryUsernameAuthEnabled) {
   const tempUserId = getTemporaryUserId();
   setExtraHeaders(tempUserId ? { "x-dev-user-id": tempUserId } : null);
-} else if (import.meta.env.DEV) {
+} else if (localToolingRoutesEnabled) {
   setExtraHeaders({ "x-dev-user-id": getDevUserId() });
 }
 
@@ -229,10 +237,24 @@ function ClerkProviderWithRoutes() {
             <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
             <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
             <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
-            {import.meta.env.DEV && VfxShowcase && (
+            {localToolingRoutesEnabled && VfxShowcase && (
               <Route path="/vfx-showcase">
                 <Suspense fallback={null}>
                   <ProtectedRoute component={VfxShowcase} />
+                </Suspense>
+              </Route>
+            )}
+            {localToolingRoutesEnabled && VfxShowcase && (
+              <Route path="/vfx">
+                <Suspense fallback={null}>
+                  <ProtectedRoute component={VfxShowcase} />
+                </Suspense>
+              </Route>
+            )}
+            {localToolingRoutesEnabled && LosTest && (
+              <Route path="/los-test">
+                <Suspense fallback={null}>
+                  <ProtectedRoute component={LosTest} />
                 </Suspense>
               </Route>
             )}

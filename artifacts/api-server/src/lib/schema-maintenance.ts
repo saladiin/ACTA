@@ -1,4 +1,4 @@
-﻿import { pool } from "@workspace/db";
+import { pool } from "@workspace/db";
 import fs from "node:fs";
 import path from "node:path";
 import { SHIP_AI_PROFILE_SEEDS } from "./ai-opponent";
@@ -42,6 +42,7 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Hyperion Missile Cruiser", priority: "raid" },
   { name: "Hyperion Pulse Cruiser", priority: "raid" },
   { name: "Hyperion Rail Cruiser", priority: "skirmish" },
+  { name: "Orion Starbase, Alpha Version (Variant)", priority: "battle" },
   { name: "Nova Dreadnought", priority: "raid" },
   { name: "White Star", priority: "raid" },
   { name: "Tethys Cutter", priority: "patrol" },
@@ -60,10 +61,17 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
 
 const CAPITAL_BASE_RADIUS_INCHES = 0.8;
 const FIGHTER_BASE_RADIUS_INCHES = CAPITAL_BASE_RADIUS_INCHES;
+const ORION_SPACE_STATION_BASE_RADIUS_INCHES = 1.6;
 
 const SHIP_PRIORITY_BY_NAME = new Map(
   SHIP_PRIORITY_SEEDS.map((seed) => [seed.name.toLowerCase(), seed.priority]),
 );
+
+// Reference profiles retained in the canonical CSV but intentionally excluded
+// from the playable roster until their dedicated rules are implemented.
+const DORMANT_CSV_SHIP_NAMES = new Set([
+  "orion starbase, alpha version (variant)",
+]);
 
 const POINT_COST_BY_PRIORITY: Record<string, number> = {
   patrol: 25,
@@ -93,6 +101,7 @@ const FALLBACK_ACTA_SHIP_CSV = String.raw`SHIP STATS,,,,,,,,,,,,,,,,,
 Faction,Name,Class,Hull,Troops,Damage,Damage Threshold,Crew,Crew Threshold,Speed,Turns,Turn Angle (deg),Crew Quality,Shield,Shield Max,Shield Regen Rate,Ship Traits,Small craft
 Shadows,Shadow Cruiser (Ancient),Dreadnought,6,0,150,38,0,0,8,0,0,N/A,20,20,10,Super Maneuverable; Self Repair:3d6,
 Earth Alliance,Hyperion Cruiser,Heavy Cruiser,5,3,28,6,32,6,8,2,45,Veteran,0,0,0,Anti-Fighter 2; Interceptors 2; Jump Engine,Aurora Starfury (1)
+Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,5,30,500,125,0,0,0,0,0,Regular,0,0,0,Carrier 3; Command +1; Defence Network 4; Immobile; Interceptors 6; Space Station; Targets 3,Aurora Starfury (12)
 Minbari,Sharlin War Cruiser,Warcruiser,5,5,60,20,66,22,8,1,45,Elite,0,0,0,Advanced Anti-Fighter 5; Advanced Jump Engine; Flight Computer; Lumbering; Stealth +5,"Nial (4), Flyer (1)"
 Earth Alliance,Olympus Corvette,Corvette,5,1,18,4,20,4,8,2,45,Regular,0,0,0,Interceptors 1,
 Minbari,Tinashi,Warship,5,4,38,12,42,14,10,2,45,Regular,0,0,0,Advanced Anti-Fighter 4; Advanced Jump Engine; Flight Computer; Stealth +5,
@@ -112,6 +121,9 @@ Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Port,10,8,,,,,
 Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Starboard,10,8,,,,,,,,,,,
 Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Medium Pulse Cannon,Aft,10,2,,,,,,,,,,,
 Earth Alliance,Hyperion Cruiser,Heavy Cruiser,Heavy Laser Cannon,Boresight Aft,18,2,Beam; Double Damage,,,,,,,,,,
+Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,Heavy Pulse Cannon,Turret,20,10,,,,,,,,,,
+Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,Medium Pulse Cannon,Turret,18,6,Twin-Linked,,,,,,,,,,
+Earth Alliance,"Orion Starbase, Alpha Version (Variant)",Starbase,Missile Racks,Turret,35,4,Precise; Slow Loading; Super Armor Piercing,,,,,,,,,,
 Minbari,Sharlin War Cruiser,Warcruiser,Neutron Laser,Forward,30,8,Beam; Double Damage; Precise,,,,,,,,,,
 Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Forward,18,8,Mini Beam,,,,,,,,,,
 Minbari,Sharlin War Cruiser,Warcruiser,Fusion Cannon,Port,18,8,Mini Beam,,,,,,,,,,
@@ -390,6 +402,7 @@ const THENTUS_WEAPONS = [
     traits: "Twin-Linked",
   },
 ];
+
 const TLOTH_WEAPONS = [
   {
     name: "Plasma Cannon",
@@ -763,6 +776,7 @@ type ShipMaintenanceSeed = {
   crewQuality: string;
   traits: string;
   smallCraft: string | null;
+  baseRadiusInches?: number;
   weaponRange: number;
   weaponDamage: number;
   description: string;
@@ -904,6 +918,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     crewQuality: "Regular",
     traits: "Anti-Fighter 4; Immobile; Interceptors 5; Space Station",
     smallCraft: null,
+    baseRadiusInches: ORION_SPACE_STATION_BASE_RADIUS_INCHES,
     weaponRange: 45,
     weaponDamage: 5,
     description:
@@ -1932,6 +1947,7 @@ async function seedActaCsvShips(): Promise<void> {
 
   for (const ship of csv.ships) {
     const key = ship.name.toLowerCase();
+    if (DORMANT_CSV_SHIP_NAMES.has(key)) continue;
     const priority = SHIP_PRIORITY_BY_NAME.get(key) ?? "raid";
     const pointCost = POINT_COST_BY_PRIORITY[priority] ?? 100;
     const filename =
@@ -2213,6 +2229,14 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS terrain_config jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS station_config jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE games
       ADD COLUMN IF NOT EXISTS archived_at timestamp with time zone
     `);
     await pool.query(`
@@ -2487,7 +2511,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
           ship.crewQuality,
           ship.traits,
           ship.smallCraft,
-          CAPITAL_BASE_RADIUS_INCHES,
+          ship.baseRadiusInches ?? CAPITAL_BASE_RADIUS_INCHES,
           ship.weaponRange,
           ship.weaponDamage,
           ship.description,
@@ -2500,6 +2524,20 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         await syncWeaponsForShipModel(shipId, ship.weapons);
       }
     }
+
+    await pool.query(
+      `
+        UPDATE game_units
+        SET base_radius_inches = $1
+        WHERE lower(name) IN (
+          'orion space station',
+          'orion-class space station',
+          'orion starbase',
+          'orion starbase, alpha version (variant)'
+        )
+      `,
+      [ORION_SPACE_STATION_BASE_RADIUS_INCHES],
+    );
 
     await pool.query(
       `
@@ -2957,6 +2995,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     if (thentusId) {
       await syncWeaponsForShipModel(thentusId, THENTUS_WEAPONS);
     }
+
     const tloth = await pool.query<{ id: number }>(
       `
         WITH updated AS (

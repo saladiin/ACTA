@@ -70,6 +70,10 @@ export interface Game {
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
+  /** True if this engagement includes generated terrain/scenery. */
+  hasTerrain?: boolean;
+  /** True if this engagement has station play enabled. */
+  hasStation?: boolean;
   /**
      * Depth in inches of each player's deployment zone, measured inward from their short edge of the 48"×72" board.
      * @minimum 4
@@ -78,6 +82,8 @@ export interface Game {
   deploymentDepth?: number;
   /** Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment. */
   deploymentConfig?: Record<string, unknown> | null;
+  /** Structured terrain objects generated for this engagement. */
+  terrainConfig?: Record<string, unknown> | null;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**

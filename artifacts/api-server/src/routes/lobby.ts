@@ -14,6 +14,28 @@ function toGameDto<T extends { passwordHash: string | null }>(row: T): Omit<T, "
   return { ...rest, hasPassword: passwordHash !== null };
 }
 
+type LobbyGameRow = typeof gamesTable.$inferSelect;
+
+function terrainConfigHasObjects(terrainConfig: unknown): boolean {
+  if (!terrainConfig || typeof terrainConfig !== "object" || Array.isArray(terrainConfig)) return false;
+  const objects = (terrainConfig as { objects?: unknown }).objects;
+  return Array.isArray(objects) && objects.length > 0;
+}
+
+function stationConfigIsEnabled(stationConfig: unknown): boolean {
+  if (!stationConfig || typeof stationConfig !== "object" || Array.isArray(stationConfig)) return false;
+  const config = stationConfig as { enabled?: unknown; objects?: unknown };
+  return config.enabled === true || (Array.isArray(config.objects) && config.objects.length > 0);
+}
+
+function toLobbyGameDto<T extends LobbyGameRow & { passwordHash: string | null }>(row: T) {
+  return {
+    ...toGameDto(row),
+    hasTerrain: terrainConfigHasObjects(row.terrainConfig),
+    hasStation: stationConfigIsEnabled(row.stationConfig),
+  };
+}
+
 const router: IRouter = Router();
 
 function isDevBuiltinCommander(userId: string): boolean {
@@ -53,14 +75,14 @@ router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
   const pendingChallenges = [
     ...myGames.filter(g => g.status === "pending" || g.status === "open"),
     ...openChallenges,
-  ].map(toGameDto);
+  ].map(toLobbyGameDto);
   const activeGames = myGames
     .filter(g => g.status === "active" || g.status === "deploying")
-    .map(toGameDto);
+    .map(toLobbyGameDto);
   const recentlyCompleted = myGames
     .filter(g => g.status === "completed" || g.status === "declined")
     .slice(-5)
-    .map(toGameDto);
+    .map(toLobbyGameDto);
 
   res.json(GetLobbyResponse.parse({ pendingChallenges, activeGames, recentlyCompleted }));
 });

@@ -154,6 +154,7 @@ type SpecialStation = {
     | "beacon-pulse"
     | "gravity-lens"
     | "damage-glow-core"
+    | "dead-hulk-point-sparks"
     | "godot-jump-point-mesh"
     | "cloud-flipbook-damage"
     | "missile-impact-flipbook-test"
@@ -200,7 +201,6 @@ type AnimatedModelStation = {
   tuning?: Partial<Tuning>;
 };
 
-type ShowcaseStation =
 type OrganicSkinStation = {
   kind: "organic-skin";
   id: string;
@@ -212,6 +212,7 @@ type OrganicSkinStation = {
   tuning?: Partial<Tuning>;
 };
 
+type ShowcaseStation =
   | WeaponStation
   | AmbientStation
   | SpecialStation
@@ -313,27 +314,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         kind: "special",
         id: "missile-impact-flipbook-test",
         label: "Missile Impact Timing",
-        note: "Missile Hyperion launches three 0.4-inch texture-flare missiles; each impact aligns with the default Fire Diffuse target impact.",
+        note: "Missile Hyperion launches three direct missiles with a dense particle engine flare; impacts keep the default Fire Diffuse timing.",
         effect: "missile-impact-flipbook-test",
         position: [-16, 0],
         to: [6, 0],
         modelFilename: "missile1.glb",
-        textureFilename: "missileflare.png",
         tuning: {
-          color: "#ef4444",
-          secondaryColor: "#f97316",
-          speed: 0.75,
-          size: 0.31,
-          fade: 1,
-          intensity: 1.4,
-          spread: 0.5,
-          count: 4,
-          arc: 0,
-          thickness: 1.35,
+          color: "#f97316",
+          secondaryColor: "#fde68a",
+          speed: 0.72,
+          size: 0.86,
+          fade: 1.1,
+          intensity: 1.35,
+          spread: 0.55,
+          count: 110,
+          arc: 0.32,
+          thickness: 0.95,
           expansionCycle: 3.2,
-          randomness: 0,
+          randomness: 0.42,
           meshSize: 0.4,
-          flareSize: 4,
+          flareSize: 0.1,
         },
       },
     ],
@@ -529,6 +529,46 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [0, -10],
         tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 34, spread: 0.95 },
       },
+      {
+        kind: "special",
+        id: "dead-hyperion-sparse-embers",
+        label: "Sparse Ember Drift",
+        note: "Point particles: a few hot embers drifting aft from a cold dead Hyperion.",
+        effect: "dead-hulk-point-sparks",
+        position: [-18, 4],
+        modelFilename: "dead-hyperion.glb",
+        tuning: { color: "#fb923c", secondaryColor: "#fef3c7", speed: 0.15, size: 0.72, fade: 1.45, intensity: 1.05, spread: 0.72, count: 55, arc: 0.55, thickness: 0.82, randomness: 0.25 },
+      },
+      {
+        kind: "special",
+        id: "dead-hyperion-engine-spark-trail",
+        label: "Engine Spark Trail",
+        note: "Point particles: denser orange trail venting backward from the aft hull.",
+        effect: "dead-hulk-point-sparks",
+        position: [-6, 4],
+        modelFilename: "dead-hyperion.glb",
+        tuning: { color: "#f97316", secondaryColor: "#fde68a", speed: 0.72, size: 0.86, fade: 1.1, intensity: 1.35, spread: 0.55, count: 110, arc: 0.32, thickness: 0.95, randomness: 0.42 },
+      },
+      {
+        kind: "special",
+        id: "dead-hyperion-electrical-glints",
+        label: "Electrical Glints",
+        note: "Point particles: cooler intermittent blue-white sparks flickering off damaged systems.",
+        effect: "dead-hulk-point-sparks",
+        position: [6, 4],
+        modelFilename: "dead-hyperion.glb",
+        tuning: { color: "#67e8f9", secondaryColor: "#f8fafc", speed: 0.58, size: 0.54, fade: 1.8, intensity: 1.5, spread: 0.9, count: 78, arc: 0.82, thickness: 0.68, randomness: 0.86 },
+      },
+      {
+        kind: "special",
+        id: "dead-hyperion-wide-debris-sparkle",
+        label: "Wide Debris Sparkle",
+        note: "Point particles: wider, quieter mixed-color motes trailing from the hulk silhouette.",
+        effect: "dead-hulk-point-sparks",
+        position: [18, 4],
+        modelFilename: "dead-hyperion.glb",
+        tuning: { color: "#f59e0b", secondaryColor: "#94a3b8", speed: 0.3, size: 0.46, fade: 2.1, intensity: 0.9, spread: 1.35, count: 135, arc: 1.1, thickness: 0.62, randomness: 0.7 },
+      },
     ],
   },
   {
@@ -719,6 +759,33 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     ],
   },
   {
+    id: "organic-skin-tests",
+    name: "Organic Skin",
+    summary: "Single-drift organic hull motion on the Spitfire and Shadow Battlecrab, preserving the source texture's black and grey palette.",
+    stations: [
+      {
+        kind: "organic-skin",
+        id: "organic-single-drift",
+        label: "Spitfire - Single Drift",
+        note: "The original fighter reference using the selected single-drift tuning.",
+        modelFilename: "spitfire.glb",
+        position: [-9, 0],
+        variant: "single-drift",
+        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
+      },
+      {
+        kind: "organic-skin",
+        id: "organic-single-drift-battlecrab",
+        label: "Battlecrab - Single Drift",
+        note: "The same grayscale UV drift applied to the replacement Battlecrab mesh.",
+        modelFilename: "battlecrab.glb",
+        position: [9, 0],
+        variant: "single-drift",
+        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
+      },
+    ],
+  },
+  {
     id: "special-systems",
     name: "Special Systems",
     summary: "Additional plausible game effects for defenses, special actions, and battlefield events.",
@@ -759,33 +826,6 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [-9, 8],
         tuning: { color: "#f472b6", secondaryColor: "#fde68a", speed: 0.85, size: 1.15, fade: 1, thickness: 1.2 },
       },
-  {
-    id: "organic-skin-tests",
-    name: "Organic Skin",
-    summary: "Single-drift organic hull motion on the Spitfire and Shadow Battlecrab, preserving the source texture's black and grey palette.",
-    stations: [
-      {
-        kind: "organic-skin",
-        id: "organic-single-drift",
-        label: "Spitfire - Single Drift",
-        note: "The original fighter reference using the selected single-drift tuning.",
-        modelFilename: "spitfire.glb",
-        position: [-9, 0],
-        variant: "single-drift",
-        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
-      },
-      {
-        kind: "organic-skin",
-        id: "organic-single-drift-battlecrab",
-        label: "Battlecrab - Single Drift",
-        note: "The same grayscale UV drift applied to the replacement Battlecrab mesh.",
-        modelFilename: "battlecrab.glb",
-        position: [9, 0],
-        variant: "single-drift",
-        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
-      },
-    ],
-  },
       {
         kind: "special",
         id: "stealth-shimmer",
@@ -1036,12 +1076,13 @@ function stationTypeLabel(station: ShowcaseStation): string {
   if (station.kind === "weapon") return station.weapon.name;
   if (station.kind === "hull-state") return station.mode;
   if (station.kind === "animated-model") return "bone test";
+  if (station.kind === "organic-skin") return "organic skin";
   return station.effect;
 }
 
 function supportsRibbonRandomness(station: ShowcaseStation): boolean {
   if (station.kind !== "special") return false;
-  return station.effect === "jump-point" || station.effect === "vortex-ribbons" || station.effect === "jump-vortex" || station.effect === "jump-point-aperture" || station.effect === "arc-particle-spray" || station.effect === "persistent-impact-flashes";
+  return station.effect === "jump-point" || station.effect === "vortex-ribbons" || station.effect === "jump-vortex" || station.effect === "jump-point-aperture" || station.effect === "arc-particle-spray" || station.effect === "persistent-impact-flashes" || isPointSparkTrail(station);
 }
 
 function isArcParticleSpray(station: ShowcaseStation): boolean {
@@ -1050,6 +1091,10 @@ function isArcParticleSpray(station: ShowcaseStation): boolean {
 
 function isPersistentImpactFlashes(station: ShowcaseStation): boolean {
   return station.kind === "special" && station.effect === "persistent-impact-flashes";
+}
+
+function isPointSparkTrail(station: ShowcaseStation): boolean {
+  return station.kind === "special" && (station.effect === "dead-hulk-point-sparks" || station.effect === "missile-impact-flipbook-test");
 }
 
 function isTexturedExplodingSphere(station: ShowcaseStation): station is SpecialStation {
@@ -1072,6 +1117,7 @@ function baseTuningFor(station: ShowcaseStation): Tuning {
   return {
     ...DEFAULT_TUNING,
     color: stationColor,
+    secondaryColor,
     count: station.kind === "weapon" ? station.totalDice : DEFAULT_TUNING.count,
     ...station.tuning,
   };
@@ -1082,7 +1128,6 @@ function effectiveTuning(station: ShowcaseStation, overrides: TuningOverrides): 
 }
 
 function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): "beam" | "tracer" | "missile" {
-  if (station.kind === "organic-skin") return "organic skin";
   const name = (weapon.name ?? "").toLowerCase();
   const traits = (weapon.traits ?? "").toLowerCase();
   if (name.includes("missile")) return "missile";
@@ -1114,7 +1159,6 @@ function BoardPlane() {
     </group>
   );
 }
-    secondaryColor,
 
 function StationLabel({ station, selected }: { station: ShowcaseStation; selected: boolean }) {
   const [x, z] = station.kind === "weapon"
@@ -1175,6 +1219,8 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "missile1.glb": "20260719-013547",
   "omega2.glb": "20260720-174853",
   "projectile_mesh.glb": "20260720-154500",
+  "spitfire.glb": "20260720-210100",
+  "battlecrab.glb": "20260720-214405-organic",
   "_jumppoint.glb": "20260719-192131",
 };
 
@@ -1191,6 +1237,12 @@ const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "sci-fi-explosion-flipbook-5x5.png": "20260720-020000",
   "energy-impact-particles-flipbook-5x5.png": "20260720-114500-stabilized-alpha",
   "praxis.png": "20260720-120000",
+  "shadow_flesh_alpha.png": "20260720-organic-v1",
+  "shadow_flesh_base_tile.png": "20260720-organic-v1",
+  "shadow_flesh_distortion.png": "20260720-organic-v1",
+  "shadow_flesh_flow.png": "20260720-organic-v1",
+  "shadow_flesh_normal.png": "20260720-organic-v1",
+  "shadow_flesh_roughness.png": "20260720-organic-v1",
 };
 
 function showcaseModelUrl(filename: string): string {
@@ -1216,8 +1268,6 @@ function ShowcaseGlbModel({
   filename,
   tint,
   opacity = 1,
-  "spitfire.glb": "20260720-210100",
-  "battlecrab.glb": "20260720-214405-organic",
   emissiveColor,
   emissiveIntensity = 0,
   emissivePulse = false,
@@ -1234,12 +1284,6 @@ function ShowcaseGlbModel({
   anchorEffects?: boolean;
   rotation?: [number, number, number];
   targetInches?: number;
-  "shadow_flesh_alpha.png": "20260720-organic-v1",
-  "shadow_flesh_base_tile.png": "20260720-organic-v1",
-  "shadow_flesh_distortion.png": "20260720-organic-v1",
-  "shadow_flesh_flow.png": "20260720-organic-v1",
-  "shadow_flesh_normal.png": "20260720-organic-v1",
-  "shadow_flesh_roughness.png": "20260720-organic-v1",
 }) {
   const url = showcaseModelUrl(filename);
   const { scene } = useGLTF(url);
@@ -1321,47 +1365,6 @@ function ShowcaseGlbModel({
   );
 }
 
-function RotatingBoneShowcaseModel({
-  filename,
-  tint,
-  rotatingBoneName,
-  rotationAxis,
-  secondsPerRotation,
-}: {
-  filename: string;
-  tint: string;
-  rotatingBoneName: string;
-  rotationAxis: "x" | "y" | "z";
-  secondsPerRotation: number;
-}) {
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const revision =
-    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
-  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
-  const { scene } = useGLTF(url);
-  const boneRef = useRef<THREE.Object3D | null>(null);
-  const initialRotationRef = useRef(0);
-
-  const cloned = useMemo(() => {
-    const c = cloneSkeleton(scene) as THREE.Object3D;
-    const tintColor = new THREE.Color(tint);
-    const targetBoneName = rotatingBoneName.toLowerCase();
-    boneRef.current = null;
-    initialRotationRef.current = 0;
-
-    c.traverse((child: any) => {
-      const childName = String(child.name ?? "").toLowerCase();
-      if (childName === targetBoneName) {
-        boneRef.current = child;
-        initialRotationRef.current = readEulerAxis(child.rotation, rotationAxis);
-      }
-      if (!child.isMesh) return;
-      child.castShadow = true;
-      child.receiveShadow = true;
-      const sourceMaterials = Array.isArray(child.material)
-        ? child.material
-        : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
 const ORGANIC_SKIN_VARIANT_INDEX: Record<OrganicSkinVariant, number> = {
   "static-reference": 0,
   "single-drift": 1,
@@ -1644,6 +1647,47 @@ function OrganicSkinFxStation({
   );
 }
 
+function RotatingBoneShowcaseModel({
+  filename,
+  tint,
+  rotatingBoneName,
+  rotationAxis,
+  secondsPerRotation,
+}: {
+  filename: string;
+  tint: string;
+  rotatingBoneName: string;
+  rotationAxis: "x" | "y" | "z";
+  secondsPerRotation: number;
+}) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+  const { scene } = useGLTF(url);
+  const boneRef = useRef<THREE.Object3D | null>(null);
+  const initialRotationRef = useRef(0);
+
+  const cloned = useMemo(() => {
+    const c = cloneSkeleton(scene) as THREE.Object3D;
+    const tintColor = new THREE.Color(tint);
+    const targetBoneName = rotatingBoneName.toLowerCase();
+    boneRef.current = null;
+    initialRotationRef.current = 0;
+
+    c.traverse((child: any) => {
+      const childName = String(child.name ?? "").toLowerCase();
+      if (childName === targetBoneName) {
+        boneRef.current = child;
+        initialRotationRef.current = readEulerAxis(child.rotation, rotationAxis);
+      }
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
         const clonedMaterial = material?.clone
           ? material.clone()
           : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
@@ -2612,6 +2656,149 @@ function HullStateFxStation({ station, tuning, selected, showLabel }: { station:
   );
 }
 
+type DeadHulkSparkSeed = {
+  origin: [number, number, number];
+  velocity: [number, number, number];
+  phase: number;
+  life: number;
+  wobble: number;
+  colorMix: number;
+};
+
+function seededSparkNoise(index: number, salt: number): number {
+  const value = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453123;
+  return value - Math.floor(value);
+}
+
+function DeadHulkPointSparks({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const timeRef = useRef(0);
+  const particleCount = clamp(Math.round(tuning.count), 8, 280);
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    g.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    return g;
+  }, [particleCount]);
+  const seeds = useMemo<DeadHulkSparkSeed[]>(() => {
+    const randomness = clamp(tuning.randomness ?? 0.5, 0, 1);
+    const plumeWidth = Math.max(0.08, tuning.spread);
+    const lift = Math.max(0, tuning.arc);
+    return Array.from({ length: particleCount }, (_, index) => {
+      const a = seededSparkNoise(index, 0.11);
+      const b = seededSparkNoise(index, 1.73);
+      const c = seededSparkNoise(index, 4.41);
+      const d = seededSparkNoise(index, 8.19);
+      const side = (a - 0.5) * (0.65 + plumeWidth * 0.7);
+      const originY = -0.18 + b * (0.3 + randomness * 0.44);
+      const originZ = -0.78 - c * (0.55 + randomness * 0.7);
+      const driftX = side * (0.42 + randomness * 0.8);
+      const driftY = 0.12 + lift * (0.35 + d * 0.72);
+      const driftZ = -(1.35 + b * 2.4) * (0.55 + plumeWidth * 0.52);
+      return {
+        origin: [side * 0.72, originY, originZ],
+        velocity: [driftX, driftY, driftZ],
+        phase: a * 7.5,
+        life: 2.8 + b * 3.4 + tuning.fade * 0.55,
+        wobble: 0.25 + c * (0.7 + randomness * 1.1),
+        colorMix: d,
+      };
+    });
+  }, [particleCount, tuning.arc, tuning.fade, tuning.randomness, tuning.spread]);
+  const primary = useMemo(() => new THREE.Color(tuning.color), [tuning.color]);
+  const secondary = useMemo(
+    () => new THREE.Color(tuning.secondaryColor),
+    [tuning.secondaryColor],
+  );
+  const workingColorRef = useRef(new THREE.Color());
+  const sparkSize = Math.max(0.012, 0.055 * tuning.size * tuning.thickness);
+
+  useFrame((_, delta) => {
+    if (!paused) timeRef.current += delta * clamp(tuning.speed, 0.05, 3);
+    const positions = geometry.getAttribute("position")
+      .array as Float32Array;
+    const colors = geometry.getAttribute("color").array as Float32Array;
+    const time = timeRef.current;
+    for (let i = 0; i < seeds.length; i += 1) {
+      const seed = seeds[i];
+      const local = ((time + seed.phase) % seed.life) / seed.life;
+      const fadeIn = clamp(local / 0.16, 0, 1);
+      const fadeOut = clamp(1 - (local - 0.48) / 0.52, 0, 1);
+      const brightness =
+        fadeIn *
+        fadeOut *
+        (0.38 + Math.sin((time + seed.phase) * (5.5 + seed.wobble * 4)) * 0.22 + seed.colorMix * 0.55);
+      const wobbleX = Math.sin(time * 1.7 + seed.phase) * 0.08 * seed.wobble;
+      const wobbleZ = Math.cos(time * 1.2 + seed.phase * 0.7) * 0.05 * seed.wobble;
+      const idx = i * 3;
+      positions[idx] = seed.origin[0] + seed.velocity[0] * local + wobbleX;
+      positions[idx + 1] = seed.origin[1] + seed.velocity[1] * local;
+      positions[idx + 2] = seed.origin[2] + seed.velocity[2] * local + wobbleZ;
+      const color = workingColorRef.current
+        .copy(primary)
+        .lerp(secondary, seed.colorMix * 0.85);
+      color.multiplyScalar(clamp(brightness * tuning.intensity, 0.04, 2.4));
+      colors[idx] = color.r;
+      colors[idx + 1] = color.g;
+      colors[idx + 2] = color.b;
+    }
+    geometry.getAttribute("position").needsUpdate = true;
+    geometry.getAttribute("color").needsUpdate = true;
+  });
+
+  return (
+    <group position={[station.position[0], 0, station.position[1]]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+        <ringGeometry args={[1.35, 1.52, 64]} />
+        <meshBasicMaterial color={tuning.color} transparent opacity={0.36} />
+      </mesh>
+      <group position={[0, 1.35, 0]} rotation={[THREE.MathUtils.degToRad(7), 0, THREE.MathUtils.degToRad(5)]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel
+            filename={station.modelFilename ?? "dead-hyperion.glb"}
+            tint="#94a3b8"
+            opacity={0.9}
+            emissiveColor={tuning.secondaryColor}
+            emissiveIntensity={0.04 * tuning.intensity}
+            targetInches={2.5}
+          />
+        </Suspense>
+      </group>
+      <points geometry={geometry} position={[0, 1.35, 0]} raycast={() => null}>
+        <pointsMaterial
+          size={sparkSize}
+          sizeAttenuation
+          transparent
+          opacity={0.86}
+          vertexColors
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+      <pointLight
+        color={tuning.color}
+        intensity={0.75 * tuning.intensity}
+        distance={5.5 * tuning.spread}
+        position={[0, 1.65, -1.15]}
+      />
+    </group>
+  );
+}
+
 function BeamPreview({ from, to, tuning }: { from: THREE.Vector3; to: THREE.Vector3; tuning: Tuning }) {
   const coreRef = useRef<THREE.MeshBasicMaterial>(null);
   const haloRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -3091,6 +3278,9 @@ function MeshMissileRound({
   filename,
   textureFilename,
   textureFlare,
+  sparkTrail,
+  smokeTrail = true,
+  directPath,
   from,
   to,
   tuning,
@@ -3102,6 +3292,9 @@ function MeshMissileRound({
   filename: string;
   textureFilename?: string;
   textureFlare?: boolean;
+  sparkTrail?: boolean;
+  smokeTrail?: boolean;
+  directPath?: boolean;
   from: THREE.Vector3;
   to: THREE.Vector3;
   tuning: Tuning;
@@ -3114,6 +3307,39 @@ function MeshMissileRound({
   const smokeTrailRef = useRef<THREE.Group>(null);
   const localElapsedRef = useRef(0);
   const forward = useMemo(() => new THREE.Vector3(0, 0, 1), []);
+  const sparkParticleCount = clamp(Math.round(tuning.count), 4, 160);
+  const sparkTrailGeometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(sparkParticleCount * 3), 3),
+    );
+    geometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(sparkParticleCount * 3), 3),
+    );
+    return geometry;
+  }, [sparkParticleCount]);
+  const sparkSeeds = useMemo(
+    () =>
+      Array.from({ length: sparkParticleCount }, (_, sparkIndex) => {
+        const a = seededSparkNoise(index * 197 + sparkIndex, 0.23);
+        const b = seededSparkNoise(index * 197 + sparkIndex, 1.91);
+        const c = seededSparkNoise(index * 197 + sparkIndex, 5.47);
+        const d = seededSparkNoise(index * 197 + sparkIndex, 9.83);
+        const randomness = clamp(tuning.randomness ?? 0.42, 0, 1.5);
+        return {
+          lag: 0.018 + (sparkIndex / Math.max(1, sparkParticleCount - 1)) * (0.18 + tuning.fade * 0.05),
+          side: (a - 0.5) * (0.18 + tuning.spread * 0.22) * (1 + randomness * 0.35),
+          lift: (b - 0.35) * (0.05 + tuning.arc * 0.18),
+          drift: (c - 0.5) * (0.08 + tuning.spread * 0.12),
+          phase: d * 8.5,
+          colorMix: b,
+          brightness: 0.55 + c * 0.55,
+        };
+      }),
+    [index, sparkParticleCount, tuning.arc, tuning.fade, tuning.randomness, tuning.spread],
+  );
   const smokePuffs = useMemo(
     () =>
       Array.from({ length: 21 }, (_, i) => ({
@@ -3138,10 +3364,12 @@ function MeshMissileRound({
   const pointAt = useCallback(
     (t: number) => {
       const p = flight.start.clone().lerp(flight.end, t);
-      p.y += Math.sin(Math.PI * t) * tuning.arc * (1 + (index % 2) * 0.12);
+      if (!directPath) {
+        p.y += Math.sin(Math.PI * t) * tuning.arc * (1 + (index % 2) * 0.12);
+      }
       return p;
     },
-    [flight.end, flight.start, index, tuning.arc],
+    [directPath, flight.end, flight.start, index, tuning.arc],
   );
 
   const directionAt = useCallback(
@@ -3155,8 +3383,8 @@ function MeshMissileRound({
 
   useFrame((_, delta) => {
     const group = missileRef.current;
-    const smokeTrail = smokeTrailRef.current;
-    if (!group || (!textureFlare && !smokeTrail)) return;
+    const smokeTrailGroup = smokeTrailRef.current;
+    if (!group || (!textureFlare && !smokeTrailGroup && !sparkTrail)) return;
     if (!timelineRef && !paused) localElapsedRef.current += delta;
 
     const duration = MESH_MISSILE_FLIGHT_SECONDS;
@@ -3166,7 +3394,7 @@ function MeshMissileRound({
     const elapsed = (timelineSeconds % cycle) - delay;
     if (elapsed < 0) {
       group.visible = false;
-      if (smokeTrail) smokeTrail.visible = false;
+      if (smokeTrailGroup) smokeTrailGroup.visible = false;
       return;
     }
 
@@ -3178,16 +3406,55 @@ function MeshMissileRound({
     group.position.copy(current);
     group.quaternion.setFromUnitVectors(forward, direction);
 
+    if (sparkTrail) {
+      const positions = sparkTrailGeometry.getAttribute("position").array as Float32Array;
+      const colors = sparkTrailGeometry.getAttribute("color").array as Float32Array;
+      const side = new THREE.Vector3(-direction.z, 0, direction.x).normalize();
+      const primary = new THREE.Color(tuning.color);
+      const secondary = new THREE.Color(tuning.secondaryColor);
+      const workingColor = new THREE.Color();
+      const isTrailVisible = visible && t > 0.02;
+      for (let sparkIndex = 0; sparkIndex < sparkSeeds.length; sparkIndex += 1) {
+        const seed = sparkSeeds[sparkIndex];
+        const idx = sparkIndex * 3;
+        if (!isTrailVisible || t - seed.lag <= 0) {
+          positions[idx] = current.x;
+          positions[idx + 1] = current.y;
+          positions[idx + 2] = current.z;
+          colors[idx] = 0;
+          colors[idx + 1] = 0;
+          colors[idx + 2] = 0;
+          continue;
+        }
+        const lagT = clamp(t - seed.lag, 0, 1);
+        const age = clamp(seed.lag / Math.max(0.001, 0.18 + tuning.fade * 0.05), 0, 1);
+        const flicker = 0.65 + Math.sin((timelineSeconds + seed.phase) * (6.5 + seed.brightness * 3)) * 0.28;
+        const brightness = (1 - age) * seed.brightness * flicker * tuning.intensity;
+        const sparkPoint = pointAt(lagT)
+          .add(side.clone().multiplyScalar(seed.side))
+          .add(new THREE.Vector3(seed.drift, seed.lift, -seed.drift * 0.35));
+        positions[idx] = sparkPoint.x;
+        positions[idx + 1] = sparkPoint.y;
+        positions[idx + 2] = sparkPoint.z;
+        workingColor.copy(primary).lerp(secondary, seed.colorMix * 0.8).multiplyScalar(clamp(brightness, 0, 2.6));
+        colors[idx] = workingColor.r;
+        colors[idx + 1] = workingColor.g;
+        colors[idx + 2] = workingColor.b;
+      }
+      sparkTrailGeometry.getAttribute("position").needsUpdate = true;
+      sparkTrailGeometry.getAttribute("color").needsUpdate = true;
+    }
+
     if (textureFlare) {
-      if (smokeTrail) smokeTrail.visible = false;
+      if (smokeTrailGroup) smokeTrailGroup.visible = false;
       return;
     }
 
-    if (!smokeTrail) return;
-    smokeTrail.visible = visible && t > 0.025;
-    if (smokeTrail.visible) {
+    if (!smokeTrailGroup) return;
+    smokeTrailGroup.visible = smokeTrail && visible && t > 0.025;
+    if (smokeTrailGroup.visible) {
       const side = new THREE.Vector3(-direction.z, 0, direction.x).normalize();
-      smokeTrail.children.forEach((child, puffIndex) => {
+      smokeTrailGroup.children.forEach((child, puffIndex) => {
         const puff = smokePuffs[puffIndex];
         if (!puff) return;
         const lagT = clamp(t - puff.lag, 0, 1);
@@ -3219,7 +3486,7 @@ function MeshMissileRound({
           />
         </Suspense>
       </group>
-      {textureFlare ? null : (
+      {!textureFlare && smokeTrail ? (
         <group ref={smokeTrailRef} visible={false}>
           {smokePuffs.map((_, smokeIndex) => (
             <mesh key={smokeIndex} raycast={() => null}>
@@ -3233,7 +3500,21 @@ function MeshMissileRound({
             </mesh>
           ))}
         </group>
-      )}
+      ) : null}
+      {sparkTrail ? (
+        <points geometry={sparkTrailGeometry} raycast={() => null}>
+          <pointsMaterial
+            size={Math.max(0.012, 0.055 * tuning.size * tuning.thickness)}
+            sizeAttenuation
+            transparent
+            opacity={0.86}
+            vertexColors
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </points>
+      ) : null}
     </>
   );
 }
@@ -3256,7 +3537,10 @@ function MeshMissileSalvo({
   const to = useMemo(() => toVector3(targetPosition, 1.15), [targetPosition]);
   const filename = station.modelFilename ?? "missile.glb";
   const textureFilename = station.textureFilename;
-  const textureFlare = station.effect === "texture-missile-salvo" || station.effect === "missile-impact-flipbook-test";
+  const textureFlare = station.effect === "texture-missile-salvo";
+  const sparkTrail = station.effect === "missile-impact-flipbook-test";
+  const smokeTrail = station.effect !== "missile-impact-flipbook-test";
+  const directPath = station.effect === "missile-impact-flipbook-test";
   const count = station.effect === "missile-impact-flipbook-test" ? 3 : clamp(Math.round(tuning.count), 1, 5);
 
   return (
@@ -3269,6 +3553,9 @@ function MeshMissileSalvo({
           filename={filename}
           textureFilename={textureFilename}
           textureFlare={textureFlare}
+          sparkTrail={sparkTrail}
+          smokeTrail={smokeTrail}
+          directPath={directPath}
           from={from}
           to={to}
           tuning={tuning}
@@ -3783,6 +4070,22 @@ function MissileImpactFlipbookTest({ station, tuning, paused }: { station: Speci
   const targetVector = useMemo(() => toVector3(targetPosition, 1.85), [targetPosition]);
   const salvoTimelineRef = useRef(0);
   const missileCount = 3;
+  const impactTuning = useMemo<Tuning>(
+    () => ({
+      ...tuning,
+      color: "#ef4444",
+      secondaryColor: "#f97316",
+      speed: 0.75,
+      size: 0.31,
+      fade: 1,
+      intensity: 1.4,
+      spread: 0.5,
+      count: 4,
+      arc: 0,
+      thickness: 1.35,
+    }),
+    [tuning],
+  );
   const cycleDuration =
     MESH_MISSILE_FLIGHT_SECONDS +
     meshMissileLaunchDelaySeconds(missileCount - 1) +
@@ -3828,7 +4131,7 @@ function MissileImpactFlipbookTest({ station, tuning, paused }: { station: Speci
         <ShowcaseTargetImpactSphere
           key={`impact-${i}`}
           position={position}
-          tuning={tuning}
+          tuning={impactTuning}
           paused={paused}
           delaySeconds={MESH_MISSILE_FLIGHT_SECONDS + meshMissileLaunchDelaySeconds(i)}
           timelineRef={salvoTimelineRef}
@@ -5469,6 +5772,9 @@ function SpecialFxStation({
       {station.effect === "beacon-pulse" ? <BeaconPulse position={station.position} tuning={tuning} /> : null}
       {station.effect === "gravity-lens" ? <GravityLens position={station.position} tuning={tuning} /> : null}
       {station.effect === "damage-glow-core" ? <DamageGlowCore position={station.position} tuning={tuning} /> : null}
+      {station.effect === "dead-hulk-point-sparks" ? (
+        <DeadHulkPointSparks station={station} tuning={tuning} paused={animationPaused} />
+      ) : null}
       {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
       {station.effect === "cloud-flipbook-damage" && station.textureFilename ? (
         <Suspense fallback={null}>
@@ -5501,6 +5807,24 @@ function SpecialFxStation({
   );
 }
 
+function ShowcaseCameraRig({ boardId }: { boardId: string }) {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    if (boardId === "organic-skin-tests") {
+      const canvasAspect = size.width / Math.max(size.height, 1);
+      const framingDistance = 43 * Math.max(1, 1.35 / canvasAspect);
+      camera.position.set(0, Math.min(framingDistance, 100), 0.1);
+    } else {
+      camera.position.set(0, 39, 48);
+    }
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+  }, [boardId, camera, size.height, size.width]);
+
+  return null;
+}
+
 function ShowcaseScene({
   board,
   overrides,
@@ -5518,6 +5842,7 @@ function ShowcaseScene({
       <ambientLight intensity={0.55} />
       <directionalLight position={[10, 24, 14]} intensity={1.4} castShadow />
       <BoardPlane />
+      <ShowcaseCameraRig boardId={board.id} />
       {board.stations.map(station => {
         const tuning = effectiveTuning(station, overrides);
         const selected = station.id === selectedStationId;
@@ -5526,6 +5851,7 @@ function ShowcaseScene({
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
+        if (station.kind === "organic-skin") return <OrganicSkinFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
         return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} animationPaused={animationPaused} showLabel={showLabel} />;
       })}
       <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={14} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={[0, 0, 0]} />
@@ -5671,7 +5997,9 @@ export default function VfxShowcase() {
   const selectedIsPersistentImpactFlashes = selectedStation ? isPersistentImpactFlashes(selectedStation) : false;
   const selectedIsTexturedSphere = selectedStation ? isTexturedExplodingSphere(selectedStation) : false;
   const selectedIsTexturedSphereSampleOne = selectedStation ? isTexturedSphereSampleOne(selectedStation) : false;
+  const selectedIsPointSparkTrail = selectedStation ? isPointSparkTrail(selectedStation) : false;
   const selectedIsPraxisShockwave = selectedStation?.kind === "special" && selectedStation.effect === "praxis-shockwave";
+  const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -5690,24 +6018,6 @@ export default function VfxShowcase() {
       return next;
     });
   };
-function ShowcaseCameraRig({ boardId }: { boardId: string }) {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    if (boardId === "organic-skin-tests") {
-      const canvasAspect = size.width / Math.max(size.height, 1);
-      const framingDistance = 43 * Math.max(1, 1.35 / canvasAspect);
-      camera.position.set(0, Math.min(framingDistance, 100), 0.1);
-    } else {
-      camera.position.set(0, 39, 48);
-    }
-    camera.lookAt(0, 0, 0);
-    camera.updateProjectionMatrix();
-  }, [boardId, camera, size.height, size.width]);
-
-  return null;
-}
-
 
   const copyPreset = async () => {
     await navigator.clipboard.writeText(exportText);
@@ -5725,7 +6035,6 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
                 <p className="mt-1 text-sm text-muted-foreground">{activeBoard.summary}</p>
               </div>
             </div>
-      <ShowcaseCameraRig boardId={board.id} />
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -5734,7 +6043,6 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
                 className="gap-2 uppercase tracking-widest text-xs"
                 onClick={() => setAnimationPaused(prev => !prev)}
               >
-        if (station.kind === "organic-skin") return <OrganicSkinFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
                 {animationPaused ? "Resume Animation" : "Pause Animation"}
               </Button>
               {SHOWCASE_BOARDS.map(board => (
@@ -5853,7 +6161,7 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
                       <SliderControl label="Fade" value={selectedTuning.fade} min={0.25} max={3} step={0.05} onChange={fade => updateSelected({ fade })} />
                       <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
                       <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
-                      <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
+                      <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsPointSparkTrail ? 160 : selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
                       <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
                       <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
                     </>
@@ -5890,7 +6198,6 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
                     <SliderControl
                       label="Ribbon Effect"
                       value={selectedTuning.ribbonEffect ?? 0.7}
-  const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
                       min={0}
                       max={2}
                       step={0.05}

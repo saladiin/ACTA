@@ -316,6 +316,9 @@ All Hands on Deck:
 Scout support:
 - Implemented as separate Scout actions rather than normal Special Actions.
 - Needs range exceptions, especially Delphi unlimited Scout range.
+- AI currently does not make tactical Scout Support choices in the formal
+  pre-fire Scout window; revisit with heuristics for Counter-Stealth and
+  Coordinate Fire once the player-facing flow settles.
 - Needs tests for token consumption, failed checks, and invalid weapon exclusions.
 
 ## Ship Trait Gaps

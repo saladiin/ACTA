@@ -98,6 +98,17 @@ import {
   type PriorityLevel,
   priorityLabel,
 } from "@/lib/fleet-allocation";
+import {
+  findBlockingLineOfSightObstacle,
+  type LineOfSightBlock,
+  type LineOfSightObstacle,
+} from "@/lib/line-of-sight";
+import {
+  ASTEROID_FIELD_SOURCE_DIAMETER,
+  lineOfSightObstaclesFromTerrainConfig,
+  normalizeTerrainConfig,
+  type TerrainObject,
+} from "@/lib/terrain";
 import skyboxUrl from "@assets/skybox_1780215222009.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1293,7 +1304,6 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   COMMAND_HYPERION_MODEL_FILENAME,
   "black-omega.glb",
   "aurora.glb",
-  "black-omega.glb",
   "thunderbolt.glb",
   "tiger.glb",
   "nial.glb",
@@ -1326,6 +1336,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "sharlin.glb": 1.5,
   "avioki.glb": 1.5,
   "battlecrab.glb": 1.5,
+  [ORION_SPACE_STATION_MODEL_FILENAME]: 3,
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
   [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
   "aurora.glb": 0.165,
@@ -1338,8 +1349,12 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "frazi.glb": 0.165,
   "spitfire.glb": 0.165,
 };
+const MODEL_VISUAL_Y_OFFSETS: Record<string, number> = {
+  [ORION_SPACE_STATION_MODEL_FILENAME]: 2,
+};
 const FIGHTER_SQUADRON_MODELS = new Set([
   "aurora.glb",
+  "black-omega.glb",
   "thunderbolt.glb",
   "tiger.glb",
   "nial.glb",
@@ -1375,6 +1390,10 @@ const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
 
 function modelScaleMultiplier(filename: string): number {
   return MODEL_SCALE_MULTIPLIERS[filename.toLowerCase()] ?? 1;
+}
+
+function modelVisualYOffset(filename: string): number {
+  return MODEL_VISUAL_Y_OFFSETS[filename.toLowerCase()] ?? 0;
 }
 
 function visualModelFilenameForUnit(unit: {
@@ -1779,8 +1798,13 @@ function GlbModel({
   const flip = FLIP_MODELS.has(filename);
   const visualFlip =
     flip || VISUAL_ROTATE_180_MODELS.has(filename.toLowerCase());
+  const yOffset = modelVisualYOffset(filename);
   return (
-    <group scale={[s, s, s]} rotation={[0, visualFlip ? Math.PI : 0, 0]}>
+    <group
+      position={[0, yOffset, 0]}
+      scale={[s, s, s]}
+      rotation={[0, visualFlip ? Math.PI : 0, 0]}
+    >
       <primitive object={cloned} />
       {damageAnchorEffects
         ? anchors.map((anchor) => (
@@ -1812,6 +1836,29 @@ class ModelErrorBoundary extends React.Component<
   }
 }
 
+class OptionalFxErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { error: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { error: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Optional weapon FX failed; suppressing visual effect.", error);
+  }
+
+  render() {
+    if (this.state.error) return null;
+    return this.props.children;
+  }
+}
+
 function ShipModelFallback({
   color,
   opacity = 1,
@@ -1834,6 +1881,7 @@ function ShipModelFallback({
 // Cache HEAD-check results so each URL is only fetched once per session
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "asteroid-light.glb": "20260721-field-v2",
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
@@ -2223,8 +2271,11 @@ function isShadowCodedDamageVessel(unit: {
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
 const CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES = 3;
 
-function rulesBaseRadius(_unit?: { baseRadiusInches?: number | null }): number {
-  return STANDARD_BASE_RADIUS_INCHES;
+function rulesBaseRadius(unit?: { baseRadiusInches?: number | null }): number {
+  const radius = Number(unit?.baseRadiusInches);
+  return Number.isFinite(radius) && radius > 0
+    ? radius
+    : STANDARD_BASE_RADIUS_INCHES;
 }
 
 function carriedFighterDeployCenterRadius(
@@ -2495,6 +2546,95 @@ function BoardModelVisual({
         </group>
       ))}
     </group>
+  );
+}
+
+function TerrainAsteroidField({ field }: { field: TerrainObject }) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    MODEL_ASSET_REVISIONS[field.modelFilename.toLowerCase()] ?? APP_BUILD_SHA;
+  const url = `${basePath}/api/models/${field.modelFilename}?v=${encodeURIComponent(revision)}`;
+  const { scene } = useGLTF(url);
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (String(child.name ?? "").toLowerCase().includes("circle")) {
+        child.visible = false;
+      }
+      if (child.isMesh) {
+        child.castShadow = false;
+        child.receiveShadow = false;
+        const materials = Array.isArray(child.material)
+          ? child.material
+          : [child.material];
+        const clonedMaterials = materials.map((material: THREE.Material | undefined) => {
+          const next = material?.clone
+            ? material.clone()
+            : new THREE.MeshStandardMaterial({ color: "#8b949e" });
+          next.transparent = true;
+          next.opacity = 0.9;
+          if ("emissive" in next) {
+            (next as THREE.MeshStandardMaterial).emissive = new THREE.Color("#0f172a");
+            (next as THREE.MeshStandardMaterial).emissiveIntensity = 0.08;
+          }
+          return next;
+        });
+        child.material = Array.isArray(child.material) ? clonedMaterials : clonedMaterials[0];
+      }
+    });
+    return c;
+  }, [scene]);
+  const diameter = field.radiusInches * 2;
+  const scale = diameter / ASTEROID_FIELD_SOURCE_DIAMETER;
+  return (
+    <group position={[field.x, 0.03, field.z]} renderOrder={2}>
+      <group scale={[scale, scale, scale]}>
+        <primitive object={cloned} />
+      </group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]}>
+        <ringGeometry args={[field.radiusInches - 0.035, field.radiusInches + 0.035, 72]} />
+        <meshBasicMaterial
+          color="#38bdf8"
+          transparent
+          opacity={0.78}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]}>
+        <circleGeometry args={[field.radiusInches, 72]} />
+        <meshBasicMaterial
+          color="#0e7490"
+          transparent
+          opacity={0.08}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <Billboard position={[0, 0.95, 0]}>
+        <Text
+          fontSize={0.28}
+          color="#bae6fd"
+          anchorX="center"
+          anchorY="middle"
+          outlineColor="#020617"
+          outlineWidth={0.035}
+        >
+          {field.name} · D{field.density}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+function TerrainFields({ fields }: { fields: TerrainObject[] }) {
+  if (fields.length === 0) return null;
+  return (
+    <Suspense fallback={null}>
+      {fields.map((field) => (
+        <TerrainAsteroidField key={field.id} field={field} />
+      ))}
+    </Suspense>
   );
 }
 
@@ -4262,6 +4402,18 @@ function weaponRangeDistanceForPreview(
   return Math.max(0, distance);
 }
 
+function weaponLineOfSightBlockForPreview(
+  attacker: { hexQ: number; hexR: number },
+  target: { hexQ: number; hexR: number },
+  obstacles: LineOfSightObstacle[],
+): LineOfSightBlock | null {
+  return findBlockingLineOfSightObstacle(
+    { x: attacker.hexQ, z: attacker.hexR },
+    { x: target.hexQ, z: target.hexR },
+    obstacles,
+  );
+}
+
 function ArcSector({
   centerAngle,
   halfAngle,
@@ -4759,6 +4911,40 @@ type SelfRepairResult = {
   hullBefore: number;
   hullAfter: number;
   unit: GameUnit;
+};
+
+type TerrainHazardRoll = {
+  fieldId: string;
+  fieldName: string;
+  density: number;
+  inchesInside: number;
+  checkRolls: number[];
+  crewQuality?: number;
+  checkTotal: number;
+  passed: boolean;
+  attackDice: number;
+  hitThreshold: number;
+  attackRolls: number[];
+  hits: number;
+  damage: number;
+  crewLost: number;
+  damageTable?: {
+    overkill: number;
+    roll: number;
+    total: number;
+    outcome: "adrift" | "destroyed" | "exploding-end-of-next";
+  } | null;
+};
+
+type TerrainHazardMoveResult = GameUnit & {
+  asteroidHazards?: TerrainHazardRoll[];
+};
+
+type TerrainHazardModalState = {
+  unitName: string;
+  hazards: TerrainHazardRoll[];
+  phase: "rolling" | "shown";
+  confirmingClose?: boolean;
 };
 
 type FighterBayActionResult = {
@@ -5414,6 +5600,8 @@ function ForwardPreview({
   distance,
   maxDistance,
   minRequired,
+  turnRequired,
+  turnRequirementLabel,
   committedBefore,
   minExempt,
 }: {
@@ -5422,6 +5610,10 @@ function ForwardPreview({
   // Inches the ship MUST cover this activation (sheet rule: at least half
   // base speed). Zero / exempt → no minimum line, arrow always green.
   minRequired: number;
+  // Inches the ship must cover before it may turn. Agile ships often have a
+  // lower turn gate than their minimum activation movement requirement.
+  turnRequired?: number;
+  turnRequirementLabel?: string;
   // Distance already committed to the ledger before this in-progress segment.
   committedBefore: number;
   // True when ship is All Stop / All Stop & Pivot / under mandatory-move
@@ -5445,11 +5637,18 @@ function ForwardPreview({
   // the still-available distance (i.e. the player hasn't already covered it
   // with previously-committed movement this activation).
   const minRemaining = Math.max(0, minRequired - committedBefore);
+  const turnRemaining = Math.max(0, (turnRequired ?? 0) - committedBefore);
   const showMinTick =
     !minExempt &&
     minRequired > 0 &&
     minRemaining > 0 &&
     minRemaining <= maxDistance + 1e-6;
+  const showTurnTick =
+    !minExempt &&
+    (turnRequired ?? 0) > 0 &&
+    Math.abs((turnRequired ?? 0) - minRequired) > 1e-6 &&
+    turnRemaining > 0 &&
+    turnRemaining <= maxDistance + 1e-6;
   return (
     <group>
       {/* Faint max-range rail showing how far this ship can still go this phase */}
@@ -5465,6 +5664,25 @@ function ForwardPreview({
           <boxGeometry args={[0.5, 0.04, 0.06]} />
           <meshBasicMaterial color="#f59e0b" transparent opacity={0.95} />
         </mesh>
+      )}
+      {showTurnTick && (
+        <>
+          <mesh position={[0, 0.085, 1.2 + turnRemaining]}>
+            <boxGeometry args={[0.36, 0.05, 0.05]} />
+            <meshBasicMaterial color="#22d3ee" transparent opacity={0.95} />
+          </mesh>
+          <CameraFacingText
+            position={[0.42, 0.12, 1.2 + turnRemaining]}
+            fontSize={0.22}
+            color="#67e8f9"
+            anchorX="left"
+            anchorY="middle"
+            outlineWidth={0.035}
+            outlineColor="black"
+          >
+            {turnRequirementLabel ?? `turn ${turnRequired?.toFixed(1)}"`}
+          </CameraFacingText>
+        </>
       )}
       {/* Active distance arrow */}
       {distance > 0 && (
@@ -5488,7 +5706,7 @@ function ForwardPreview({
             anchorY="middle"
             outlineWidth={0.04}
             outlineColor="black"
-          >{`${distance.toFixed(1)}"${minExempt || meetsMin ? "" : ` / min ${minRequired.toFixed(1)}"`}`}</CameraFacingText>
+          >{`${distance.toFixed(1)}"${minExempt || meetsMin ? "" : ` / min move ${minRequired.toFixed(1)}"`}`}</CameraFacingText>
         </>
       )}
     </group>
@@ -5536,6 +5754,8 @@ function MovementPlanner({
   flip,
   remainingMove,
   minRequired,
+  turnRequired,
+  turnRequirementLabel,
   committedBefore,
   minExempt,
 }: {
@@ -5544,6 +5764,8 @@ function MovementPlanner({
   flip: boolean;
   remainingMove: number;
   minRequired: number;
+  turnRequired?: number;
+  turnRequirementLabel?: string;
   committedBefore: number;
   minExempt: boolean;
 }) {
@@ -5562,6 +5784,8 @@ function MovementPlanner({
               distance={plan?.kind === "forward" ? plan.distance : 0}
               maxDistance={remainingMove}
               minRequired={minRequired}
+              turnRequired={turnRequired}
+              turnRequirementLabel={turnRequirementLabel}
               committedBefore={committedBefore}
               minExempt={minExempt}
             />
@@ -7424,6 +7648,13 @@ export default function GameBoard() {
   const game = gameData?.game;
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
+  const terrainFields = useMemo(
+    () => normalizeTerrainConfig(game?.terrainConfig).objects,
+    [game?.terrainConfig],
+  );
+  const lineOfSightObstacles = useMemo<LineOfSightObstacle[]>(() => {
+    return lineOfSightObstaclesFromTerrainConfig(game?.terrainConfig);
+  }, [game?.terrainConfig]);
   const devAiCommanderActive =
     import.meta.env.DEV &&
     (rawMyUserId === "test-user-1" || rawMyUserId === "test-user-2") &&
@@ -7483,6 +7714,48 @@ export default function GameBoard() {
   });
   const chooseSpecialAction = useChooseSpecialAction();
   const chooseScoutAction = useChooseScoutAction();
+  const declareScoutSupport = useMutation({
+    mutationFn: ({
+      unitId,
+      action,
+    }: {
+      unitId: number;
+      action: "counter-stealth" | "coord";
+    }) =>
+      customFetch(`/api/games/${gameId}/units/${unitId}/scout-action`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+        responseType: "json",
+      }),
+    onSuccess: (res: any) => {
+      if (res?.unit) mergeUpdatedUnitIntoGame(res.unit);
+      setActivationFeedback(
+        `${res?.action === "counter-stealth" ? "Counter-Stealth" : "Coordinate Fire"} declared. Resolve Scout Support at the start of Firing.`,
+      );
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        cleanApiErrorMessage(err, "Scout Support declaration failed"),
+      );
+    },
+  });
+  const skipScoutSupport = useMutation({
+    mutationFn: () =>
+      customFetch(`/api/games/${gameId}/scout-support/skip`, {
+        method: "POST",
+        responseType: "json",
+      }),
+    onSuccess: () => {
+      setScoutPicking(null);
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        cleanApiErrorMessage(err, "Scout Support skip failed"),
+      );
+    },
+  });
   useEffect(() => {
     if (!gameId) return;
     void qc.invalidateQueries({ queryKey: getListShipModelsQueryKey() });
@@ -7751,13 +8024,17 @@ export default function GameBoard() {
   // pick-mode, then click an enemy ship to declare against.
   const [scoutPicking, setScoutPicking] = useState<{
     action: "counter-stealth" | "coord";
+    scoutUnitId: number;
   } | null>(null);
   const [scoutFeedback, setScoutFeedback] = useState<{
     action: string;
+    scoutName: string;
+    crewQuality: number;
     success: boolean;
     cqRoll: number | null;
     cqTotal: number | null;
     cqRequired: number | null;
+    error?: string | null;
   } | null>(null);
   // Synchronous re-entry guard for the firing-phase target click. A single
   // user click on an enemy ship produces multiple R3F onClick events (one per
@@ -7766,6 +8043,7 @@ export default function GameBoard() {
   // ref flips synchronously the moment we kick off a mutate() and is cleared
   // when the request settles, so the 2nd–Nth events in the same gesture bail.
   const firingInFlightRef = useRef(false);
+  const scoutActionInFlightRef = useRef(false);
   const [passAllFiringPending, setPassAllFiringPending] = useState(false);
   const [passAllFiringConfirmOpen, setPassAllFiringConfirmOpen] =
     useState(false);
@@ -7787,6 +8065,8 @@ export default function GameBoard() {
   // damage-ready → damage-rolling → damage-shown → close (confirmed). The
   // server returns the full result in one shot; the staging is purely UX.
   const [diceModal, setDiceModal] = useState<DiceModalState | null>(null);
+  const [terrainHazardModal, setTerrainHazardModal] =
+    useState<TerrainHazardModalState | null>(null);
   const [dogfightModal, setDogfightModal] = useState<DogfightModalState | null>(
     null,
   );
@@ -7983,7 +8263,10 @@ export default function GameBoard() {
   // polling as soon as the modal closes.
   useEffect(() => {
     const open =
-      diceModal !== null || dogfightModal !== null || selfRepairModal !== null;
+      diceModal !== null ||
+      dogfightModal !== null ||
+      selfRepairModal !== null ||
+      terrainHazardModal !== null;
     pausePollingRef.current = open;
     if (open) {
       void qc
@@ -7994,7 +8277,7 @@ export default function GameBoard() {
           // consumed here.
         });
     }
-  }, [diceModal, dogfightModal, selfRepairModal, qc, gameId]);
+  }, [diceModal, dogfightModal, selfRepairModal, terrainHazardModal, qc, gameId]);
   const [turnMoves, setTurnMoves] = useState<
     Array<{
       unitId: number;
@@ -9018,6 +9301,27 @@ export default function GameBoard() {
     },
     [gameId, qc],
   );
+  const showTerrainHazardsForMove = useCallback(
+    (updatedUnit: TerrainHazardMoveResult) => {
+      const hazards = Array.isArray(updatedUnit.asteroidHazards)
+        ? updatedUnit.asteroidHazards
+        : [];
+      if (hazards.length === 0) return;
+      setTerrainHazardModal({
+        unitName: updatedUnit.name,
+        hazards,
+        phase: "rolling",
+      });
+      window.setTimeout(() => {
+        setTerrainHazardModal((modal) =>
+          modal && modal.unitName === updatedUnit.name && modal.phase === "rolling"
+            ? { ...modal, phase: "shown" }
+            : modal,
+        );
+      }, 700);
+    },
+    [],
+  );
   const commitSelfRepair = useCallback(
     async (modal: SelfRepairModalState) => {
       if (modal.phase !== "ready" && modal.phase !== "error") return;
@@ -9301,6 +9605,7 @@ export default function GameBoard() {
           moveConfirmInFlightRef.current = false;
           setActivationFeedback(null);
           mergeUpdatedUnitIntoGame(updatedUnit);
+          showTerrainHazardsForMove(updatedUnit as TerrainHazardMoveResult);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           afterSuccess?.();
         },
@@ -9325,6 +9630,7 @@ export default function GameBoard() {
     qc,
     shipModels,
     mergeUpdatedUnitIntoGame,
+    showTerrainHazardsForMove,
     isFighterUnit,
     unitsWithFighterFlags,
   ]);
@@ -10251,17 +10557,82 @@ export default function GameBoard() {
         uiBasesInContact(selectedUnitData, unit),
     );
   }, [isFighterUnit, myUserId, selectedUnitData, units]);
-  const hasAnyWeaponFiredThisPhase = useMemo(() => {
-    return units.some(
-      (u) =>
-        u.hasFiredThisRound ||
-        ((u.firedWeaponIds ?? []) as number[]).length > 0,
-    );
-  }, [units]);
+  const unitCanScoutSupport = useCallback(
+    (unit: BoardUnit): boolean => {
+      if (unit.isDestroyed || unit.scoutAction) return false;
+      if (unit.specialAction) return false;
+      if (unit.hullPoints <= 0) return false;
+      if ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
+        return false;
+      if (
+        unit.damageState === "adrift" ||
+        unit.damageState === "exploding-end-of-next"
+      )
+        return false;
+      const maxCrew = unit.maxCrewPoints ?? 0;
+      if (maxCrew > 0 && (unit.crewPoints ?? 0) <= maxCrew / 2) return false;
+      const traits = getShipModelForUnit(unit)?.traits ?? "";
+      return /\bscout\b/i.test(traits);
+    },
+    [getShipModelForUnit],
+  );
+  const enemyHasStealthTrait = useCallback(
+    (unit: BoardUnit): boolean => {
+      const traits = getShipModelForUnit(unit)?.traits ?? "";
+      return /\bstealth\s*\+?\d+/i.test(traits);
+    },
+    [getShipModelForUnit],
+  );
+  const unitRangeInches = useCallback((a: BoardUnit, b: BoardUnit): number => {
+    return Math.hypot((b.hexQ ?? 0) - (a.hexQ ?? 0), (b.hexR ?? 0) - (a.hexR ?? 0));
+  }, []);
+  const declaredScoutActionBase = useCallback(
+    (raw: string | null | undefined): "counter-stealth" | "coord" | null => {
+      if (raw === "counter-stealth-declared") return "counter-stealth";
+      if (raw === "coord-declared") return "coord";
+      return null;
+    },
+    [],
+  );
   const canDeclareScoutSupport =
     game?.status === "active" &&
+    currentPhase === "movement" &&
+    isMyActivation &&
+    activeUnitReadyForActions &&
+    selectedUnitData?.id === activeUnitId &&
+    selectedUnitData.ownerId === myUserId &&
+    unitCanScoutSupport(selectedUnitData) &&
+    !selectedUnitData.hasMovedThisRound &&
+    !(selectedUnitData as { hasInitiatedMoveThisActivation?: boolean })
+      .hasInitiatedMoveThisActivation;
+  const myDeclaredScoutSupportRows = useMemo(
+    () =>
+      units
+        .map((unit) => ({
+          unit,
+          action: declaredScoutActionBase(unit.scoutAction),
+        }))
+        .filter(
+          (
+            row,
+          ): row is {
+            unit: BoardUnit;
+            action: "counter-stealth" | "coord";
+          } => row.unit.ownerId === myUserId && row.action !== null,
+        ),
+    [declaredScoutActionBase, myUserId, units],
+  );
+  const currentDeclaredScoutSupport = myDeclaredScoutSupportRows[0] ?? null;
+  const myDeclaredScoutSupportOpen =
+    game?.status === "active" &&
     currentPhase === "firing" &&
-    !hasAnyWeaponFiredThisPhase;
+    myDeclaredScoutSupportRows.length > 0 &&
+    scoutPicking === null &&
+    scoutFeedback === null;
+  const declaredScoutSupportBlocksFiring =
+    game?.status === "active" &&
+    currentPhase === "firing" &&
+    myDeclaredScoutSupportRows.length > 0;
   const hasAvailableScoutCoordToken = useMemo(() => {
     return units.some(
       (u) =>
@@ -10826,6 +11197,7 @@ export default function GameBoard() {
       {
         onSuccess: (updatedUnit) => {
           mergeUpdatedUnitIntoGame(updatedUnit);
+          showTerrainHazardsForMove(updatedUnit as TerrainHazardMoveResult);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           endActivation.mutate(
             { gameId },
@@ -10853,6 +11225,7 @@ export default function GameBoard() {
     gameId,
     qc,
     mergeUpdatedUnitIntoGame,
+    showTerrainHazardsForMove,
   ]);
   // Reset the in-flight latch whenever the active unit changes so a new
   // adrift activation can drift on its own button click.
@@ -10961,15 +11334,26 @@ export default function GameBoard() {
     // window. This takes priority over the weapon picker.
     if (
       game?.status === "active" &&
-      canDeclareScoutSupport &&
+      currentPhase === "firing" &&
       scoutPicking !== null &&
-      selectedUnit !== null &&
       unit.ownerId !== myUserId
     ) {
-      const scout = units.find((u) => u.id === selectedUnit);
+      if (scoutActionInFlightRef.current || chooseScoutAction.isPending) return;
+      const scout = units.find((u) => u.id === scoutPicking.scoutUnitId);
       if (!scout || scout.ownerId !== myUserId) return;
       const declared = scoutPicking.action;
+      if (unitRangeInches(scout, unit) > 36) {
+        setActivationFeedback(
+          `${declared === "counter-stealth" ? "Counter-Stealth" : "Coordinate Fire"} target is outside Scout range.`,
+        );
+        return;
+      }
+      if (declared === "counter-stealth" && !enemyHasStealthTrait(unit)) {
+        setActivationFeedback("Counter-Stealth requires an enemy with Stealth.");
+        return;
+      }
       setScoutPicking(null);
+      scoutActionInFlightRef.current = true;
       chooseScoutAction.mutate(
         {
           gameId,
@@ -10978,26 +11362,38 @@ export default function GameBoard() {
         },
         {
           onSuccess: (res) => {
+            scoutActionInFlightRef.current = false;
+            if ((res as { alreadyResolved?: boolean }).alreadyResolved) {
+              mergeUpdatedUnitIntoGame(res.unit);
+              qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+              return;
+            }
             setScoutFeedback({
               action: res.action,
+              scoutName: scout.name,
+              crewQuality: scout.crewQuality,
               success: res.success,
               cqRoll: res.cqRoll ?? null,
               cqTotal: res.cqTotal ?? null,
               cqRequired: res.cqRequired ?? null,
             });
+            mergeUpdatedUnitIntoGame(res.unit);
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           },
           onError: (err: any) => {
+            scoutActionInFlightRef.current = false;
+            const message = cleanApiErrorMessage(err, "Scout action failed");
             setScoutFeedback({
               action: declared,
+              scoutName: scout.name,
+              crewQuality: scout.crewQuality,
               success: false,
               cqRoll: null,
               cqTotal: null,
               cqRequired: 8,
+              error: message,
             });
-            setActivationFeedback(
-              cleanApiErrorMessage(err, "Scout action failed"),
-            );
+            setActivationFeedback(message);
           },
         },
       );
@@ -11046,6 +11442,20 @@ export default function GameBoard() {
       unit.ownerId !== myUserId
     ) {
       if (splitFireCommitting || firingInFlightRef.current) return;
+      const attacker = units.find((u) => u.id === splitFirePlan.attackerUnitId);
+      if (attacker) {
+        const losBlock = weaponLineOfSightBlockForPreview(
+          attacker,
+          unit,
+          lineOfSightObstacles,
+        );
+        if (losBlock) {
+          setActivationFeedback(
+            `Line of sight is blocked by ${losBlock.obstacle.name}.`,
+          );
+          return;
+        }
+      }
       if (splitFirePlan.firstTargetId == null) {
         setSplitFirePlan((plan) =>
           plan
@@ -11122,6 +11532,17 @@ export default function GameBoard() {
       ) {
         setActivationFeedback(
           "Target fighter is locked in a dogfight and cannot be attacked by normal weapons.",
+        );
+        return;
+      }
+      const losBlock = weaponLineOfSightBlockForPreview(
+        attacker,
+        unit,
+        lineOfSightObstacles,
+      );
+      if (losBlock) {
+        setActivationFeedback(
+          `Line of sight is blocked by ${losBlock.obstacle.name}.`,
         );
         return;
       }
@@ -12898,6 +13319,7 @@ export default function GameBoard() {
             {game.status === "deploying" && (
               <DeploymentZones config={deploymentConfig} mySide={mySide} />
             )}
+            <TerrainFields fields={terrainFields} />
             {game.status === "deploying" &&
               carriedFighterDeploymentGuideCarrier && (
                 <CarriedFighterDeploymentGuide
@@ -12995,8 +13417,15 @@ export default function GameBoard() {
                   unit,
                   activeTargetingPreview.weapon.arc,
                 );
+                const losBlocked = Boolean(
+                  weaponLineOfSightBlockForPreview(
+                    activeTargetingPreview.attacker,
+                    unit,
+                    lineOfSightObstacles,
+                  ),
+                );
                 targetingPreview =
-                  inRange && inArc && !activeFighterLockedInDogfight
+                  inRange && inArc && !losBlocked && !activeFighterLockedInDogfight
                     ? "eligible"
                     : "ineligible";
               }
@@ -13054,6 +13483,13 @@ export default function GameBoard() {
                 const minRequired = minExempt
                   ? 0
                   : effectiveUiSpeed(selectedUnitData) / 2;
+                const turnRequired = selectedMovementUi?.turnGateExempt
+                  ? 0
+                  : selectedMovementUi?.neededStraight;
+                const turnRequirementLabel =
+                  turnRequired && turnRequired > 0
+                    ? `turn ${turnRequired.toFixed(turnRequired % 1 === 0 ? 0 : 1)}"`
+                    : undefined;
                 const committedBefore = getLedger(selectedUnitData.id).distance;
                 if (isFighterUnit(selectedUnitData)) {
                   return (
@@ -13072,6 +13508,8 @@ export default function GameBoard() {
                     flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
                     remainingMove={selectedRemainingMove}
                     minRequired={minRequired}
+                    turnRequired={turnRequired}
+                    turnRequirementLabel={turnRequirementLabel}
                     committedBefore={committedBefore}
                     minExempt={minExempt}
                   />
@@ -13215,18 +13653,20 @@ export default function GameBoard() {
               const from = new THREE.Vector3(ax, 2, az);
               const to = new THREE.Vector3(tx, 2, tz);
               const hits = diceModal.result?.hits ?? 0;
+              const fxKey = `${diceModal.attackerUnitId}-${diceModal.weapon.id}-${diceModal.targetId}`;
               return (
-                <WeaponFx
-                  key={`${diceModal.attackerUnitId}-${diceModal.weapon.id}-${diceModal.targetId}`}
-                  from={from}
-                  to={to}
-                  weapon={diceModal.weapon}
-                  attackerFaction={attacker.faction}
-                  attackerName={attacker.name}
-                  attackerModelFilename={attacker.modelFilename}
-                  hits={hits}
-                  totalDice={diceModal.attackDice}
-                />
+                <OptionalFxErrorBoundary key={fxKey}>
+                  <WeaponFx
+                    from={from}
+                    to={to}
+                    weapon={diceModal.weapon}
+                    attackerFaction={attacker.faction}
+                    attackerName={attacker.name}
+                    attackerModelFilename={attacker.modelFilename}
+                    hits={hits}
+                    totalDice={diceModal.attackDice}
+                  />
+                </OptionalFxErrorBoundary>
               );
             })()}
             {(() => {
@@ -13245,17 +13685,18 @@ export default function GameBoard() {
               const [ax, , az] = hexToWorld(attacker.hexQ, attacker.hexR);
               const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
               return (
-                <WeaponFx
-                  key={aiWeaponFxReplay.key}
-                  from={new THREE.Vector3(ax, 2, az)}
-                  to={new THREE.Vector3(tx, 2, tz)}
-                  weapon={weapon}
-                  attackerFaction={attacker.faction}
-                  attackerName={attacker.name}
-                  attackerModelFilename={attacker.modelFilename}
-                  hits={aiWeaponFxReplay.hits}
-                  totalDice={weapon.attackDice}
-                />
+                <OptionalFxErrorBoundary key={aiWeaponFxReplay.key}>
+                  <WeaponFx
+                    from={new THREE.Vector3(ax, 2, az)}
+                    to={new THREE.Vector3(tx, 2, tz)}
+                    weapon={weapon}
+                    attackerFaction={attacker.faction}
+                    attackerName={attacker.name}
+                    attackerModelFilename={attacker.modelFilename}
+                    hits={aiWeaponFxReplay.hits}
+                    totalDice={weapon.attackDice}
+                  />
+                </OptionalFxErrorBoundary>
               );
             })()}
             <EffectComposer>
@@ -15367,6 +15808,10 @@ export default function GameBoard() {
                         : isSkeletonSA
                           ? "Cannot declare — skeleton crew"
                           : null;
+                    const scoutActionLocked = !!selectedUnitData.scoutAction;
+                    const selectedHasScoutTrait = /\bscout\b/i.test(
+                      getShipModelForUnit(selectedUnitData)?.traits ?? "",
+                    );
                     return (
                       <div
                         className="space-y-1.5"
@@ -15403,8 +15848,59 @@ export default function GameBoard() {
                             ✗ {noSAReason}
                           </div>
                         )}
+                        {!actionLocked && scoutActionLocked && (
+                          <div
+                            className="text-[9px] font-mono text-cyan-300/85 border border-cyan-500/40 bg-cyan-500/10 rounded px-2 py-1"
+                            data-testid="special-action-locked-by-scout"
+                          >
+                            Scout Support already used this round
+                          </div>
+                        )}
                         {!actionLocked && (
                           <div className="grid grid-cols-1 gap-1">
+                            {selectedHasScoutTrait &&
+                              (["counter-stealth", "coord"] as const).map(
+                              (a) => {
+                                const disabled =
+                                  !canDeclareScoutSupport ||
+                                  declareScoutSupport.isPending;
+                                const label =
+                                  a === "counter-stealth"
+                                    ? "Counter-Stealth"
+                                    : "Coordinate Fire";
+                                const hint =
+                                  a === "counter-stealth"
+                                    ? "Reduce enemy Stealth by 1 this round"
+                                    : "Mark enemy for one re-roll this round";
+                                return (
+                                  <button
+                                    key={`scout-${a}`}
+                                    type="button"
+                                    data-testid={`scout-action-${a}`}
+                                    disabled={disabled}
+                                    onClick={() => {
+                                      declareScoutSupport.mutate({
+                                        unitId: selectedUnitData.id,
+                                        action: a,
+                                      });
+                                    }}
+                                    className={`text-left rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-35 disabled:cursor-not-allowed ${
+                                      "border-cyan-500/35 bg-cyan-500/10 text-cyan-200/90 hover:bg-cyan-500/15"
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-bold">{label}</span>
+                                      <span className="text-[9px] opacity-70">
+                                        CQ 8+
+                                      </span>
+                                    </div>
+                                    <div className="text-[9px] opacity-70">
+                                      {`${hint} - activate during Movement phase`}
+                                    </div>
+                                  </button>
+                                );
+                              },
+                            )}
                             {SPECIAL_ACTIONS.filter((a) => !a.hidden).map(
                               (a) => {
                                 const needsTarget = a.id === "concentrate-fire";
@@ -15432,6 +15928,7 @@ export default function GameBoard() {
                                   chooseSpecialAction.isPending ||
                                   (needsTarget && !enemyAlive) ||
                                   alreadyMoved ||
+                                  scoutActionLocked ||
                                   !!noSAReason ||
                                   needsAllStopPrereq;
                                 return (
@@ -15730,6 +16227,34 @@ export default function GameBoard() {
                               </div>
                             </div>
                           )}
+                        {hasAvailableScoutCoordToken && (
+                          <label
+                            className={`flex cursor-pointer select-none items-center justify-between gap-3 rounded border px-3 py-2 font-mono text-[11px] transition-colors ${
+                              useCoordOnNext
+                                ? "border-sky-200/80 bg-sky-300/20 text-sky-50 shadow-[0_0_18px_rgba(125,211,252,0.22)]"
+                                : "border-sky-300/45 bg-sky-400/10 text-sky-100 hover:bg-sky-400/20"
+                            }`}
+                            data-testid="scout-coord-toggle"
+                          >
+                            <span>
+                              <span className="block text-xs font-bold uppercase tracking-wider">
+                                Expend Coordinated Fire?
+                              </span>
+                              <span className="text-[10px] text-sky-100/70">
+                                Next eligible weapon into the marked target rerolls missed AD.
+                              </span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={useCoordOnNext}
+                              onChange={(e) =>
+                                setUseCoordOnNext(e.target.checked)
+                              }
+                              className="h-4 w-4 accent-sky-300"
+                              data-testid="scout-coord-checkbox"
+                            />
+                          </label>
+                        )}
                         {weapons.map((w) => {
                           const fired = firedSet.has(w.id);
                           const skeletonBlocked =
@@ -15780,10 +16305,17 @@ export default function GameBoard() {
                                 data-testid={`weapon-${w.id}`}
                                 disabled={
                                   unavailable ||
+                                  declaredScoutSupportBlocksFiring ||
                                   fireWeapon.isPending ||
                                   splitFireCommitting
                                 }
                                 onClick={() => {
+                                  if (declaredScoutSupportBlocksFiring) {
+                                    setActivationFeedback(
+                                      "Resolve declared Scout Support before firing weapons.",
+                                    );
+                                    return;
+                                  }
                                   setSplitFirePlan(null);
                                   setFiringWeaponPicking(picking ? null : w.id);
                                 }}
@@ -15859,6 +16391,7 @@ export default function GameBoard() {
                                 }
                                 disabled={
                                   unavailable ||
+                                  declaredScoutSupportBlocksFiring ||
                                   splitFireReason !== null ||
                                   fireWeapon.isPending ||
                                   splitFireCommitting
@@ -15902,7 +16435,7 @@ export default function GameBoard() {
                         option. */}
                         {hasAvailableScoutCoordToken && (
                           <label
-                            className="flex items-center gap-2 text-[10px] font-mono text-cyan-300/80 cursor-pointer select-none border border-cyan-500/30 bg-cyan-500/5 rounded px-2 py-1 hover:bg-cyan-500/10"
+                            className="hidden"
                             data-testid="scout-coord-toggle"
                           >
                             <input
@@ -15926,228 +16459,8 @@ export default function GameBoard() {
                     );
                   })()}
 
-                {/* ── SCOUT SUPPORT panel ── Visible during the shared
-                  pre-fire window. Doesn't require the scout to be the
-                  active ship. */}
-                {canDeclareScoutSupport &&
-                  selectedUnitData &&
-                  selectedUnitData.ownerId === myUserId &&
-                  !selectedUnitData.isDestroyed &&
-                  (() => {
-                    const traitsStr =
-                      getShipModelForUnit(selectedUnitData)?.traits ?? "";
-                    const hasScout = /\bscout\b/i.test(traitsStr);
-                    if (!hasScout) return null;
-                    const rawAct = selectedUnitData.scoutAction ?? null;
-                    const baseAct = rawAct
-                      ? rawAct.replace(/-failed$/, "")
-                      : null;
-                    const actFailed = !!rawAct && rawAct.endsWith("-failed");
-                    const actLocked = !!rawAct;
-                    return (
-                      <div
-                        className="space-y-1.5"
-                        data-testid="scout-actions-panel"
-                      >
-                        <div className="text-[10px] uppercase tracking-wider text-cyan-400/80 font-mono flex items-center justify-between">
-                          <span>
-                            Scout Support · CQ {selectedUnitData.crewQuality} ·
-                            36"
-                          </span>
-                          {actLocked && (
-                            <Badge
-                              variant="outline"
-                              className={`text-[9px] font-mono ${actFailed ? "border-red-500/60 text-red-300 bg-red-500/10" : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"}`}
-                              data-testid="badge-active-scout-action"
-                            >
-                              {actFailed ? "✗" : "✓"} {baseAct}
-                              {baseAct === "coord" &&
-                              selectedUnitData.scoutCoordConsumed
-                                ? " · spent"
-                                : ""}
-                            </Badge>
-                          )}
-                        </div>
-                        {!actLocked && (
-                          <div className="grid grid-cols-1 gap-1">
-                            {(["counter-stealth", "coord"] as const).map(
-                              (a) => {
-                                const picking = scoutPicking?.action === a;
-                                const enemyAlive = units.some(
-                                  (x) =>
-                                    x.ownerId !== myUserId && !x.isDestroyed,
-                                );
-                                const disabled =
-                                  chooseScoutAction.isPending || !enemyAlive;
-                                const label =
-                                  a === "counter-stealth"
-                                    ? "Counter-Stealth"
-                                    : "Coordination";
-                                const hint =
-                                  a === "counter-stealth"
-                                    ? "Reduce target Stealth by 1 this round"
-                                    : "Grant one allied weapon re-roll vs target";
-                                return (
-                                  <button
-                                    key={a}
-                                    data-testid={`scout-action-${a}`}
-                                    disabled={disabled}
-                                    onClick={() =>
-                                      setScoutPicking((p) =>
-                                        p?.action === a ? null : { action: a },
-                                      )
-                                    }
-                                    className={`text-left rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                                      picking
-                                        ? "border-cyan-400/80 bg-cyan-400/15 text-cyan-200"
-                                        : "border-cyan-500/30 bg-black/40 text-cyan-300/90 hover:bg-cyan-500/10"
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-bold">{label}</span>
-                                      <span className="text-[9px] opacity-70">
-                                        CQ 8+
-                                      </span>
-                                    </div>
-                                    <div className="text-[9px] opacity-70">
-                                      {picking
-                                        ? "▸ Click an enemy ship to declare"
-                                        : hint}
-                                    </div>
-                                  </button>
-                                );
-                              },
-                            )}
-                          </div>
-                        )}
-                        {scoutFeedback && (
-                          <div
-                            className={`rounded border px-2 py-1 text-[10px] font-mono ${
-                              scoutFeedback.success
-                                ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                                : "border-red-500/50 bg-red-500/10 text-red-300"
-                            }`}
-                            data-testid="scout-action-feedback"
-                          >
-                            {scoutFeedback.cqRoll !== null &&
-                            scoutFeedback.cqTotal !== null &&
-                            scoutFeedback.cqRequired !== null
-                              ? `${scoutFeedback.action} · Rolled ${scoutFeedback.cqRoll} + CQ ${selectedUnitData.crewQuality} = ${scoutFeedback.cqTotal} vs ${scoutFeedback.cqRequired}+ → ${scoutFeedback.success ? "SUCCESS" : "FAIL"}`
-                              : `${scoutFeedback.action} · ${scoutFeedback.success ? "✓ ENGAGED" : "✗ FAILED"}`}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
               </div>
             )}
-
-          {game.status === "active" &&
-            !isMyActivation &&
-            canDeclareScoutSupport &&
-            selectedUnitData &&
-            selectedUnitData.ownerId === myUserId &&
-            !selectedUnitData.isDestroyed &&
-            (() => {
-              const traitsStr =
-                getShipModelForUnit(selectedUnitData)?.traits ?? "";
-              const hasScout = /\bscout\b/i.test(traitsStr);
-              if (!hasScout) return null;
-              const rawAct = selectedUnitData.scoutAction ?? null;
-              const baseAct = rawAct ? rawAct.replace(/-failed$/, "") : null;
-              const actFailed = !!rawAct && rawAct.endsWith("-failed");
-              const actLocked = !!rawAct;
-              return (
-                <div
-                  className="p-4 border-b border-border space-y-1.5"
-                  data-testid="scout-actions-panel"
-                >
-                  <div className="text-[10px] uppercase tracking-wider text-cyan-400/80 font-mono flex items-center justify-between">
-                    <span>
-                      Scout Support · CQ {selectedUnitData.crewQuality} · 36"
-                    </span>
-                    {actLocked && (
-                      <Badge
-                        variant="outline"
-                        className={`text-[9px] font-mono ${actFailed ? "border-red-500/60 text-red-300 bg-red-500/10" : "border-cyan-500/60 text-cyan-300 bg-cyan-500/10"}`}
-                        data-testid="badge-active-scout-action"
-                      >
-                        {actFailed ? "✗" : "✓"} {baseAct}
-                        {baseAct === "coord" &&
-                        selectedUnitData.scoutCoordConsumed
-                          ? " · spent"
-                          : ""}
-                      </Badge>
-                    )}
-                  </div>
-                  {!actLocked && (
-                    <div className="grid grid-cols-1 gap-1">
-                      {(["counter-stealth", "coord"] as const).map((a) => {
-                        const picking = scoutPicking?.action === a;
-                        const enemyAlive = units.some(
-                          (x) => x.ownerId !== myUserId && !x.isDestroyed,
-                        );
-                        const disabled =
-                          chooseScoutAction.isPending || !enemyAlive;
-                        const label =
-                          a === "counter-stealth"
-                            ? "Counter-Stealth"
-                            : "Coordination";
-                        const hint =
-                          a === "counter-stealth"
-                            ? "Reduce target Stealth by 1 this round"
-                            : "Grant one allied weapon re-roll vs target";
-                        return (
-                          <button
-                            key={a}
-                            data-testid={`scout-action-${a}`}
-                            disabled={disabled}
-                            onClick={() =>
-                              setScoutPicking((p) =>
-                                p?.action === a ? null : { action: a },
-                              )
-                            }
-                            className={`text-left rounded border px-2 py-1 font-mono text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                              picking
-                                ? "border-cyan-400/80 bg-cyan-400/15 text-cyan-200"
-                                : "border-cyan-500/30 bg-black/40 text-cyan-300/90 hover:bg-cyan-500/10"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold">{label}</span>
-                              <span className="text-[9px] opacity-70">
-                                CQ 8+
-                              </span>
-                            </div>
-                            <div className="text-[9px] opacity-70">
-                              {picking
-                                ? "▸ Click an enemy ship to declare"
-                                : hint}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {scoutFeedback && (
-                    <div
-                      className={`rounded border px-2 py-1 text-[10px] font-mono ${
-                        scoutFeedback.success
-                          ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                          : "border-red-500/50 bg-red-500/10 text-red-300"
-                      }`}
-                      data-testid="scout-action-feedback"
-                    >
-                      {scoutFeedback.cqRoll !== null &&
-                      scoutFeedback.cqTotal !== null &&
-                      scoutFeedback.cqRequired !== null
-                        ? `${scoutFeedback.action} · Rolled ${scoutFeedback.cqRoll} + CQ ${selectedUnitData.crewQuality} = ${scoutFeedback.cqTotal} vs ${scoutFeedback.cqRequired}+ → ${scoutFeedback.success ? "SUCCESS" : "FAIL"}`
-                        : `${scoutFeedback.action} · ${scoutFeedback.success ? "✓ ENGAGED" : "✗ FAILED"}`}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
 
           {/* ── Critical-damage / End-Phase Damage-Control panel ─────────────
               Rendered as a sibling of the activation panel above so it
@@ -16862,6 +17175,122 @@ export default function GameBoard() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <Dialog
+        open={myDeclaredScoutSupportOpen}
+        onOpenChange={() => {}}
+      >
+        <DialogContent
+          className="border-cyan-500/60 bg-black/95 font-mono text-cyan-50 shadow-[0_0_45px_rgba(34,211,238,0.28)] sm:max-w-md"
+          data-testid="dialog-declared-scout-support"
+        >
+          <DialogHeader>
+            <DialogTitle className="text-sm uppercase tracking-[0.22em] text-cyan-200">
+              Resolve Scout Support
+            </DialogTitle>
+            <DialogDescription className="text-xs text-cyan-100/75">
+              {currentDeclaredScoutSupport?.unit.name ?? "Scout"} declared{" "}
+              {currentDeclaredScoutSupport?.action === "coord"
+                ? "Coordinate Fire"
+                : "Counter-Stealth"}
+              . Choose a legal target before weapons fire.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!currentDeclaredScoutSupport || chooseScoutAction.isPending}
+              onClick={() => {
+                if (!currentDeclaredScoutSupport) return;
+                setSelectedUnit(currentDeclaredScoutSupport.unit.id);
+                setScoutPicking({
+                  action: currentDeclaredScoutSupport.action,
+                  scoutUnitId: currentDeclaredScoutSupport.unit.id,
+                });
+                setActivationFeedback(
+                  `${currentDeclaredScoutSupport.action === "counter-stealth" ? "Counter-Stealth" : "Coordinate Fire"}: click an enemy target within 36".`,
+                );
+              }}
+              className="justify-start border-cyan-500/45 bg-cyan-500/5 text-left font-mono text-cyan-100 hover:bg-cyan-500/15"
+              data-testid="button-resolve-declared-scout"
+            >
+              Select Target On Board
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={skipScoutSupport.isPending || chooseScoutAction.isPending}
+              onClick={() => skipScoutSupport.mutate()}
+              className="justify-start font-mono text-slate-300 hover:bg-slate-800"
+              data-testid="button-skip-declared-scout-support"
+            >
+              {skipScoutSupport.isPending ? "Skipping..." : "Skip Declared Scout Support"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={scoutFeedback !== null}
+        onOpenChange={(open) => {
+          if (!open) setScoutFeedback(null);
+        }}
+      >
+        <DialogContent
+          className="border-cyan-500/60 bg-black/95 font-mono text-cyan-50 sm:max-w-md"
+          data-testid="dialog-scout-roll-result"
+        >
+          <DialogHeader>
+            <DialogTitle
+              className={`text-sm uppercase tracking-[0.22em] ${
+                scoutFeedback?.success ? "text-cyan-200" : "text-red-200"
+              }`}
+            >
+              {scoutFeedback?.success ? "Scout Support Succeeds" : "Scout Support Fails"}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-300">
+              {scoutFeedback?.scoutName ?? "Scout"} attempted{" "}
+              {scoutFeedback?.action === "coord"
+                ? "Coordinate Fire"
+                : "Counter-Stealth"}
+              .
+            </DialogDescription>
+          </DialogHeader>
+          {scoutFeedback && (
+            <div
+              className={`rounded border px-3 py-3 text-sm ${
+                scoutFeedback.success
+                  ? "border-cyan-500/45 bg-cyan-500/10 text-cyan-100"
+                  : "border-red-500/45 bg-red-500/10 text-red-100"
+              }`}
+            >
+              {scoutFeedback.cqRoll !== null &&
+              scoutFeedback.cqTotal !== null &&
+              scoutFeedback.cqRequired !== null ? (
+                <>
+                  Roll {scoutFeedback.cqRoll} + CQ{" "}
+                  {scoutFeedback.crewQuality} = {scoutFeedback.cqTotal} vs{" "}
+                  {scoutFeedback.cqRequired}+
+                </>
+              ) : scoutFeedback.error ? (
+                scoutFeedback.error
+              ) : (
+                "No roll data returned."
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={() => setScoutFeedback(null)}
+              className="font-mono"
+              data-testid="button-close-scout-roll-result"
+            >
+              Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {diceModal && (
         <DiceRollModal
           modal={diceModal}
@@ -16889,6 +17318,16 @@ export default function GameBoard() {
           onClose={() => {
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             setDogfightModal(null);
+          }}
+        />
+      )}
+      {terrainHazardModal && (
+        <TerrainHazardDiceModal
+          modal={terrainHazardModal}
+          setModal={setTerrainHazardModal}
+          onClose={() => {
+            qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+            setTerrainHazardModal(null);
           }}
         />
       )}
@@ -16962,6 +17401,198 @@ function DiceFace({
     >
       {display}
     </span>
+  );
+}
+
+function TerrainHazardDiceModal({
+  modal,
+  setModal,
+  onClose,
+}: {
+  modal: TerrainHazardModalState;
+  setModal: React.Dispatch<
+    React.SetStateAction<TerrainHazardModalState | null>
+  >;
+  onClose: () => void;
+}) {
+  const { unitName, hazards, phase, confirmingClose } = modal;
+  const rolling = phase === "rolling";
+  const requestClose = () =>
+    setModal((m) => (m ? { ...m, confirmingClose: true } : null));
+  const cancelClose = () =>
+    setModal((m) => (m ? { ...m, confirmingClose: false } : null));
+  const failedCount = hazards.filter((hazard) => !hazard.passed).length;
+  const totalDamage = hazards.reduce((sum, hazard) => sum + hazard.damage, 0);
+  const totalCrew = hazards.reduce((sum, hazard) => sum + hazard.crewLost, 0);
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 px-4"
+      role="dialog"
+      aria-modal="true"
+      data-testid="terrain-hazard-dice-modal"
+    >
+      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded border border-orange-400/60 bg-slate-950/95 p-4 shadow-2xl shadow-orange-950/40">
+        <button
+          type="button"
+          onClick={requestClose}
+          className="absolute right-3 top-3 rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-mono text-xs text-slate-200 hover:bg-slate-800"
+          aria-label="Close terrain hazard result"
+        >
+          X
+        </button>
+
+        <div className="pr-8">
+          <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-orange-300/80">
+            Movement Hazard
+          </div>
+          <div className="mt-1 font-mono text-lg font-black uppercase text-orange-100">
+            Damaging Terrain
+          </div>
+          <p className="mt-1 font-mono text-xs text-slate-300">
+            {unitName} moved through {hazards.length === 1 ? hazards[0]?.fieldName : `${hazards.length} terrain fields`}.
+          </p>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {hazards.map((hazard) => (
+            <div
+              key={hazard.fieldId}
+              className="rounded border border-orange-400/30 bg-black/45 p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-orange-200/80">
+                    {hazard.fieldName}
+                  </div>
+                  <div className="mt-1 font-mono text-[10px] text-slate-400">
+                    {hazard.inchesInside}" through field - density {hazard.density}
+                  </div>
+                </div>
+                <div
+                  className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${
+                    hazard.passed
+                      ? "border-emerald-400/40 text-emerald-200"
+                      : "border-red-400/50 text-red-200"
+                  }`}
+                >
+                  {rolling
+                    ? "Rolling"
+                    : hazard.passed
+                      ? "Check Passed"
+                      : "Check Failed"}
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                  Density Check - 1D6 + CQ need {hazard.density}+
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {hazard.checkRolls.map((roll, idx) => (
+                    <DiceFace
+                      key={`${hazard.fieldId}-check-${idx}`}
+                      value={roll}
+                      rolling={rolling}
+                      tone={hazard.passed ? "solid" : "bulkhead"}
+                    />
+                  ))}
+                  <span className="font-mono text-xs font-semibold text-slate-400">
+                    + CQ {hazard.crewQuality ?? 0}
+                  </span>
+                  <span className="font-mono text-sm font-bold text-slate-200">
+                    {rolling ? "..." : `= ${hazard.checkTotal}`}
+                  </span>
+                </div>
+              </div>
+
+              {!hazard.passed && (
+                <div className="mt-4">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                    Asteroid Attack - {hazard.attackDice}AD vs Hull {hazard.hitThreshold}+
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {hazard.attackRolls.map((roll, idx) => (
+                      <DiceFace
+                        key={`${hazard.fieldId}-attack-${idx}`}
+                        value={roll}
+                        rolling={rolling}
+                        tone={roll >= hazard.hitThreshold ? "crit" : "default"}
+                      />
+                    ))}
+                    {hazard.attackRolls.length === 0 && (
+                      <span className="font-mono text-xs text-slate-500">
+                        No attack dice rolled.
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 font-mono text-xs text-slate-200">
+                    {rolling
+                      ? "Resolving impact..."
+                      : `${hazard.hits} hit(s), ${hazard.damage} damage, ${hazard.crewLost} crew`}
+                  </div>
+                  {!rolling && hazard.damageTable && (
+                    <div className="mt-1 font-mono text-[10px] text-orange-200/90">
+                      Hull zero table: d6 {hazard.damageTable.roll} + overkill {hazard.damageTable.overkill} = {hazard.damageTable.total}, {hazard.damageTable.outcome}.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {!rolling && (
+          <div className="mt-4 rounded border border-slate-700 bg-slate-900/70 p-3 font-mono text-xs text-slate-200">
+            {failedCount === 0
+              ? "All terrain checks passed."
+              : `Terrain caused ${totalDamage} damage and ${totalCrew} crew loss.`}
+          </div>
+        )}
+
+        <div className="mt-4 flex justify-end">
+          <Button
+            type="button"
+            onClick={requestClose}
+            disabled={rolling}
+            className="font-mono uppercase tracking-widest"
+            data-testid="button-close-terrain-hazard-modal"
+          >
+            {rolling ? "Rolling..." : "Continue"}
+          </Button>
+        </div>
+
+        {confirmingClose && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/75 p-4">
+            <div className="w-full max-w-sm rounded border border-orange-400/50 bg-slate-950 p-4 text-center shadow-2xl">
+              <div className="font-mono text-sm font-bold text-orange-100">
+                Close terrain dice?
+              </div>
+              <p className="mt-2 font-mono text-xs text-slate-300">
+                The result is already recorded in the battle log.
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="font-mono"
+                  onClick={cancelClose}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className="font-mono"
+                  onClick={onClose}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

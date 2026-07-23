@@ -76,6 +76,28 @@ function TurnBadge({ game, myUserId }: { game: TurnSummaryGame; myUserId: string
   );
 }
 
+function FeatureBadge({ label }: { label: "Terrain" | "Station" }) {
+  const className = label === "Terrain"
+    ? "border-emerald-400/50 bg-emerald-400/10 text-emerald-300"
+    : "border-cyan-400/50 bg-cyan-400/10 text-cyan-300";
+
+  return (
+    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest ${className}`}>
+      {label}
+    </span>
+  );
+}
+
+function ChallengeFeatureBadges({ game }: { game: { hasTerrain?: boolean; hasStation?: boolean } }) {
+  if (!game.hasTerrain && !game.hasStation) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+      {game.hasTerrain ? <FeatureBadge label="Terrain" /> : null}
+      {game.hasStation ? <FeatureBadge label="Station" /> : null}
+    </div>
+  );
+}
+
 export default function Lobby() {
   const { data: lobby, isLoading } = useGetLobby();
   const { data: profile } = useGetMyProfile();
@@ -268,6 +290,7 @@ export default function Lobby() {
                           {priorityLabel(normalizePriorityLevel(game.priorityLevel))} {game.allocationPoints} FAP
                           {isChallenger && game.status === "open" ? " - awaiting opponent" : ""}
                         </div>
+                        <ChallengeFeatureBadges game={game} />
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
