@@ -1251,6 +1251,7 @@ const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
+const DEAD_OMEGA_MODEL_FILENAME = "dead-omega.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
 };
@@ -1297,6 +1298,8 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
   [COMMAND_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
   "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
+  "omega.glb": DEAD_OMEGA_MODEL_FILENAME,
+  [OMEGA_ROTATING_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
   EXPLORER_ROTATING_MODEL_FILENAME,
@@ -1339,6 +1342,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   [ORION_SPACE_STATION_MODEL_FILENAME]: 3,
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
   [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
+  [DEAD_OMEGA_MODEL_FILENAME]: 1.5,
   "aurora.glb": 0.165,
   "black-omega.glb": 0.165,
   "thunderbolt.glb": 0.165,
@@ -1404,6 +1408,12 @@ function visualModelFilenameForUnit(unit: {
   const shouldUseDeadMesh =
     unit.isDestroyed || unit.damageState === "destroyed";
   const modelFilenameKey = unit.modelFilename.toLowerCase();
+  if (
+    unit.damageState === "adrift" &&
+    (modelFilenameKey === "omega.glb" || modelFilenameKey === OMEGA_ROTATING_MODEL_FILENAME)
+  ) {
+    return "omega.glb";
+  }
   if (!shouldUseDeadMesh) {
     return DEFAULT_VISUAL_MODEL_FILENAMES[modelFilenameKey] ?? unit.modelFilename;
   }
@@ -1887,6 +1897,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
+  [DEAD_OMEGA_MODEL_FILENAME]: "20260718-231918",
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
@@ -3366,27 +3377,33 @@ function GameUnit3D({
   const pulseHalo = Boolean((phaseViable || lightBlueHighlight) && !visuallyDestroyed);
   const dimOpacityScale = targetIneligible ? 0.38 : 1;
   const modelOpacity = hasPreview ? 0.28 : targetIneligible ? 0.24 : 1;
-  const usesDeadHyperionVisual =
-    visualModelFilename.toLowerCase() === DEAD_HYPERION_MODEL_FILENAME;
+  const usesAnchoredDeadMeshVisual = [
+    DEAD_HYPERION_MODEL_FILENAME,
+    DEAD_OMEGA_MODEL_FILENAME,
+  ].includes(visualModelFilename.toLowerCase());
   const usesAdriftVisual = unit.damageState === "adrift" && !isFighter;
+  const usesOmegaAdriftWreckVisual =
+    usesAdriftVisual && visualModelFilename.toLowerCase() === "omega.glb";
+  const usesAnimatedAdriftVisual =
+    usesAdriftVisual && !usesOmegaAdriftWreckVisual;
   const usesExplodingVisual =
     unit.damageState === "exploding-end-of-next" && !isFighter;
   const showGenericDamageSparks =
-    !usesAdriftVisual &&
+    !usesAnimatedAdriftVisual &&
     !usesExplodingVisual &&
-    !usesDeadHyperionVisual &&
+    !usesAnchoredDeadMeshVisual &&
     fireLevel > 0;
   const showGenericDestroyedSmoke =
     !useShadowDamageVfx &&
-    !usesDeadHyperionVisual &&
+    !usesAnchoredDeadMeshVisual &&
     !usesExplodingVisual &&
-    !usesAdriftVisual &&
+    !usesAnimatedAdriftVisual &&
     (visuallyDestroyed || fireLevel >= 0.7);
 
   useFrame(({ clock }) => {
     const modelAttitude = modelAttitudeRef.current;
     if (modelAttitude) {
-      if (usesAdriftVisual && !hasPreview) {
+      if (usesAnimatedAdriftVisual && !hasPreview) {
         const t = clock.elapsedTime * 0.35;
         modelAttitude.rotation.x = THREE.MathUtils.degToRad(
           9 + Math.sin(t * 0.83) * 8,
@@ -3546,7 +3563,7 @@ function GameUnit3D({
                 tint={modelTint}
                 opacity={modelOpacity}
                 meshTintsEnabled={shipMeshTintsEnabled}
-                damageAnchorEffects={!hasPreview && usesDeadHyperionVisual}
+                damageAnchorEffects={!hasPreview && usesAnchoredDeadMeshVisual}
               />
             </Suspense>
           </ModelErrorBoundary>
