@@ -77,11 +77,14 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "whitestar.glb",
   "avenger.glb",
   "tloth.glb",
+  "bintak.glb",
+  "rongoth.glb",
   "frazi.glb",
 ]);
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
+  "bintak.glb": "20260723-195109",
   "command-hyperion.glb": "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
@@ -92,6 +95,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
+  "rongoth.glb": "20260723-193459",
 };
 
 type ModelProbe = {

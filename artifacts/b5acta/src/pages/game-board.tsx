@@ -1317,6 +1317,8 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "whitestar.glb",
   "avenger.glb",
   "tloth.glb",
+  "bintak.glb",
+  "rongoth.glb",
   "frazi.glb",
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
@@ -1335,6 +1337,8 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "oracle.glb": 0.5,
   "sagittarius.glb": 0.5,
   "gquan.glb": 1.5,
+  "bintak.glb": 1.75,
+  "rongoth.glb": 0.8,
   "primus.glb": 1.875,
   "sharlin.glb": 1.5,
   "avioki.glb": 1.5,
@@ -1894,6 +1898,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "asteroid-light.glb": "20260721-field-v2",
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
+  "bintak.glb": "20260723-195109",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
@@ -1903,6 +1908,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
+  "rongoth.glb": "20260723-193459",
   "vorchan.glb": "20260719-140443",
 };
 
@@ -3248,6 +3254,7 @@ function GameUnit3D({
   projectedWeaponArcs = [],
   targetingPreview = null,
   launchHighlight = false,
+  damageControlHighlight = false,
   arcColorScheme = "classic",
   healthBarFacesCamera = false,
   shipMeshTintsEnabled = true,
@@ -3295,6 +3302,7 @@ function GameUnit3D({
   projectedWeaponArcs?: Array<{ arc: string; range: number }>;
   targetingPreview?: TargetingPreviewState | null;
   launchHighlight?: boolean;
+  damageControlHighlight?: boolean;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
@@ -3373,6 +3381,7 @@ function GameUnit3D({
   const targetRingOuter = baseRadius + 0.48;
   const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const targetMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const damageControlDiskMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const modelAttitudeRef = useRef<THREE.Group>(null);
   const pulseHalo = Boolean((phaseViable || lightBlueHighlight) && !visuallyDestroyed);
   const dimOpacityScale = targetIneligible ? 0.38 : 1;
@@ -3433,6 +3442,11 @@ function GameUnit3D({
       targetMat.opacity = 0.58 + t * 0.24;
       targetMat.emissiveIntensity = 0.7 + t * 0.55;
     }
+    const dcDiskMat = damageControlDiskMaterialRef.current;
+    if (dcDiskMat) {
+      const t = (Math.sin(clock.getElapsedTime() * 4.2) + 1) / 2;
+      dcDiskMat.opacity = 0.16 + t * 0.28;
+    }
   });
 
   return (
@@ -3466,6 +3480,24 @@ function GameUnit3D({
           depthWrite={!hasPreview && !targetIneligible}
         />
       </mesh>
+      {damageControlHighlight && !hasPreview && (
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.026, 0]}
+          renderOrder={7}
+        >
+          <circleGeometry args={[Math.max(0.05, baseRadius * 0.88), 48]} />
+          <meshBasicMaterial
+            ref={damageControlDiskMaterialRef}
+            color="#ffffff"
+            transparent
+            opacity={0.24}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      )}
       {/* Base ring edge */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
         <ringGeometry args={[ringInner, baseRadius, 48]} />
@@ -10156,6 +10188,40 @@ export default function GameBoard() {
     game?.status === "active" &&
     currentPhase === "end" &&
     game.activePlayerId === myUserId;
+  const myEndPhasePassed =
+    game?.status === "active" &&
+    currentPhase === "end" &&
+    (myUserId === game.challengerId
+      ? Boolean(game.endPhaseChallengerPassed)
+      : myUserId === game.opponentId
+        ? Boolean(game.endPhaseOpponentPassed)
+        : false);
+  const unitCanUseDamageControlNow = useCallback(
+    (unit: BoardUnit): boolean => {
+      if (!isMyEndPhaseWindow || myEndPhasePassed) return false;
+      if (unit.ownerId !== myUserId || unit.isDestroyed) return false;
+      if (unit.hullPoints <= 0) return false;
+      if ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
+        return false;
+      const currentRound = game?.currentRound ?? 0;
+      const rawSA = unit.specialAction ?? null;
+      const baseSA = rawSA ? rawSA.replace(/-failed$/, "") : null;
+      const allHandsActive =
+        baseSA === "all-hands-on-deck" && !rawSA?.endsWith("-failed");
+      const dcLocked = (unit.lastDcRound ?? 0) === currentRound && !allHandsActive;
+      if (dcLocked || damageControl.isPending) return false;
+      return (unit.criticals ?? []).some(
+        (crit) => crit.repairable && crit.appliedRound !== currentRound,
+      );
+    },
+    [
+      damageControl.isPending,
+      game?.currentRound,
+      isMyEndPhaseWindow,
+      myEndPhasePassed,
+      myUserId,
+    ],
+  );
   const mergeFighterBayResultIntoGame = useCallback(
     (result: FighterBayActionResult) => {
       qc.setQueryData<GameDetail | undefined>(
@@ -13475,6 +13541,7 @@ export default function GameBoard() {
                     endPhaseLaunchPrompt?.mode === "highlight" &&
                     eligibleLaunchCarrierIds.has(unit.id)
                   }
+                  damageControlHighlight={unitCanUseDamageControlNow(unit)}
                 />
               );
             })}
