@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, type CarriedFighterInventoryItem } from "@workspace/db";
-import { requireAuth, getUserId } from "../lib/auth";
+import { requireAuth, getUserId, isAdminUser } from "../lib/auth";
 import {
   parseShipTraits,
   parseWeaponTraits,
@@ -5770,6 +5770,21 @@ function isDevAiCommander(game: typeof gamesTable.$inferSelect, userId: string):
   return isDevBuiltinCommander(userId) && game.opponentKind === "ai" && game.opponentId === AI_OPPONENT_ID && userId !== game.challengerId;
 }
 
+async function canReadGameState(game: typeof gamesTable.$inferSelect, userId: string): Promise<boolean> {
+  return game.status === "open" ||
+    game.challengerId === userId ||
+    game.opponentId === userId ||
+    isDevAiCommander(game, userId) ||
+    await isAdminUser(userId);
+}
+
+async function canReadPrivateGameState(game: typeof gamesTable.$inferSelect, userId: string): Promise<boolean> {
+  return game.challengerId === userId ||
+    game.opponentId === userId ||
+    isDevAiCommander(game, userId) ||
+    await isAdminUser(userId);
+}
+
 function canDeployAiOpponentForAlpha(game: typeof gamesTable.$inferSelect, userId: string): boolean {
   return game.status === "deploying" &&
     game.opponentKind === "ai" &&
@@ -5949,11 +5964,7 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView =
-    game.status === "open" ||
-    game.challengerId === userId ||
-    game.opponentId === userId ||
-    isDevAiCommander(game, userId);
+  const canView = await canReadGameState(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -6008,7 +6019,7 @@ router.get("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> =
   try {
     const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
     if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
-    const canChat = game.opponentKind !== "ai" && (game.challengerId === userId || game.opponentId === userId);
+    const canChat = game.opponentKind !== "ai" && await canReadPrivateGameState(game, userId);
     if (!canChat) throw Object.assign(new Error("Game not found"), { status: 404 });
 
     const latest = await db
@@ -6316,10 +6327,7 @@ router.get("/games/:gameId/attack-audit-log", requireAuth, async (req, res): Pro
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView =
-    game.challengerId === userId ||
-    game.opponentId === userId ||
-    isDevAiCommander(game, userId);
+  const canView = await canReadPrivateGameState(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -6352,10 +6360,7 @@ router.get("/games/:gameId/movement-audit-log", requireAuth, async (req, res): P
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView =
-    game.challengerId === userId ||
-    game.opponentId === userId ||
-    isDevAiCommander(game, userId);
+  const canView = await canReadPrivateGameState(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -6388,10 +6393,7 @@ router.get("/games/:gameId/special-action-audit-log", requireAuth, async (req, r
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView =
-    game.challengerId === userId ||
-    game.opponentId === userId ||
-    isDevAiCommander(game, userId);
+  const canView = await canReadPrivateGameState(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;

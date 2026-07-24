@@ -618,11 +618,13 @@ function AiDiagnosticsPanel({
   onToggleAuto,
   isRunning,
   autoEnabled,
+  readOnly = false,
 }: {
   game: GameDetail["game"];
   onToggleAuto: () => void;
   isRunning: boolean;
   autoEnabled: boolean;
+  readOnly?: boolean;
 }) {
   if (game.opponentKind !== "ai") return null;
   return (
@@ -639,7 +641,7 @@ function AiDiagnosticsPanel({
             : "border-cyan-500/35 text-cyan-100 hover:bg-cyan-500/10"
         }`}
         onClick={onToggleAuto}
-        disabled={isRunning && !autoEnabled}
+        disabled={readOnly || (isRunning && !autoEnabled)}
         data-testid="button-toggle-ai-auto"
       >
         <Cpu className="h-3.5 w-3.5" />
@@ -7694,6 +7696,14 @@ export default function GameBoard() {
       },
     },
   });
+  const { data: adminMe } = useQuery({
+    queryKey: ["admin-me"],
+    queryFn: () =>
+      customFetch<{ isAdmin: boolean }>("/api/admin/me", {
+        responseType: "json",
+      }),
+    staleTime: 60_000,
+  });
   const game = gameData?.game;
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
@@ -7722,6 +7732,10 @@ export default function GameBoard() {
     devAiCommanderActive || aiDeploymentControlActive
       ? AI_OPPONENT_ID
       : rawMyUserId;
+  const isChallenger = game?.challengerId === myUserId;
+  const isOpponent = game?.opponentId === myUserId;
+  const isParticipant = Boolean(isChallenger || isOpponent);
+  const isAdminObserver = Boolean(game && adminMe?.isAdmin && !isParticipant);
   const { data: fleets } = useListFleets();
   const { data: shipModels } = useListShipModels({
     query: {
@@ -8577,7 +8591,7 @@ export default function GameBoard() {
   }, [aiAutoRunEnabled]);
   const runAiUntilHuman = useCallback(
     async (respectToggle = false) => {
-      if (!game || autoAiRunning) return;
+      if (!game || autoAiRunning || isAdminObserver) return;
       setAutoAiRunning(true);
       setAutoAiError(null);
       let lastSignature = aiProgressSignature(game);
@@ -8601,10 +8615,10 @@ export default function GameBoard() {
         setAutoAiRunning(false);
       }
     },
-    [autoAiRunning, game, gameId, myUserId, qc, runAiStep],
+    [autoAiRunning, game, gameId, isAdminObserver, myUserId, qc, runAiStep],
   );
   useEffect(() => {
-    if (!game || game.opponentKind !== "ai" || game.status !== "active") {
+    if (!game || isAdminObserver || game.opponentKind !== "ai" || game.status !== "active") {
       setAiAutoRunEnabled(false);
       return;
     }
@@ -8615,6 +8629,7 @@ export default function GameBoard() {
     aiAutoRunEnabled,
     autoAiRunning,
     game,
+    isAdminObserver,
     myUserId,
     runAiStep.isPending,
     runAiUntilHuman,
@@ -8703,8 +8718,6 @@ export default function GameBoard() {
     [phaseLedger, serverMovementLedgerByUnit],
   );
 
-  const isChallenger = game?.challengerId === myUserId;
-  const isOpponent = game?.opponentId === myUserId;
   // Surrender eligibility: every one of MY ships is at ≤0 hull OR ≤0 crew
   // (or destroyed). A ship with maxCrewPoints=0 (legacy unit without a crew
   // pool) shouldn't gate surrender on its non-existent crew, so we only
@@ -9208,8 +9221,11 @@ export default function GameBoard() {
     setTapPlacementShip(null);
   }, [yardsFleetId, yardsFleetShips, makeStagedUnit, myUserId]);
   const canUseGameChat = Boolean(
-    game && game.opponentKind !== "ai" && (isChallenger || isOpponent),
+    game &&
+      game.opponentKind !== "ai" &&
+      (isParticipant || isAdminObserver),
   );
+  const canSendGameChat = Boolean(canUseGameChat && isParticipant);
   const gameChatQueryKey = useMemo(
     () => ["gameChat", gameId] as const,
     [gameId],
@@ -12186,7 +12202,7 @@ export default function GameBoard() {
 
   const handleSendChat = useCallback(async () => {
     const message = chatMessage.trim();
-    if (!message || chatSending || !canUseGameChat) return;
+    if (!message || chatSending || !canSendGameChat) return;
     setChatSending(true);
     setChatError(null);
     try {
@@ -12202,7 +12218,7 @@ export default function GameBoard() {
     } finally {
       setChatSending(false);
     }
-  }, [canUseGameChat, chatMessage, chatSending, gameChatQueryKey, gameId, qc]);
+  }, [canSendGameChat, chatMessage, chatSending, gameChatQueryKey, gameId, qc]);
 
   const handleSubmitTurn = () => {
     submitTurn.mutate(
@@ -12469,8 +12485,11 @@ export default function GameBoard() {
               onChange={(event) => setChatMessage(event.target.value)}
               maxLength={500}
               rows={2}
-              placeholder="Message opponent..."
+              placeholder={
+                isAdminObserver ? "Read-only observer mode" : "Message opponent..."
+              }
               className="min-h-14 resize-none font-mono text-xs"
+              disabled={!canSendGameChat}
             />
             <div className="flex items-center gap-2">
               <span className="flex-1 text-[10px] font-mono text-muted-foreground">
@@ -12480,7 +12499,11 @@ export default function GameBoard() {
                 type="submit"
                 size="sm"
                 className="h-8 gap-1.5 px-3 text-[10px] font-bold uppercase tracking-widest"
-                disabled={chatSending || chatMessage.trim().length === 0}
+                disabled={
+                  !canSendGameChat ||
+                  chatSending ||
+                  chatMessage.trim().length === 0
+                }
                 data-testid="button-send-game-chat"
               >
                 <Send className="h-3.5 w-3.5" />
@@ -14091,7 +14114,7 @@ export default function GameBoard() {
                 </div>
               </div>
             )}
-          {game.status === "deploying" && !myDeploymentLocked && (
+          {game.status === "deploying" && isParticipant && !myDeploymentLocked && (
             <DeploymentAllocationHud
               units={currentStagedUnits}
               scenarioPriority={scenarioPriority}
@@ -14100,7 +14123,7 @@ export default function GameBoard() {
               remainingTicks={stagedAllocation.remainingTicks}
             />
           )}
-          {game.status === "deploying" && !myDeploymentLocked && (
+          {game.status === "deploying" && isParticipant && !myDeploymentLocked && (
             <div
               className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 border border-primary/50 bg-black/80 px-4 py-2 text-center font-mono text-sm font-bold uppercase tracking-[0.24em] text-primary shadow-lg shadow-black/60 backdrop-blur-sm"
               data-testid="hud-deployment-owner"
@@ -14124,6 +14147,14 @@ export default function GameBoard() {
               {game.status}{" "}
               {game.status === "active" && `— Round ${game.currentRound}`}
             </div>
+            {isAdminObserver && (
+              <div
+                className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-cyan-400/45 bg-cyan-400/10 text-cyan-200"
+                data-testid="hud-admin-observer"
+              >
+                Observer Mode
+              </div>
+            )}
             {game.status === "active" && isMyActivation && !hasActiveUnit && (
               <div
                 className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-primary/40 bg-primary/10 text-primary animate-pulse"
@@ -14266,7 +14297,22 @@ export default function GameBoard() {
             }}
             isRunning={runAiStep.isPending}
             autoEnabled={aiAutoRunEnabled}
+            readOnly={isAdminObserver}
           />
+
+          {isAdminObserver && (
+            <div
+              className="border-b border-cyan-400/25 bg-cyan-400/10 px-4 py-3"
+              data-testid="panel-admin-observer"
+            >
+              <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-cyan-200">
+                Silent Observer
+              </p>
+              <p className="mt-1 text-[10px] font-mono leading-snug text-cyan-100/75">
+                Read-only admin view. Game actions and chat sending are disabled.
+              </p>
+            </div>
+          )}
 
           {mobileGameChrome && (
             <BattleLogPanel
@@ -14276,7 +14322,7 @@ export default function GameBoard() {
             />
           )}
 
-          {game.status === "deploying" && myDeploymentLocked && (
+          {game.status === "deploying" && isParticipant && myDeploymentLocked && (
             <div
               className="p-4 border-b border-border space-y-2"
               data-testid="panel-awaiting-opponent"
@@ -14295,7 +14341,7 @@ export default function GameBoard() {
           )}
 
           {/* ── FLEET YARDS (deploy phase, current player not yet deployed) ── */}
-          {game.status === "deploying" && !myDeploymentLocked && (
+          {game.status === "deploying" && isParticipant && !myDeploymentLocked && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">
                 Fleet Yards
@@ -14785,7 +14831,7 @@ export default function GameBoard() {
           )}
 
           {/* Open challenge — any non-challenger can claim it; challenger can withdraw it. */}
-          {game.status === "open" && !isChallenger && (
+          {game.status === "open" && !isChallenger && !isAdminObserver && (
             <div className="p-4 border-b border-border space-y-2">
               <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
                 {game.visibility === "private"
