@@ -1898,7 +1898,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "asteroid-light.glb": "20260721-field-v2",
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
-  "bintak.glb": "20260723-195109",
+  "bintak.glb": "20260723-200207",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",

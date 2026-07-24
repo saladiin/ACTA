@@ -84,7 +84,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
-  "bintak.glb": "20260723-195109",
+  "bintak.glb": "20260723-200207",
   "command-hyperion.glb": "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
