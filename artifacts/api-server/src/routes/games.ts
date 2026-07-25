@@ -988,7 +988,87 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter
     || /\bfighter\b/i.test(model.shipClass ?? "")
     || /fighter flight/i.test(model.name ?? "")
-    || /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer)\b/i.test(identity);
+    || /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer|spitfire|shadow\s+fighter)\b/i.test(identity);
+}
+
+const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
+  "aurora starfury": 4,
+  "aurora starfury flight": 4,
+  "aurora starfury wing": 4,
+  "thunderbolt starfury": 4,
+  "thunderbolt starfury flight": 4,
+  "thunderbolt starfury wing": 4,
+  "tiger starfury": 6,
+  "tiger starfury flight": 6,
+  "tiger starfury wing": 6,
+  "black omega": 2,
+  "black omega starfury": 2,
+  "black omega starfury flight": 2,
+  "black omega starfury wing": 2,
+  "nial": 2,
+  "nial fighter": 2,
+  "nial heavy fighter": 2,
+  "nial heavy fighter flight": 2,
+  "nial wing": 2,
+  "flyer": 4,
+  "flyer flight": 4,
+  "flyer wing": 4,
+  "sentri": 4,
+  "sentri flight": 4,
+  "sentri wing": 4,
+  "frazi": 5,
+  "frazi flight": 5,
+  "frazi wing": 5,
+  "shadow fighter": 2,
+  "shadow fighter flight": 2,
+  "shadow fighter wing": 2,
+  "shadow spitfire": 2,
+  "spitfire": 2,
+  "spitfire flight": 2,
+  "tethys cutter": 2,
+  "tethys class cutter": 2,
+  "tethys class laser boat": 2,
+  "tethys class missile boat": 2,
+};
+
+const MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME: Record<string, number> = {
+  "aurora.glb": 4,
+  "thunderbolt.glb": 4,
+  "tiger.glb": 6,
+  "black-omega.glb": 2,
+  "nial.glb": 2,
+  "flyer.glb": 4,
+  "sentri.glb": 4,
+  "frazi.glb": 5,
+  "spitfire.glb": 2,
+  "tethys.glb": 2,
+};
+
+function normalizeMultiUnitPurchaseKey(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]+/g, " ");
+}
+
+function multiUnitPurchaseCount(model: {
+  name?: string | null;
+  filename?: string | null;
+  shipClass?: string | null;
+  traits?: string | null;
+}): number {
+  const filename = (model.filename ?? "").trim().toLowerCase();
+  const filenameCount = MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME[filename];
+  if (filenameCount) return filenameCount;
+  const identities = [model.name, model.shipClass, model.filename].flatMap((value) => {
+    const normalized = normalizeMultiUnitPurchaseKey(value);
+    return normalized ? [normalized, normalized.replace(/\.(glb|gltf)$/i, "")] : [];
+  });
+  for (const identity of identities) {
+    const count = MULTI_UNIT_PURCHASE_COUNTS[identity];
+    if (count) return count;
+  }
+  return 1;
 }
 
 function movementTraitsForModel(
@@ -1403,6 +1483,8 @@ async function resolveDestroyedFighterRecovery(
 
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
 const BASE_CONTACT_EPSILON = 0.05;
+const DOGFIGHT_CONTACT_GAP_EPSILON = 0.05;
+const DOGFIGHT_CONTACT_OVERLAP_EPSILON = 0.02;
 const DOGFIGHT_SUPPORT_RANGE_INCHES = 0.25;
 
 type UnitFootprint = {
@@ -1569,12 +1651,23 @@ function canBasesOverlap(a: Pick<UnitFootprint, "isFighter">, b: Pick<UnitFootpr
   return false;
 }
 
+function capitalMovementCanDisplaceFighter(
+  moving: Pick<UnitFootprint, "isFighter">,
+  other: Pick<UnitFootprint, "isFighter">,
+): boolean {
+  return !moving.isFighter && other.isFighter;
+}
+
 function basesOverlap(a: UnitFootprint, b: UnitFootprint): boolean {
   return centerDistance(a, b) < rulesBaseRadius(a) + rulesBaseRadius(b) - BASE_CONTACT_EPSILON;
 }
 
 function basesInContact(a: UnitFootprint, b: UnitFootprint): boolean {
-  return centerDistance(a, b) <= rulesBaseRadius(a) + rulesBaseRadius(b) + BASE_CONTACT_EPSILON;
+  const baseEdgeDistance = centerDistance(a, b) - rulesBaseRadius(a) - rulesBaseRadius(b);
+  return (
+    baseEdgeDistance >= -DOGFIGHT_CONTACT_OVERLAP_EPSILON
+    && baseEdgeDistance <= DOGFIGHT_CONTACT_GAP_EPSILON
+  );
 }
 
 function enemyFighterContacts(fighter: UnitFootprint, others: UnitFootprint[]): UnitFootprint[] {
@@ -1594,6 +1687,221 @@ function findIllegalBaseOverlap(candidate: UnitFootprint, others: UnitFootprint[
     if (basesOverlap(candidate, other)) return other;
   }
   return null;
+}
+
+type FighterDisplacementEntry = {
+  unitId: number;
+  ownerId: string;
+  name: string;
+  x: number;
+  z: number;
+  baseRadiusInches: number;
+};
+
+type FighterDisplacementState = {
+  kind: "fighter-displacement";
+  round: number;
+  displacingUnitId: number;
+  displacingPlayerId: string;
+  readyToPlace: boolean;
+  ownerOrder: string[];
+  entries: FighterDisplacementEntry[];
+};
+
+function readFighterDisplacement(raw: unknown): FighterDisplacementState | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = (raw as Record<string, unknown>).fighterDisplacement;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const state = value as Partial<FighterDisplacementState>;
+  if (state.kind !== "fighter-displacement") return null;
+  if (
+    typeof state.round !== "number" ||
+    typeof state.displacingUnitId !== "number" ||
+    typeof state.displacingPlayerId !== "string" ||
+    !Array.isArray(state.ownerOrder) ||
+    !Array.isArray(state.entries)
+  )
+    return null;
+  return {
+    ...(state as FighterDisplacementState),
+    readyToPlace: state.readyToPlace === true,
+  };
+}
+
+function writeFighterDisplacement(
+  raw: unknown,
+  displacement: FighterDisplacementState | null,
+): Record<string, unknown> {
+  const base = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? { ...(raw as Record<string, unknown>) }
+    : {};
+  if (displacement && displacement.entries.length > 0) {
+    base.fighterDisplacement = displacement;
+  } else {
+    delete base.fighterDisplacement;
+  }
+  return base;
+}
+
+function currentFighterDisplacementOwner(state: FighterDisplacementState): string | null {
+  for (const ownerId of state.ownerOrder) {
+    if (state.entries.some((entry) => entry.ownerId === ownerId)) return ownerId;
+  }
+  return null;
+}
+
+async function findLegalDisplacedFighterSpot(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  displacement: FighterDisplacementState,
+  fighter: typeof gameUnitsTable.$inferSelect,
+  entry: FighterDisplacementEntry,
+): Promise<{ x: number; z: number } | null> {
+  const pendingIds = new Set(displacement.entries.map((item) => item.unitId));
+  const liveUnits = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const blockers: UnitFootprint[] = [];
+  for (const other of liveUnits as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (
+      other.id === fighter.id ||
+      other.id === displacement.displacingUnitId ||
+      pendingIds.has(other.id)
+    )
+      continue;
+    const otherModel = await getShipModelForUnit(tx, other);
+    blockers.push({
+      id: other.id,
+      ownerId: other.ownerId,
+      x: other.hexQ,
+      z: other.hexR,
+      baseRadiusInches: rulesBaseRadius(other),
+      isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
+    });
+  }
+
+  const radius = rulesBaseRadius(fighter);
+  const isLegal = (x: number, z: number): boolean => {
+    if (Math.hypot(x - entry.x, z - entry.z) > 3 + 1e-6) return false;
+    if (
+      x < BOARD_MIN_X + radius ||
+      x > BOARD_MAX_X - radius ||
+      z < BOARD_MIN_Z + radius ||
+      z > BOARD_MAX_Z - radius
+    )
+      return false;
+    const candidate: UnitFootprint = {
+      id: fighter.id,
+      ownerId: fighter.ownerId,
+      x,
+      z,
+      baseRadiusInches: radius,
+      isFighter: true,
+    };
+    return !findIllegalBaseOverlap(candidate, blockers);
+  };
+
+  const candidates: Array<{ x: number; z: number; distance: number }> = [];
+  for (let rawDistance = 0; rawDistance <= 3.001; rawDistance += 0.25) {
+    const distance = Number(rawDistance.toFixed(2));
+    const steps = distance === 0 ? 1 : 32;
+    for (let step = 0; step < steps; step++) {
+      const angle = (Math.PI * 2 * step) / steps;
+      candidates.push({
+        x: snapBoardCoord(entry.x + Math.cos(angle) * distance),
+        z: snapBoardCoord(entry.z + Math.sin(angle) * distance),
+        distance,
+      });
+    }
+  }
+  candidates.sort((left, right) => left.distance - right.distance);
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const key = `${candidate.x}:${candidate.z}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (isLegal(candidate.x, candidate.z)) {
+      return { x: candidate.x, z: candidate.z };
+    }
+  }
+  return null;
+}
+
+async function resolveReadyAiFighterDisplacement(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<typeof gamesTable.$inferSelect | null> {
+  const displacement = readFighterDisplacement(game.aiState);
+  if (
+    game.status !== "active" ||
+    game.phase !== "movement" ||
+    !displacement?.readyToPlace ||
+    currentFighterDisplacementOwner(displacement) !== AI_OPPONENT_ID
+  )
+    return null;
+
+  let nextEntries = [...displacement.entries];
+  const placed: Array<{ unitId: number; name: string; x: number; z: number }> = [];
+  const removed: Array<{ unitId: number; reason: string }> = [];
+  const aiEntries = nextEntries.filter((entry) => entry.ownerId === AI_OPPONENT_ID);
+  for (const entry of aiEntries) {
+    const [fighter] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, entry.unitId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
+    if (!fighter || fighter.isDestroyed) {
+      nextEntries = nextEntries.filter((item) => item.unitId !== entry.unitId);
+      removed.push({ unitId: entry.unitId, reason: "missing-or-destroyed" });
+      continue;
+    }
+    const model = await getShipModelForUnit(tx, fighter);
+    if (!model || !shipModelIsFighter(model)) {
+      nextEntries = nextEntries.filter((item) => item.unitId !== entry.unitId);
+      removed.push({ unitId: entry.unitId, reason: "not-a-fighter" });
+      continue;
+    }
+    const spot = await findLegalDisplacedFighterSpot(tx, game, { ...displacement, entries: nextEntries }, fighter, entry);
+    if (!spot) {
+      throw Object.assign(new Error(`AI could not find a legal placement for displaced fighter ${entry.name}`), { status: 400 });
+    }
+    const [updatedUnit] = await tx.update(gameUnitsTable)
+      .set({ hexQ: spot.x, hexR: spot.z })
+      .where(eq(gameUnitsTable.id, fighter.id))
+      .returning();
+    nextEntries = nextEntries.filter((item) => item.unitId !== entry.unitId);
+    placed.push({
+      unitId: updatedUnit.id,
+      name: updatedUnit.name,
+      x: updatedUnit.hexQ,
+      z: updatedUnit.hexR,
+    });
+  }
+
+  const nextState = nextEntries.length > 0 ? { ...displacement, entries: nextEntries } : null;
+  const [row] = await tx.update(gamesTable)
+    .set({
+      aiState: withAiDecisionLog(
+        writeFighterDisplacement(game.aiState, nextState),
+        aiState("acted", "movement.place-displaced-fighters", {
+          message: placed.length > 0
+            ? `AI placed ${placed.length} displaced fighter flight${placed.length === 1 ? "" : "s"}.`
+            : "AI cleared stale displaced fighter records.",
+          unitIds: placed.map((entry) => entry.unitId),
+        }),
+        aiDecision(
+          "movement.place-displaced-fighters",
+          "movement",
+          placed.length > 0
+            ? `AI placed ${placed.length} displaced fighter flight${placed.length === 1 ? "" : "s"}.`
+            : "AI cleared stale displaced fighter records.",
+          { placed, removed },
+        ),
+      ),
+    })
+    .where(eq(gamesTable.id, game.id))
+    .returning();
+  return row;
 }
 
 type MovementDebtClearanceResult = {
@@ -1717,7 +2025,14 @@ async function scanLegalMovementDebtRestingSpots(
         baseRadiusInches: rulesBaseRadius(unit),
         isFighter: false,
       };
-      if (!findIllegalBaseOverlap(candidate, otherFootprints)) {
+      if (
+        !findIllegalBaseOverlap(
+          candidate,
+          otherFootprints.filter(
+            (other) => !capitalMovementCanDisplaceFighter(candidate, other),
+          ),
+        )
+      ) {
         return {
           ...result,
           hasLegalRestingSpot: true,
@@ -6798,6 +7113,50 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         }
         placedModelByShipId.set(ship.id, model);
       }
+      const multiUnitPurchaseGroups = new Map<string, {
+        modelId: number;
+        modelName: string;
+        expectedUnits: number;
+        indexes: number[];
+      }>();
+      for (let index = 0; index < parsed.data.placements.length; index += 1) {
+        const placement = parsed.data.placements[index]!;
+        const deploymentGroupId = placement.deploymentGroupId?.trim();
+        if (!deploymentGroupId) continue;
+        if (placement.launchedFromPlacementIndex != null) {
+          throw Object.assign(new Error("Carrier-deployed fighters cannot use a multi-unit purchase group."), { status: 400 });
+        }
+        const ship = placedShips[index];
+        const model = ship ? placedModelByShipId.get(ship.id) : undefined;
+        if (!ship || !model) {
+          throw Object.assign(new Error("Multi-unit purchase placement references an unknown ship model."), { status: 400 });
+        }
+        const expectedUnits = multiUnitPurchaseCount(model);
+        if (expectedUnits <= 1) {
+          throw Object.assign(new Error(`${model.name} is not configured as a multi-unit purchase.`), { status: 400 });
+        }
+        const group = multiUnitPurchaseGroups.get(deploymentGroupId);
+        if (group) {
+          if (group.modelId !== model.id) {
+            throw Object.assign(new Error("Multi-unit purchase groups cannot mix ship models."), { status: 400 });
+          }
+          group.indexes.push(index);
+        } else {
+          multiUnitPurchaseGroups.set(deploymentGroupId, {
+            modelId: model.id,
+            modelName: model.name,
+            expectedUnits,
+            indexes: [index],
+          });
+        }
+      }
+      for (const group of multiUnitPurchaseGroups.values()) {
+        if (group.indexes.length !== group.expectedUnits) {
+          throw Object.assign(new Error(
+            `${group.modelName} deploys as ${group.expectedUnits} unit(s); ${group.indexes.length} placement(s) were submitted.`,
+          ), { status: 400 });
+        }
+      }
       const fighterInventoryModels = await tx.select({
         id: shipModelsTable.id,
         name: shipModelsTable.name,
@@ -6856,10 +7215,25 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         predeployedByCarrierAndModel.set(modelKey, usedByModel + 1);
       }
       const scenarioPriority = normalizePriorityLevel(game.priorityLevel);
+      const chargedMultiUnitPurchaseGroups = new Set<string>();
+      const chargeablePriorityLevels: ReturnType<typeof normalizePriorityLevel>[] = [];
+      for (let index = 0; index < placedShips.length; index += 1) {
+        if (predeployedFighterLinks.has(index)) continue;
+        const ship = placedShips[index];
+        const model = ship ? placedModelByShipId.get(ship.id) : undefined;
+        if (!model) continue;
+        const deploymentGroupId = parsed.data.placements[index]?.deploymentGroupId?.trim();
+        if (
+          deploymentGroupId &&
+          multiUnitPurchaseCount(model) > 1
+        ) {
+          if (chargedMultiUnitPurchaseGroups.has(deploymentGroupId)) continue;
+          chargedMultiUnitPurchaseGroups.add(deploymentGroupId);
+        }
+        chargeablePriorityLevels.push(normalizePriorityLevel(model.priorityLevel));
+      }
       const allocation = calculateAllocation(
-        placedShips
-          .filter((_ship, index) => !predeployedFighterLinks.has(index))
-          .map(ship => normalizePriorityLevel(placedModelByShipId.get(ship.id)?.priorityLevel)),
+        chargeablePriorityLevels,
         scenarioPriority,
         game.allocationPoints,
       );
@@ -7286,8 +7660,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     eq(gameUnitsTable.isDestroyed, false),
   ));
   const otherFootprints: UnitFootprint[] = [];
+  const otherUnitsById = new Map<number, typeof gameUnitsTable.$inferSelect>();
   for (const other of otherUnits) {
     if (other.id === unit.id) continue;
+    otherUnitsById.set(other.id, other);
     const [otherShip] = await db.select().from(shipsTable).where(eq(shipsTable.id, other.shipId));
     if (!otherShip) continue;
     const [otherModel] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, otherShip.shipModelId));
@@ -7300,6 +7676,14 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
     });
   }
+  const pendingDisplacement = readFighterDisplacement(game.aiState);
+  if (pendingDisplacement?.readyToPlace) {
+    res.status(400).json({ error: "Place displaced fighters before moving again" });
+    return;
+  }
+  const pendingDisplacedUnitIds = new Set(
+    pendingDisplacement?.entries.map((entry) => entry.unitId) ?? [],
+  );
   if (candidateFootprint.isFighter && await fighterIsLockedInDogfight(db, params.data.gameId, unit)) {
     res.status(400).json({ error: "Fighter is locked in a dogfight and cannot move" });
     return;
@@ -7320,7 +7704,19 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     res.status(400).json({ error: "Fighter base must remain inside the board" });
     return;
   }
-  if (findIllegalBaseOverlap(finalFootprint, otherFootprints)) {
+  const activeOverlapBlockers = otherFootprints.filter(
+    (other) => !pendingDisplacedUnitIds.has(other.id),
+  );
+  const displaceableFighterOverlaps = activeOverlapBlockers.filter(
+    (other) =>
+      capitalMovementCanDisplaceFighter(finalFootprint, other) &&
+      basesOverlap(finalFootprint, other),
+  );
+  const hardOverlapBlockers = activeOverlapBlockers.filter(
+    (other) =>
+      !displaceableFighterOverlaps.some((fighter) => fighter.id === other.id),
+  );
+  if (findIllegalBaseOverlap(finalFootprint, hardOverlapBlockers)) {
     res.status(400).json({ error: "Move would overlap another base illegally" });
     return;
   }
@@ -7347,6 +7743,41 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   const nextDistanceSinceLastTurn = isTurn
     ? 0
     : unit.distanceSinceLastTurnThisActivation + actualStepInches;
+  const nextDisplacementEntries = pendingDisplacement?.entries
+    ? [...pendingDisplacement.entries]
+    : [];
+  let nextDisplacementState = pendingDisplacement ?? null;
+  if (displaceableFighterOverlaps.length > 0) {
+    const byUnitId = new Set(nextDisplacementEntries.map((entry) => entry.unitId));
+    for (const fighter of displaceableFighterOverlaps) {
+      if (byUnitId.has(fighter.id)) continue;
+      const fighterUnit = otherUnitsById.get(fighter.id);
+      nextDisplacementEntries.push({
+        unitId: fighter.id,
+        ownerId: fighter.ownerId,
+        name: fighterUnit?.name ?? `Fighter ${fighter.id}`,
+        x: fighter.x,
+        z: fighter.z,
+        baseRadiusInches: rulesBaseRadius(fighter),
+      });
+      byUnitId.add(fighter.id);
+    }
+    const owners = new Set(nextDisplacementEntries.map((entry) => entry.ownerId));
+    const ownerOrder = [
+      unit.ownerId,
+      ...[...owners].filter((ownerId) => ownerId !== unit.ownerId),
+    ].filter((ownerId, index, all) => all.indexOf(ownerId) === index);
+    nextDisplacementState = {
+      kind: "fighter-displacement",
+      round: game.currentRound,
+      displacingUnitId: unit.id,
+      displacingPlayerId: unit.ownerId,
+      readyToPlace: pendingDisplacement?.readyToPlace === true,
+      ownerOrder,
+      entries: nextDisplacementEntries,
+    };
+  }
+
   const [updated] = await db.update(gameUnitsTable)
     .set({
       hexQ: finalHexQ,
@@ -7362,6 +7793,13 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     })
     .where(eq(gameUnitsTable.id, params.data.unitId))
     .returning();
+  if (nextDisplacementState) {
+    await db.update(gamesTable)
+      .set({
+        aiState: writeFighterDisplacement(game.aiState, nextDisplacementState),
+      })
+      .where(eq(gamesTable.id, params.data.gameId));
+  }
   const asteroidResult = await applyAsteroidMovementHazards(db, game, unit, updated, moveModel, actualStepInches);
   const finalUpdated = asteroidResult.unit;
   try {
@@ -7465,6 +7903,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     },
   }, "movement step committed");
 
+  const [responseGame] = await db.select().from(gamesTable).where(eq(gamesTable.id, game.id));
   res.json({
     ...finalUpdated,
     damageState: effectiveDamageState(finalUpdated.damageState, moveCritRows),
@@ -7472,6 +7911,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     isCrippled: isMovingFighter ? false : isCrippledUnit(finalUpdated),
     isSkeletonCrew: isSkeletonCrewUnit(finalUpdated),
     asteroidHazards: asteroidResult.hazards,
+    game: responseGame ?? game,
   });
 });
 
@@ -7764,6 +8204,140 @@ router.post("/games/:gameId/units/:unitId/recover-fighter", requireAuth, async (
   }
 });
 
+router.post("/games/:gameId/displaced-fighters/:unitId/place", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number.parseInt(String(req.params.gameId), 10);
+  const unitId = Number.parseInt(String(req.params.unitId), 10);
+  const x = Number(req.body?.x);
+  const z = Number(req.body?.z);
+  if (!Number.isInteger(gameId) || gameId <= 0 || !Number.isInteger(unitId) || unitId <= 0) {
+    res.status(400).json({ error: "Invalid game or unit id" });
+    return;
+  }
+  if (!Number.isFinite(x) || !Number.isFinite(z)) {
+    res.status(400).json({ error: "Invalid fighter placement coordinates" });
+    return;
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active" || game.phase !== "movement") {
+        throw Object.assign(new Error("Displaced fighters are placed during the Movement Phase"), { status: 400 });
+      }
+      if (userId !== game.challengerId && userId !== game.opponentId) {
+        throw Object.assign(new Error("Not a player in this game"), { status: 403 });
+      }
+      const displacement = readFighterDisplacement(game.aiState);
+      if (!displacement) throw Object.assign(new Error("No displaced fighters are pending"), { status: 400 });
+      if (!displacement.readyToPlace) {
+        throw Object.assign(new Error("Finish the moving ship's activation before placing displaced fighters"), { status: 400 });
+      }
+
+      const currentOwnerId = currentFighterDisplacementOwner(displacement);
+      if (currentOwnerId !== userId) {
+        throw Object.assign(new Error("Waiting for the other commander to place displaced fighters"), { status: 400 });
+      }
+      const entry = displacement.entries.find((item) => item.unitId === unitId);
+      if (!entry) throw Object.assign(new Error("This fighter is not pending displacement"), { status: 404 });
+      if (entry.ownerId !== userId) {
+        throw Object.assign(new Error("You may only place your own displaced fighters"), { status: 403 });
+      }
+
+      const [fighter] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, entry.unitId),
+        eq(gameUnitsTable.gameId, game.id),
+      ));
+      if (!fighter || fighter.isDestroyed) {
+        const nextEntries = displacement.entries.filter((item) => item.unitId !== entry.unitId);
+        const nextState = nextEntries.length > 0 ? { ...displacement, entries: nextEntries } : null;
+        const [updatedGame] = await tx.update(gamesTable)
+          .set({ aiState: writeFighterDisplacement(game.aiState, nextState) })
+          .where(eq(gamesTable.id, game.id))
+          .returning();
+        return { unit: fighter ?? null, game: updatedGame };
+      }
+      const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, fighter.shipId));
+      const [model] = ship
+        ? await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId))
+        : [];
+      if (!model || !shipModelIsFighter(model)) {
+        throw Object.assign(new Error("Only fighter flights can resolve fighter displacement"), { status: 400 });
+      }
+
+      const finalX = snapBoardCoord(x);
+      const finalZ = snapBoardCoord(z);
+      if (Math.hypot(finalX - entry.x, finalZ - entry.z) > 3 + 1e-6) {
+        throw Object.assign(new Error("Displaced fighter must be placed within 3 inches of its previous position"), { status: 400 });
+      }
+      const candidate: UnitFootprint = {
+        id: fighter.id,
+        ownerId: fighter.ownerId,
+        x: finalX,
+        z: finalZ,
+        baseRadiusInches: rulesBaseRadius(fighter),
+        isFighter: true,
+      };
+      const radius = rulesBaseRadius(candidate);
+      if (
+        finalX < BOARD_MIN_X + radius ||
+        finalX > BOARD_MAX_X - radius ||
+        finalZ < BOARD_MIN_Z + radius ||
+        finalZ > BOARD_MAX_Z - radius
+      ) {
+        throw Object.assign(new Error("Displaced fighter base must remain inside the board"), { status: 400 });
+      }
+
+      const pendingIds = new Set(displacement.entries.map((item) => item.unitId));
+      const liveUnits = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, game.id),
+        eq(gameUnitsTable.isDestroyed, false),
+      ));
+      const blockers: UnitFootprint[] = [];
+      for (const other of liveUnits as Array<typeof gameUnitsTable.$inferSelect>) {
+        if (
+          other.id === fighter.id ||
+          other.id === displacement.displacingUnitId ||
+          pendingIds.has(other.id)
+        )
+          continue;
+        const otherModel = await getShipModelForUnit(tx, other);
+        blockers.push({
+          id: other.id,
+          ownerId: other.ownerId,
+          x: other.hexQ,
+          z: other.hexR,
+          baseRadiusInches: rulesBaseRadius(other),
+          isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
+        });
+      }
+      if (findIllegalBaseOverlap(candidate, blockers)) {
+        throw Object.assign(new Error("Displaced fighter placement overlaps another base illegally"), { status: 400 });
+      }
+
+      const [updatedUnit] = await tx.update(gameUnitsTable)
+        .set({ hexQ: finalX, hexR: finalZ })
+        .where(eq(gameUnitsTable.id, fighter.id))
+        .returning();
+      const nextEntries = displacement.entries.filter((item) => item.unitId !== fighter.id);
+      const nextState = nextEntries.length > 0 ? { ...displacement, entries: nextEntries } : null;
+      const [updatedGame] = await tx.update(gamesTable)
+        .set({ aiState: writeFighterDisplacement(game.aiState, nextState) })
+        .where(eq(gamesTable.id, game.id))
+        .returning();
+      return { unit: updatedUnit, game: updatedGame };
+    });
+    res.json(result);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
 router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const params = ActivateUnitParams.safeParse(req.params);
@@ -7783,6 +8357,9 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
       if (game.phase !== "movement" && game.phase !== "firing") {
         throw Object.assign(new Error("Units can only activate during Movement or Firing"), { status: 400 });
+      }
+      if (game.phase === "movement" && readFighterDisplacement(game.aiState)) {
+        throw Object.assign(new Error("Place displaced fighters before activating another unit"), { status: 400 });
       }
       if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
       if (game.activeUnitId && game.activeUnitId !== unitId) {
@@ -8417,6 +8994,12 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       if (readAntiFighterPending(game.aiState)) {
         throw Object.assign(new Error("Resolve pending Anti-Fighter allocation first"), { status: 400 });
       }
+      const pendingFighterDisplacement = game.phase === "movement"
+        ? readFighterDisplacement(game.aiState)
+        : null;
+      if (pendingFighterDisplacement?.readyToPlace) {
+        throw Object.assign(new Error("Place displaced fighters before ending this activation"), { status: 400 });
+      }
       if (game.phase !== "movement" && game.phase !== "firing") {
         throw Object.assign(new Error("Ship activations only end during Movement or Firing"), { status: 400 });
       }
@@ -8605,6 +9188,25 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
               }
             }
           }
+        }
+        const displacementAfterMovementChecks = readFighterDisplacement(game.aiState);
+        if (displacementAfterMovementChecks && !displacementAfterMovementChecks.readyToPlace) {
+          const [armed] = await tx.update(gamesTable)
+            .set({
+              aiState: writeFighterDisplacement(game.aiState, {
+                ...displacementAfterMovementChecks,
+                readyToPlace: true,
+              }),
+            })
+            .where(and(
+              eq(gamesTable.id, gameId),
+              eq(gamesTable.activePlayerId, userId),
+              eq(gamesTable.activeUnitId, endedUnitId),
+              eq(gamesTable.status, "active"),
+            ))
+            .returning();
+          if (!armed) throw Object.assign(new Error("Activation conflict, retry"), { status: 409 });
+          return armed;
         }
         // Mark the just-ended activation as done for THIS phase only.
         const [endedAfter] = await tx.update(gameUnitsTable)
@@ -10650,6 +11252,16 @@ router.post("/games/:gameId/ai/step", requireAuth, async (req, res): Promise<voi
           })),
         }).where(eq(gamesTable.id, game.id)).returning();
         return row;
+      }
+
+      const displacementRow = await resolveReadyAiFighterDisplacement(tx, game);
+      if (displacementRow) {
+        req.log.info({
+          gameId,
+          nextPhase: displacementRow.phase,
+          nextActivePlayerId: displacementRow.activePlayerId,
+        }, "ai debug step placed displaced fighter");
+        return displacementRow;
       }
 
       if ((game.phase === "movement" || game.phase === "firing") && game.activePlayerId !== AI_OPPONENT_ID) {

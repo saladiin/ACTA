@@ -592,6 +592,11 @@ export interface ShipPlacement {
      * @minimum 0
      */
   launchedFromPlacementIndex?: number | null;
+  /**
+     * Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.
+     * @nullable
+     */
+  deploymentGroupId?: string | null;
 }
 
 export interface DeploymentInput {

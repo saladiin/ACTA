@@ -597,7 +597,8 @@ export const DeployFleetBody = zod.object({
   "hexR": zod.number(),
   "heading": zod.number(),
   "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.'),
-  "launchedFromPlacementIndex": zod.number().min(0).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.')
+  "launchedFromPlacementIndex": zod.number().min(0).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.'),
+  "deploymentGroupId": zod.string().max(80).nullish().describe('Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.')
 })).min(1)
 })
 

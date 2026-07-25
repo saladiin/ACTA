@@ -60,6 +60,10 @@ type Tuning = {
   rotationY?: number;
   rotationZ?: number;
   expansionCycle?: number;
+  beamCoreDiameter?: number;
+  beamCoreBrightness?: number;
+  beamCoreOpacity?: number;
+  beamCorePulse?: number;
 };
 
 function impactFadeEnvelope(t: number): number {
@@ -162,6 +166,7 @@ type SpecialStation = {
     | "mesh-missile-salvo"
     | "mesh-projectile-salvo"
     | "texture-missile-salvo"
+    | "kirishiac-beam-test"
     | "textured-exploding-sphere";
   position: Vec2;
   to?: Vec2;
@@ -197,6 +202,8 @@ type AnimatedModelStation = {
   position: Vec2;
   rotatingBoneName: string;
   rotationAxis: "x" | "y" | "z";
+  rotationMode?: "euler" | "local-axis";
+  materialFx?: "kirishiac-dual-diffuse" | "kirishiac-dual-diffuse-original";
   secondsPerRotation: number;
   tuning?: Partial<Tuning>;
 };
@@ -254,6 +261,47 @@ const CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING: Tuning = {
   arc: 0.35,
   thickness: 0.95,
 };
+
+const KIRISHIAC_DUAL_DIFFUSE_ORIGINAL_TUNING: Partial<Tuning> = {
+  color: "#facc15",
+  secondaryColor: "#fff7ad",
+  speed: 0.7,
+  size: 1,
+  fade: 1.1,
+  intensity: 1.35,
+  count: 1,
+  spread: 1,
+  arc: 0,
+  thickness: 1,
+};
+
+const KIRISHIAC_DUAL_DIFFUSE_TUNING: Partial<Tuning> = {
+  color: "#facc15",
+  secondaryColor: "#fde68a",
+  speed: 0.7,
+  size: 1,
+  fade: 0.68,
+  intensity: 0.82,
+  count: 1,
+  spread: 1,
+  arc: 0,
+  thickness: 1,
+};
+
+const KIRISHIAC_SPIKE_BASE_FADE_INNER_RADIUS = 8.55;
+const KIRISHIAC_SPIKE_BASE_FADE_OUTER_RADIUS = 10.75;
+
+const KIRISHIAC_BEAM_TEXTURE_OPTIONS = [
+  { label: "Fire Panning", filename: "T_FirePanningCyl45.png" },
+  { label: "Wind Noise", filename: "T_VFX_WindNoise1.png" },
+  { label: "Hard Noise", filename: "T_Noise_HU85k.png" },
+  { label: "Soft Noise", filename: "T_Noise1_nk.png" },
+] as const;
+const KIRISHIAC_ATTACK_TURN_IN_SECONDS = 1;
+const KIRISHIAC_ATTACK_FIRE_SECONDS = 3;
+const KIRISHIAC_ATTACK_RETURN_SECONDS = 1;
+const KIRISHIAC_ATTACK_PREVIEW_CYCLE_SECONDS = 6;
+const KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES = 1.35;
 
 const FACTION_COLORS: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
@@ -510,6 +558,35 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         tuning: { color: "#38bdf8", secondaryColor: "#f8fafc", speed: 1, size: 1, intensity: 0.4 },
       },
       {
+        kind: "special",
+        id: "kirishiac-beam-firing-test",
+        label: "Kirishiac Beam Firing",
+        note: "kirishiac1.glb with the named kirishiac_beam shell active, plus a textured yellow core beam using Orb Texture assets.",
+        effect: "kirishiac-beam-test",
+        modelFilename: "kirishiac1.glb",
+        position: [0, -2],
+        to: [10.5, 10.5],
+        tuning: {
+          color: "#facc15",
+          secondaryColor: "#fff7ad",
+          speed: 0.9,
+          size: 0.75,
+          fade: 0.82,
+          intensity: 1.15,
+          spread: 1,
+          count: 1,
+          arc: 0.32,
+          thickness: 1,
+          cylinderLength: 1,
+          randomness: 1,
+          ribbonEffect: 1,
+          beamCoreDiameter: 0.07,
+          beamCoreBrightness: 1.15,
+          beamCoreOpacity: 0.82,
+          beamCorePulse: 0.6,
+        },
+      },
+      {
         kind: "hull-state",
         id: "omega-destroyed-wreck",
         label: "Destroyed Omega Wreck",
@@ -528,6 +605,16 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         modelFilename: "dead-nova.glb",
         position: [0, -10],
         tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 34, spread: 0.95 },
+      },
+      {
+        kind: "hull-state",
+        id: "bintak-destroyed-wreck",
+        label: "Destroyed Bintak Wreck",
+        note: "Dead Bintak mesh with small_glow, wreck_smoke, and ember_trail emitter empties.",
+        mode: "destroyed",
+        modelFilename: "dead-bintak.glb",
+        position: [9, -10],
+        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.9, intensity: 0.9, count: 38, spread: 1 },
       },
       {
         kind: "special",
@@ -1197,6 +1284,23 @@ function showcaseShipScale(object: THREE.Object3D, targetInches = 2.4): number {
   return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
 }
 
+function showcaseShipScaleIgnoring(object: THREE.Object3D, targetInches: number, ignoredName: string): number {
+  const box = new THREE.Box3();
+  const scratch = new THREE.Box3();
+  const ignored = ignoredName.toLowerCase();
+  object.updateMatrixWorld(true);
+  object.traverse((child: any) => {
+    if (!child.isMesh) return;
+    if (String(child.name ?? "").toLowerCase().includes(ignored)) return;
+    scratch.setFromObject(child);
+    if (!scratch.isEmpty()) box.union(scratch);
+  });
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxHorizontal = Math.max(size.x, size.z);
+  return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
+}
+
 function readEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z"): number {
   if (axis === "x") return rotation.x;
   if (axis === "y") return rotation.y;
@@ -1209,11 +1313,53 @@ function writeEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z", value: num
   else rotation.z = value;
 }
 
+function createKirishiacRotatorWeightMaskMaterial(
+  sourceMaterial: THREE.Material,
+  mode: "static" | "rotating",
+): THREE.Material {
+  const maskedMaterial = sourceMaterial.clone();
+  maskedMaterial.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <common>",
+      `#include <common>
+      varying float vKirishiacRotatorWeight;`,
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <skinbase_vertex>",
+      `vKirishiacRotatorWeight = 0.0;
+      vKirishiacRotatorWeight += skinWeight.x * (1.0 - step(0.5, abs(skinIndex.x - 2.0)));
+      vKirishiacRotatorWeight += skinWeight.y * (1.0 - step(0.5, abs(skinIndex.y - 2.0)));
+      vKirishiacRotatorWeight += skinWeight.z * (1.0 - step(0.5, abs(skinIndex.z - 2.0)));
+      vKirishiacRotatorWeight += skinWeight.w * (1.0 - step(0.5, abs(skinIndex.w - 2.0)));
+      #include <skinbase_vertex>`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <common>",
+      `#include <common>
+      varying float vKirishiacRotatorWeight;`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "void main() {",
+      `void main() {
+      ${
+        mode === "static"
+          ? "if (vKirishiacRotatorWeight > 0.5) discard;"
+          : "if (vKirishiacRotatorWeight <= 0.5) discard;"
+      }`,
+    );
+  };
+  maskedMaterial.customProgramCacheKey = () => `kirishiac-${mode}-rotator-weight-mask`;
+  return maskedMaterial;
+}
+
 const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "dead-bintak.glb": "20260724-223851",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",
   "dead-omega.glb": "20260718-231918",
   "hyperion.glb": "20260719-local",
+  "kirishiac.glb": "20260725-004107",
+  "kirishiac1.glb": "20260725-beam-0100",
   "missile.glb": "20260719-010532",
   "missile-hyperion.glb": "20260719-local",
   "missile1.glb": "20260719-013547",
@@ -1301,7 +1447,8 @@ function ShowcaseGlbModel({
       if (
         anchorName.startsWith("wreck_smoke") ||
         anchorName.startsWith("smoke_light") ||
-        anchorName.startsWith("small_glow")
+        anchorName.startsWith("small_glow") ||
+        anchorName.startsWith("ember_trail")
       ) {
         anchorPoints.push({
           name: anchorName,
@@ -1652,13 +1799,19 @@ function RotatingBoneShowcaseModel({
   tint,
   rotatingBoneName,
   rotationAxis,
+  rotationMode = "euler",
+  materialFx,
   secondsPerRotation,
+  tuning,
 }: {
   filename: string;
   tint: string;
   rotatingBoneName: string;
   rotationAxis: "x" | "y" | "z";
+  rotationMode?: "euler" | "local-axis";
+  materialFx?: "kirishiac-dual-diffuse" | "kirishiac-dual-diffuse-original";
   secondsPerRotation: number;
+  tuning: Tuning;
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const revision =
@@ -1667,30 +1820,249 @@ function RotatingBoneShowcaseModel({
   const { scene } = useGLTF(url);
   const boneRef = useRef<THREE.Object3D | null>(null);
   const initialRotationRef = useRef(0);
+  const initialQuaternionRef = useRef(new THREE.Quaternion());
+  const deltaQuaternionRef = useRef(new THREE.Quaternion());
+  const localAxisRef = useRef(new THREE.Vector3(0, 1, 0));
+  const shaderMaterialsRef = useRef<THREE.ShaderMaterial[]>([]);
+  const skinnedMeshesRef = useRef<THREE.SkinnedMesh[]>([]);
+  const rotatingLayerRef = useRef<THREE.Object3D | null>(null);
+  const primaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_FirePanningCyl45.png"));
+  const secondaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_VFX_WindNoise1.png"));
+  const alphaTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_Noise_HU85k.png"));
+  const dualDiffuseConfig = TEXTURED_SPHERE_VARIANT_CONFIGS["dual-diffuse"];
+
+  useMemo(() => {
+    configureSphereTexture(primaryTexture);
+    configureSphereTexture(secondaryTexture);
+    configureSphereTexture(alphaTexture, THREE.NoColorSpace);
+  }, [alphaTexture, primaryTexture, secondaryTexture]);
 
   const cloned = useMemo(() => {
-    const c = cloneSkeleton(scene) as THREE.Object3D;
+    const kirishiacLayeredPreview =
+      materialFx === "kirishiac-dual-diffuse" ||
+      materialFx === "kirishiac-dual-diffuse-original";
+    const c = kirishiacLayeredPreview
+      ? new THREE.Group()
+      : (cloneSkeleton(scene) as THREE.Object3D);
     const tintColor = new THREE.Color(tint);
     const targetBoneName = rotatingBoneName.toLowerCase();
     boneRef.current = null;
     initialRotationRef.current = 0;
+    shaderMaterialsRef.current = [];
+    skinnedMeshesRef.current = [];
+    rotatingLayerRef.current = null;
 
-    c.traverse((child: any) => {
+    const createDualDiffuseMaterial = () => {
+      const originalReference = materialFx === "kirishiac-dual-diffuse-original";
+      const uniforms = {
+        uPrimaryMap: { value: primaryTexture },
+        uSecondaryMap: { value: secondaryTexture },
+        uAlphaMap: { value: alphaTexture },
+        uTime: { value: 0 },
+        uColor: { value: new THREE.Color(tuning.color) },
+        uSecondaryColor: { value: new THREE.Color(tuning.secondaryColor) },
+        uIntensity: { value: tuning.intensity },
+        uFade: { value: tuning.fade },
+        uAlphaSource: { value: dualDiffuseConfig.alphaSource },
+        uAlphaFloor: { value: dualDiffuseConfig.alphaFloor * (originalReference ? 1 : 0.65) },
+        uAlphaStrength: { value: dualDiffuseConfig.alphaStrength * (originalReference ? 1 : 0.75) },
+        uSecondaryMix: { value: dualDiffuseConfig.secondaryMix },
+        uEmissiveBoost: { value: dualDiffuseConfig.emissiveBoost * (originalReference ? 1 : 2.4) },
+        uRimBoost: { value: dualDiffuseConfig.rimBoost * (originalReference ? 1 : 0.55) },
+        uRimAlpha: { value: dualDiffuseConfig.rimAlpha },
+        uFresnelPower: { value: dualDiffuseConfig.fresnelPower },
+        uThreshold: { value: dualDiffuseConfig.threshold },
+        uPulseAmount: { value: dualDiffuseConfig.pulseAmount },
+        uBaseFadeEnabled: { value: originalReference ? 0 : 1 },
+        uBaseFadeInnerRadius: { value: KIRISHIAC_SPIKE_BASE_FADE_INNER_RADIUS },
+        uBaseFadeOuterRadius: { value: KIRISHIAC_SPIKE_BASE_FADE_OUTER_RADIUS },
+        uPrimarySpeed: { value: new THREE.Vector2(...dualDiffuseConfig.primarySpeed) },
+        uSecondarySpeed: { value: new THREE.Vector2(...dualDiffuseConfig.secondarySpeed) },
+        uAlphaSpeed: { value: new THREE.Vector2(...dualDiffuseConfig.alphaSpeed) },
+        uPrimaryRepeat: { value: new THREE.Vector2(...dualDiffuseConfig.primaryRepeat) },
+        uSecondaryRepeat: { value: new THREE.Vector2(...dualDiffuseConfig.secondaryRepeat) },
+        uAlphaRepeat: { value: new THREE.Vector2(...dualDiffuseConfig.alphaRepeat) },
+      };
+      const material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: `
+          #include <common>
+          #include <skinning_pars_vertex>
+          varying vec2 vUv;
+          varying vec3 vWorldNormal;
+          varying vec3 vViewDir;
+          varying float vBaseDistance;
+          void main() {
+            vUv = uv;
+            vBaseDistance = length(position);
+            #include <beginnormal_vertex>
+            #include <skinbase_vertex>
+            #include <skinnormal_vertex>
+            #include <defaultnormal_vertex>
+            #include <begin_vertex>
+            #include <skinning_vertex>
+            vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
+            vWorldNormal = normalize(mat3(modelMatrix) * transformedNormal);
+            vViewDir = normalize(cameraPosition - worldPosition.xyz);
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uPrimaryMap;
+          uniform sampler2D uSecondaryMap;
+          uniform sampler2D uAlphaMap;
+          uniform float uTime;
+          uniform vec3 uColor;
+          uniform vec3 uSecondaryColor;
+          uniform float uIntensity;
+          uniform float uFade;
+          uniform float uAlphaSource;
+          uniform float uAlphaFloor;
+          uniform float uAlphaStrength;
+          uniform float uSecondaryMix;
+          uniform float uEmissiveBoost;
+          uniform float uRimBoost;
+          uniform float uRimAlpha;
+          uniform float uFresnelPower;
+          uniform float uThreshold;
+          uniform float uPulseAmount;
+          uniform float uBaseFadeEnabled;
+          uniform float uBaseFadeInnerRadius;
+          uniform float uBaseFadeOuterRadius;
+          uniform vec2 uPrimarySpeed;
+          uniform vec2 uSecondarySpeed;
+          uniform vec2 uAlphaSpeed;
+          uniform vec2 uPrimaryRepeat;
+          uniform vec2 uSecondaryRepeat;
+          uniform vec2 uAlphaRepeat;
+          varying vec2 vUv;
+          varying vec3 vWorldNormal;
+          varying vec3 vViewDir;
+          varying float vBaseDistance;
+
+          void main() {
+            vec4 primary = texture2D(uPrimaryMap, vUv * uPrimaryRepeat + uPrimarySpeed * uTime);
+            vec4 secondary = texture2D(uSecondaryMap, vUv * uSecondaryRepeat + uSecondarySpeed * uTime);
+            vec4 alphaTex = texture2D(uAlphaMap, vUv * uAlphaRepeat + uAlphaSpeed * uTime);
+            float alphaSample = primary.r;
+            if (uAlphaSource > 0.5 && uAlphaSource < 1.5) {
+              alphaSample = secondary.r;
+            } else if (uAlphaSource >= 1.5) {
+              alphaSample = alphaTex.r;
+            }
+            float cut = smoothstep(uThreshold - 0.16, uThreshold + 0.16, alphaSample);
+            float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), uFresnelPower);
+            float pulse = 1.0 + sin(uTime * 4.2) * uPulseAmount;
+            vec3 mappedColor = uColor * (0.38 + primary.rgb * 1.25);
+            mappedColor = mix(mappedColor, uSecondaryColor * (0.32 + secondary.rgb * 1.25), uSecondaryMix);
+            mappedColor += uSecondaryColor * alphaTex.r * uEmissiveBoost;
+            mappedColor += uSecondaryColor * fresnel * uRimBoost;
+            mappedColor *= mix(1.0, 2.25, uBaseFadeEnabled);
+            float baseFade = smoothstep(uBaseFadeInnerRadius, uBaseFadeOuterRadius, vBaseDistance);
+            float alpha = (uAlphaFloor + cut * uAlphaStrength + fresnel * uRimAlpha) * uIntensity * uFade * pulse;
+            alpha *= mix(1.0, baseFade, uBaseFadeEnabled);
+            gl_FragColor = vec4(mappedColor * uIntensity, clamp(alpha, 0.0, 0.92));
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      (material as THREE.ShaderMaterial & { skinning?: boolean }).skinning = true;
+      shaderMaterialsRef.current.push(material);
+      return material;
+    };
+
+    const invisibleMaterial = new THREE.MeshBasicMaterial({
+      color: "#000000",
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      depthTest: false,
+    });
+
+    const createRotatorWeightMaskMaterial = (
+      sourceMaterial: THREE.Material,
+      mode: "static" | "rotating",
+    ) => {
+      const maskedMaterial = sourceMaterial.clone();
+      maskedMaterial.onBeforeCompile = (shader) => {
+        shader.vertexShader = shader.vertexShader.replace(
+          "#include <common>",
+          `#include <common>
+          varying float vKirishiacRotatorWeight;`,
+        );
+        shader.vertexShader = shader.vertexShader.replace(
+          "#include <skinbase_vertex>",
+          `vKirishiacRotatorWeight = 0.0;
+          vKirishiacRotatorWeight += skinWeight.x * (1.0 - step(0.5, abs(skinIndex.x - 2.0)));
+          vKirishiacRotatorWeight += skinWeight.y * (1.0 - step(0.5, abs(skinIndex.y - 2.0)));
+          vKirishiacRotatorWeight += skinWeight.z * (1.0 - step(0.5, abs(skinIndex.z - 2.0)));
+          vKirishiacRotatorWeight += skinWeight.w * (1.0 - step(0.5, abs(skinIndex.w - 2.0)));
+          #include <skinbase_vertex>`,
+        );
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <common>",
+          `#include <common>
+          varying float vKirishiacRotatorWeight;`,
+        );
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "void main() {",
+          `void main() {
+          ${
+            mode === "static"
+              ? "if (vKirishiacRotatorWeight > 0.5) discard;"
+              : "if (vKirishiacRotatorWeight <= 0.5) discard;"
+          }`,
+        );
+      };
+      maskedMaterial.customProgramCacheKey = () => `kirishiac-${mode}-rotator-weight-mask`;
+      return maskedMaterial;
+    };
+
+    const prepareClone = (root: THREE.Object3D, mode: "default" | "static" | "rotating") => {
+      root.traverse((child: any) => {
       const childName = String(child.name ?? "").toLowerCase();
       if (childName === targetBoneName) {
         boneRef.current = child;
         initialRotationRef.current = readEulerAxis(child.rotation, rotationAxis);
+        initialQuaternionRef.current.copy(child.quaternion);
+        localAxisRef.current.set(
+          rotationAxis === "x" ? 1 : 0,
+          rotationAxis === "y" ? 1 : 0,
+          rotationAxis === "z" ? 1 : 0,
+        );
       }
       if (!child.isMesh) return;
       child.castShadow = true;
       child.receiveShadow = true;
+      if (child.isSkinnedMesh && child.skeleton) {
+        skinnedMeshesRef.current.push(child as THREE.SkinnedMesh);
+      }
       const sourceMaterials = Array.isArray(child.material)
         ? child.material
         : [child.material];
       const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const isKirishiacFlame = String(material?.name ?? "")
+          .toLowerCase()
+          .includes("kirishiac flame");
+        if (kirishiacLayeredPreview && mode === "static" && isKirishiacFlame) {
+          return invisibleMaterial.clone();
+        }
         const clonedMaterial = material?.clone
           ? material.clone()
           : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        if (
+          kirishiacLayeredPreview &&
+          isKirishiacFlame
+        ) {
+          return createDualDiffuseMaterial();
+        }
+        if (kirishiacLayeredPreview && (mode === "static" || mode === "rotating")) {
+          return createRotatorWeightMaskMaterial(clonedMaterial, mode);
+        }
         const adjustable = clonedMaterial as THREE.Material & {
           color?: THREE.Color;
           emissive?: THREE.Color;
@@ -1707,21 +2079,78 @@ function RotatingBoneShowcaseModel({
       });
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
+    };
+
+    if (kirishiacLayeredPreview) {
+      const staticLayer = cloneSkeleton(scene) as THREE.Object3D;
+      const rotatingLayer = cloneSkeleton(scene) as THREE.Object3D;
+      prepareClone(staticLayer, "static");
+      prepareClone(rotatingLayer, "rotating");
+      rotatingLayerRef.current = rotatingLayer;
+      c.add(staticLayer, rotatingLayer);
+    } else {
+      prepareClone(c, "default");
+    }
 
     return c;
-  }, [scene, tint, rotatingBoneName, rotationAxis]);
+  }, [
+    alphaTexture,
+    dualDiffuseConfig,
+    materialFx,
+    primaryTexture,
+    rotatingBoneName,
+    rotationAxis,
+    scene,
+    secondaryTexture,
+    tint,
+    tuning.color,
+    tuning.fade,
+    tuning.intensity,
+    tuning.secondaryColor,
+  ]);
 
   useFrame(({ clock }) => {
     const bone = boneRef.current;
-    if (!bone) return;
+    const elapsed = clock.elapsedTime * clamp(tuning.speed, 0.25, 3);
+    shaderMaterialsRef.current.forEach((material) => {
+      material.uniforms.uTime.value = elapsed;
+      material.uniforms.uColor.value.set(tuning.color);
+      material.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
+      material.uniforms.uIntensity.value = tuning.intensity;
+      material.uniforms.uFade.value = tuning.fade;
+    });
     const cycle = Math.max(0.1, secondsPerRotation);
     const progress = (clock.elapsedTime % cycle) / cycle;
-    writeEulerAxis(
-      bone.rotation,
-      rotationAxis,
-      initialRotationRef.current + progress * Math.PI * 2,
-    );
-    bone.updateMatrixWorld();
+    const rotatingLayer = rotatingLayerRef.current;
+    if (rotatingLayer) {
+      writeEulerAxis(rotatingLayer.rotation, rotationAxis, progress * Math.PI * 2);
+      rotatingLayer.updateMatrix();
+      rotatingLayer.updateMatrixWorld(true);
+      cloned.updateMatrixWorld(true);
+      return;
+    }
+    if (!bone) return;
+    if (rotationMode === "local-axis") {
+      deltaQuaternionRef.current.setFromAxisAngle(
+        localAxisRef.current,
+        progress * Math.PI * 2,
+      );
+      bone.quaternion
+        .copy(initialQuaternionRef.current)
+        .multiply(deltaQuaternionRef.current);
+    } else {
+      writeEulerAxis(
+        bone.rotation,
+        rotationAxis,
+        initialRotationRef.current + progress * Math.PI * 2,
+      );
+    }
+    bone.updateMatrix();
+    bone.updateMatrixWorld(true);
+    cloned.updateMatrixWorld(true);
+    skinnedMeshesRef.current.forEach((mesh) => {
+      mesh.skeleton?.update();
+    });
   });
 
   const scale = useMemo(() => showcaseShipScale(cloned, 3.2), [cloned]);
@@ -1749,7 +2178,10 @@ function AnimatedModelFxStation({ station, tuning, selected, showLabel }: { stat
               tint={tuning.secondaryColor}
               rotatingBoneName={station.rotatingBoneName}
               rotationAxis={station.rotationAxis}
+              rotationMode={station.rotationMode}
+              materialFx={station.materialFx}
               secondsPerRotation={station.secondsPerRotation}
+              tuning={tuning}
             />
           </Suspense>
         </group>
@@ -1884,6 +2316,95 @@ function ModelAnchorGlow({
         />
       </mesh>
       <pointLight ref={lightRef} color="#f97316" intensity={0.8} distance={1.8} />
+    </group>
+  );
+}
+
+function ModelAnchorEmberTrail({
+  anchor,
+  modelScale,
+}: {
+  anchor: ShowcaseModelAnchor;
+  modelScale: number;
+}) {
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+  const particleCount = 72;
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    g.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    return g;
+  }, []);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const seeds = useMemo(
+    () =>
+      Array.from({ length: particleCount }, (_, i) => {
+        const a = seededSparkNoise(i, 0.17);
+        const b = seededSparkNoise(i, 1.37);
+        const c = seededSparkNoise(i, 4.79);
+        return {
+          phase: a * 5.8,
+          side: (b - 0.5) * 0.55,
+          lift: 0.06 + c * 0.42,
+          speed: 0.16 + a * 0.24,
+          life: 2.1 + b * 2.6,
+          mix: c,
+        };
+      }),
+    [],
+  );
+  const colorA = useMemo(() => new THREE.Color("#f97316"), []);
+  const colorB = useMemo(() => new THREE.Color("#fde68a"), []);
+  const workingColorRef = useRef(new THREE.Color());
+
+  useFrame(({ clock }) => {
+    const positions = geometry.getAttribute("position").array as Float32Array;
+    const colors = geometry.getAttribute("color").array as Float32Array;
+    const t = clock.elapsedTime;
+    for (let i = 0; i < seeds.length; i += 1) {
+      const seed = seeds[i]!;
+      const local = ((t * seed.speed + seed.phase) % seed.life) / seed.life;
+      const fadeIn = clamp(local / 0.15, 0, 1);
+      const fadeOut = clamp(1 - (local - 0.52) / 0.48, 0, 1);
+      const brightness =
+        fadeIn *
+        fadeOut *
+        (0.55 + Math.sin((t + seed.phase) * 5.2) * 0.16 + seed.mix * 0.38);
+      const idx = i * 3;
+      positions[idx] = seed.side + Math.sin(t * 1.1 + seed.phase) * 0.05;
+      positions[idx + 1] = seed.lift + local * 0.45;
+      positions[idx + 2] = -local * (1.4 + seed.mix * 1.2);
+      const color = workingColorRef.current.copy(colorA).lerp(colorB, seed.mix);
+      color.multiplyScalar(clamp(brightness, 0.02, 1.7));
+      colors[idx] = color.r;
+      colors[idx + 1] = color.g;
+      colors[idx + 2] = color.b;
+    }
+    geometry.getAttribute("position").needsUpdate = true;
+    geometry.getAttribute("color").needsUpdate = true;
+  });
+
+  return (
+    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]}>
+      <points geometry={geometry} raycast={() => null}>
+        <pointsMaterial
+          size={0.055}
+          sizeAttenuation
+          transparent
+          opacity={0.9}
+          vertexColors
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+      <pointLight color="#f97316" intensity={1.3} distance={3.4} />
     </group>
   );
 }
@@ -2042,6 +2563,9 @@ function ModelAnchorEffect({
   }
   if (anchor.name.startsWith("small_glow")) {
     return <ModelAnchorGlow anchor={anchor} modelScale={modelScale} />;
+  }
+  if (anchor.name.startsWith("ember_trail")) {
+    return <ModelAnchorEmberTrail anchor={anchor} modelScale={modelScale} />;
   }
   return null;
 }
@@ -2953,6 +3477,453 @@ function TexturedBeamEmitterPreview({
       </mesh>
       <pointLight color={tuning.color} intensity={4.2 * tuning.intensity} distance={10} />
     </group>
+  );
+}
+
+function selectedKirishiacBeamTexture(tuning: Tuning): typeof KIRISHIAC_BEAM_TEXTURE_OPTIONS[number] {
+  const index = clamp(Math.round(tuning.count) - 1, 0, KIRISHIAC_BEAM_TEXTURE_OPTIONS.length - 1);
+  return KIRISHIAC_BEAM_TEXTURE_OPTIONS[index] ?? KIRISHIAC_BEAM_TEXTURE_OPTIONS[0];
+}
+
+function KirishiacInnerCombatBeam({
+  from,
+  to,
+  tuning,
+  textureFilename,
+  visible,
+  paused,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  tuning: Tuning;
+  textureFilename: string;
+  visible: boolean;
+  paused: boolean;
+}) {
+  const elapsedRef = useRef(0);
+  const planeMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const crossMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const { mid, quat, len } = useMemo(() => {
+    const dir = new THREE.Vector3().subVectors(to, from);
+    const length = dir.length();
+    const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    return { mid: midpoint, quat: q, len: length };
+  }, [from, to]);
+  const [mainTexture, crossTexture] = useMemo(() => {
+    const configure = (texture: THREE.Texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1.3, 5.2);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+      return texture;
+    };
+    return [configure(sourceTexture.clone()), configure(sourceTexture.clone())] as const;
+  }, [sourceTexture]);
+
+  useEffect(() => {
+    return () => {
+      mainTexture.dispose();
+      crossTexture.dispose();
+    };
+  }, [crossTexture, mainTexture]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const elapsed = elapsedRef.current * clamp(tuning.speed, 0.05, 3);
+    const pulseAmount = clamp(tuning.beamCorePulse ?? 0.2, 0, 1.5);
+    const brightness = clamp(tuning.beamCoreBrightness ?? 1, 0, 5);
+    const opacity = visible ? clamp(tuning.beamCoreOpacity ?? 0.8, 0, 2) : 0;
+    const pulse = 1 + Math.sin(elapsed * 6.4) * pulseAmount;
+    mainTexture.offset.y = -elapsed * 0.26;
+    mainTexture.offset.x = Math.sin(elapsed * 0.42) * 0.03;
+    crossTexture.offset.y = -elapsed * 0.34;
+    crossTexture.offset.x = Math.cos(elapsed * 0.36) * 0.04;
+    if (planeMatRef.current) {
+      planeMatRef.current.color.set(tuning.color);
+      planeMatRef.current.opacity = clamp(0.42 * opacity * brightness * pulse, 0, 1.2);
+    }
+    if (crossMatRef.current) {
+      crossMatRef.current.color.set(tuning.secondaryColor);
+      crossMatRef.current.opacity = clamp(0.26 * opacity * brightness * pulse, 0, 1);
+    }
+    if (coreMatRef.current) {
+      coreMatRef.current.color.set(tuning.secondaryColor);
+      coreMatRef.current.opacity = clamp(0.78 * opacity * brightness * pulse, 0, 1.35);
+    }
+    if (haloMatRef.current) {
+      haloMatRef.current.color.set(tuning.color);
+      haloMatRef.current.opacity = clamp(0.18 * opacity * brightness * pulse, 0, 0.8);
+    }
+    if (lightRef.current) {
+      lightRef.current.color.set(tuning.color);
+      lightRef.current.intensity = opacity * brightness * (2.4 + pulse * 2.4);
+    }
+  });
+
+  const diameter = clamp(tuning.beamCoreDiameter ?? 0.18, 0.02, 2.5);
+  return (
+    <group position={mid.toArray()} quaternion={quat}>
+      <mesh raycast={() => null}>
+        <planeGeometry args={[diameter * 4.6, len]} />
+        <meshBasicMaterial
+          ref={planeMatRef}
+          map={mainTexture}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} raycast={() => null}>
+        <planeGeometry args={[diameter * 3.2, len]} />
+        <meshBasicMaterial
+          ref={crossMatRef}
+          map={crossTexture}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh raycast={() => null}>
+        <cylinderGeometry args={[diameter * 0.5, diameter * 0.5, len, 10, 1]} />
+        <meshBasicMaterial
+          ref={coreMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh raycast={() => null}>
+        <cylinderGeometry args={[diameter * 1.9, diameter * 1.9, len, 18, 1]} />
+        <meshBasicMaterial
+          ref={haloMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={12 + diameter * 7} />
+    </group>
+  );
+}
+
+function KirishiacBeamFiringShowcase({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const filename = station.modelFilename ?? "kirishiac1.glb";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const textureOption = selectedKirishiacBeamTexture(tuning);
+  const beamTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureOption.filename));
+  const elapsedRef = useRef(0);
+  const shellMaterialsRef = useRef<THREE.ShaderMaterial[]>([]);
+  const beamMeshesRef = useRef<Array<{ mesh: THREE.Mesh; baseScale: THREE.Vector3 }>>([]);
+  const shipYawGroupRef = useRef<THREE.Group>(null);
+  const rotatingShipLayerRef = useRef<THREE.Object3D | null>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const [beamActive, setBeamActive] = useState(false);
+  const beamActiveRef = useRef(false);
+  const targetPosition = station.to ?? [station.position[0], station.position[1] + 20];
+  const shipY = SHOWCASE_MESH_ORIGIN_Y + 1;
+  const shipOrigin = useMemo(
+    () => toVector3(station.position, shipY + 0.05),
+    [shipY, station.position],
+  );
+  const beamTarget = useMemo(
+    () => toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y + 0.05),
+    [targetPosition],
+  );
+  const targetYaw = useMemo(
+    () => Math.atan2(beamTarget.x - shipOrigin.x, beamTarget.z - shipOrigin.z),
+    [beamTarget, shipOrigin],
+  );
+  const beamSource = useMemo(() => {
+    const offset = new THREE.Vector3(0, 0, KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES);
+    offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), targetYaw);
+    return shipOrigin.clone().add(offset);
+  }, [shipOrigin, targetYaw]);
+
+  useMemo(() => {
+    configureSphereTexture(beamTexture);
+    beamTexture.repeat.set(1.4, 2.6);
+  }, [beamTexture]);
+
+  const cloned = useMemo(() => {
+    const c = new THREE.Group();
+    shellMaterialsRef.current = [];
+    beamMeshesRef.current = [];
+    rotatingShipLayerRef.current = null;
+
+    const createShellMaterial = () => {
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uMap: { value: beamTexture },
+          uTime: { value: 0 },
+          uColor: { value: new THREE.Color(tuning.color) },
+          uSecondaryColor: { value: new THREE.Color(tuning.secondaryColor) },
+          uOpacity: { value: 0 },
+          uPulseAmount: { value: tuning.arc },
+          uBeamMinY: { value: -0.5 },
+          uBeamMaxY: { value: 0.5 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          varying float vLocalBeamY;
+          varying vec3 vWorldNormal;
+          varying vec3 vViewDir;
+          void main() {
+            vUv = uv;
+            vLocalBeamY = position.y;
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+            vViewDir = normalize(cameraPosition - worldPosition.xyz);
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uMap;
+          uniform float uTime;
+          uniform vec3 uColor;
+          uniform vec3 uSecondaryColor;
+          uniform float uOpacity;
+          uniform float uPulseAmount;
+          uniform float uBeamMinY;
+          uniform float uBeamMaxY;
+          varying vec2 vUv;
+          varying float vLocalBeamY;
+          varying vec3 vWorldNormal;
+          varying vec3 vViewDir;
+          void main() {
+            vec2 uv = vUv * vec2(1.2, 2.2) + vec2(0.0, -0.18 * uTime);
+            vec4 tex = texture2D(uMap, uv);
+            float beamRange = max(abs(uBeamMaxY - uBeamMinY), 0.0001);
+            float alongBeam = clamp((vLocalBeamY - uBeamMinY) / beamRange, 0.0, 1.0);
+            float endCapFade = smoothstep(0.0, 0.24, alongBeam) * (1.0 - smoothstep(0.76, 1.0, alongBeam));
+            float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), 1.1);
+            float pulse = 1.0 + sin(uTime * 5.8) * uPulseAmount;
+            vec3 color = mix(uColor * (0.5 + tex.r), uSecondaryColor * (0.45 + tex.g), 0.35);
+            color += uSecondaryColor * fresnel * 0.85;
+            float alpha = (0.08 + tex.r * 0.42 + fresnel * 0.12) * endCapFade * uOpacity * pulse;
+            gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.88));
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      shellMaterialsRef.current.push(material);
+      return material;
+    };
+
+    const cloneStandardMaterials = (
+      source: THREE.Material | THREE.Material[] | undefined,
+      mode?: "static" | "rotating",
+      kirishiacSpikeMaterial = false,
+    ) => {
+      const cloneOne = (material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone?.() ?? new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number };
+        if (kirishiacSpikeMaterial) {
+          if ("color" in clonedMaterial && clonedMaterial.color instanceof THREE.Color) {
+            clonedMaterial.color = clonedMaterial.color.clone().lerp(new THREE.Color(tuning.secondaryColor), 0.34);
+          }
+          if (adjustable.emissive instanceof THREE.Color) {
+            adjustable.emissive = new THREE.Color(tuning.secondaryColor);
+            adjustable.emissiveIntensity = 6.5 * clamp(tuning.intensity, 0.1, 4);
+          }
+          clonedMaterial.toneMapped = false;
+        } else if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = new THREE.Color(tuning.color);
+          adjustable.emissiveIntensity = 0.08 * tuning.intensity;
+        }
+        return mode ? createKirishiacRotatorWeightMaskMaterial(clonedMaterial, mode) : clonedMaterial;
+      };
+      return Array.isArray(source) ? source.map(cloneOne) : cloneOne(source);
+    };
+
+    const prepareLayer = (root: THREE.Object3D, mode: "static" | "rotating" | "beam") => {
+      root.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.raycast = () => null;
+      const childName = String(child.name ?? "").toLowerCase();
+      const materialName = Array.isArray(child.material)
+        ? child.material.map((material: THREE.Material) => material.name).join(" ")
+        : String(child.material?.name ?? "");
+      const isKirishiacSpikeMaterial = materialName.toLowerCase().includes("kirishiac flame");
+      const isBeamShell =
+        childName.includes("kirishiac_beam") ||
+        String(child.geometry?.name ?? "").toLowerCase().includes("kirishiac_beam");
+
+      if (isBeamShell) {
+        if (mode !== "beam") {
+          child.visible = false;
+          return;
+        }
+        child.castShadow = false;
+        child.receiveShadow = false;
+        const shellMaterial = createShellMaterial();
+        child.material = shellMaterial;
+        child.geometry.computeBoundingBox();
+        const box = child.geometry.boundingBox;
+        if (box) {
+          shellMaterial.uniforms.uBeamMinY.value = box.min.y;
+          shellMaterial.uniforms.uBeamMaxY.value = box.max.y;
+        }
+        beamMeshesRef.current.push({ mesh: child as THREE.Mesh, baseScale: child.scale.clone() });
+        return;
+      }
+
+      if (mode === "beam") {
+        child.visible = false;
+        return;
+      }
+
+      if (child.isSkinnedMesh) {
+        child.material = cloneStandardMaterials(child.material, mode, isKirishiacSpikeMaterial);
+      } else {
+        if (mode === "rotating") {
+          child.visible = false;
+          return;
+        }
+        child.material = cloneStandardMaterials(child.material, undefined, isKirishiacSpikeMaterial);
+      }
+      void materialName;
+      });
+    };
+
+    const staticLayer = cloneSkeleton(scene) as THREE.Object3D;
+    const rotatingLayer = cloneSkeleton(scene) as THREE.Object3D;
+    const beamLayer = cloneSkeleton(scene) as THREE.Object3D;
+    prepareLayer(staticLayer, "static");
+    prepareLayer(rotatingLayer, "rotating");
+    prepareLayer(beamLayer, "beam");
+    rotatingShipLayerRef.current = rotatingLayer;
+    c.add(staticLayer, rotatingLayer, beamLayer);
+    return c;
+  }, [beamTexture, scene, tuning.color, tuning.intensity, tuning.secondaryColor]);
+
+  const scale = useMemo(() => showcaseShipScaleIgnoring(cloned, 4.1 * tuning.size, "kirishiac_beam"), [cloned, tuning.size]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const sequenceTime = elapsedRef.current % KIRISHIAC_ATTACK_PREVIEW_CYCLE_SECONDS;
+    const turnInEnd = KIRISHIAC_ATTACK_TURN_IN_SECONDS;
+    const fireEnd = turnInEnd + KIRISHIAC_ATTACK_FIRE_SECONDS;
+    const returnEnd = fireEnd + KIRISHIAC_ATTACK_RETURN_SECONDS;
+    const fireActive = sequenceTime >= turnInEnd && sequenceTime <= fireEnd;
+    if (beamActiveRef.current !== fireActive) {
+      beamActiveRef.current = fireActive;
+      setBeamActive(fireActive);
+    }
+    let yawAmount = 0;
+    if (sequenceTime < turnInEnd) {
+      yawAmount = THREE.MathUtils.smoothstep(sequenceTime, 0, turnInEnd);
+    } else if (sequenceTime <= fireEnd) {
+      yawAmount = 1;
+    } else if (sequenceTime <= returnEnd) {
+      yawAmount = 1 - THREE.MathUtils.smoothstep(sequenceTime, fireEnd, returnEnd);
+    }
+    if (shipYawGroupRef.current) {
+      shipYawGroupRef.current.rotation.y = targetYaw * yawAmount;
+    }
+    const elapsed = Math.max(0, sequenceTime - turnInEnd) * clamp(tuning.speed, 0.05, 3);
+    const pulseAmount = clamp(tuning.arc, 0, 1.5);
+    const pulse = 1 + Math.sin(elapsed * 5.8) * pulseAmount;
+    const outerVisible = fireActive && (tuning.ribbonEffect ?? 1) >= 0.5;
+    const diameter = clamp(tuning.thickness, 0.15, 4);
+    const opacity = clamp(tuning.fade, 0, 3) * clamp(tuning.intensity, 0.1, 4);
+
+    if (rotatingShipLayerRef.current) {
+      rotatingShipLayerRef.current.rotation.z = (elapsedRef.current % 30) / 30 * Math.PI * 2;
+      rotatingShipLayerRef.current.updateMatrixWorld(true);
+    }
+    shellMaterialsRef.current.forEach((material) => {
+      material.uniforms.uTime.value = elapsed;
+      material.uniforms.uColor.value.set(tuning.color);
+      material.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
+      material.uniforms.uOpacity.value = outerVisible ? opacity : 0;
+      material.uniforms.uPulseAmount.value = pulseAmount;
+    });
+    beamMeshesRef.current.forEach(({ mesh, baseScale }) => {
+      const lengthScale = clamp(tuning.cylinderLength ?? 1, 0.1, 6);
+      mesh.scale.set(baseScale.x * diameter, baseScale.y * lengthScale, baseScale.z * diameter);
+      mesh.visible = outerVisible;
+    });
+    if (lightRef.current) {
+      lightRef.current.color.set(tuning.color);
+      lightRef.current.intensity = outerVisible ? 5.5 * opacity * (0.75 + pulse * 0.25) : 0;
+      lightRef.current.distance = 10 + diameter * 3;
+    }
+  });
+
+  const targetHeading = useMemo(() => {
+    const dx = station.position[0] - targetPosition[0];
+    const dz = station.position[1] - targetPosition[1];
+    return Math.atan2(dx, dz);
+  }, [station.position, targetPosition]);
+  const innerBeamVisible = (tuning.randomness ?? 1) >= 0.5;
+
+  return (
+    <>
+      <group ref={shipYawGroupRef} position={[station.position[0], shipY, station.position[1]]}>
+        <group scale={[scale, scale, scale]}>
+          <primitive object={cloned} />
+        </group>
+        <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={14} position={[0, 1.5, 7.2]} />
+      </group>
+      <EndpointMarker position={targetPosition} color={tuning.secondaryColor} />
+      <group position={toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y).toArray()} rotation={[0, targetHeading, 0]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel
+            filename="hyperion.glb"
+            tint="#dbeafe"
+            emissiveColor={tuning.secondaryColor}
+            emissiveIntensity={0.06}
+            targetInches={2.4}
+          />
+        </Suspense>
+      </group>
+      <Suspense fallback={null}>
+        <KirishiacInnerCombatBeam
+          from={beamSource}
+          to={beamTarget}
+          tuning={tuning}
+          textureFilename={textureOption.filename}
+          visible={innerBeamVisible && beamActive}
+          paused={paused}
+        />
+      </Suspense>
+    </>
   );
 }
 
@@ -5797,6 +6768,11 @@ function SpecialFxStation({
       {station.effect === "mesh-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "mesh-projectile-salvo" ? <MeshProjectileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
+      {station.effect === "kirishiac-beam-test" ? (
+        <Suspense fallback={null}>
+          <KirishiacBeamFiringShowcase station={station} tuning={tuning} paused={animationPaused} />
+        </Suspense>
+      ) : null}
       {station.effect === "textured-exploding-sphere" ? (
         <Suspense fallback={null}>
           <TexturedExplodingSphereStation station={station} tuning={tuning} />
@@ -5909,6 +6885,37 @@ function ToggleControl({
   );
 }
 
+function TextureOptionControl({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const selectedIndex = clamp(Math.round(value) - 1, 0, KIRISHIAC_BEAM_TEXTURE_OPTIONS.length - 1);
+  return (
+    <div className="grid gap-2">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Beam Texture</span>
+      <div className="grid grid-cols-2 gap-2">
+        {KIRISHIAC_BEAM_TEXTURE_OPTIONS.map((option, index) => (
+          <button
+            key={option.filename}
+            type="button"
+            className={`h-9 rounded border px-2 font-mono text-[10px] font-bold uppercase tracking-widest transition-colors ${
+              selectedIndex === index
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:border-primary/50"
+            }`}
+            onClick={() => onChange(index + 1)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ColorControl({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="grid gap-2">
@@ -5980,6 +6987,10 @@ function exportPresetFor(station: ShowcaseStation, tuning: Tuning): string {
   );
 }
 
+function isKirishiacBeamStation(station: ShowcaseStation): boolean {
+  return station.kind === "special" && station.effect === "kirishiac-beam-test";
+}
+
 export default function VfxShowcase() {
   const [activeBoardId, setActiveBoardId] = useState(SHOWCASE_BOARDS[0]?.id ?? "");
   const activeBoard = SHOWCASE_BOARDS.find(board => board.id === activeBoardId) ?? SHOWCASE_BOARDS[0];
@@ -6000,6 +7011,7 @@ export default function VfxShowcase() {
   const selectedIsPointSparkTrail = selectedStation ? isPointSparkTrail(selectedStation) : false;
   const selectedIsPraxisShockwave = selectedStation?.kind === "special" && selectedStation.effect === "praxis-shockwave";
   const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
+  const selectedIsKirishiacBeam = selectedStation ? isKirishiacBeamStation(selectedStation) : false;
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -6128,7 +7140,62 @@ export default function VfxShowcase() {
                       ) : null}
                     </div>
                   ) : null}
-                  {selectedIsOrganicSkin ? (
+                  {selectedIsKirishiacBeam ? (
+                    <>
+                      <TextureOptionControl value={selectedTuning.count} onChange={count => updateSelected({ count })} />
+                      <SliderControl label="Texture Speed" value={selectedTuning.speed} min={0.05} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
+                      <SliderControl label="Outer Diameter" value={selectedTuning.thickness} min={0.15} max={3.5} step={0.05} onChange={thickness => updateSelected({ thickness })} />
+                      <SliderControl label="Outer Length" value={selectedTuning.cylinderLength ?? 1} min={0.25} max={6} step={0.05} onChange={cylinderLength => updateSelected({ cylinderLength })} />
+                      <SliderControl label="Outer Opacity" value={selectedTuning.fade} min={0} max={2} step={0.05} onChange={fade => updateSelected({ fade })} />
+                      <SliderControl label="Outer Brightness" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
+                      <SliderControl label="Outer Pulse" value={selectedTuning.arc} min={0} max={1.25} step={0.05} onChange={arc => updateSelected({ arc })} />
+                      <SliderControl label="Model Size" value={selectedTuning.size} min={0.5} max={1.8} step={0.05} onChange={size => updateSelected({ size })} />
+                      <SliderControl
+                        label="Inner Diameter"
+                        value={selectedTuning.beamCoreDiameter ?? 0.18}
+                        min={0.02}
+                        max={1.4}
+                        step={0.01}
+                        onChange={beamCoreDiameter => updateSelected({ beamCoreDiameter })}
+                      />
+                      <SliderControl
+                        label="Inner Brightness"
+                        value={selectedTuning.beamCoreBrightness ?? 1.15}
+                        min={0}
+                        max={4}
+                        step={0.05}
+                        onChange={beamCoreBrightness => updateSelected({ beamCoreBrightness })}
+                      />
+                      <SliderControl
+                        label="Inner Opacity"
+                        value={selectedTuning.beamCoreOpacity ?? 0.82}
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        onChange={beamCoreOpacity => updateSelected({ beamCoreOpacity })}
+                      />
+                      <SliderControl
+                        label="Inner Pulse"
+                        value={selectedTuning.beamCorePulse ?? 0.22}
+                        min={0}
+                        max={1.25}
+                        step={0.05}
+                        onChange={beamCorePulse => updateSelected({ beamCorePulse })}
+                      />
+                      <ToggleControl
+                        id="kirishiac-normal-beam-toggle"
+                        label="Normal Beam Core"
+                        checked={(selectedTuning.randomness ?? 1) >= 0.5}
+                        onChange={enabled => updateSelected({ randomness: enabled ? 1 : 0 })}
+                      />
+                      <ToggleControl
+                        id="kirishiac-outer-shell-toggle"
+                        label="Outer Beam Shell"
+                        checked={(selectedTuning.ribbonEffect ?? 1) >= 0.5}
+                        onChange={enabled => updateSelected({ ribbonEffect: enabled ? 1 : 0 })}
+                      />
+                    </>
+                  ) : selectedIsOrganicSkin ? (
                     <>
                       <SliderControl label="Motion Speed" value={selectedTuning.speed} min={0} max={2} step={0.01} onChange={speed => updateSelected({ speed })} />
                       <SliderControl label="Pattern Scale" value={selectedTuning.spread} min={0.5} max={5} step={0.05} onChange={spread => updateSelected({ spread })} />

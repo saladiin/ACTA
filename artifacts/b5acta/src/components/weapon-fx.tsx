@@ -1,11 +1,11 @@
-import { Suspense, useRef, useMemo } from "react";
+import { Suspense, useEffect, useRef, useMemo } from "react";
 import { useFrame, useLoader } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Weapon } from "@workspace/api-client-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Weapon firing FX — beam / tracer / missile, with per-hit impact flashes.
+// Weapon firing FX — beam / mesh projectile / missile, with per-hit impact flashes.
 //
 // All effects are purely visual (server has already resolved the shot). They
 // use additive blending so they read as energy in the bloom pass, and disable
@@ -21,14 +21,27 @@ const FACTION_BEAM_COLOR: Record<string, string> = {
 };
 const SHADOW_SLICER_COLOR = "#b85cff";
 const DEFAULT_BEAM_COLOR = "#ff2a2a";
-const TRACER_COLOR = "#76bb40";
-const TRACER_IMPACT_COLOR = "#96d35f";
-const TRACER_TUNING = {
-  speed: 1,
-  size: 0.3,
-  fade: 2.9,
-  intensity: 1,
-  count: 7,
+const KIRISHIAC_BEAM_MODEL_FILENAME = "kirishiac1.glb";
+const KIRISHIAC_BEAM_MODEL_REVISION = "20260725-beam-0100";
+const KIRISHIAC_BEAM_TEXTURE_FILENAME = "T_FirePanningCyl45.png";
+const KIRISHIAC_ATTACK_TURN_IN_MS = 1000;
+const KIRISHIAC_ATTACK_FIRE_MS = 3000;
+const KIRISHIAC_ATTACK_TOTAL_MS = 5000;
+const KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES = 1.35;
+const KIRISHIAC_BEAM_TUNING = {
+  color: "#facc15",
+  secondaryColor: "#fff7ad",
+  speed: 0.9,
+  size: 0.75,
+  fade: 0.82,
+  intensity: 1.15,
+  arc: 0.32,
+  thickness: 1,
+  cylinderLength: 1,
+  beamCoreDiameter: 0.07,
+  beamCoreBrightness: 1.15,
+  beamCoreOpacity: 0.82,
+  beamCorePulse: 0.6,
 };
 const FIGHTER_PROJECTILE_MODEL_FILENAME = "projectile_mesh.glb";
 const FIGHTER_PROJECTILE_TEXTURE_FILENAME = "T_FirePanningCyl45.png";
@@ -49,6 +62,19 @@ const FIGHTER_PROJECTILE_TUNING = {
   thickness: 0.6,
   meshSize: 0.15,
 };
+const CAPITAL_PROJECTILE_TUNING = {
+  color: "#f43f5e",
+  secondaryColor: "#facc15",
+  speed: 0.7,
+  size: 1,
+  fade: 1.1,
+  intensity: 1.2,
+  spread: 1,
+  count: 6,
+  arc: 0.35,
+  thickness: 1,
+  meshSize: 0.15,
+};
 const SHADOW_FIGHTER_PROJECTILE_TUNING = {
   ...FIGHTER_PROJECTILE_TUNING,
   color: "#a655f7",
@@ -67,13 +93,13 @@ const MISSILE_TUNING = {
   arc: 2.7,
   thickness: 0.25,
   meshSize: 0.4,
-  flareSize: 4,
+  flareSize: 0.1,
+  sparkCount: 110,
+  sparkRandomness: 0.42,
 };
 const MISSILE_MODEL_FILENAME = "missile1.glb";
 const MISSILE_MODEL_REVISION = "20260719-013547";
-const MISSILE_FLARE_TEXTURE_FILENAME = "missileflare.png";
-const MISSILE_FLARE_TEXTURE_REVISION = "20260719-011930";
-const MISSILE_FLIGHT_MS = 3000;
+const MISSILE_FLIGHT_MS = 1500;
 const MISSILE_LAUNCH_DELAYS_MS = [0, 500, 1200] as const;
 const TARGET_IMPACT_TEXTURE_FILENAME = "T_FirePanningCyl45.png";
 const TARGET_IMPACT_TEXTURE_REVISION = "20260720-121500";
@@ -119,6 +145,11 @@ function impactClusterOffsets(count: number, spread: number, seed = 0): [number,
     return [x * spacing, base[1] * spacing, z * spacing];
   });
 }
+
+function seededSparkNoise(seed: number, salt: number): number {
+  const x = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
 const ENERGY_MINE_TUNING = {
   color: "#f5f5f4",
   secondaryColor: "#6e6ce4",
@@ -146,17 +177,6 @@ export function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): WeaponC
 export function beamColorFor(faction: string, weapon?: Pick<Weapon, "name">): string {
   if ((weapon?.name ?? "").toLowerCase().includes("molecular slicer")) return SHADOW_SLICER_COLOR;
   return FACTION_BEAM_COLOR[faction] ?? DEFAULT_BEAM_COLOR;
-}
-
-function tracerColorsFor(faction: string, weapon?: Pick<Weapon, "name">): { color: string; impact: string } {
-  const name = (weapon?.name ?? "").toLowerCase();
-  if (name.includes("matter") || name.includes("particle")) {
-    return { color: "#ffa040", impact: "#ffd166" };
-  }
-  if (/brakiri|league/i.test(faction) || name.includes("pulsar") || name.includes("ion")) {
-    return { color: TRACER_COLOR, impact: TRACER_IMPACT_COLOR };
-  }
-  return { color: TRACER_COLOR, impact: TRACER_IMPACT_COLOR };
 }
 
 function isFighterAttacker(attackerName?: string, attackerModelFilename?: string): boolean {
@@ -377,45 +397,7 @@ function TravellingProjectile({
   );
 }
 
-// ── Salvo of cannon tracers ─────────────────────────────────────────────────
-function TracerSalvoFx({
-  from,
-  to,
-  color,
-  count,
-}: {
-  from: THREE.Vector3;
-  to: THREE.Vector3;
-  color: string;
-  count: number;
-}) {
-  const startRef = useRef<number>(performance.now());
-  // Cap count so very high-AD weapons (e.g. 14D Heavy Pulse) don't spawn a wall.
-  const n = Math.max(1, Math.min(count, TRACER_TUNING.count));
-  const travelMs = 340 / TRACER_TUNING.speed;
-  const fadeMs = 180 * TRACER_TUNING.fade;
-  const projectileSize = 0.16 * TRACER_TUNING.size;
-  return (
-    <>
-      {Array.from({ length: n }).map((_, i) => (
-        <TravellingProjectile
-          key={i}
-          from={from}
-          to={to}
-          color={color}
-          delayMs={i * 65}
-          travelMs={travelMs}
-          startRef={startRef}
-          size={projectileSize}
-          fadeMs={fadeMs}
-          intensity={TRACER_TUNING.intensity}
-        />
-      ))}
-    </>
-  );
-}
-
-// ── Missile volley — slower, arcing trajectory ─────────────────────────────
+// ── Missile volley — direct mesh missiles with staggered launches ──────────
 function modelScaleForTargetSize(object: THREE.Object3D, targetInches: number): number {
   const box = new THREE.Box3().setFromObject(object);
   const size = new THREE.Vector3();
@@ -424,7 +406,7 @@ function modelScaleForTargetSize(object: THREE.Object3D, targetInches: number): 
   return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
 }
 
-type FighterProjectileTuning = typeof FIGHTER_PROJECTILE_TUNING;
+type MeshProjectileTuning = typeof FIGHTER_PROJECTILE_TUNING;
 
 const FIGHTER_PROJECTILE_SHADER_CONFIG = {
   alphaSource: 2,
@@ -457,6 +439,347 @@ function assetUrl(kind: "models" | "textures", filename: string): string {
   return `${basePath}/api/${kind}/${filename}`;
 }
 
+function versionedAssetUrl(kind: "models" | "textures", filename: string, revision: string): string {
+  return `${assetUrl(kind, filename)}?v=${encodeURIComponent(revision)}`;
+}
+
+function modelScaleForTargetSizeIgnoring(
+  object: THREE.Object3D,
+  targetInches: number,
+  ignoredName: string,
+): number {
+  const box = new THREE.Box3();
+  const scratch = new THREE.Box3();
+  const ignored = ignoredName.toLowerCase();
+  object.updateMatrixWorld(true);
+  object.traverse((child: any) => {
+    if (!child.isMesh) return;
+    if (String(child.name ?? "").toLowerCase().includes(ignored)) return;
+    if (String(child.geometry?.name ?? "").toLowerCase().includes(ignored)) return;
+    scratch.setFromObject(child);
+    if (!scratch.isEmpty()) box.union(scratch);
+  });
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxHorizontal = Math.max(size.x, size.z);
+  return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
+}
+
+function isKirishiacBeamAttack({
+  weapon,
+  attackerName,
+  attackerModelFilename,
+}: {
+  weapon: Pick<Weapon, "name" | "traits">;
+  attackerName?: string;
+  attackerModelFilename?: string;
+}): boolean {
+  const text = `${attackerName ?? ""} ${attackerModelFilename ?? ""} ${weapon.name ?? ""} ${weapon.traits ?? ""}`.toLowerCase();
+  return text.includes("kirishiac");
+}
+
+function kirishiacBeamEmitterPoint(from: THREE.Vector3, to: THREE.Vector3): THREE.Vector3 {
+  const direction = new THREE.Vector3(to.x - from.x, 0, to.z - from.z);
+  if (direction.lengthSq() < 0.0001) return from.clone();
+  direction.normalize();
+  return from.clone().add(direction.multiplyScalar(KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES));
+}
+
+function KirishiacInnerCombatBeamFx({
+  from,
+  to,
+  startRef,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  startRef: React.MutableRefObject<number>;
+}) {
+  const planeMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const crossMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const sourceTexture = useLoader(THREE.TextureLoader, assetUrl("textures", KIRISHIAC_BEAM_TEXTURE_FILENAME));
+
+  const { mid, quat, len } = useMemo(() => {
+    const dir = new THREE.Vector3().subVectors(to, from);
+    const length = dir.length();
+    const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    return { mid: midpoint, quat: q, len: length };
+  }, [from.x, from.y, from.z, to.x, to.y, to.z]);
+
+  const [mainTexture, crossTexture] = useMemo(() => {
+    const configure = (texture: THREE.Texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1.3, 5.2);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+      return texture;
+    };
+    return [configure(sourceTexture.clone()), configure(sourceTexture.clone())] as const;
+  }, [sourceTexture]);
+
+  useEffect(() => {
+    return () => {
+      mainTexture.dispose();
+      crossTexture.dispose();
+    };
+  }, [crossTexture, mainTexture]);
+
+  useFrame(() => {
+    const totalElapsedMs = performance.now() - startRef.current;
+    const fireElapsedMs = totalElapsedMs - KIRISHIAC_ATTACK_TURN_IN_MS;
+    const rawT = fireElapsedMs / KIRISHIAC_ATTACK_FIRE_MS;
+    const envelopeAlpha = totalElapsedMs <= KIRISHIAC_ATTACK_TOTAL_MS ? envelope(rawT) : 0;
+    const elapsed = Math.max(0, fireElapsedMs * 0.001) * KIRISHIAC_BEAM_TUNING.speed;
+    const pulse =
+      1 +
+      Math.sin(elapsed * 6.4) *
+        THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.beamCorePulse, 0, 1.5);
+    const brightness = THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.beamCoreBrightness, 0, 5);
+    const opacity =
+      envelopeAlpha *
+      THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.beamCoreOpacity, 0, 2);
+
+    mainTexture.offset.y = -elapsed * 0.26;
+    mainTexture.offset.x = Math.sin(elapsed * 0.42) * 0.03;
+    crossTexture.offset.y = -elapsed * 0.34;
+    crossTexture.offset.x = Math.cos(elapsed * 0.36) * 0.04;
+
+    if (planeMatRef.current) {
+      planeMatRef.current.color.set(KIRISHIAC_BEAM_TUNING.color);
+      planeMatRef.current.opacity = THREE.MathUtils.clamp(0.42 * opacity * brightness * pulse, 0, 1.2);
+    }
+    if (crossMatRef.current) {
+      crossMatRef.current.color.set(KIRISHIAC_BEAM_TUNING.secondaryColor);
+      crossMatRef.current.opacity = THREE.MathUtils.clamp(0.26 * opacity * brightness * pulse, 0, 1);
+    }
+    if (coreMatRef.current) {
+      coreMatRef.current.color.set(KIRISHIAC_BEAM_TUNING.secondaryColor);
+      coreMatRef.current.opacity = THREE.MathUtils.clamp(0.78 * opacity * brightness * pulse, 0, 1.35);
+    }
+    if (haloMatRef.current) {
+      haloMatRef.current.color.set(KIRISHIAC_BEAM_TUNING.color);
+      haloMatRef.current.opacity = THREE.MathUtils.clamp(0.18 * opacity * brightness * pulse, 0, 0.8);
+    }
+    if (lightRef.current) {
+      lightRef.current.color.set(KIRISHIAC_BEAM_TUNING.color);
+      lightRef.current.intensity = opacity * brightness * (2.4 + pulse * 2.4);
+    }
+  });
+
+  const diameter = THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.beamCoreDiameter, 0.02, 2.5);
+  return (
+    <group position={mid.toArray()} quaternion={quat}>
+      <mesh raycast={() => null}>
+        <planeGeometry args={[diameter * 4.6, len]} />
+        <meshBasicMaterial ref={planeMatRef} map={mainTexture} color={KIRISHIAC_BEAM_TUNING.color} transparent opacity={0} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} raycast={() => null}>
+        <planeGeometry args={[diameter * 3.2, len]} />
+        <meshBasicMaterial ref={crossMatRef} map={crossTexture} color={KIRISHIAC_BEAM_TUNING.secondaryColor} transparent opacity={0} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <mesh raycast={() => null}>
+        <cylinderGeometry args={[diameter * 0.5, diameter * 0.5, len, 10, 1]} />
+        <meshBasicMaterial ref={coreMatRef} color={KIRISHIAC_BEAM_TUNING.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <mesh raycast={() => null}>
+        <cylinderGeometry args={[diameter * 1.9, diameter * 1.9, len, 18, 1]} />
+        <meshBasicMaterial ref={haloMatRef} color={KIRISHIAC_BEAM_TUNING.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <pointLight ref={lightRef} color={KIRISHIAC_BEAM_TUNING.color} intensity={0} distance={12 + diameter * 7} />
+    </group>
+  );
+}
+
+function KirishiacOuterBeamShellFx({
+  from,
+  to,
+  startRef,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  startRef: React.MutableRefObject<number>;
+}) {
+  const { scene } = useGLTF(versionedAssetUrl("models", KIRISHIAC_BEAM_MODEL_FILENAME, KIRISHIAC_BEAM_MODEL_REVISION));
+  const beamTexture = useLoader(THREE.TextureLoader, assetUrl("textures", KIRISHIAC_BEAM_TEXTURE_FILENAME));
+  const shellMaterialsRef = useRef<THREE.ShaderMaterial[]>([]);
+  const beamMeshesRef = useRef<Array<{ mesh: THREE.Mesh; baseScale: THREE.Vector3 }>>([]);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useMemo(() => {
+    configureProjectileTexture(beamTexture);
+    beamTexture.repeat.set(1.4, 2.6);
+  }, [beamTexture]);
+
+  const { cloned, scale } = useMemo(() => {
+    const c = scene.clone(true);
+    const previewScale = modelScaleForTargetSizeIgnoring(c, 4.1 * KIRISHIAC_BEAM_TUNING.size, "kirishiac_beam");
+    shellMaterialsRef.current = [];
+    beamMeshesRef.current = [];
+
+    const createShellMaterial = () => {
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uMap: { value: beamTexture },
+          uTime: { value: 0 },
+          uColor: { value: new THREE.Color(KIRISHIAC_BEAM_TUNING.color) },
+          uSecondaryColor: { value: new THREE.Color(KIRISHIAC_BEAM_TUNING.secondaryColor) },
+          uOpacity: { value: 0 },
+          uPulseAmount: { value: KIRISHIAC_BEAM_TUNING.arc },
+          uBeamMinY: { value: -0.5 },
+          uBeamMaxY: { value: 0.5 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          varying float vLocalBeamY;
+          varying vec3 vWorldNormal;
+          varying vec3 vViewDir;
+          void main() {
+            vUv = uv;
+            vLocalBeamY = position.y;
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+            vViewDir = normalize(cameraPosition - worldPosition.xyz);
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uMap;
+          uniform float uTime;
+          uniform vec3 uColor;
+          uniform vec3 uSecondaryColor;
+          uniform float uOpacity;
+          uniform float uPulseAmount;
+          uniform float uBeamMinY;
+          uniform float uBeamMaxY;
+          varying vec2 vUv;
+          varying float vLocalBeamY;
+          varying vec3 vWorldNormal;
+          varying vec3 vViewDir;
+          void main() {
+            vec2 uv = vUv * vec2(1.2, 2.2) + vec2(0.0, -0.18 * uTime);
+            vec4 tex = texture2D(uMap, uv);
+            float beamRange = max(abs(uBeamMaxY - uBeamMinY), 0.0001);
+            float alongBeam = clamp((vLocalBeamY - uBeamMinY) / beamRange, 0.0, 1.0);
+            float endCapFade = smoothstep(0.0, 0.24, alongBeam) * (1.0 - smoothstep(0.76, 1.0, alongBeam));
+            float fresnel = pow(1.0 - clamp(abs(dot(normalize(vWorldNormal), normalize(vViewDir))), 0.0, 1.0), 1.1);
+            float pulse = 1.0 + sin(uTime * 5.8) * uPulseAmount;
+            vec3 color = mix(uColor * (0.5 + tex.r), uSecondaryColor * (0.45 + tex.g), 0.35);
+            color += uSecondaryColor * fresnel * 0.85;
+            float alpha = (0.08 + tex.r * 0.42 + fresnel * 0.12) * endCapFade * uOpacity * pulse;
+            gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.88));
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      shellMaterialsRef.current.push(material);
+      return material;
+    };
+
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.raycast = () => null;
+      const childName = String(child.name ?? "").toLowerCase();
+      const isBeamShell =
+        childName.includes("kirishiac_beam") ||
+        String(child.geometry?.name ?? "").toLowerCase().includes("kirishiac_beam");
+      if (!isBeamShell) {
+        child.visible = false;
+        return;
+      }
+      child.castShadow = false;
+      child.receiveShadow = false;
+      const shellMaterial = createShellMaterial();
+      child.material = shellMaterial;
+      child.geometry.computeBoundingBox();
+      const box = child.geometry.boundingBox;
+      if (box) {
+        shellMaterial.uniforms.uBeamMinY.value = box.min.y;
+        shellMaterial.uniforms.uBeamMaxY.value = box.max.y;
+      }
+      beamMeshesRef.current.push({ mesh: child as THREE.Mesh, baseScale: child.scale.clone() });
+    });
+
+    return { cloned: c, scale: previewScale };
+  }, [beamTexture, scene]);
+
+  useFrame(() => {
+    const totalElapsedMs = performance.now() - startRef.current;
+    const fireElapsedMs = totalElapsedMs - KIRISHIAC_ATTACK_TURN_IN_MS;
+    const rawT = fireElapsedMs / KIRISHIAC_ATTACK_FIRE_MS;
+    const envelopeAlpha = totalElapsedMs <= KIRISHIAC_ATTACK_TOTAL_MS ? envelope(rawT) : 0;
+    const elapsed = Math.max(0, fireElapsedMs * 0.001) * KIRISHIAC_BEAM_TUNING.speed;
+    const pulse =
+      1 +
+      Math.sin(elapsed * 5.8) *
+        THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.arc, 0, 1.5);
+    const opacity =
+      envelopeAlpha *
+      THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.fade, 0, 3) *
+      THREE.MathUtils.clamp(KIRISHIAC_BEAM_TUNING.intensity, 0.1, 4);
+
+    shellMaterialsRef.current.forEach((material) => {
+      material.uniforms.uTime.value = elapsed;
+      material.uniforms.uColor.value.set(KIRISHIAC_BEAM_TUNING.color);
+      material.uniforms.uSecondaryColor.value.set(KIRISHIAC_BEAM_TUNING.secondaryColor);
+      material.uniforms.uOpacity.value = opacity;
+      material.uniforms.uPulseAmount.value = KIRISHIAC_BEAM_TUNING.arc;
+    });
+    beamMeshesRef.current.forEach(({ mesh, baseScale }) => {
+      mesh.scale.set(
+        baseScale.x * KIRISHIAC_BEAM_TUNING.thickness,
+        baseScale.y * KIRISHIAC_BEAM_TUNING.cylinderLength,
+        baseScale.z * KIRISHIAC_BEAM_TUNING.thickness,
+      );
+      mesh.visible = opacity > 0.01;
+    });
+    if (lightRef.current) {
+      lightRef.current.color.set(KIRISHIAC_BEAM_TUNING.color);
+      lightRef.current.intensity = 5.5 * opacity * (0.75 + pulse * 0.25);
+      lightRef.current.distance = 10 + KIRISHIAC_BEAM_TUNING.thickness * 3;
+    }
+  });
+
+  const dir = useMemo(() => new THREE.Vector3().subVectors(to, from), [from.x, from.y, from.z, to.x, to.y, to.z]);
+  const heading = Math.atan2(dir.x, dir.z);
+
+  return (
+    <group position={from.toArray()} rotation={[0, heading, 0]}>
+      <primitive object={cloned} scale={[scale, scale, scale]} />
+      <pointLight ref={lightRef} color={KIRISHIAC_BEAM_TUNING.color} intensity={0} distance={14} position={[0, 1.5, 7.2]} />
+    </group>
+  );
+}
+
+function KirishiacBeamFx({
+  from,
+  to,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+}) {
+  const startRef = useRef<number>(performance.now());
+  const beamFrom = useMemo(
+    () => kirishiacBeamEmitterPoint(from, to),
+    [from.x, from.y, from.z, to.x, to.y, to.z],
+  );
+  return (
+    <>
+      <KirishiacOuterBeamShellFx from={from} to={to} startRef={startRef} />
+      <KirishiacInnerCombatBeamFx from={beamFrom} to={to} startRef={startRef} />
+    </>
+  );
+}
+
 function MeshFighterProjectileRound({
   from,
   to,
@@ -466,7 +789,7 @@ function MeshFighterProjectileRound({
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
-  tuning: FighterProjectileTuning;
+  tuning: MeshProjectileTuning;
   index: number;
   startRef: React.MutableRefObject<number>;
 }) {
@@ -672,14 +995,13 @@ function MeshFighterProjectileRound({
 function MeshFighterProjectileSalvoFx({
   from,
   to,
-  shadow,
+  tuning,
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
-  shadow: boolean;
+  tuning: MeshProjectileTuning;
 }) {
   const startRef = useRef<number>(performance.now());
-  const tuning = shadow ? SHADOW_FIGHTER_PROJECTILE_TUNING : FIGHTER_PROJECTILE_TUNING;
   const count = Math.max(1, Math.min(tuning.count, 6));
   return (
     <>
@@ -698,50 +1020,50 @@ function MeshFighterProjectileSalvoFx({
   );
 }
 
-function MissileTextureFlare() {
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const url = `${basePath}/api/textures/${MISSILE_FLARE_TEXTURE_FILENAME}?v=${encodeURIComponent(MISSILE_FLARE_TEXTURE_REVISION)}`;
-  const texture = useLoader(THREE.TextureLoader, url);
-  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+function MissileEngineGlow() {
+  const coreRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const flareSize = MISSILE_TUNING.flareSize;
-  const length = 0.34 * flareSize;
-  const height = 0.16 * flareSize;
-
-  useMemo(() => {
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.needsUpdate = true;
-  }, [texture]);
 
   useFrame(() => {
-    const pulse = (Math.sin(performance.now() * 0.014) + 1) / 2;
-    if (matRef.current) matRef.current.opacity = (0.5 + pulse * 0.22) * MISSILE_TUNING.intensity;
-    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.1) * MISSILE_TUNING.intensity;
+    const pulse = (Math.sin(performance.now() * 0.018) + 1) / 2;
+    if (coreRef.current) coreRef.current.opacity = 0.74 + pulse * 0.2;
+    if (haloRef.current) haloRef.current.opacity = (0.18 + pulse * 0.16) * MISSILE_TUNING.intensity;
+    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.3) * MISSILE_TUNING.intensity;
   });
 
   return (
-    <group position={[0, 0, -length / 2]} rotation={[0, Math.PI / 2, 0]}>
-      <mesh raycast={() => null} renderOrder={5}>
-        <planeGeometry args={[length, height]} />
+    <group>
+      <mesh raycast={() => null}>
+        <sphereGeometry args={[0.014 * flareSize, 14, 14]} />
         <meshBasicMaterial
-          ref={matRef}
-          map={texture}
-          color={MISSILE_TUNING.color}
+          ref={coreRef}
+          color={MISSILE_TUNING.secondaryColor}
           transparent
-          opacity={0.7 * MISSILE_TUNING.intensity}
+          opacity={0.8}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
-          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh raycast={() => null}>
+        <sphereGeometry args={[0.042 * flareSize, 18, 18]} />
+        <meshBasicMaterial
+          ref={haloRef}
+          color={MISSILE_TUNING.color}
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
           toneMapped={false}
         />
       </mesh>
       <pointLight
         ref={lightRef}
         color={MISSILE_TUNING.color}
-        intensity={1}
-        distance={0.4 * flareSize}
+        intensity={0.9}
+        distance={0.38 * flareSize}
       />
     </group>
   );
@@ -791,7 +1113,7 @@ function MissileMeshModel() {
   return (
     <group>
       <primitive object={cloned} scale={[scale, scale, scale]} />
-      <MissileTextureFlare />
+      <MissileEngineGlow />
     </group>
   );
 }
@@ -809,6 +1131,38 @@ function MeshMissileRound({
 }) {
   const missileRef = useRef<THREE.Group>(null);
   const forward = useMemo(() => new THREE.Vector3(0, 0, 1), []);
+  const sparkParticleCount = MISSILE_TUNING.sparkCount;
+  const sparkTrailGeometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(sparkParticleCount * 3), 3),
+    );
+    geometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(sparkParticleCount * 3), 3),
+    );
+    return geometry;
+  }, [sparkParticleCount]);
+  const sparkSeeds = useMemo(
+    () =>
+      Array.from({ length: sparkParticleCount }, (_, sparkIndex) => {
+        const a = seededSparkNoise(index * 197 + sparkIndex, 0.23);
+        const b = seededSparkNoise(index * 197 + sparkIndex, 1.91);
+        const c = seededSparkNoise(index * 197 + sparkIndex, 5.47);
+        const d = seededSparkNoise(index * 197 + sparkIndex, 9.83);
+        return {
+          lag: 0.018 + (sparkIndex / Math.max(1, sparkParticleCount - 1)) * (0.18 + MISSILE_TUNING.fade * 0.05),
+          side: (a - 0.5) * (0.18 + MISSILE_TUNING.spread * 0.22) * (1 + MISSILE_TUNING.sparkRandomness * 0.35),
+          lift: (b - 0.35) * (0.05 + MISSILE_TUNING.arc * 0.18),
+          drift: (c - 0.5) * (0.08 + MISSILE_TUNING.spread * 0.12),
+          phase: d * 8.5,
+          colorMix: b,
+          brightness: 0.55 + c * 0.55,
+        };
+      }),
+    [index, sparkParticleCount],
+  );
 
   const flight = useMemo(() => {
     const dir = new THREE.Vector3().subVectors(to, from).normalize();
@@ -821,9 +1175,7 @@ function MeshMissileRound({
   }, [from, index, to]);
 
   const pointAt = (t: number) => {
-    const p = flight.start.clone().lerp(flight.end, t);
-    p.y += Math.sin(Math.PI * t) * MISSILE_TUNING.arc * (1 + (index % 2) * 0.12);
-    return p;
+    return flight.start.clone().lerp(flight.end, t);
   };
 
   const directionAt = (t: number) => {
@@ -835,12 +1187,19 @@ function MeshMissileRound({
   useFrame(() => {
     const group = missileRef.current;
     if (!group) return;
+    const positions = sparkTrailGeometry.getAttribute("position").array as Float32Array;
+    const colors = sparkTrailGeometry.getAttribute("color").array as Float32Array;
+    const primary = new THREE.Color(MISSILE_TUNING.color);
+    const secondary = new THREE.Color(MISSILE_TUNING.secondaryColor);
+    const workingColor = new THREE.Color();
 
     const durationMs = MISSILE_FLIGHT_MS;
     const delayMs = MISSILE_LAUNCH_DELAYS_MS[index] ?? MISSILE_LAUNCH_DELAYS_MS[MISSILE_LAUNCH_DELAYS_MS.length - 1];
     const elapsed = performance.now() - startRef.current - delayMs;
     if (elapsed < 0) {
       group.visible = false;
+      colors.fill(0);
+      sparkTrailGeometry.getAttribute("color").needsUpdate = true;
       return;
     }
 
@@ -851,14 +1210,61 @@ function MeshMissileRound({
     group.visible = visible;
     group.position.copy(current);
     group.quaternion.setFromUnitVectors(forward, direction);
+
+    const side = new THREE.Vector3(-direction.z, 0, direction.x).normalize();
+    const isTrailVisible = visible && t > 0.02;
+    const timelineSeconds = performance.now() / 1000;
+    for (let sparkIndex = 0; sparkIndex < sparkSeeds.length; sparkIndex += 1) {
+      const seed = sparkSeeds[sparkIndex];
+      const idx = sparkIndex * 3;
+      if (!isTrailVisible || t - seed.lag <= 0) {
+        positions[idx] = current.x;
+        positions[idx + 1] = current.y;
+        positions[idx + 2] = current.z;
+        colors[idx] = 0;
+        colors[idx + 1] = 0;
+        colors[idx + 2] = 0;
+        continue;
+      }
+      const lagT = THREE.MathUtils.clamp(t - seed.lag, 0, 1);
+      const age = THREE.MathUtils.clamp(seed.lag / Math.max(0.001, 0.18 + MISSILE_TUNING.fade * 0.05), 0, 1);
+      const flicker = 0.65 + Math.sin((timelineSeconds + seed.phase) * (6.5 + seed.brightness * 3)) * 0.28;
+      const brightness = (1 - age) * seed.brightness * flicker * MISSILE_TUNING.intensity;
+      const sparkPoint = pointAt(lagT)
+        .add(side.clone().multiplyScalar(seed.side))
+        .add(new THREE.Vector3(seed.drift, seed.lift, -seed.drift * 0.35));
+      positions[idx] = sparkPoint.x;
+      positions[idx + 1] = sparkPoint.y;
+      positions[idx + 2] = sparkPoint.z;
+      workingColor.copy(primary).lerp(secondary, seed.colorMix * 0.8).multiplyScalar(THREE.MathUtils.clamp(brightness, 0, 2.6));
+      colors[idx] = workingColor.r;
+      colors[idx + 1] = workingColor.g;
+      colors[idx + 2] = workingColor.b;
+    }
+    sparkTrailGeometry.getAttribute("position").needsUpdate = true;
+    sparkTrailGeometry.getAttribute("color").needsUpdate = true;
   });
 
   return (
-    <group ref={missileRef} visible={false}>
-      <Suspense fallback={null}>
-        <MissileMeshModel />
-      </Suspense>
-    </group>
+    <>
+      <group ref={missileRef} visible={false}>
+        <Suspense fallback={null}>
+          <MissileMeshModel />
+        </Suspense>
+      </group>
+      <points geometry={sparkTrailGeometry} raycast={() => null}>
+        <pointsMaterial
+          size={Math.max(0.012, 0.055 * MISSILE_TUNING.size * MISSILE_TUNING.thickness)}
+          sizeAttenuation
+          transparent
+          opacity={0.86}
+          vertexColors
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </points>
+    </>
   );
 }
 
@@ -1193,6 +1599,25 @@ export function WeaponFx({
   const kind = classifyWeapon(weapon);
 
   if (kind === "beam") {
+    if (isKirishiacBeamAttack({ weapon, attackerName, attackerModelFilename })) {
+      const raisedFrom = from.clone();
+      raisedFrom.y += 1;
+      return (
+        <>
+          <Suspense fallback={null}>
+            <KirishiacBeamFx from={raisedFrom} to={to} />
+          </Suspense>
+          {Array.from({ length: hits }).map((_, i) => (
+            <TargetImpactFx
+              key={i}
+              position={to}
+              delayMs={KIRISHIAC_ATTACK_TURN_IN_MS + 250 + i * 70}
+              seed={i}
+            />
+          ))}
+        </>
+      );
+    }
     const color = beamColorFor(attackerFaction, weapon);
     return (
       <>
@@ -1234,45 +1659,33 @@ export function WeaponFx({
     return <EnergyMineFx from={from} to={to} />;
   }
 
-  // Tracer (cannons / mass drivers / ion / pulse).
+  // Default non-beam, non-missile projectiles (cannons / mass drivers / ion / pulse).
   const fighterProjectile = isFighterAttacker(attackerName, attackerModelFilename);
   const shadowFighterProjectile = isShadowFighterAttacker(
     attackerFaction,
     attackerName,
     attackerModelFilename,
   );
-  if (fighterProjectile) {
-    const travelMs =
-      FIGHTER_PROJECTILE_FLIGHT_MS /
-      THREE.MathUtils.clamp(FIGHTER_PROJECTILE_TUNING.speed, 0.25, 3);
-    return (
-      <>
-        <MeshFighterProjectileSalvoFx
-          from={from}
-          to={to}
-          shadow={shadowFighterProjectile}
-        />
-        {Array.from({ length: hits }).map((_, i) => (
-          <TargetImpactFx
-            key={i}
-            position={to}
-            delayMs={travelMs + i * 70}
-            seed={i + 40}
-          />
-        ))}
-      </>
-    );
-  }
-
-  const tracerColors = tracerColorsFor(attackerFaction, weapon);
+  const projectileTuning = fighterProjectile
+    ? shadowFighterProjectile
+      ? SHADOW_FIGHTER_PROJECTILE_TUNING
+      : FIGHTER_PROJECTILE_TUNING
+    : CAPITAL_PROJECTILE_TUNING;
+  const travelMs =
+    FIGHTER_PROJECTILE_FLIGHT_MS /
+    THREE.MathUtils.clamp(projectileTuning.speed, 0.25, 3);
   return (
     <>
-      <TracerSalvoFx from={from} to={to} color={tracerColors.color} count={totalDice} />
+      <MeshFighterProjectileSalvoFx
+        from={from}
+        to={to}
+        tuning={projectileTuning}
+      />
       {Array.from({ length: hits }).map((_, i) => (
         <TargetImpactFx
           key={i}
           position={to}
-          delayMs={340 / TRACER_TUNING.speed + i * 70}
+          delayMs={travelMs + i * 70}
           seed={i + 40}
         />
       ))}

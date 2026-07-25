@@ -505,6 +505,59 @@ function readAntiFighterUiState(raw: unknown): AntiFighterUiState | null {
   return af as AntiFighterUiState;
 }
 
+type FighterDisplacementUiEntry = {
+  unitId: number;
+  ownerId: string;
+  name: string;
+  x: number;
+  z: number;
+  baseRadiusInches: number;
+};
+
+type FighterDisplacementUiState = {
+  kind: "fighter-displacement";
+  round: number;
+  displacingUnitId: number;
+  displacingPlayerId: string;
+  readyToPlace: boolean;
+  ownerOrder: string[];
+  entries: FighterDisplacementUiEntry[];
+};
+
+function readFighterDisplacementUiState(
+  raw: unknown,
+): FighterDisplacementUiState | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const state = raw as Record<string, unknown>;
+  const value = state.fighterDisplacement;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const displacement = value as Partial<FighterDisplacementUiState>;
+  if (displacement.kind !== "fighter-displacement") return null;
+  if (
+    typeof displacement.round !== "number" ||
+    typeof displacement.displacingUnitId !== "number" ||
+    typeof displacement.displacingPlayerId !== "string" ||
+    !Array.isArray(displacement.ownerOrder) ||
+    !Array.isArray(displacement.entries)
+  )
+    return null;
+  return {
+    ...(displacement as FighterDisplacementUiState),
+    readyToPlace: displacement.readyToPlace === true,
+  };
+}
+
+function currentFighterDisplacementOwnerId(
+  displacement: FighterDisplacementUiState | null,
+): string | null {
+  if (!displacement?.readyToPlace) return null;
+  for (const ownerId of displacement.ownerOrder) {
+    if (displacement.entries.some((entry) => entry.ownerId === ownerId))
+      return ownerId;
+  }
+  return null;
+}
+
 function readAntiFighterLastResult(
   raw: unknown,
 ): AntiFighterUiState["lastResult"] | null {
@@ -577,6 +630,7 @@ function readAiDiagnostics(raw: unknown): AiDiagnostics {
 
 function aiProgressSignature(game: GameDetail["game"]): string {
   const state = readAiDiagnostics(game.aiState);
+  const displacement = readFighterDisplacementUiState(game.aiState);
   return [
     game.status,
     game.phase,
@@ -590,6 +644,9 @@ function aiProgressSignature(game: GameDetail["game"]): string {
     state.status ?? "",
     state.lastStep ?? "",
     state.lastActionAt ?? "",
+    displacement?.readyToPlace ? "displace-ready" : "",
+    currentFighterDisplacementOwnerId(displacement) ?? "",
+    displacement?.entries.map((entry) => entry.unitId).join(",") ?? "",
   ].join("|");
 }
 
@@ -598,6 +655,9 @@ function shouldStopAiAutoRun(
   myUserId: string,
 ): boolean {
   if (game.status !== "active") return true;
+  const displacement = readFighterDisplacementUiState(game.aiState);
+  if (currentFighterDisplacementOwnerId(displacement) === AI_OPPONENT_ID)
+    return false;
   if (game.activePlayerId && game.activePlayerId !== AI_OPPONENT_ID)
     return true;
   if (game.phase === "initiative") {
@@ -1075,6 +1135,7 @@ function EndPhaseFighterLaunchPreview({
   z,
   heading,
   legal,
+  dogfightWarning = false,
   shipMeshTintsEnabled = true,
 }: {
   fighterModel: ShipModel;
@@ -1082,9 +1143,10 @@ function EndPhaseFighterLaunchPreview({
   z: number;
   heading: number;
   legal: boolean;
+  dogfightWarning?: boolean;
   shipMeshTintsEnabled?: boolean;
 }) {
-  const color = legal ? "#67e8f9" : "#fb7185";
+  const color = !legal ? "#fb7185" : dogfightWarning ? "#d946ef" : "#67e8f9";
   const baseRadius = rulesBaseRadius({
     baseRadiusInches: fighterModel.baseRadiusInches,
   });
@@ -1113,6 +1175,19 @@ function EndPhaseFighterLaunchPreview({
           depthWrite={false}
         />
       </mesh>
+      {legal && dogfightWarning && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.082, 0]}>
+          <ringGeometry args={[baseRadius + 0.12, baseRadius + 0.3, 56]} />
+          <meshStandardMaterial
+            color="#a855f7"
+            emissive="#d946ef"
+            emissiveIntensity={1.05}
+            transparent
+            opacity={0.78}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
       <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <ModelErrorBoundary color={color}>
           <Suspense
@@ -1130,13 +1205,111 @@ function EndPhaseFighterLaunchPreview({
       <CameraFacingText
         position={[0, 3.25, 0]}
         fontSize={0.26}
-        color={legal ? "#bae6fd" : "#fecdd3"}
+        color={!legal ? "#fecdd3" : dogfightWarning ? "#f5d0fe" : "#bae6fd"}
         anchorX="center"
         anchorY="middle"
         outlineWidth={0.03}
         outlineColor="black"
       >
-        {legal ? "Place launch" : "Illegal"}
+        {!legal ? "Illegal" : dogfightWarning ? "Dogfight" : "Place launch"}
+      </CameraFacingText>
+    </group>
+  );
+}
+
+function DisplacedFighterPlacementPreview({
+  x,
+  z,
+  baseRadiusInches,
+  unit,
+  legal = true,
+  dogfightWarning = false,
+  shipMeshTintsEnabled = true,
+}: {
+  x: number;
+  z: number;
+  baseRadiusInches?: number | null;
+  unit?: {
+    name: string;
+    modelFilename: string;
+    heading: number;
+  } | null;
+  legal?: boolean;
+  dogfightWarning?: boolean;
+  shipMeshTintsEnabled?: boolean;
+}) {
+  const baseRadius = rulesBaseRadius({ baseRadiusInches });
+  const ringInner = Math.max(0.05, baseRadius - 0.05);
+  const ringColor = !legal
+    ? "#ef4444"
+    : dogfightWarning
+      ? "#d946ef"
+      : "#38bdf8";
+  const text = !legal ? "Illegal" : dogfightWarning ? "Dogfight" : "Preview";
+  return (
+    <group position={[x, 0, z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.065, 0]}>
+        <circleGeometry args={[baseRadius, 48]} />
+        <meshStandardMaterial
+          color="#020617"
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.075, 0]}>
+        <ringGeometry args={[ringInner, baseRadius + 0.1, 48]} />
+        <meshStandardMaterial
+          color={ringColor}
+          emissive={ringColor}
+          emissiveIntensity={0.85}
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh position={[0, 0.1, baseRadius + 0.22]}>
+        <boxGeometry args={[0.08, 0.06, 0.42]} />
+        <meshBasicMaterial color={ringColor} transparent opacity={0.95} />
+      </mesh>
+      {dogfightWarning && legal && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.105, 0]}>
+          <ringGeometry args={[baseRadius + 0.16, baseRadius + 0.3, 64]} />
+          <meshBasicMaterial
+            color="#d946ef"
+            transparent
+            opacity={0.8}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+      {unit && (
+        <group
+          position={[0, 2, 0]}
+          rotation={[0, (unit.heading * Math.PI) / 180, 0]}
+        >
+          <ModelErrorBoundary color={ringColor}>
+            <Suspense fallback={<ShipModelFallback color={ringColor} />}>
+              <BoardModelVisual
+                filename={unit.modelFilename}
+                tint={ringColor}
+                opacity={legal ? 0.9 : 0.55}
+                meshTintsEnabled={shipMeshTintsEnabled}
+              />
+            </Suspense>
+          </ModelErrorBoundary>
+        </group>
+      )}
+      <CameraFacingText
+        position={[0, unit ? 3.35 : 0.8, 0]}
+        fontSize={0.22}
+        color={legal ? (dogfightWarning ? "#f5d0fe" : "#bae6fd") : "#fecaca"}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.03}
+        outlineColor="black"
+      >
+        {text}
       </CameraFacingText>
     </group>
   );
@@ -1252,6 +1425,7 @@ const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
+const DEAD_BINTAK_MODEL_FILENAME = "dead-bintak.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
 const DEAD_OMEGA_MODEL_FILENAME = "dead-omega.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
@@ -1302,6 +1476,7 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
   "omega.glb": DEAD_OMEGA_MODEL_FILENAME,
   [OMEGA_ROTATING_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
+  "bintak.glb": DEAD_BINTAK_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
   EXPLORER_ROTATING_MODEL_FILENAME,
@@ -1319,9 +1494,10 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "whitestar.glb",
   "avenger.glb",
   "tloth.glb",
-  "bintak.glb",
+  "orestes.glb",
   "rongoth.glb",
   "frazi.glb",
+  "spitfire.glb",
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
@@ -1329,9 +1505,11 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "missile-hyperion.glb": 1.2,
   "avenger.glb": 1.2,
   "olympus.glb": 0.5,
+  [EXPLORER_ROTATING_MODEL_FILENAME]: 2,
   "omega.glb": 1.5,
   [OMEGA_ROTATING_MODEL_FILENAME]: 1.5,
   "nova.glb": 1.15,
+  "orestes.glb": 1.65,
   "tethys.glb": 0.4,
   "vorchan.glb": 0.5,
   "covran.glb": 0.5,
@@ -1347,6 +1525,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "battlecrab.glb": 1.5,
   [ORION_SPACE_STATION_MODEL_FILENAME]: 3,
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
+  [DEAD_BINTAK_MODEL_FILENAME]: 1.75,
   [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
   [DEAD_OMEGA_MODEL_FILENAME]: 1.5,
   "aurora.glb": 0.165,
@@ -1361,6 +1540,8 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
 };
 const MODEL_VISUAL_Y_OFFSETS: Record<string, number> = {
   [ORION_SPACE_STATION_MODEL_FILENAME]: 2,
+  "kirishiac.glb": 1,
+  "kirishiac1.glb": 1,
 };
 const FIGHTER_SQUADRON_MODELS = new Set([
   "aurora.glb",
@@ -1460,6 +1641,7 @@ type BoardSmokeTuning = {
 };
 
 const BOARD_SMOKE_TEXTURE_FILENAME = "cloud01-8x8.webp";
+const BOARD_PRAXIS_TEXTURE_FILENAME = "praxis.png";
 const ORGANIC_BATTLECRAB_MODEL_FILENAME = "battlecrab.glb";
 const ORGANIC_BATTLECRAB_TUNING = {
   speed: 2,
@@ -1469,6 +1651,7 @@ const ORGANIC_BATTLECRAB_TUNING = {
 } as const;
 const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   [BOARD_SMOKE_TEXTURE_FILENAME]: "20260719-032240",
+  [BOARD_PRAXIS_TEXTURE_FILENAME]: "20260720-120000",
   "shadow_flesh_base_tile.png": "20260720-organic-v1",
   "shadow_flesh_normal.png": "20260720-organic-v1",
   "shadow_flesh_roughness.png": "20260720-organic-v1",
@@ -1737,20 +1920,41 @@ function GlbModel({
       if (
         anchorName.startsWith("wreck_smoke") ||
         anchorName.startsWith("smoke_light") ||
-        anchorName.startsWith("small_glow")
+        anchorName.startsWith("small_glow") ||
+        anchorName.startsWith("ember_trail")
       ) {
         anchorNodes.push(child);
       }
       if (child.isMesh) {
+        const childName = String(child.name ?? "").toLowerCase();
+        const geometryName = String(child.geometry?.name ?? "").toLowerCase();
+        if (childName.includes("kirishiac_beam") || geometryName.includes("kirishiac_beam")) {
+          child.visible = false;
+          return;
+        }
         const sourceMaterials = Array.isArray(child.material)
           ? child.material
           : [child.material];
         const materials = sourceMaterials.map(
           (material: THREE.Material | undefined) => {
+            const materialName = String(material?.name ?? "").toLowerCase();
+            const isKirishiacSpikeMaterial =
+              filenameKey.includes("kirishiac") &&
+              materialName.includes("kirishiac flame");
             const clonedMaterial = material?.clone
               ? material.clone()
               : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-            if (meshTintsEnabled && "emissive" in clonedMaterial) {
+            if (isKirishiacSpikeMaterial) {
+              const spikeMaterial = clonedMaterial as THREE.MeshStandardMaterial;
+              if (spikeMaterial.color instanceof THREE.Color) {
+                spikeMaterial.color = spikeMaterial.color.clone().lerp(new THREE.Color("#fff7ad"), 0.34);
+              }
+              if (spikeMaterial.emissive instanceof THREE.Color) {
+                spikeMaterial.emissive = new THREE.Color("#fff7ad");
+                spikeMaterial.emissiveIntensity = 6.5;
+              }
+              clonedMaterial.toneMapped = false;
+            } else if (meshTintsEnabled && "emissive" in clonedMaterial) {
               (clonedMaterial as THREE.MeshStandardMaterial).emissive =
                 new THREE.Color(tint);
               (clonedMaterial as THREE.MeshStandardMaterial).emissiveIntensity =
@@ -1900,17 +2104,19 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "asteroid-light.glb": "20260721-field-v2",
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
-  "bintak.glb": "20260723-200207",
+  "bintak.glb": "20260724-221703",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
+  [DEAD_BINTAK_MODEL_FILENAME]: "20260724-223851",
   "dead-hyperion.glb": "20260718-163044",
   [DEAD_OMEGA_MODEL_FILENAME]: "20260718-231918",
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "missile-hyperion.glb": "20260719-005010",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  "orestes.glb": "20260724-191655",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
-  "rongoth.glb": "20260723-193459",
+  "rongoth.glb": "20260724-193659",
   "vorchan.glb": "20260719-140443",
 };
 
@@ -2106,6 +2312,87 @@ function shipModelHasFighterTrait(
     isFighterSquadronModel(model?.filename ?? "") ||
     FIGHTER_IDENTITY_PATTERN.test(identity)
   );
+}
+
+const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
+  "aurora starfury": 4,
+  "aurora starfury flight": 4,
+  "aurora starfury wing": 4,
+  "thunderbolt starfury": 4,
+  "thunderbolt starfury flight": 4,
+  "thunderbolt starfury wing": 4,
+  "tiger starfury": 6,
+  "tiger starfury flight": 6,
+  "tiger starfury wing": 6,
+  "black omega": 2,
+  "black omega starfury": 2,
+  "black omega starfury flight": 2,
+  "black omega starfury wing": 2,
+  "nial": 2,
+  "nial fighter": 2,
+  "nial heavy fighter": 2,
+  "nial heavy fighter flight": 2,
+  "nial wing": 2,
+  "flyer": 4,
+  "flyer flight": 4,
+  "flyer wing": 4,
+  "sentri": 4,
+  "sentri flight": 4,
+  "sentri wing": 4,
+  "frazi": 5,
+  "frazi flight": 5,
+  "frazi wing": 5,
+  "shadow fighter": 2,
+  "shadow fighter flight": 2,
+  "shadow fighter wing": 2,
+  "shadow spitfire": 2,
+  "spitfire": 2,
+  "spitfire flight": 2,
+  "tethys cutter": 2,
+  "tethys class cutter": 2,
+  "tethys class laser boat": 2,
+  "tethys class missile boat": 2,
+};
+
+const MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME: Record<string, number> = {
+  "aurora.glb": 4,
+  "thunderbolt.glb": 4,
+  "tiger.glb": 6,
+  "black-omega.glb": 2,
+  "nial.glb": 2,
+  "flyer.glb": 4,
+  "sentri.glb": 4,
+  "frazi.glb": 5,
+  "spitfire.glb": 2,
+  "tethys.glb": 2,
+};
+
+function multiUnitPurchaseCount(
+  model: FighterIdentityModel | undefined,
+): number {
+  if (!model) return 1;
+  const normalizedFilename = (model.filename ?? "").trim().toLowerCase();
+  const filenamePurchaseCount =
+    MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME[normalizedFilename];
+  if (filenamePurchaseCount) return filenamePurchaseCount;
+  const canonicalFilename = canonicalFighterSquadronFilename(model.filename);
+  if (canonicalFilename) {
+    const count = MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME[canonicalFilename];
+    if (count) return count;
+  }
+  const identities = [model.name, model.shipClass, model.filename]
+    .filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    )
+    .flatMap((value) => {
+      const normalized = normalizeHintKey(value);
+      return [normalized, normalized.replace(/\.(glb|gltf)$/i, "")];
+    });
+  for (const identity of identities) {
+    const count = MULTI_UNIT_PURCHASE_COUNTS[identity];
+    if (count) return count;
+  }
+  return 1;
 }
 
 type StagedFighterInventoryItem = {
@@ -2309,6 +2596,8 @@ function carriedFighterDeployCenterRadius(
 }
 
 const BASE_CONTACT_EPSILON = 0.05;
+const DOGFIGHT_CONTACT_GAP_EPSILON = 0.05;
+const DOGFIGHT_CONTACT_OVERLAP_EPSILON = 0.02;
 
 function uiBasesCanOverlap(
   moving: { isFighter?: boolean },
@@ -2319,13 +2608,24 @@ function uiBasesCanOverlap(
   return false;
 }
 
+function uiCapitalMovementCanDisplaceFighter(
+  moving: { isFighter?: boolean },
+  other: { isFighter?: boolean },
+): boolean {
+  return !moving.isFighter && Boolean(other.isFighter);
+}
+
 function uiBasesInContact(
   a: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
   b: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
 ): boolean {
+  const edgeDistance =
+    Math.hypot(a.hexQ - b.hexQ, a.hexR - b.hexR) -
+    rulesBaseRadius(a) -
+    rulesBaseRadius(b);
   return (
-    Math.hypot(a.hexQ - b.hexQ, a.hexR - b.hexR) <=
-    rulesBaseRadius(a) + rulesBaseRadius(b) + BASE_CONTACT_EPSILON
+    edgeDistance >= -DOGFIGHT_CONTACT_OVERLAP_EPSILON &&
+    edgeDistance <= DOGFIGHT_CONTACT_GAP_EPSILON
   );
 }
 
@@ -2378,6 +2678,7 @@ function finalForwardPositionOverlapsBase(
   }>,
   direction: { x: number; z: number },
   distance: number,
+  options: { ignoreDisplaceableFighters?: boolean } = {},
 ): boolean {
   const x = moving.hexQ + direction.x * distance;
   const z = moving.hexR + direction.z * distance;
@@ -2386,6 +2687,11 @@ function finalForwardPositionOverlapsBase(
   for (const other of others) {
     if (other.id === moving.id || other.isDestroyed) continue;
     if (uiBasesCanOverlap(moving, other)) continue;
+    if (
+      options.ignoreDisplaceableFighters &&
+      uiCapitalMovementCanDisplaceFighter(moving, other)
+    )
+      continue;
     const minDistance = Math.max(
       0,
       movingRadius + rulesBaseRadius(other) - BASE_CONTACT_EPSILON,
@@ -2418,7 +2724,11 @@ function firstLegalForwardDistanceAtOrAfter(
   const maxLegal = Math.max(0, snapMovementDistance(maxDistance));
   let distance = Math.max(0, snapMovementDistance(startDistance));
   while (distance <= maxLegal + 1e-6) {
-    if (!finalForwardPositionOverlapsBase(moving, others, direction, distance)) {
+    if (
+      !finalForwardPositionOverlapsBase(moving, others, direction, distance, {
+        ignoreDisplaceableFighters: true,
+      })
+    ) {
       return distance;
     }
     distance = snapMovementDistance(distance + TABLET_FORWARD_STEP);
@@ -2452,7 +2762,11 @@ function clampForwardDistanceToLegalRestingSpot(
     Math.min(maxDistance, snapMovementDistance(requestedDistance)),
   );
   const maxLegal = Math.max(0, snapMovementDistance(maxDistance));
-  if (!finalForwardPositionOverlapsBase(moving, others, direction, requested))
+  if (
+    !finalForwardPositionOverlapsBase(moving, others, direction, requested, {
+      ignoreDisplaceableFighters: true,
+    })
+  )
     return requested;
 
   const candidates = new Set<number>([0, maxLegal]);
@@ -2463,6 +2777,7 @@ function clampForwardDistanceToLegalRestingSpot(
   for (const other of others) {
     if (other.id === moving.id || other.isDestroyed) continue;
     if (uiBasesCanOverlap(moving, other)) continue;
+    if (uiCapitalMovementCanDisplaceFighter(moving, other)) continue;
 
     const minDistance = Math.max(
       0,
@@ -2496,7 +2811,10 @@ function clampForwardDistanceToLegalRestingSpot(
   const legalCandidates = [...candidates]
     .map((d) => Math.max(0, Math.min(maxLegal, snapMovementDistance(d))))
     .filter(
-      (d) => !finalForwardPositionOverlapsBase(moving, others, direction, d),
+      (d) =>
+        !finalForwardPositionOverlapsBase(moving, others, direction, d, {
+          ignoreDisplaceableFighters: true,
+        }),
     );
 
   if (preference === "forward") {
@@ -2662,11 +2980,15 @@ function LiveCloudFlipbookSmoke({
   modelScale = 1,
   intensityScale = 1,
   spreadScale = 1,
+  color,
+  secondaryColor,
 }: {
   position?: [number, number, number];
   modelScale?: number;
   intensityScale?: number;
   spreadScale?: number;
+  color?: string;
+  secondaryColor?: string;
 }) {
   const sourceTexture = useLoader(
     THREE.TextureLoader,
@@ -2747,7 +3069,7 @@ function LiveCloudFlipbookSmoke({
             <planeGeometry args={[2.15, 2.15]} />
             <meshBasicMaterial
               map={frameTextures[i]}
-              color={tuning.color}
+              color={color ?? tuning.color}
               transparent
               opacity={puff.opacity * tuning.fade}
               blending={THREE.AdditiveBlending}
@@ -2759,7 +3081,7 @@ function LiveCloudFlipbookSmoke({
         </Billboard>
       ))}
       <pointLight
-        color={tuning.secondaryColor}
+        color={secondaryColor ?? tuning.secondaryColor}
         intensity={1.2 * tuning.intensity * intensityScale}
         distance={5 * tuning.spread * spreadScale}
         position={[0, 1.2, 0]}
@@ -2831,6 +3153,24 @@ function LiveAnchorGlow({
   );
 }
 
+function LiveAnchorEmberTrail({
+  anchor,
+  modelScale,
+}: {
+  anchor: DamageVfxAnchor;
+  modelScale: number;
+}) {
+  const effectScale = modelScale > 0 ? 1 / modelScale : 1;
+  return (
+    <group
+      position={anchor.position}
+      scale={[effectScale, effectScale, effectScale]}
+    >
+      <ShipDamagePointSparks level={0.85} destroyed />
+    </group>
+  );
+}
+
 function LiveDamageAnchorEffect({
   anchor,
   modelScale,
@@ -2847,62 +3187,20 @@ function LiveDamageAnchorEffect({
   if (anchor.name.startsWith("small_glow")) {
     return <LiveAnchorGlow anchor={anchor} modelScale={modelScale} />;
   }
+  if (anchor.name.startsWith("ember_trail")) {
+    return <LiveAnchorEmberTrail anchor={anchor} modelScale={modelScale} />;
+  }
   return null;
 }
 
 function LiveExplodingOriginPlume() {
-  const groupRef = useRef<THREE.Group>(null);
-  const plumeColors = ["#ef4444", "#f97316", "#facc15", "#fde68a"];
-  const particles = useMemo(
-    () =>
-      Array.from({ length: 16 }, (_, i) => ({
-        angle: i * 2.399,
-        radius: 0.1 + (i % 5) * 0.035,
-        speed: 0.18 + (i % 4) * 0.035,
-        offset: i * 0.13,
-        size: 0.14 + (i % 4) * 0.04,
-      })),
-    [],
-  );
-
-  useFrame(({ clock }) => {
-    const group = groupRef.current;
-    if (!group) return;
-    group.children.forEach((child, i) => {
-      const particle = particles[i];
-      if (!particle) return;
-      const local = (clock.elapsedTime * particle.speed + particle.offset) % 1;
-      child.position.set(
-        Math.cos(particle.angle + local * 0.7) *
-          particle.radius *
-          (1 + local * 2.2),
-        local * 1.25,
-        Math.sin(particle.angle + local * 0.7) *
-          particle.radius *
-          (1 + local * 2.2),
-      );
-      child.scale.setScalar(particle.size * (0.85 + local * 1.45));
-      const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.22 * (1 - local);
-    });
-  });
-
   return (
-    <group ref={groupRef}>
-      {particles.map((_, i) => (
-        <mesh key={i} raycast={() => null}>
-          <sphereGeometry args={[1, 12, 10]} />
-          <meshBasicMaterial
-            color={plumeColors[i % plumeColors.length]}
-            transparent
-            opacity={0}
-            depthWrite={false}
-            blending={THREE.AdditiveBlending}
-            toneMapped={false}
-          />
-        </mesh>
-      ))}
-    </group>
+    <LiveCloudFlipbookSmoke
+      color="#f97316"
+      secondaryColor="#facc15"
+      intensityScale={1.15}
+      spreadScale={0.9}
+    />
   );
 }
 
@@ -3080,6 +3378,111 @@ function LiveExplodingCorePulse() {
   );
 }
 
+type ScoutSupportVisualEffect = "counter-stealth" | "coord";
+
+const SCOUT_SUPPORT_SHOCKWAVE_TUNING = {
+  speed: 1,
+  size: 5,
+  fade: 3,
+  intensity: 1.35,
+  count: 2,
+} as const;
+
+function ScoutSupportPraxisShockwave({
+  color,
+  layer = 0,
+}: {
+  color: string;
+  layer?: number;
+}) {
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    boardTextureUrl(BOARD_PRAXIS_TEXTURE_FILENAME),
+  );
+  const elapsedRef = useRef(layer * 0.45);
+  const ringGroupRef = useRef<THREE.Group>(null);
+  const repetitionCount = SCOUT_SUPPORT_SHOCKWAVE_TUNING.count;
+  const lifetime = SCOUT_SUPPORT_SHOCKWAVE_TUNING.fade;
+  const endDiameter = SCOUT_SUPPORT_SHOCKWAVE_TUNING.size;
+
+  useEffect(() => {
+    sourceTexture.colorSpace = THREE.SRGBColorSpace;
+    sourceTexture.wrapS = THREE.ClampToEdgeWrapping;
+    sourceTexture.wrapT = THREE.ClampToEdgeWrapping;
+    sourceTexture.minFilter = THREE.LinearFilter;
+    sourceTexture.magFilter = THREE.LinearFilter;
+    sourceTexture.needsUpdate = true;
+  }, [sourceTexture]);
+
+  useFrame((_, delta) => {
+    elapsedRef.current += delta * SCOUT_SUPPORT_SHOCKWAVE_TUNING.speed;
+    const group = ringGroupRef.current;
+    if (!group) return;
+
+    group.children.forEach((child, index) => {
+      const mesh = child as THREE.Mesh;
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      const phase =
+        ((elapsedRef.current / lifetime - index / repetitionCount) % 1 + 1) %
+        1;
+      const easedExpansion = 1 - Math.pow(1 - phase, 2.2);
+      const diameter = Math.max(0.02, easedExpansion * endDiameter);
+      const fadeIn = THREE.MathUtils.clamp(phase / 0.055, 0, 1);
+      const fadeOut = Math.pow(1 - phase, 1.35);
+
+      mesh.scale.set(diameter, diameter, 1);
+      material.opacity = Math.min(
+        1,
+        fadeIn * fadeOut * SCOUT_SUPPORT_SHOCKWAVE_TUNING.intensity,
+      );
+    });
+  });
+
+  return (
+    <group
+      ref={ringGroupRef}
+      position={[0, 0.08 + layer * 0.012, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      {Array.from({ length: repetitionCount }).map((_, index) => (
+        <mesh key={index} raycast={() => null} renderOrder={18 + layer + index}>
+          <planeGeometry args={[1, 1]} />
+          <meshBasicMaterial
+            map={sourceTexture}
+            color={color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            depthTest
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ScoutSupportShockwaves({
+  effects,
+}: {
+  effects: ScoutSupportVisualEffect[];
+}) {
+  if (effects.length === 0) return null;
+  return (
+    <>
+      {effects.map((effect, index) => (
+        <ScoutSupportPraxisShockwave
+          key={effect}
+          color={effect === "counter-stealth" ? "#8bdcff" : "#7a30e8"}
+          layer={index}
+        />
+      ))}
+    </>
+  );
+}
+
 function UnitHealthBar({
   hullPct,
   crewPct,
@@ -3251,18 +3654,21 @@ function GameUnit3D({
   weapons,
   dragOffset,
   previewHeadingDelta = 0,
+  visualAttackTurn,
   phaseViable,
   firingArc,
   projectedWeaponArcs = [],
   targetingPreview = null,
   launchHighlight = false,
   damageControlHighlight = false,
+  dogfightLocked = false,
   arcColorScheme = "classic",
   healthBarFacesCamera = false,
   shipMeshTintsEnabled = true,
   shipHullNamesEnabled = true,
   shipStatusDisplayMode = "bar",
   isFighter = false,
+  scoutSupportEffects = [],
 }: {
   unit: {
     id: number;
@@ -3290,6 +3696,7 @@ function GameUnit3D({
   weapons: Pick<Weapon, "arc" | "range">[];
   dragOffset?: { x: number; z: number } | null;
   previewHeadingDelta?: number;
+  visualAttackTurn?: { key: string; targetHeading: number } | null;
   phaseViable?: boolean;
   arcColorScheme?: UiArcColorScheme;
   healthBarFacesCamera?: boolean;
@@ -3297,6 +3704,7 @@ function GameUnit3D({
   shipHullNamesEnabled?: boolean;
   shipStatusDisplayMode?: UiShipStatusDisplayMode;
   isFighter?: boolean;
+  scoutSupportEffects?: ScoutSupportVisualEffect[];
   // When set, draws a translucent "weapon coverage" sector at full range for
   // the currently-selected firing weapon so the player can see eligible
   // targets. Only rendered for the active firing ship.
@@ -3305,6 +3713,7 @@ function GameUnit3D({
   targetingPreview?: TargetingPreviewState | null;
   launchHighlight?: boolean;
   damageControlHighlight?: boolean;
+  dogfightLocked?: boolean;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
@@ -3384,11 +3793,16 @@ function GameUnit3D({
   const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const targetMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const damageControlDiskMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const dogfightRimMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const modelHeadingRef = useRef<THREE.Group>(null);
   const modelAttitudeRef = useRef<THREE.Group>(null);
+  const visualAttackKeyRef = useRef<string | null>(null);
+  const visualAttackStartRef = useRef(0);
   const pulseHalo = Boolean((phaseViable || lightBlueHighlight) && !visuallyDestroyed);
   const dimOpacityScale = targetIneligible ? 0.38 : 1;
   const modelOpacity = hasPreview ? 0.28 : targetIneligible ? 0.24 : 1;
   const usesAnchoredDeadMeshVisual = [
+    DEAD_BINTAK_MODEL_FILENAME,
     DEAD_HYPERION_MODEL_FILENAME,
     DEAD_OMEGA_MODEL_FILENAME,
   ].includes(visualModelFilename.toLowerCase());
@@ -3412,6 +3826,32 @@ function GameUnit3D({
     (visuallyDestroyed || fireLevel >= 0.7);
 
   useFrame(({ clock }) => {
+    const modelHeading = modelHeadingRef.current;
+    if (modelHeading) {
+      let visualHeading = unit.heading;
+      if (visualAttackTurn) {
+        if (visualAttackKeyRef.current !== visualAttackTurn.key) {
+          visualAttackKeyRef.current = visualAttackTurn.key;
+          visualAttackStartRef.current = performance.now();
+        }
+        const elapsed = performance.now() - visualAttackStartRef.current;
+        const turnToward = THREE.MathUtils.clamp(elapsed / 1000, 0, 1);
+        const returnHome = THREE.MathUtils.clamp((elapsed - 4000) / 1000, 0, 1);
+        const heldHeading = interpolateHeadingDegrees(
+          unit.heading,
+          visualAttackTurn.targetHeading,
+          turnToward,
+        );
+        visualHeading = interpolateHeadingDegrees(
+          heldHeading,
+          unit.heading,
+          returnHome,
+        );
+      } else {
+        visualAttackKeyRef.current = null;
+      }
+      modelHeading.rotation.y = THREE.MathUtils.degToRad(visualHeading);
+    }
     const modelAttitude = modelAttitudeRef.current;
     if (modelAttitude) {
       if (usesAnimatedAdriftVisual && !hasPreview) {
@@ -3448,6 +3888,12 @@ function GameUnit3D({
     if (dcDiskMat) {
       const t = (Math.sin(clock.getElapsedTime() * 4.2) + 1) / 2;
       dcDiskMat.opacity = 0.16 + t * 0.28;
+    }
+    const dogfightRimMat = dogfightRimMaterialRef.current;
+    if (dogfightRimMat) {
+      const t = (Math.sin(clock.getElapsedTime() * 4.8) + 1) / 2;
+      dogfightRimMat.opacity = 0.5 + t * 0.28;
+      dogfightRimMat.emissiveIntensity = 0.7 + t * 0.55;
     }
   });
 
@@ -3500,6 +3946,24 @@ function GameUnit3D({
           />
         </mesh>
       )}
+      {dogfightLocked && isFighter && !hasPreview && !visuallyDestroyed && (
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.032, 0]}
+          renderOrder={8}
+        >
+          <ringGeometry args={[baseRadius + 0.06, baseRadius + 0.24, 56]} />
+          <meshStandardMaterial
+            ref={dogfightRimMaterialRef}
+            color="#a855f7"
+            emissive="#d946ef"
+            emissiveIntensity={0.95}
+            transparent
+            opacity={0.66}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
       {/* Base ring edge */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
         <ringGeometry args={[ringInner, baseRadius, 48]} />
@@ -3538,6 +4002,9 @@ function GameUnit3D({
             depthWrite={false}
           />
         </mesh>
+      )}
+      {!hasPreview && !visuallyDestroyed && (
+        <ScoutSupportShockwaves effects={scoutSupportEffects} />
       )}
       {/* Selection pulse ring */}
       {isSelected && !hasPreview && (
@@ -3588,7 +4055,7 @@ function GameUnit3D({
         </group>
       )}
       {/* Ship model floating 2" above the base, rotated to heading */}
-      <group position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
+      <group ref={modelHeadingRef} position={[0, 2, 0]} rotation={[0, headingRad, 0]}>
         <group ref={modelAttitudeRef}>
           <ModelErrorBoundary color={modelTint}>
             <Suspense fallback={<ShipModelFallback color={modelTint} />}>
@@ -5447,6 +5914,25 @@ function headingDeltaDegrees(from: number, to: number): number {
   return Math.abs(delta);
 }
 
+function signedHeadingDeltaDegrees(from: number, to: number): number {
+  let delta = (((to - from) % 360) + 360) % 360;
+  if (delta > 180) delta -= 360;
+  return delta;
+}
+
+function interpolateHeadingDegrees(from: number, to: number, amount: number): number {
+  return from + signedHeadingDeltaDegrees(from, to) * clampNumber(amount, 0, 1);
+}
+
+function isKirishiacVisualBeamWeapon(
+  unit: { name: string; modelFilename: string },
+  weapon: Pick<Weapon, "name" | "traits" | "arc">,
+): boolean {
+  const text = `${unit.name} ${unit.modelFilename} ${weapon.name} ${weapon.traits ?? ""}`.toLowerCase();
+  const isForward = /\bf\b|\bforward\b/i.test(weapon.arc ?? "");
+  return isForward && text.includes("kirishiac") && /\bbeam\b/i.test(weapon.traits ?? weapon.name);
+}
+
 function effectiveUiAttackDice(weapon: Weapon): number {
   const traits = weapon.traits ?? "";
   const weakPenalty = /\bweak\b/i.test(traits) ? 1 : 0;
@@ -6505,6 +6991,9 @@ interface StagedUnitData {
   traits?: string | null;
   carriedFighters?: StagedFighterInventoryItem[];
   launchedFromStagedId?: string | null;
+  deploymentGroupId?: string | null;
+  deploymentGroupSize?: number | null;
+  deploymentGroupOrdinal?: number | null;
   x: number;
   z: number;
   heading: number; // degrees, 0 = +Z axis, clockwise
@@ -6563,6 +7052,38 @@ const TEST_FLEET_TEMPLATES: FleetTemplate[] = [
   },
 ];
 
+function chargeableStagedUnits(units: StagedUnitData[]): StagedUnitData[] {
+  const seenDeploymentGroups = new Set<string>();
+  const chargeable: StagedUnitData[] = [];
+  for (const unit of units) {
+    if (unit.launchedFromStagedId) continue;
+    const groupId = unit.deploymentGroupId?.trim();
+    if (groupId) {
+      if (seenDeploymentGroups.has(groupId)) continue;
+      seenDeploymentGroups.add(groupId);
+    }
+    chargeable.push(unit);
+  }
+  return chargeable;
+}
+
+function deploymentGroupGridOffsets(
+  count: number,
+  spacing: number,
+): Array<{ x: number; z: number }> {
+  if (count <= 1) return [{ x: 0, z: 0 }];
+  const columns = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / columns);
+  return Array.from({ length: count }, (_, index) => {
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    return {
+      x: (col - (columns - 1) / 2) * spacing,
+      z: (row - (rows - 1) / 2) * spacing,
+    };
+  });
+}
+
 const PRIORITY_HUD_STYLE: Record<
   PriorityLevel,
   { fill: string; text: string; label: string }
@@ -6614,8 +7135,9 @@ function DeploymentAllocationHud({
 }) {
   const [expanded, setExpanded] = useState(false);
   const budgetTicks = Math.max(1, allocationPoints * ALLOCATION_TICKS_PER_FAP);
+  const chargeableUnits = chargeableStagedUnits(units);
   let cursor = 0;
-  const segments = units.map((unit) => {
+  const segments = chargeableUnits.map((unit) => {
     const priority = normalizePriorityLevel(unit.priorityLevel);
     const cost = allocationTicksForShip(priority, scenarioPriority);
     const start = cursor;
@@ -6699,7 +7221,7 @@ function DeploymentAllocationHud({
         {expanded && (
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] uppercase tracking-wider text-muted-foreground">
             {Object.entries(PRIORITY_HUD_STYLE).map(([level, style]) => {
-              const count = units.filter(
+              const count = chargeableUnits.filter(
                 (unit) => normalizePriorityLevel(unit.priorityLevel) === level,
               ).length;
               if (count === 0) return null;
@@ -6709,7 +7231,7 @@ function DeploymentAllocationHud({
                 </span>
               );
             })}
-            {units.length === 0 && <span>No ships placed</span>}
+            {chargeableUnits.length === 0 && <span>No ships placed</span>}
           </div>
         )}
       </button>
@@ -7736,6 +8258,53 @@ export default function GameBoard() {
   const isOpponent = game?.opponentId === myUserId;
   const isParticipant = Boolean(isChallenger || isOpponent);
   const isAdminObserver = Boolean(game && adminMe?.isAdmin && !isParticipant);
+  const fighterDisplacement = useMemo(
+    () => readFighterDisplacementUiState(game?.aiState),
+    [game?.aiState],
+  );
+  const displacedFighterUnitIds = useMemo(
+    () =>
+      new Set(
+        fighterDisplacement?.entries.map((entry) => entry.unitId) ?? [],
+      ),
+    [fighterDisplacement],
+  );
+  const fighterDisplacementCurrentOwnerId = useMemo(
+    () => currentFighterDisplacementOwnerId(fighterDisplacement),
+    [fighterDisplacement],
+  );
+  const currentDisplacedFighterToPlace = useMemo(
+    () =>
+      fighterDisplacement?.entries.find(
+        (entry) => entry.ownerId === fighterDisplacementCurrentOwnerId,
+      ) ?? null,
+    [fighterDisplacement, fighterDisplacementCurrentOwnerId],
+  );
+  const canPlaceCurrentDisplacedFighter =
+    Boolean(currentDisplacedFighterToPlace) &&
+    fighterDisplacementCurrentOwnerId === myUserId;
+  const [
+    stagedDisplacedFighterPlacement,
+    setStagedDisplacedFighterPlacement,
+  ] = useState<{ unitId: number; x: number; z: number } | null>(null);
+  const [
+    displacedFighterConfirmPopover,
+    setDisplacedFighterConfirmPopover,
+  ] = useState<{ x: number; y: number } | null>(null);
+  const displacedFighterPlacementDraggingRef = useRef(false);
+  useEffect(() => {
+    setStagedDisplacedFighterPlacement((current) =>
+      currentDisplacedFighterToPlace &&
+      current?.unitId === currentDisplacedFighterToPlace.unitId
+        ? current
+        : null,
+    );
+  }, [currentDisplacedFighterToPlace?.unitId]);
+  useEffect(() => {
+    if (!canPlaceCurrentDisplacedFighter || !stagedDisplacedFighterPlacement) {
+      setDisplacedFighterConfirmPopover(null);
+    }
+  }, [canPlaceCurrentDisplacedFighter, stagedDisplacedFighterPlacement]);
   const { data: fleets } = useListFleets();
   const { data: shipModels } = useListShipModels({
     query: {
@@ -7775,6 +8344,71 @@ export default function GameBoard() {
       setLocation("/lobby");
     },
   });
+  const placeDisplacedFighter = useMutation({
+    mutationFn: ({
+      unitId,
+      x,
+      z,
+    }: {
+      unitId: number;
+      x: number;
+      z: number;
+    }) =>
+      customFetch<{ unit: any | null; game: any }>(
+        `/api/games/${gameId}/displaced-fighters/${unitId}/place`,
+        {
+          method: "POST",
+          body: JSON.stringify({ x, z }),
+          responseType: "json",
+        },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData<any>(getGetGameQueryKey(gameId), (old: any) => {
+        if (!old) return old;
+        const nextUnits = result.unit
+          ? old.units.map((unit: any) =>
+              unit.id === result.unit?.id ? result.unit : unit,
+            )
+          : old.units;
+        return { ...old, game: result.game, units: nextUnits };
+      });
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+      setStagedDisplacedFighterPlacement(null);
+      setDisplacedFighterConfirmPopover(null);
+      setActivationFeedback(null);
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        `Displaced fighter placement rejected: ${cleanApiErrorMessage(err)}`,
+      );
+    },
+  });
+  const clampDisplacedFighterPlacement = useCallback(
+    (entry: FighterDisplacementUiEntry, rawX: number, rawZ: number) => {
+      let x = rawX;
+      let z = rawZ;
+      const dx = x - entry.x;
+      const dz = z - entry.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 3 && dist > 1e-6) {
+        x = entry.x + (dx / dist) * 3;
+        z = entry.z + (dz / dist) * 3;
+      }
+      const radius = rulesBaseRadius({
+        baseRadiusInches: entry.baseRadiusInches,
+      });
+      x = Math.max(
+        -BOARD_W / 2 + radius,
+        Math.min(BOARD_W / 2 - radius, x),
+      );
+      z = Math.max(
+        -BOARD_D / 2 + radius,
+        Math.min(BOARD_D / 2 - radius, z),
+      );
+      return { x: snapBoardCoord(x), z: snapBoardCoord(z) };
+    },
+    [],
+  );
   const chooseSpecialAction = useChooseSpecialAction();
   const chooseScoutAction = useChooseScoutAction();
   const declareScoutSupport = useMutation({
@@ -7861,6 +8495,8 @@ export default function GameBoard() {
       z: number;
       heading: number;
     } | null>(null);
+  const [fighterLaunchConfirmPopover, setFighterLaunchConfirmPopover] =
+    useState<{ x: number; y: number } | null>(null);
   // For "Concentrate All Fire-power" we need a target picker before sending.
   const [concentratePicking, setConcentratePicking] = useState(false);
 
@@ -8267,7 +8903,7 @@ export default function GameBoard() {
     setAiWeaponFxReplay({ key, attackerUnitId, targetUnitId, weaponId, hits });
     const timeout = window.setTimeout(() => {
       setAiWeaponFxReplay((current) => (current?.key === key ? null : current));
-    }, 2400);
+    }, 5200);
     return () => window.clearTimeout(timeout);
   }, [game?.aiState, game?.opponentKind]);
 
@@ -8648,8 +9284,133 @@ export default function GameBoard() {
     [getShipModelForUnit],
   );
   const unitsWithFighterFlags = useMemo(
-    () => units.map((unit) => ({ ...unit, isFighter: isFighterUnit(unit) })),
-    [isFighterUnit, units],
+    () =>
+      units
+        .filter((unit) => !displacedFighterUnitIds.has(unit.id))
+        .map((unit) => ({ ...unit, isFighter: isFighterUnit(unit) })),
+    [displacedFighterUnitIds, isFighterUnit, units],
+  );
+  const currentDisplacedFighterUnit = useMemo(
+    () =>
+      currentDisplacedFighterToPlace
+        ? units.find((unit) => unit.id === currentDisplacedFighterToPlace.unitId) ??
+          null
+        : null,
+    [currentDisplacedFighterToPlace, units],
+  );
+  const resolveDisplacedFighterPlacementCandidate = useCallback(
+    (
+      entry: FighterDisplacementUiEntry,
+      rawX: number,
+      rawZ: number,
+      previous?: { x: number; z: number } | null,
+    ) => {
+      let candidate = clampDisplacedFighterPlacement(entry, rawX, rawZ);
+      const candidateRadius = rulesBaseRadius({
+        baseRadiusInches: entry.baseRadiusInches,
+      });
+      const blockers = unitsWithFighterFlags
+        .filter((other) => !other.isDestroyed)
+        .map(
+          (other): UiBaseFootprint => ({
+            id: other.id,
+            x: other.hexQ,
+            z: other.hexR,
+            isFighter: other.isFighter,
+            baseRadiusInches: other.baseRadiusInches,
+          }),
+        );
+
+      for (let pass = 0; pass < 8; pass += 1) {
+        const blocker = blockers.find((other) =>
+          uiBaseFootprintsIllegallyOverlap(
+            {
+              id: entry.unitId,
+              x: candidate.x,
+              z: candidate.z,
+              isFighter: true,
+              baseRadiusInches: entry.baseRadiusInches,
+            },
+            other,
+          ),
+        );
+        if (!blocker) break;
+
+        let dx = candidate.x - blocker.x;
+        let dz = candidate.z - blocker.z;
+        let distance = Math.hypot(dx, dz);
+        if (distance < 1e-6 && previous) {
+          dx = previous.x - blocker.x;
+          dz = previous.z - blocker.z;
+          distance = Math.hypot(dx, dz);
+        }
+        if (distance < 1e-6) {
+          dx = rawX - blocker.x;
+          dz = rawZ - blocker.z;
+          distance = Math.hypot(dx, dz);
+        }
+        if (distance < 1e-6) {
+          dx = entry.x - blocker.x;
+          dz = entry.z - blocker.z;
+          distance = Math.hypot(dx, dz);
+        }
+        if (distance < 1e-6) {
+          dx = 1;
+          dz = 0;
+          distance = 1;
+        }
+
+        const contactDistance =
+          candidateRadius +
+          rulesBaseRadius({ baseRadiusInches: blocker.baseRadiusInches });
+        candidate = clampDisplacedFighterPlacement(
+          entry,
+          blocker.x + (dx / distance) * contactDistance,
+          blocker.z + (dz / distance) * contactDistance,
+        );
+      }
+
+      const legal = !blockers.some((other) =>
+        uiBaseFootprintsIllegallyOverlap(
+          {
+            id: entry.unitId,
+            x: candidate.x,
+            z: candidate.z,
+            isFighter: true,
+            baseRadiusInches: entry.baseRadiusInches,
+          },
+          other,
+        ),
+      );
+      return { ...candidate, legal };
+    },
+    [clampDisplacedFighterPlacement, unitsWithFighterFlags],
+  );
+  const stageDisplacedFighterPlacementAtPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!currentDisplacedFighterToPlace) return false;
+      const pos = screenToBoard(clientX, clientY, threeRef);
+      if (!pos) return false;
+      const [rawX, rawZ] = pos;
+      const next = resolveDisplacedFighterPlacementCandidate(
+        currentDisplacedFighterToPlace,
+        rawX,
+        rawZ,
+        stagedDisplacedFighterPlacement,
+      );
+      setStagedDisplacedFighterPlacement({
+        unitId: currentDisplacedFighterToPlace.unitId,
+        x: next.x,
+        z: next.z,
+      });
+      setDisplacedFighterConfirmPopover(null);
+      return true;
+    },
+    [
+      currentDisplacedFighterToPlace,
+      resolveDisplacedFighterPlacementCandidate,
+      stagedDisplacedFighterPlacement,
+    ],
   );
   const enemyFighterContactsForUnit = useCallback(
     (
@@ -8674,6 +9435,111 @@ export default function GameBoard() {
     },
     [isFighterUnit, unitsWithFighterFlags],
   );
+  const dogfightingFighterUnitIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const unit of unitsWithFighterFlags) {
+      if (unit.isDestroyed || !unit.isFighter) continue;
+      if (ids.has(unit.id)) continue;
+      const contacts = enemyFighterContactsForUnit(unit);
+      if (contacts.length === 0) continue;
+      ids.add(unit.id);
+      for (const contact of contacts) ids.add(contact.id);
+    }
+    return ids;
+  }, [enemyFighterContactsForUnit, unitsWithFighterFlags]);
+  const stagedDisplacedFighterPlacementLegal = useMemo(() => {
+    if (!currentDisplacedFighterToPlace || !stagedDisplacedFighterPlacement) {
+      return false;
+    }
+    const candidate: UiBaseFootprint = {
+      id: currentDisplacedFighterToPlace.unitId,
+      x: stagedDisplacedFighterPlacement.x,
+      z: stagedDisplacedFighterPlacement.z,
+      isFighter: true,
+      baseRadiusInches: currentDisplacedFighterToPlace.baseRadiusInches,
+    };
+    const radius = rulesBaseRadius(candidate);
+    if (
+      candidate.x < -BOARD_W / 2 + radius ||
+      candidate.x > BOARD_W / 2 - radius ||
+      candidate.z < -BOARD_D / 2 + radius ||
+      candidate.z > BOARD_D / 2 - radius
+    ) {
+      return false;
+    }
+    return !unitsWithFighterFlags.some((other) => {
+      if (other.isDestroyed) return false;
+      return uiBaseFootprintsIllegallyOverlap(candidate, {
+        id: other.id,
+        x: other.hexQ,
+        z: other.hexR,
+        isFighter: other.isFighter,
+        baseRadiusInches: other.baseRadiusInches,
+      });
+    });
+  }, [
+    currentDisplacedFighterToPlace,
+    stagedDisplacedFighterPlacement,
+    unitsWithFighterFlags,
+  ]);
+  const stagedDisplacedFighterDogfightContact = useMemo(() => {
+    if (
+      !currentDisplacedFighterToPlace ||
+      !stagedDisplacedFighterPlacement ||
+      !stagedDisplacedFighterPlacementLegal
+    ) {
+      return false;
+    }
+    const probe = {
+      hexQ: stagedDisplacedFighterPlacement.x,
+      hexR: stagedDisplacedFighterPlacement.z,
+      baseRadiusInches: currentDisplacedFighterToPlace.baseRadiusInches,
+    };
+    return unitsWithFighterFlags.some(
+      (other) =>
+        !other.isDestroyed &&
+        other.isFighter &&
+        other.ownerId !== currentDisplacedFighterToPlace.ownerId &&
+        uiBasesInContact(probe, other),
+    );
+  }, [
+    currentDisplacedFighterToPlace,
+    stagedDisplacedFighterPlacement,
+    stagedDisplacedFighterPlacementLegal,
+    unitsWithFighterFlags,
+  ]);
+  const confirmDisplacedFighterPlacement = useCallback(() => {
+    if (
+      !canPlaceCurrentDisplacedFighter ||
+      !currentDisplacedFighterToPlace ||
+      !stagedDisplacedFighterPlacement ||
+      !stagedDisplacedFighterPlacementLegal ||
+      placeDisplacedFighter.isPending
+    ) {
+      if (stagedDisplacedFighterPlacement && !stagedDisplacedFighterPlacementLegal) {
+        setActivationFeedback(
+          "Displaced fighter placement overlaps another base. Drag to a legal position, then confirm.",
+        );
+      }
+      return;
+    }
+    placeDisplacedFighter.mutate({
+      unitId: currentDisplacedFighterToPlace.unitId,
+      x: stagedDisplacedFighterPlacement.x,
+      z: stagedDisplacedFighterPlacement.z,
+    });
+  }, [
+    canPlaceCurrentDisplacedFighter,
+    currentDisplacedFighterToPlace,
+    placeDisplacedFighter,
+    stagedDisplacedFighterPlacement,
+    stagedDisplacedFighterPlacementLegal,
+  ]);
+  const cancelDisplacedFighterPlacement = useCallback(() => {
+    displacedFighterPlacementDraggingRef.current = false;
+    setStagedDisplacedFighterPlacement(null);
+    setDisplacedFighterConfirmPopover(null);
+  }, []);
   const serverMovementLedgerByUnit = useMemo<
     Record<number, MovementLedger>
   >(() => {
@@ -8717,7 +9583,6 @@ export default function GameBoard() {
     },
     [phaseLedger, serverMovementLedgerByUnit],
   );
-
   // Surrender eligibility: every one of MY ships is at ≤0 hull OR ≤0 crew
   // (or destroyed). A ship with maxCrewPoints=0 (legacy unit without a crew
   // pool) shouldn't gate surrender on its non-existent crew, so we only
@@ -8815,8 +9680,7 @@ export default function GameBoard() {
   const stagedAllocation = useMemo(
     () =>
       calculateAllocation(
-        currentStagedUnits
-          .filter((u) => !u.launchedFromStagedId)
+        chargeableStagedUnits(currentStagedUnits)
           .map((u) => normalizePriorityLevel(u.priorityLevel)),
         scenarioPriority,
         allocationPoints,
@@ -8899,6 +9763,9 @@ export default function GameBoard() {
       index: number,
       total: number,
       stagedName = ship.name,
+      deploymentGroupId: string | null = null,
+      deploymentGroupSize: number | null = null,
+      deploymentGroupOrdinal: number | null = null,
     ): StagedUnitData => {
       const side = mySide ?? "challenger";
       const [cx, cz] = defaultDeploymentPoint(
@@ -8930,6 +9797,9 @@ export default function GameBoard() {
           shipModels ?? [],
         ),
         launchedFromStagedId: null,
+        deploymentGroupId,
+        deploymentGroupSize,
+        deploymentGroupOrdinal,
         x: cx,
         z: cz,
         heading: deployment.defaultHeading,
@@ -8939,57 +9809,143 @@ export default function GameBoard() {
     },
     [deploymentConfig, mySide, myUserId, shipModels],
   );
+  const makeExpandedStagedUnits = useCallback(
+    (
+      ships: Array<{ ship: ShipModel; name?: string }>,
+      idPrefix = "staged-template",
+    ): StagedUnitData[] => {
+      const batchId = Date.now();
+      const expanded: Array<{
+        ship: ShipModel;
+        name: string;
+        groupId: string | null;
+        groupSize: number | null;
+        groupOrdinal: number | null;
+      }> = [];
+      ships.forEach(({ ship, name }, sourceIndex) => {
+        const unitCount = multiUnitPurchaseCount(ship);
+        const groupId =
+          unitCount > 1
+            ? `${idPrefix}-group-${batchId}-${ship.id}-${sourceIndex}`
+            : null;
+        for (let ordinal = 1; ordinal <= unitCount; ordinal += 1) {
+          expanded.push({
+            ship,
+            name: name ?? ship.name,
+            groupId,
+            groupSize: unitCount > 1 ? unitCount : null,
+            groupOrdinal: unitCount > 1 ? ordinal : null,
+          });
+        }
+      });
+      return expanded.map((entry, index) =>
+        makeStagedUnit(
+          entry.ship,
+          index,
+          expanded.length,
+          entry.name,
+          entry.groupId,
+          entry.groupSize,
+          entry.groupOrdinal,
+        ),
+      );
+    },
+    [makeStagedUnit],
+  );
   const stageShipAtBoardPoint = useCallback(
     (ship: ShipModel, rawX: number, rawZ: number) => {
-      const [x, z] = clampToDeployZone(
-        rawX,
-        rawZ,
-        ship.baseRadiusInches,
-      );
-      const candidate: UiBaseFootprint = {
-        id: `candidate-${ship.id}`,
-        x,
-        z,
-        isFighter: shipModelHasFighterTrait(ship),
-        baseRadiusInches: ship.baseRadiusInches,
-      };
-      if (deploymentPlacementOverlaps(candidate)) {
-        setActivationFeedback("Cannot place ship: base overlaps another ship.");
-        return;
-      }
-      const newId = `staged-${Date.now()}-${ship.id}`;
-      setStagedUnits((prev) => [
-        ...prev,
-        {
-          id: newId,
-          ownerId: myUserId,
-          shipModelId: ship.id,
-          name: ship.name,
-          modelFilename: ship.filename,
-          faction: ship.faction,
-          priorityLevel: ship.priorityLevel,
-          hullPoints: ship.hullPoints,
-          speed: ship.speed,
-          weaponRange: ship.weaponRange,
-          weaponDamage: ship.weaponDamage,
-          baseRadiusInches: ship.baseRadiusInches,
-          weapons: ship.weapons ?? [],
-          traits: ship.traits ?? null,
-          carriedFighters: parseUiSmallCraftInventory(
-            ship.smallCraft,
-            shipModels ?? [],
-          ),
-          launchedFromStagedId: null,
+      const purchaseUnitCount = multiUnitPurchaseCount(ship);
+      const isMultiUnitPurchase = purchaseUnitCount > 1;
+      const groupId = isMultiUnitPurchase
+        ? `staged-group-${Date.now()}-${ship.id}`
+        : null;
+      const spacing = Math.max(ship.baseRadiusInches * 2 + 0.2, 1.1);
+      const offsets = deploymentGroupGridOffsets(purchaseUnitCount, spacing);
+      const blockers = deploymentBlockers();
+      const stagedCandidates: Array<{
+        unit: StagedUnitData;
+        footprint: UiBaseFootprint;
+      }> = [];
+      const heading = mySide
+        ? deploymentSideConfig(deploymentConfig, mySide).defaultHeading
+        : 0;
+
+      for (let index = 0; index < offsets.length; index += 1) {
+        const offset = offsets[index]!;
+        const [x, z] = clampToDeployZone(
+          rawX + offset.x,
+          rawZ + offset.z,
+          ship.baseRadiusInches,
+        );
+        const candidate: UiBaseFootprint = {
+          id: `candidate-${ship.id}-${index}`,
           x,
           z,
-          heading: mySide
-            ? deploymentSideConfig(deploymentConfig, mySide).defaultHeading
-            : 0,
-          locked: false,
-          crewQuality: 4,
-        },
+          isFighter: shipModelHasFighterTrait(ship),
+          baseRadiusInches: ship.baseRadiusInches,
+        };
+        const overlapsExisting = blockers.some((blocker) =>
+          uiBaseFootprintsIllegallyOverlap(candidate, blocker),
+        );
+        const overlapsNew = stagedCandidates.some(({ footprint }) =>
+          uiBaseFootprintsIllegallyOverlap(candidate, footprint),
+        );
+        if (overlapsExisting || overlapsNew) {
+          setActivationFeedback(
+            isMultiUnitPurchase
+              ? `Cannot place ${ship.name}: not enough legal space for ${purchaseUnitCount} units.`
+              : "Cannot place ship: base overlaps another ship.",
+          );
+          return;
+        }
+        const newId = isMultiUnitPurchase
+          ? `${groupId}-${index + 1}`
+          : `staged-${Date.now()}-${ship.id}`;
+        stagedCandidates.push({
+          footprint: candidate,
+          unit: {
+            id: newId,
+            ownerId: myUserId,
+            shipModelId: ship.id,
+            name: ship.name,
+            modelFilename: ship.filename,
+            faction: ship.faction,
+            priorityLevel: ship.priorityLevel,
+            hullPoints: ship.hullPoints,
+            speed: ship.speed,
+            weaponRange: ship.weaponRange,
+            weaponDamage: ship.weaponDamage,
+            baseRadiusInches: ship.baseRadiusInches,
+            weapons: ship.weapons ?? [],
+            traits: ship.traits ?? null,
+            carriedFighters: parseUiSmallCraftInventory(
+              ship.smallCraft,
+              shipModels ?? [],
+            ),
+            launchedFromStagedId: null,
+            deploymentGroupId: groupId,
+            deploymentGroupSize: isMultiUnitPurchase
+              ? purchaseUnitCount
+              : null,
+            deploymentGroupOrdinal: isMultiUnitPurchase
+              ? index + 1
+              : null,
+            x,
+            z,
+            heading,
+            locked: false,
+            crewQuality: 4,
+          },
+        });
+      }
+      if (stagedCandidates.length === 0) {
+        return;
+      }
+      setStagedUnits((prev) => [
+        ...prev,
+        ...stagedCandidates.map(({ unit }) => unit),
       ]);
-      setSelectedStagedId(newId);
+      setSelectedStagedId(stagedCandidates[0]!.unit.id);
       setDraggingId(null);
       setTapPlacementShip(null);
       draggedShipRef.current = null;
@@ -8998,7 +9954,7 @@ export default function GameBoard() {
     [
       clampToDeployZone,
       deploymentConfig,
-      deploymentPlacementOverlaps,
+      deploymentBlockers,
       mySide,
       myUserId,
       shipModels,
@@ -9180,8 +10136,9 @@ export default function GameBoard() {
       }
 
       if (chosenShips.length === 0) return;
-      const staged = chosenShips.map((ship, index) =>
-        makeStagedUnit(ship, index, chosenShips.length),
+      const staged = makeExpandedStagedUnits(
+        chosenShips.map((ship) => ({ ship })),
+        `template-${template.id}`,
       );
       setYardsFleetId("");
       setSelectedFaction(template.faction);
@@ -9193,7 +10150,7 @@ export default function GameBoard() {
       setDraggingId(null);
       setTapPlacementShip(null);
     },
-    [makeStagedUnit, myUserId, shipModels],
+    [makeExpandedStagedUnits, myUserId, shipModels],
   );
   useEffect(() => {
     if (!yardsFleetId) {
@@ -9204,13 +10161,12 @@ export default function GameBoard() {
       return;
 
     autoStagedFleetIdRef.current = yardsFleetId;
-    const staged = yardsFleetShips.map((fleetShip, index) =>
-      makeStagedUnit(
-        fleetShip.shipModel,
-        index,
-        yardsFleetShips.length,
-        fleetShip.name || fleetShip.shipModel.name,
-      ),
+    const staged = makeExpandedStagedUnits(
+      yardsFleetShips.map((fleetShip) => ({
+        ship: fleetShip.shipModel,
+        name: fleetShip.name || fleetShip.shipModel.name,
+      })),
+      `fleet-${yardsFleetId}`,
     );
     setStagedUnits((prev) => [
       ...prev.filter((u) => u.ownerId !== myUserId),
@@ -9219,7 +10175,7 @@ export default function GameBoard() {
     setSelectedStagedId(staged[0]?.id ?? null);
     setDraggingId(null);
     setTapPlacementShip(null);
-  }, [yardsFleetId, yardsFleetShips, makeStagedUnit, myUserId]);
+  }, [yardsFleetId, yardsFleetShips, makeExpandedStagedUnits, myUserId]);
   const canUseGameChat = Boolean(
     game &&
       game.opponentKind !== "ai" &&
@@ -9494,6 +10450,14 @@ export default function GameBoard() {
         setMovePlan(null);
         return;
       }
+      if (dogfightingFighterUnitIds.has(u.id)) {
+        setActivationFeedback(
+          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+        );
+        setMovePlan(null);
+        setMovementGesture(null);
+        return;
+      }
       const candidate: UiBaseFootprint = {
         id: u.id,
         x: movePlan.x,
@@ -9669,8 +10633,13 @@ export default function GameBoard() {
         onSuccess: (updatedUnit) => {
           moveConfirmInFlightRef.current = false;
           setActivationFeedback(null);
-          mergeUpdatedUnitIntoGame(updatedUnit);
-          showTerrainHazardsForMove(updatedUnit as TerrainHazardMoveResult);
+          const moveResult = updatedUnit as GameUnit & {
+            game?: GameDetail["game"];
+          };
+          const { game: updatedGame, ...unitOnly } = moveResult;
+          if (updatedGame) mergeGameIntoCache(updatedGame);
+          mergeUpdatedUnitIntoGame(unitOnly as GameUnit);
+          showTerrainHazardsForMove(unitOnly as TerrainHazardMoveResult);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           afterSuccess?.();
         },
@@ -9694,10 +10663,12 @@ export default function GameBoard() {
     getLedger,
     qc,
     shipModels,
+    mergeGameIntoCache,
     mergeUpdatedUnitIntoGame,
     showTerrainHazardsForMove,
     isFighterUnit,
     unitsWithFighterFlags,
+    dogfightingFighterUnitIds,
   ]);
 
   const confirmMovePlan = useCallback(() => {
@@ -9733,6 +10704,18 @@ export default function GameBoard() {
           t.isContentEditable)
       )
         return;
+      if (canPlaceCurrentDisplacedFighter) {
+        if (e.key === "Enter" || e.key === " " || e.code === "Space") {
+          e.preventDefault();
+          confirmDisplacedFighterPlacement();
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancelDisplacedFighterPlacement();
+          return;
+        }
+      }
       // While a move is in flight the server hasn't yet updated the unit's
       // position/heading; queueing another commit would compute from stale state.
       if (moveUnit.isPending) return;
@@ -9763,6 +10746,26 @@ export default function GameBoard() {
           | undefined) ?? "movement";
       if (phase !== "movement") return;
       const u = selectedUnitData;
+      const selectedFighterMoveKey =
+        isFighterUnit(u) &&
+        dogfightingFighterUnitIds.has(u.id) &&
+        (e.key === "f" ||
+          e.key === "F" ||
+          e.key === "r" ||
+          e.key === "R" ||
+          e.key === "q" ||
+          e.key === "Q" ||
+          e.key === "e" ||
+          e.key === "E");
+      if (selectedFighterMoveKey) {
+        e.preventDefault();
+        setActivationFeedback(
+          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+        );
+        setMovePlan(null);
+        setMovementGesture(null);
+        return;
+      }
       const movementModel = getShipModelForUnit(u);
       const movementTraits = uiMovementTraitsForModel(movementModel, u);
       const baseSpeed = effectiveUiSpeed(
@@ -9925,6 +10928,9 @@ export default function GameBoard() {
     isSelectedUnitActive,
     selectedUnitData,
     myUserId,
+    canPlaceCurrentDisplacedFighter,
+    confirmDisplacedFighterPlacement,
+    cancelDisplacedFighterPlacement,
     confirmMovePlan,
     commitMovePlan,
     cancelMovePlan,
@@ -9937,6 +10943,7 @@ export default function GameBoard() {
     shipModels,
     isFighterUnit,
     unitsWithFighterFlags,
+    dogfightingFighterUnitIds,
   ]);
 
   // Special-Action-adjusted caps for the selected unit. Single source of truth
@@ -10094,6 +11101,11 @@ export default function GameBoard() {
   const selectedUnitIsFighter = selectedUnitData
     ? isFighterUnit(selectedUnitData)
     : false;
+  const selectedFighterLockedInDogfight = Boolean(
+    selectedUnitData &&
+      selectedUnitIsFighter &&
+      dogfightingFighterUnitIds.has(selectedUnitData.id),
+  );
   const buildFighterMovePlan = useCallback(
     (
       unit: GameUnit,
@@ -10101,6 +11113,7 @@ export default function GameBoard() {
       rawZ: number,
       headingFallback = unit.heading,
     ): Extract<MovePlan, { kind: "fighter-free" }> | null => {
+      if (dogfightingFighterUnitIds.has(unit.id)) return null;
       const remaining = Math.max(
         0,
         selectedSaCaps
@@ -10150,7 +11163,7 @@ export default function GameBoard() {
         heading: Math.round(((heading % 360) + 360) % 360),
       };
     },
-    [getLedger, selectedSaCaps, unitsWithFighterFlags],
+    [dogfightingFighterUnitIds, getLedger, selectedSaCaps, unitsWithFighterFlags],
   );
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
@@ -10508,11 +11521,42 @@ export default function GameBoard() {
       pendingLaunchCarrier,
       pendingLaunchFighterModel,
     );
+  const pendingLaunchDogfightContact = useMemo(() => {
+    if (
+      !pendingFighterLaunchPlacement ||
+      !pendingLaunchFighterModel ||
+      !pendingLaunchPlacementLegal
+    )
+      return false;
+    const probe = {
+      hexQ: pendingFighterLaunchPlacement.x,
+      hexR: pendingFighterLaunchPlacement.z,
+      baseRadiusInches: pendingLaunchFighterModel.baseRadiusInches,
+    };
+    return unitsWithFighterFlags.some(
+      (other) =>
+        !other.isDestroyed &&
+        other.isFighter &&
+        other.ownerId !== myUserId &&
+        uiBasesInContact(probe, other),
+    );
+  }, [
+    myUserId,
+    pendingFighterLaunchPlacement,
+    pendingLaunchFighterModel,
+    pendingLaunchPlacementLegal,
+    unitsWithFighterFlags,
+  ]);
   useEffect(() => {
     if (endPhaseLaunchPrompt?.mode !== "highlight") {
       setPendingFighterLaunchPlacement(null);
     }
   }, [endPhaseLaunchPrompt?.mode]);
+  useEffect(() => {
+    if (!pendingFighterLaunchPlacement || !pendingLaunchPlacementLegal) {
+      setFighterLaunchConfirmPopover(null);
+    }
+  }, [pendingFighterLaunchPlacement, pendingLaunchPlacementLegal]);
   const launchFighterFromCarrierAtPoint = useCallback(
     async (
       carrier: GameUnit,
@@ -10545,6 +11589,7 @@ export default function GameBoard() {
         );
         mergeFighterBayResultIntoGame(result);
         setPendingFighterLaunchPlacement(null);
+        setFighterLaunchConfirmPopover(null);
         if (options?.keepCarrierSelected) {
           setSelectedUnit(carrier.id);
         } else if (result.fighter) {
@@ -10564,17 +11609,6 @@ export default function GameBoard() {
       mergeFighterBayResultIntoGame,
       qc,
     ],
-  );
-  const launchFighterFromCarrier = useCallback(
-    async (carrier: GameUnit, item: GameUnit["carriedFighters"][number]) => {
-      const spot = findAutoLaunchSpot(carrier);
-      if (!spot) {
-        setFighterBayFeedback("No legal launch position within 3 inches.");
-        return;
-      }
-      await launchFighterFromCarrierAtPoint(carrier, item, spot);
-    },
-    [findAutoLaunchSpot, launchFighterFromCarrierAtPoint],
   );
   const beginFighterLaunchPlacement = useCallback(
     (carrier: GameUnit, item: GameUnit["carriedFighters"][number]) => {
@@ -10611,6 +11645,82 @@ export default function GameBoard() {
     },
     [clampEndPhaseLaunchPoint, findAutoLaunchSpot, shipModelById],
   );
+  const cancelFighterLaunchPlacement = useCallback(() => {
+    setPendingFighterLaunchPlacement(null);
+    setFighterLaunchConfirmPopover(null);
+  }, []);
+  const confirmFighterLaunchPlacement = useCallback(() => {
+    if (
+      !pendingFighterLaunchPlacement ||
+      !pendingLaunchCarrier ||
+      !pendingLaunchFighterModel
+    )
+      return;
+    if (!pendingLaunchPlacementLegal) {
+      setFighterBayFeedback(
+        "Choose a legal launch point within 3 inches that does not overlap another base.",
+      );
+      setFighterLaunchConfirmPopover(null);
+      return;
+    }
+    const item = (pendingLaunchCarrier.carriedFighters ?? []).find(
+      (candidate) =>
+        candidate.shipModelId === pendingFighterLaunchPlacement.shipModelId &&
+        candidate.available > 0,
+    );
+    if (!item) {
+      setFighterBayFeedback(
+        `${pendingFighterLaunchPlacement.itemName} is no longer available to launch.`,
+      );
+      cancelFighterLaunchPlacement();
+      return;
+    }
+    void launchFighterFromCarrierAtPoint(
+      pendingLaunchCarrier,
+      item,
+      {
+        hexQ: pendingFighterLaunchPlacement.x,
+        hexR: pendingFighterLaunchPlacement.z,
+        heading: pendingFighterLaunchPlacement.heading,
+      },
+      { keepCarrierSelected: true },
+    );
+  }, [
+    cancelFighterLaunchPlacement,
+    launchFighterFromCarrierAtPoint,
+    pendingFighterLaunchPlacement,
+    pendingLaunchCarrier,
+    pendingLaunchFighterModel,
+    pendingLaunchPlacementLegal,
+  ]);
+  useEffect(() => {
+    if (!pendingFighterLaunchPlacement) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      )
+        return;
+      if (e.key === "Enter" || e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        confirmFighterLaunchPlacement();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cancelFighterLaunchPlacement();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [
+    cancelFighterLaunchPlacement,
+    confirmFighterLaunchPlacement,
+    pendingFighterLaunchPlacement,
+  ]);
   const recoverFighterToCarrier = useCallback(
     async (fighter: GameUnit, carrier: GameUnit) => {
       const key = `recover:${fighter.id}:${carrier.id}`;
@@ -10748,6 +11858,40 @@ export default function GameBoard() {
       setUseCoordOnNext(false);
     }
   }, [hasAvailableScoutCoordToken, useCoordOnNext]);
+  const scoutSupportEffectsByTargetId = useMemo(() => {
+    const effectsByTarget = new Map<number, ScoutSupportVisualEffect[]>();
+    if (game?.status !== "active" || currentPhase !== "firing") {
+      return effectsByTarget;
+    }
+
+    const addEffect = (
+      targetId: number | null | undefined,
+      effect: ScoutSupportVisualEffect,
+    ) => {
+      if (targetId == null) return;
+      const current = effectsByTarget.get(targetId) ?? [];
+      if (!current.includes(effect)) current.push(effect);
+      effectsByTarget.set(targetId, current);
+    };
+
+    for (const unit of units) {
+      if (unit.isDestroyed || unit.hullPoints <= 0) continue;
+      if ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0) continue;
+      if (
+        unit.damageState === "adrift" ||
+        unit.damageState === "exploding-end-of-next"
+      ) {
+        continue;
+      }
+      if (unit.scoutAction === "counter-stealth") {
+        addEffect(unit.scoutActionTargetId, "counter-stealth");
+      } else if (unit.scoutAction === "coord" && !unit.scoutCoordConsumed) {
+        addEffect(unit.scoutActionTargetId, "coord");
+      }
+    }
+
+    return effectsByTarget;
+  }, [currentPhase, game?.status, units]);
 
   // Eligible-to-activate count for the current player in the current phase.
   // Mirrors the server's `remainingFor` filter so the UI can offer a "Pass
@@ -11087,6 +12231,15 @@ export default function GameBoard() {
       if (delta < 0 && (movePlan?.kind !== "forward" || movePlan.distance <= 0))
         return;
       if (!selectedUnitData) return;
+      if (
+        isFighterUnit(selectedUnitData) &&
+        dogfightingFighterUnitIds.has(selectedUnitData.id)
+      ) {
+        setActivationFeedback(
+          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+        );
+        return;
+      }
 
       setMovementGesture({ kind: "forward" });
       setMovePlan((prev) => {
@@ -11119,6 +12272,7 @@ export default function GameBoard() {
       selectedUnitData,
       unitsWithFighterFlags,
       isFighterUnit,
+      dogfightingFighterUnitIds,
     ],
   );
 
@@ -11131,6 +12285,12 @@ export default function GameBoard() {
       )
         return;
       if (selectedUnitData && isFighterUnit(selectedUnitData)) {
+        if (dogfightingFighterUnitIds.has(selectedUnitData.id)) {
+          setActivationFeedback(
+            "Fighter is locked in a dogfight; use the Dogfight action instead.",
+          );
+          return;
+        }
         const headingDelta = visualTurnDeltaToHeadingDelta(
           selectedUnitData.modelFilename,
           deltaDeg,
@@ -11173,6 +12333,7 @@ export default function GameBoard() {
       moveUnit.isPending,
       selectedMovementUi,
       selectedUnitData,
+      dogfightingFighterUnitIds,
     ],
   );
 
@@ -11186,6 +12347,12 @@ export default function GameBoard() {
       return;
     setMovementGesture({ kind: "turn", direction: "free" });
     if (selectedUnitData && isFighterUnit(selectedUnitData)) {
+      if (dogfightingFighterUnitIds.has(selectedUnitData.id)) {
+        setActivationFeedback(
+          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+        );
+        return;
+      }
       setMovePlan((prev) =>
         prev?.kind === "fighter-free"
           ? prev
@@ -11207,6 +12374,7 @@ export default function GameBoard() {
     moveUnit.isPending,
     selectedMovementUi,
     selectedUnitData,
+    dogfightingFighterUnitIds,
   ]);
 
   const boardPointHasUnit = useCallback(
@@ -11244,6 +12412,14 @@ export default function GameBoard() {
     setFiringWeaponPicking(null);
     setSplitFirePlan(null);
   }, [activeFighterLockedInDogfight, activeUnitId]);
+
+  useEffect(() => {
+    if (!selectedFighterLockedInDogfight || movePlan?.kind !== "fighter-free")
+      return;
+    setMovePlan(null);
+    setMovementGesture(null);
+    setMoveConfirmPopover(null);
+  }, [movePlan?.kind, selectedFighterLockedInDogfight]);
 
   // Wipe per-activation Special Action UI state when the active unit changes
   // (handoff, end-activation, or round rollover). The server still owns the
@@ -11295,8 +12471,13 @@ export default function GameBoard() {
       { gameId, unitId: u.id, data: { toHexQ, toHexR, newHeading: u.heading } },
       {
         onSuccess: (updatedUnit) => {
-          mergeUpdatedUnitIntoGame(updatedUnit);
-          showTerrainHazardsForMove(updatedUnit as TerrainHazardMoveResult);
+          const moveResult = updatedUnit as GameUnit & {
+            game?: GameDetail["game"];
+          };
+          const { game: updatedGame, ...unitOnly } = moveResult;
+          if (updatedGame) mergeGameIntoCache(updatedGame);
+          mergeUpdatedUnitIntoGame(unitOnly as GameUnit);
+          showTerrainHazardsForMove(unitOnly as TerrainHazardMoveResult);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           endActivation.mutate(
             { gameId },
@@ -11323,6 +12504,7 @@ export default function GameBoard() {
     endActivation,
     gameId,
     qc,
+    mergeGameIntoCache,
     mergeUpdatedUnitIntoGame,
     showTerrainHazardsForMove,
   ]);
@@ -11880,11 +13062,21 @@ export default function GameBoard() {
     endActivation.mutate(
       { gameId },
       {
-        onSuccess: () => {
-          mergeActiveUnitIntoGame(null);
+        onSuccess: (updatedGame) => {
+          mergeGameIntoCache(updatedGame);
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
-          setSelectedUnit(null);
           setMovePlan(null);
+          const armedDisplacement =
+            readFighterDisplacementUiState(updatedGame.aiState)?.readyToPlace ===
+            true;
+          if (armedDisplacement) {
+            setActivationFeedback(
+              "Movement complete. Place displaced fighters before ending activation.",
+            );
+            return;
+          }
+          mergeActiveUnitIntoGame(null);
+          setSelectedUnit(null);
           setOptimisticActiveUnitId(null);
         },
       },
@@ -11894,6 +13086,7 @@ export default function GameBoard() {
     canPassPhase,
     endActivation,
     gameId,
+    mergeGameIntoCache,
     mergeActiveUnitIntoGame,
     qc,
   ]);
@@ -12254,6 +13447,7 @@ export default function GameBoard() {
       heading: number;
       crewQuality?: number;
       launchedFromPlacementIndex?: number | null;
+      deploymentGroupId?: string | null;
     }>;
     let fleetIdToSend: number | undefined;
     const stagedIndexById = new Map(
@@ -12266,12 +13460,33 @@ export default function GameBoard() {
       currentStagedUnits.every((unit) => !unit.launchedFromStagedId)
     ) {
       const available = [...yardsFleetShips];
+      const shipIdByDeploymentGroup = new Map<string, number>();
       placements = [];
       for (const staged of currentStagedUnits) {
-        const idx = available.findIndex(
-          (s) => s.shipModel.id === staged.shipModelId,
-        );
-        if (idx === -1) {
+        const deploymentGroupId = staged.deploymentGroupId?.trim() || null;
+        let ship: (typeof yardsFleetShips)[number] | undefined;
+        if (
+          deploymentGroupId &&
+          shipIdByDeploymentGroup.has(deploymentGroupId)
+        ) {
+          const existingShipId = shipIdByDeploymentGroup.get(deploymentGroupId);
+          ship = yardsFleetShips.find(
+            (candidate) =>
+              candidate.id === existingShipId &&
+              candidate.shipModel.id === staged.shipModelId,
+          );
+        } else {
+          const idx = available.findIndex(
+            (s) => s.shipModel.id === staged.shipModelId,
+          );
+          if (idx !== -1) {
+            ship = available.splice(idx, 1)[0];
+            if (deploymentGroupId && ship) {
+              shipIdByDeploymentGroup.set(deploymentGroupId, ship.id);
+            }
+          }
+        }
+        if (!ship) {
           // Staged a ship that isn't in the selected fleet — fall back
           // to direct drop-in for THIS unit so nothing silently disappears.
           placements.push({
@@ -12280,16 +13495,17 @@ export default function GameBoard() {
             hexR: snapBoardCoord(staged.z),
             heading: staged.heading,
             crewQuality: staged.crewQuality,
+            deploymentGroupId,
           });
           continue;
         }
-        const ship = available.splice(idx, 1)[0];
         placements.push({
           shipId: ship.id,
           hexQ: snapBoardCoord(staged.x),
           hexR: snapBoardCoord(staged.z),
           heading: staged.heading,
           crewQuality: staged.crewQuality,
+          deploymentGroupId,
         });
       }
       // Mixed fleet+drop-in payload is not supported by the API. If ANY
@@ -12298,18 +13514,13 @@ export default function GameBoard() {
       const allHaveShipId = placements.every((p) => p.shipId !== undefined);
       fleetIdToSend = allHaveShipId ? parseInt(yardsFleetId) : undefined;
       if (!allHaveShipId)
-        placements = placements.map((p) => ({
-          shipModelId:
-            p.shipModelId ??
-            currentStagedUnits.find(
-              (s) =>
-                snapBoardCoord(s.x) === p.hexQ &&
-                snapBoardCoord(s.z) === p.hexR,
-            )?.shipModelId,
-          hexQ: p.hexQ,
-          hexR: p.hexR,
-          heading: p.heading,
-          crewQuality: p.crewQuality,
+        placements = currentStagedUnits.map((s) => ({
+          shipModelId: s.shipModelId,
+          hexQ: snapBoardCoord(s.x),
+          hexR: snapBoardCoord(s.z),
+          heading: s.heading,
+          crewQuality: s.crewQuality,
+          deploymentGroupId: s.deploymentGroupId?.trim() || null,
         }));
     } else {
       // Pure direct drop-in.
@@ -12322,6 +13533,7 @@ export default function GameBoard() {
         launchedFromPlacementIndex: s.launchedFromStagedId
           ? (stagedIndexById.get(s.launchedFromStagedId) ?? null)
           : null,
+        deploymentGroupId: s.deploymentGroupId?.trim() || null,
       }));
       fleetIdToSend = undefined;
     }
@@ -12397,6 +13609,11 @@ export default function GameBoard() {
       : completedWinnerName
         ? `${completedWinnerName} wins.`
         : "Both fleets have been eliminated.";
+  const boardCameraInputDisabled =
+    Boolean(draggingId) ||
+    Boolean(movementGesture) ||
+    Boolean(pendingFighterLaunchPlacement) ||
+    canPlaceCurrentDisplacedFighter;
   const gameChatPanel = canUseGameChat ? (
     <div className="border-b border-border" data-testid="game-chat-panel">
       <button
@@ -12553,6 +13770,51 @@ export default function GameBoard() {
           }`}
           data-input={inputProfile.input}
           onContextMenu={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            if (pendingFighterLaunchPlacement) {
+              e.preventDefault();
+              if (!pendingLaunchPlacementLegal) {
+                setFighterBayFeedback(
+                  "Choose a legal launch point within 3 inches that does not overlap another base.",
+                );
+                return;
+              }
+              const width = 92;
+              const height = 48;
+              setMoveConfirmPopover(null);
+              setDisplacedFighterConfirmPopover(null);
+              setFighterLaunchConfirmPopover({
+                x: Math.max(
+                  8,
+                  Math.min(rect.width - width - 8, e.clientX - rect.left),
+                ),
+                y: Math.max(
+                  8,
+                  Math.min(rect.height - height - 8, e.clientY - rect.top),
+                ),
+              });
+              return;
+            }
+            if (
+              canPlaceCurrentDisplacedFighter &&
+              stagedDisplacedFighterPlacement
+            ) {
+              e.preventDefault();
+              const width = 92;
+              const height = 48;
+              setMoveConfirmPopover(null);
+              setDisplacedFighterConfirmPopover({
+                x: Math.max(
+                  8,
+                  Math.min(rect.width - width - 8, e.clientX - rect.left),
+                ),
+                y: Math.max(
+                  8,
+                  Math.min(rect.height - height - 8, e.clientY - rect.top),
+                ),
+              });
+              return;
+            }
             if (!canUsePcMoveConfirmPopover) return;
             e.preventDefault();
             const start = boardPointerDownRef.current;
@@ -12561,9 +13823,9 @@ export default function GameBoard() {
               const dy = e.clientY - start.y;
               if (dx * dx + dy * dy > 100) return;
             }
-            const rect = e.currentTarget.getBoundingClientRect();
             const width = canEndActivationFromPcMovePopover ? 132 : 92;
             const height = canEndActivationFromPcMovePopover ? 88 : 48;
+            setDisplacedFighterConfirmPopover(null);
             setMoveConfirmPopover({
               x: Math.max(8, Math.min(rect.width - width - 8, e.clientX - rect.left)),
               y: Math.max(8, Math.min(rect.height - height - 8, e.clientY - rect.top)),
@@ -12571,11 +13833,63 @@ export default function GameBoard() {
           }}
           onPointerDown={(e) => {
             if (e.button !== 2) setMoveConfirmPopover(null);
+            if (e.button !== 2) setDisplacedFighterConfirmPopover(null);
+            if (e.button !== 2) setFighterLaunchConfirmPopover(null);
             boardPointerDownRef.current = {
               x: e.clientX,
               y: e.clientY,
               time: performance.now(),
             };
+            if (
+              e.button === 0 &&
+              pendingFighterLaunchPlacement &&
+              pendingLaunchCarrier &&
+              pendingLaunchFighterModel &&
+              fighterBayBusyKey === null
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const [rx, rz] = pos;
+              const [x, z] = clampEndPhaseLaunchPoint(
+                rx,
+                rz,
+                pendingLaunchCarrier,
+                pendingLaunchFighterModel,
+              );
+              setPendingFighterLaunchPlacement((prev) =>
+                prev ? { ...prev, x, z } : prev,
+              );
+              setFighterBayFeedback(
+                "Launch placement preview staged. Right-click for check/X or press Enter.",
+              );
+              return;
+            }
+            if (
+              e.button === 0 &&
+              canPlaceCurrentDisplacedFighter &&
+              currentDisplacedFighterToPlace &&
+              !placeDisplacedFighter.isPending
+            ) {
+              displacedFighterPlacementDraggingRef.current = true;
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {
+                // Pointer capture can fail on synthetic events; dragging still works.
+              }
+              if (!stageDisplacedFighterPlacementAtPointer(e.clientX, e.clientY)) {
+                displacedFighterPlacementDraggingRef.current = false;
+                try {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                } catch {
+                  // Best effort only; some browsers release capture automatically.
+                }
+                return;
+              }
+              setActivationFeedback(
+                "Drag displaced fighter placement, then right-click for check/X.",
+              );
+              return;
+            }
             if (
               e.button === 0 &&
               game.status === "active" &&
@@ -12593,6 +13907,12 @@ export default function GameBoard() {
               if (pos) {
                 const [x, z] = pos;
                 if (selectedUnitIsFighter) {
+                  if (selectedFighterLockedInDogfight) {
+                    setActivationFeedback(
+                      "Fighter is locked in a dogfight; use the Dogfight action instead.",
+                    );
+                    return;
+                  }
                   const headingFallback =
                     movePlan?.kind === "fighter-free"
                       ? movePlan.heading
@@ -12625,6 +13945,14 @@ export default function GameBoard() {
             }
           }}
           onPointerMove={(e) => {
+            if (
+              displacedFighterPlacementDraggingRef.current &&
+              canPlaceCurrentDisplacedFighter &&
+              !placeDisplacedFighter.isPending
+            ) {
+              stageDisplacedFighterPlacementAtPointer(e.clientX, e.clientY);
+              return;
+            }
             // Staged unit drag (deploy phase)
             if (draggingId) {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
@@ -12698,6 +14026,11 @@ export default function GameBoard() {
               selectedUnitData &&
               selectedUnitData.ownerId === myUserId
             ) {
+              if (selectedFighterLockedInDogfight) {
+                setMovePlan(null);
+                setMovementGesture(null);
+                return;
+              }
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
               if (!pos) return;
               const [px, pz] = pos;
@@ -12806,69 +14139,15 @@ export default function GameBoard() {
             }
           }}
           onPointerUp={(e) => {
-            if (
-              pendingFighterLaunchPlacement &&
-              pendingLaunchCarrier &&
-              pendingLaunchFighterModel
-            ) {
-              const target = e.target as HTMLElement | null;
-              const boardTap = target?.tagName?.toLowerCase() === "canvas";
-              if (boardTap) {
-                const pos = screenToBoard(e.clientX, e.clientY, threeRef);
-                if (pos) {
-                  const [rx, rz] = pos;
-                  const [x, z] = clampEndPhaseLaunchPoint(
-                    rx,
-                    rz,
-                    pendingLaunchCarrier,
-                    pendingLaunchFighterModel,
-                  );
-                  setPendingFighterLaunchPlacement((prev) =>
-                    prev ? { ...prev, x, z } : prev,
-                  );
-                  const legal = isEndPhaseLaunchPointLegal(
-                    x,
-                    z,
-                    pendingLaunchCarrier,
-                    pendingLaunchFighterModel,
-                  );
-                  if (!legal) {
-                    setFighterBayFeedback(
-                      "Choose a legal launch point within 3 inches that does not overlap another base.",
-                    );
-                    boardPointerDownRef.current = null;
-                    return;
-                  }
-                  const item = (
-                    pendingLaunchCarrier.carriedFighters ?? []
-                  ).find(
-                    (candidate) =>
-                      candidate.shipModelId ===
-                        pendingFighterLaunchPlacement.shipModelId &&
-                      candidate.available > 0,
-                  );
-                  if (!item) {
-                    setFighterBayFeedback(
-                      `${pendingFighterLaunchPlacement.itemName} is no longer available to launch.`,
-                    );
-                    setPendingFighterLaunchPlacement(null);
-                    boardPointerDownRef.current = null;
-                    return;
-                  }
-                  void launchFighterFromCarrierAtPoint(
-                    pendingLaunchCarrier,
-                    item,
-                    {
-                      hexQ: x,
-                      hexR: z,
-                      heading: pendingFighterLaunchPlacement.heading,
-                    },
-                    { keepCarrierSelected: true },
-                  );
-                  boardPointerDownRef.current = null;
-                  return;
-                }
+            if (displacedFighterPlacementDraggingRef.current) {
+              displacedFighterPlacementDraggingRef.current = false;
+              try {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              } catch {
+                // Best effort only; some browsers release capture automatically.
               }
+              boardPointerDownRef.current = null;
+              return;
             }
             if (
               tapPlacementShip &&
@@ -12951,6 +14230,7 @@ export default function GameBoard() {
             boardPointerDownRef.current = null;
           }}
           onPointerCancel={() => {
+            displacedFighterPlacementDraggingRef.current = false;
             setDraggingId(null);
             if (
               movementGesture?.kind === "forward" ||
@@ -12960,6 +14240,7 @@ export default function GameBoard() {
             boardPointerDownRef.current = null;
           }}
           onPointerLeave={() => {
+            displacedFighterPlacementDraggingRef.current = false;
             setDraggingId(null);
             if (
               movementGesture?.kind === "forward" ||
@@ -13158,14 +14439,30 @@ export default function GameBoard() {
               >
                 {pendingLaunchPlacementLegal ? "legal" : "illegal"}
               </span>
+              {pendingLaunchDogfightContact && pendingLaunchPlacementLegal && (
+                <span className="shrink-0 text-[9px] font-mono uppercase tracking-widest text-fuchsia-200">
+                  Dogfight
+                </span>
+              )}
+              <button
+                type="button"
+                title="Confirm fighter launch"
+                aria-label="Confirm fighter launch"
+                disabled={!pendingLaunchPlacementLegal || fighterBayBusyKey !== null}
+                onClick={confirmFighterLaunchPlacement}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-emerald-300/60 bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                data-testid="button-confirm-fighter-launch-placement"
+              >
+                <Check className="h-4 w-4" />
+              </button>
               <button
                 type="button"
                 aria-label="Cancel fighter launch placement"
-                onClick={() => setPendingFighterLaunchPlacement(null)}
+                onClick={cancelFighterLaunchPlacement}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground"
                 data-testid="button-cancel-fighter-launch-placement"
               >
-                x
+                <X className="h-4 w-4" />
               </button>
             </div>
           )}
@@ -13343,6 +14640,44 @@ export default function GameBoard() {
               </div>
             </div>
           )}
+          {currentDisplacedFighterToPlace && (
+            <div
+              className="fixed left-1/2 top-4 z-50 w-[min(420px,calc(100vw-24px))] -translate-x-1/2 rounded border border-sky-300/50 bg-zinc-950/95 px-3 py-2 font-mono shadow-xl backdrop-blur"
+              data-testid="fighter-displacement-panel"
+            >
+              <div className="text-[10px] uppercase tracking-wider text-sky-200">
+                Displaced fighter placement
+              </div>
+              <div className="mt-1 text-sm text-zinc-100">
+                {canPlaceCurrentDisplacedFighter
+                  ? `Drag within 3" of ${currentDisplacedFighterToPlace.name}'s previous position, then right-click for check/X.`
+                  : "Waiting for the other commander to place displaced fighters."}
+              </div>
+              {canPlaceCurrentDisplacedFighter &&
+                stagedDisplacedFighterPlacement && (
+                  <div
+                    className={`mt-1 text-[11px] ${
+                      !stagedDisplacedFighterPlacementLegal
+                        ? "text-red-200"
+                        : stagedDisplacedFighterDogfightContact
+                          ? "text-fuchsia-200"
+                          : "text-sky-100/75"
+                    }`}
+                  >
+                    {!stagedDisplacedFighterPlacementLegal
+                      ? "Illegal overlap. Drag clear of bases, or cancel."
+                      : stagedDisplacedFighterDogfightContact
+                        ? "Dogfight placement. Confirm to lock contact."
+                        : "Preview staged. Right-click near the fighter to confirm or cancel."}
+                  </div>
+                )}
+              {placeDisplacedFighter.isPending && (
+                <div className="mt-1 text-[11px] text-zinc-400">
+                  Placing fighter...
+                </div>
+              )}
+            </div>
+          )}
           {game.status === "completed" && completedResultTitle && (
             <div
               className="pointer-events-auto absolute left-1/2 top-1/2 z-50 w-[min(420px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded border border-yellow-300/60 bg-black/88 px-5 py-4 text-center shadow-2xl shadow-yellow-950/40 backdrop-blur-md"
@@ -13452,10 +14787,37 @@ export default function GameBoard() {
                     z={pendingFighterLaunchPlacement.z}
                     heading={pendingFighterLaunchPlacement.heading}
                     legal={pendingLaunchPlacementLegal}
+                    dogfightWarning={pendingLaunchDogfightContact}
                     shipMeshTintsEnabled={shipMeshTintsEnabled}
                   />
                 </>
               )}
+            {currentDisplacedFighterToPlace && (
+              <>
+                <CarriedFighterDeploymentGuide
+                  carrier={{
+                    x: currentDisplacedFighterToPlace.x,
+                    z: currentDisplacedFighterToPlace.z,
+                  }}
+                  radius={3}
+                />
+                {stagedDisplacedFighterPlacement &&
+                  stagedDisplacedFighterPlacement.unitId ===
+                    currentDisplacedFighterToPlace.unitId && (
+                    <DisplacedFighterPlacementPreview
+                      x={stagedDisplacedFighterPlacement.x}
+                      z={stagedDisplacedFighterPlacement.z}
+                      baseRadiusInches={
+                        currentDisplacedFighterToPlace.baseRadiusInches
+                      }
+                      unit={currentDisplacedFighterUnit}
+                      legal={stagedDisplacedFighterPlacementLegal}
+                      dogfightWarning={stagedDisplacedFighterDogfightContact}
+                      shipMeshTintsEnabled={shipMeshTintsEnabled}
+                    />
+                  )}
+              </>
+            )}
             {dogfightImpactEffects.map((effect) => (
               <DogfightImpactFlashes
                 key={effect.id}
@@ -13468,13 +14830,19 @@ export default function GameBoard() {
               />
             ))}
             {units.map((unit) => {
+              if (displacedFighterUnitIds.has(unit.id)) return null;
               const unitIsFighter = isFighterUnit(unit);
               if (unit.isDestroyed && unitIsFighter) return null;
               const weaponsForUnit = getWeaponsForUnit(unit);
               const phaseViable =
                 game.status === "active" &&
                 (currentPhase === "movement" || currentPhase === "firing") &&
-                unitEligibleForCurrentPhase(unit);
+                unitEligibleForCurrentPhase(unit) &&
+                (currentPhase !== "firing" ||
+                  activationSegment === null ||
+                  (activationSegment === "fighter"
+                    ? unitIsFighter
+                    : !unitIsFighter));
               // Show the weapon's full-range coverage sector ONLY for the
               // active firing ship while a weapon is selected for targeting.
               let firingArc: { arc: string; range: number } | null = null;
@@ -13535,6 +14903,41 @@ export default function GameBoard() {
                     ? "eligible"
                     : "ineligible";
               }
+              let visualAttackTurn: { key: string; targetHeading: number } | null = null;
+              const visualAttackPhases = new Set<DiceModalPhase>([
+                "attack-rolling",
+                "attack-shown",
+                "damage-ready",
+                "damage-rolling",
+                "damage-shown",
+              ]);
+              if (
+                diceModal &&
+                visualAttackPhases.has(diceModal.phase) &&
+                diceModal.attackerUnitId === unit.id &&
+                isKirishiacVisualBeamWeapon(unit, diceModal.weapon)
+              ) {
+                const target = units.find((candidate) => candidate.id === diceModal.targetId);
+                if (target) {
+                  const [ux, , uz] = hexToWorld(unit.hexQ, unit.hexR);
+                  const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
+                  visualAttackTurn = {
+                    key: `player-${diceModal.attackerUnitId}-${diceModal.weapon.id}-${diceModal.targetId}`,
+                    targetHeading: headingForVisualVector(unit, tx - ux, tz - uz),
+                  };
+                }
+              } else if (aiWeaponFxReplay?.attackerUnitId === unit.id) {
+                const weapon = weaponsForUnit.find((candidate) => candidate.id === aiWeaponFxReplay.weaponId);
+                const target = units.find((candidate) => candidate.id === aiWeaponFxReplay.targetUnitId);
+                if (weapon && target && isKirishiacVisualBeamWeapon(unit, weapon)) {
+                  const [ux, , uz] = hexToWorld(unit.hexQ, unit.hexR);
+                  const [tx, , tz] = hexToWorld(target.hexQ, target.hexR);
+                  visualAttackTurn = {
+                    key: `ai-${aiWeaponFxReplay.key}`,
+                    targetHeading: headingForVisualVector(unit, tx - ux, tz - uz),
+                  };
+                }
+              }
               return (
                 <GameUnit3D
                   key={unit.id}
@@ -13550,6 +14953,7 @@ export default function GameBoard() {
                   previewHeadingDelta={
                     unit.id === selectedUnit ? selectedPreviewHeadingDelta : 0
                   }
+                  visualAttackTurn={visualAttackTurn}
                   phaseViable={phaseViable}
                   firingArc={firingArc}
                   projectedWeaponArcs={projectedWeaponArcs}
@@ -13560,6 +14964,10 @@ export default function GameBoard() {
                   shipHullNamesEnabled={shipHullNamesEnabled}
                   shipStatusDisplayMode={shipStatusDisplayMode}
                   isFighter={unitIsFighter}
+                  scoutSupportEffects={
+                    scoutSupportEffectsByTargetId.get(unit.id) ?? []
+                  }
+                  dogfightLocked={dogfightingFighterUnitIds.has(unit.id)}
                   launchHighlight={
                     endPhaseLaunchPrompt?.mode === "highlight" &&
                     eligibleLaunchCarrierIds.has(unit.id)
@@ -13636,11 +15044,13 @@ export default function GameBoard() {
                   flip={FLIP_MODELS.has(selectedUnitData.modelFilename)}
                   canForward={
                     selectedMovementUi.canForward &&
+                    !selectedFighterLockedInDogfight &&
                     !moveUnit.isPending &&
                     !activateUnit.isPending
                   }
                   canTurn={
                     selectedMovementUi.canTurn &&
+                    !selectedFighterLockedInDogfight &&
                     !moveUnit.isPending &&
                     !activateUnit.isPending
                   }
@@ -13648,6 +15058,12 @@ export default function GameBoard() {
                   activeGesture={movementGesture}
                   onForward={() => {
                     if (isFighterUnit(selectedUnitData)) {
+                      if (selectedFighterLockedInDogfight) {
+                        setActivationFeedback(
+                          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+                        );
+                        return;
+                      }
                       setMovementGesture({ kind: "fighter-free" });
                       setMovePlan((prev) =>
                         prev?.kind === "fighter-free"
@@ -13670,6 +15086,12 @@ export default function GameBoard() {
                   }}
                   onTurnLeft={() => {
                     if (isFighterUnit(selectedUnitData)) {
+                      if (selectedFighterLockedInDogfight) {
+                        setActivationFeedback(
+                          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+                        );
+                        return;
+                      }
                       nudgeTurnPlan(-TABLET_TURN_STEP_DEG, "left");
                       return;
                     }
@@ -13682,6 +15104,12 @@ export default function GameBoard() {
                   }}
                   onTurnRight={() => {
                     if (isFighterUnit(selectedUnitData)) {
+                      if (selectedFighterLockedInDogfight) {
+                        setActivationFeedback(
+                          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+                        );
+                        return;
+                      }
                       nudgeTurnPlan(TABLET_TURN_STEP_DEG, "right");
                       return;
                     }
@@ -13694,6 +15122,12 @@ export default function GameBoard() {
                   }}
                   onFreeTurn={() => {
                     if (isFighterUnit(selectedUnitData)) {
+                      if (selectedFighterLockedInDogfight) {
+                        setActivationFeedback(
+                          "Fighter is locked in a dogfight; use the Dogfight action instead.",
+                        );
+                        return;
+                      }
                       startFreeTurnPlan();
                       return;
                     }
@@ -13730,7 +15164,7 @@ export default function GameBoard() {
               />
             ))}
             <BoardCameraControls
-              disabled={Boolean(draggingId) || Boolean(movementGesture)}
+              disabled={boardCameraInputDisabled}
               focusRequest={cameraFocusRequest}
               viewRequest={cameraViewRequest}
               orientationLocked={cameraOrientationLocked}
@@ -14014,6 +15448,99 @@ export default function GameBoard() {
               )}
             </div>
           )}
+          {fighterLaunchConfirmPopover &&
+            pendingFighterLaunchPlacement &&
+            pendingLaunchPlacementLegal && (
+              <div
+                className="absolute z-40 flex items-center gap-1 rounded border border-sky-300/50 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
+                style={{
+                  left: fighterLaunchConfirmPopover.x,
+                  top: fighterLaunchConfirmPopover.y,
+                }}
+                data-testid="pc-fighter-launch-confirm-popover"
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerMove={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <button
+                  type="button"
+                  title="Confirm fighter launch"
+                  aria-label="Confirm fighter launch"
+                  disabled={fighterBayBusyKey !== null}
+                  onClick={confirmFighterLaunchPlacement}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-pc-confirm-fighter-launch"
+                >
+                  <Check className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  title="Cancel fighter launch"
+                  aria-label="Cancel fighter launch"
+                  disabled={fighterBayBusyKey !== null}
+                  onClick={cancelFighterLaunchPlacement}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-pc-cancel-fighter-launch"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            )}
+          {displacedFighterConfirmPopover &&
+            canPlaceCurrentDisplacedFighter &&
+            stagedDisplacedFighterPlacement && (
+              <div
+                className="absolute z-40 flex items-center gap-1 rounded border border-cyan-300/50 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
+                style={{
+                  left: displacedFighterConfirmPopover.x,
+                  top: displacedFighterConfirmPopover.y,
+                }}
+                data-testid="pc-displaced-fighter-confirm-popover"
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerMove={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <button
+                  type="button"
+                  title={
+                    stagedDisplacedFighterPlacementLegal
+                      ? "Confirm placement"
+                      : "Placement overlaps another base"
+                  }
+                  aria-label="Confirm placement"
+                  disabled={
+                    placeDisplacedFighter.isPending ||
+                    !stagedDisplacedFighterPlacementLegal
+                  }
+                  onClick={confirmDisplacedFighterPlacement}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-confirm-displaced-fighter-placement"
+                >
+                  <Check className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  title="Cancel placement"
+                  aria-label="Cancel placement"
+                  disabled={placeDisplacedFighter.isPending}
+                  onClick={cancelDisplacedFighterPlacement}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-cancel-displaced-fighter-placement"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            )}
           {touchGameControls &&
             currentPhase === "movement" &&
             isSelectedUnitActive &&
@@ -14026,11 +15553,13 @@ export default function GameBoard() {
                 plan={movePlan}
                 canForward={
                   selectedMovementUi.canForward &&
+                  !selectedFighterLockedInDogfight &&
                   !moveUnit.isPending &&
                   !activateUnit.isPending
                 }
                 canTurn={
                   selectedMovementUi.canTurn &&
+                  !selectedFighterLockedInDogfight &&
                   !moveUnit.isPending &&
                   !activateUnit.isPending
                 }
@@ -14626,6 +16155,16 @@ export default function GameBoard() {
                               carried
                             </span>
                           )}
+                          {u.deploymentGroupSize &&
+                            u.deploymentGroupSize > 1 && (
+                              <span
+                                className="text-[9px] text-amber-300/80 shrink-0"
+                                title="Multi-unit purchase"
+                              >
+                                group {u.deploymentGroupOrdinal}/
+                                {u.deploymentGroupSize}
+                              </span>
+                            )}
                           {game?.crewQualityMode === "custom" && (
                             <span
                               className="text-[9px] text-amber-400/80 shrink-0"
@@ -14640,9 +16179,15 @@ export default function GameBoard() {
                               data-testid={`staged-remove-${u.id}`}
                               onClick={(e) => {
                                 e.stopPropagation();
+                                const deploymentGroupId =
+                                  u.deploymentGroupId?.trim() || null;
                                 setStagedUnits((prev) =>
                                   prev.filter(
                                     (s) =>
+                                      (deploymentGroupId
+                                        ? s.deploymentGroupId?.trim() !==
+                                          deploymentGroupId
+                                        : true) &&
                                       s.id !== u.id &&
                                       s.launchedFromStagedId !== u.id,
                                   ),
@@ -15269,15 +16814,12 @@ export default function GameBoard() {
                                     className="h-7 shrink-0 px-2 text-[10px] uppercase tracking-widest"
                                     disabled={disabled}
                                     onClick={() =>
-                                      void launchFighterFromCarrier(
-                                        selectedUnitData,
-                                        item,
-                                      )
+                                      beginFighterLaunchPlacement(selectedUnitData, item)
                                     }
                                   >
                                     {fighterBayBusyKey === key
                                       ? "..."
-                                      : "Launch"}
+                                      : "Place"}
                                   </Button>
                                 </div>
                               );
@@ -17444,7 +18986,6 @@ export default function GameBoard() {
       {dogfightModal && (
         <DogfightResultModal
           modal={dogfightModal}
-          setModal={setDogfightModal}
           onClose={() => {
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             setDogfightModal(null);
@@ -17728,19 +19269,16 @@ function TerrainHazardDiceModal({
 
 function DogfightResultModal({
   modal,
-  setModal,
   onClose,
 }: {
   modal: DogfightModalState;
-  setModal: React.Dispatch<React.SetStateAction<DogfightModalState | null>>;
   onClose: () => void;
 }) {
-  const { result, phase, confirmingClose } = modal;
+  const { result, phase } = modal;
   const rolling = phase === "rolling";
-  const requestClose = () =>
-    setModal((m) => (m ? { ...m, confirmingClose: true } : null));
-  const cancelClose = () =>
-    setModal((m) => (m ? { ...m, confirmingClose: false } : null));
+  const requestClose = () => {
+    if (!rolling) onClose();
+  };
   const winnerName = result.tied
     ? null
     : result.destroyedUnitId === result.targetUnitId
@@ -17863,35 +19401,6 @@ function DogfightResultModal({
           </Button>
         </div>
 
-        {confirmingClose && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center rounded bg-black/70 p-4">
-            <div className="w-full max-w-sm rounded border border-slate-600 bg-slate-950 p-4 text-center shadow-xl">
-              <div className="font-mono text-sm font-bold uppercase text-fuchsia-100">
-                Close dogfight result?
-              </div>
-              <div className="mt-1 font-mono text-xs text-slate-300">
-                The dogfight has already been applied.
-              </div>
-              <div className="mt-3 flex justify-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={cancelClose}
-                  className="border-slate-600 bg-slate-900 font-mono text-xs uppercase text-slate-100 hover:bg-slate-800"
-                >
-                  Keep Open
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={onClose}
-                  className="bg-fuchsia-300 font-mono text-xs font-black uppercase text-black hover:bg-fuchsia-200"
-                >
-                  Close
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
