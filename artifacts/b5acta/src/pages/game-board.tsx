@@ -1429,6 +1429,7 @@ const DEAD_BINTAK_MODEL_FILENAME = "dead-bintak.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
 const DEAD_OMEGA_MODEL_FILENAME = "dead-omega.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
+  "kirishiac1.glb": "kirishiac.glb",
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
 };
 const ROTATING_MODEL_PARTS: Record<
@@ -1490,8 +1491,6 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "flyer.glb",
   "battlecrab.glb",
   DEAD_BATTLECRAB_MODEL_FILENAME,
-  "kirishiac.glb",
-  "kirishiac1.glb",
   "primus.glb",
   "whitestar.glb",
   "avenger.glb",
@@ -1542,10 +1541,14 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "frazi.glb": 0.165,
   "spitfire.glb": 0.165,
 };
+const MODEL_ABSOLUTE_SCALES: Record<string, number> = {
+  "kirishiac.glb": 0.078,
+  "kirishiac1.glb": 0.078,
+};
 const MODEL_VISUAL_Y_OFFSETS: Record<string, number> = {
   [ORION_SPACE_STATION_MODEL_FILENAME]: 2,
-  "kirishiac.glb": 0.2,
-  "kirishiac1.glb": 0.2,
+  "kirishiac.glb": 0.08,
+  "kirishiac1.glb": 0.08,
 };
 const MODEL_CENTER_ON_HORIZONTAL_BOUNDS = new Set([
   "kirishiac.glb",
@@ -1589,6 +1592,64 @@ const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
 
 function modelScaleMultiplier(filename: string): number {
   return MODEL_SCALE_MULTIPLIERS[filename.toLowerCase()] ?? 1;
+}
+
+function modelAbsoluteScale(filename: string): number | null {
+  return MODEL_ABSOLUTE_SCALES[filename.toLowerCase()] ?? null;
+}
+
+function modelRequiresSkeletonClone(filename: string): boolean {
+  const key = filename.toLowerCase();
+  return key === "kirishiac.glb" || key === "kirishiac1.glb";
+}
+
+function isKirishiacModelFilename(filename: string): boolean {
+  const key = filename.toLowerCase();
+  return key === "kirishiac.glb" || key === "kirishiac1.glb";
+}
+
+function createKirishiacRotatorWeightMaskMaterial(
+  sourceMaterial: THREE.Material,
+  mode: "static" | "rotating",
+  rotatorJointIndex = 2,
+): THREE.Material {
+  const maskedMaterial = sourceMaterial.clone();
+  const rotatorJointIndexLiteral = Number.isFinite(rotatorJointIndex)
+    ? rotatorJointIndex.toFixed(1)
+    : "2.0";
+  maskedMaterial.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <common>",
+      `#include <common>
+      varying float vKirishiacRotatorWeight;`,
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <skinbase_vertex>",
+      `vKirishiacRotatorWeight = 0.0;
+      vKirishiacRotatorWeight += skinWeight.x * (1.0 - step(0.5, abs(skinIndex.x - ${rotatorJointIndexLiteral})));
+      vKirishiacRotatorWeight += skinWeight.y * (1.0 - step(0.5, abs(skinIndex.y - ${rotatorJointIndexLiteral})));
+      vKirishiacRotatorWeight += skinWeight.z * (1.0 - step(0.5, abs(skinIndex.z - ${rotatorJointIndexLiteral})));
+      vKirishiacRotatorWeight += skinWeight.w * (1.0 - step(0.5, abs(skinIndex.w - ${rotatorJointIndexLiteral})));
+      #include <skinbase_vertex>`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <common>",
+      `#include <common>
+      varying float vKirishiacRotatorWeight;`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "void main() {",
+      `void main() {
+      ${
+        mode === "static"
+          ? "if (vKirishiacRotatorWeight > 0.5) discard;"
+          : "if (vKirishiacRotatorWeight <= 0.5) discard;"
+      }`,
+    );
+  };
+  maskedMaterial.customProgramCacheKey = () =>
+    `kirishiac-live-${mode}-${rotatorJointIndexLiteral}-rotator-weight-mask`;
+  return maskedMaterial;
 }
 
 function modelVisualYOffset(filename: string): number {
@@ -1897,16 +1958,101 @@ function GlbModel({
   const { scene } = useGLTF(url);
   const filenameKey = filename.toLowerCase();
   const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
+  const kirishiacLayeredRotation = isKirishiacModelFilename(filenameKey);
   const rotatingPartRef = useRef<THREE.Object3D | null>(null);
+  const kirishiacRotatingLayerRef = useRef<THREE.Object3D | null>(null);
   const rotatingPartInitialRotationRef = useRef(0);
   const rotatingPartInitialQuaternionRef = useRef(new THREE.Quaternion());
   const rotatingPartDeltaQuaternionRef = useRef(new THREE.Quaternion());
   const rotatingPartLocalAxisRef = useRef(new THREE.Vector3(0, 1, 0));
   const { cloned, anchors } = useMemo(() => {
     rotatingPartRef.current = null;
+    kirishiacRotatingLayerRef.current = null;
     rotatingPartInitialRotationRef.current = 0;
-    const c = rotatingPartConfig ? cloneSkeleton(scene) : scene.clone(true);
     const anchorNodes: THREE.Object3D[] = [];
+    const cloneShipMaterial = (
+      material: THREE.Material | undefined,
+      maskMode?: "static" | "rotating",
+      rotatorJointIndex?: number,
+    ) => {
+      const materialName = String(material?.name ?? "").toLowerCase();
+      const isKirishiacSpikeMaterial =
+        kirishiacLayeredRotation && materialName.includes("kirishiac flame");
+      const clonedMaterial = material?.clone
+        ? material.clone()
+        : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+      if (isKirishiacSpikeMaterial) {
+        const spikeMaterial = clonedMaterial as THREE.MeshStandardMaterial;
+        if (spikeMaterial.color instanceof THREE.Color) {
+          spikeMaterial.color = spikeMaterial.color.clone().lerp(new THREE.Color("#fff7ad"), 0.34);
+        }
+        if (spikeMaterial.emissive instanceof THREE.Color) {
+          spikeMaterial.emissive = new THREE.Color("#fff7ad");
+          spikeMaterial.emissiveIntensity = 6.5;
+        }
+        clonedMaterial.toneMapped = false;
+      } else if (meshTintsEnabled && "emissive" in clonedMaterial) {
+        (clonedMaterial as THREE.MeshStandardMaterial).emissive =
+          new THREE.Color(tint);
+        (clonedMaterial as THREE.MeshStandardMaterial).emissiveIntensity =
+          0.18;
+      }
+      clonedMaterial.transparent = opacity < 1;
+      clonedMaterial.opacity = opacity;
+      return maskMode
+        ? createKirishiacRotatorWeightMaskMaterial(clonedMaterial, maskMode, rotatorJointIndex)
+        : clonedMaterial;
+    };
+    const cloneShipMaterials = (
+      material: THREE.Material | THREE.Material[] | undefined,
+      maskMode?: "static" | "rotating",
+      rotatorJointIndex?: number,
+    ) =>
+      Array.isArray(material)
+        ? material.map((entry) => cloneShipMaterial(entry, maskMode, rotatorJointIndex))
+        : cloneShipMaterial(material, maskMode, rotatorJointIndex);
+    const prepareMeshMaterials = (root: THREE.Object3D, mode?: "static" | "rotating") => {
+      root.traverse((child: any) => {
+        if (!child.isMesh) return;
+        const childName = String(child.name ?? "").toLowerCase();
+        const geometryName = String(child.geometry?.name ?? "").toLowerCase();
+        if (childName.includes("kirishiac_beam") || geometryName.includes("kirishiac_beam")) {
+          child.visible = false;
+          return;
+        }
+        if (mode === "rotating" && !child.isSkinnedMesh) {
+          child.visible = false;
+          return;
+        }
+        const rotatorJointIndex =
+          child.isSkinnedMesh && child.skeleton?.bones
+            ? child.skeleton.bones.findIndex((bone: THREE.Bone) =>
+                String(bone.name ?? "").toLowerCase().includes("lordship rotator"),
+              )
+            : undefined;
+        const skinMaskJointIndex =
+          typeof rotatorJointIndex === "number" && rotatorJointIndex >= 0
+            ? rotatorJointIndex
+            : undefined;
+        child.material = Array.isArray(child.material)
+          ? cloneShipMaterials(child.material, child.isSkinnedMesh ? mode : undefined, skinMaskJointIndex)
+          : cloneShipMaterials(child.material, child.isSkinnedMesh ? mode : undefined, skinMaskJointIndex);
+      });
+    };
+    const c = kirishiacLayeredRotation
+      ? (() => {
+          const group = new THREE.Group();
+          const staticLayer = cloneSkeleton(scene);
+          const rotatingLayer = cloneSkeleton(scene);
+          prepareMeshMaterials(staticLayer, "static");
+          prepareMeshMaterials(rotatingLayer, "rotating");
+          kirishiacRotatingLayerRef.current = rotatingLayer;
+          group.add(staticLayer, rotatingLayer);
+          return group;
+        })()
+      : rotatingPartConfig || modelRequiresSkeletonClone(filenameKey)
+        ? cloneSkeleton(scene)
+        : scene.clone(true);
     c.traverse((child: any) => {
       const anchorName = String(child.name ?? "").toLowerCase();
       if (
@@ -1933,49 +2079,10 @@ function GlbModel({
       ) {
         anchorNodes.push(child);
       }
-      if (child.isMesh) {
-        const childName = String(child.name ?? "").toLowerCase();
-        const geometryName = String(child.geometry?.name ?? "").toLowerCase();
-        if (childName.includes("kirishiac_beam") || geometryName.includes("kirishiac_beam")) {
-          child.visible = false;
-          return;
-        }
-        const sourceMaterials = Array.isArray(child.material)
-          ? child.material
-          : [child.material];
-        const materials = sourceMaterials.map(
-          (material: THREE.Material | undefined) => {
-            const materialName = String(material?.name ?? "").toLowerCase();
-            const isKirishiacSpikeMaterial =
-              filenameKey.includes("kirishiac") &&
-              materialName.includes("kirishiac flame");
-            const clonedMaterial = material?.clone
-              ? material.clone()
-              : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-            if (isKirishiacSpikeMaterial) {
-              const spikeMaterial = clonedMaterial as THREE.MeshStandardMaterial;
-              if (spikeMaterial.color instanceof THREE.Color) {
-                spikeMaterial.color = spikeMaterial.color.clone().lerp(new THREE.Color("#fff7ad"), 0.34);
-              }
-              if (spikeMaterial.emissive instanceof THREE.Color) {
-                spikeMaterial.emissive = new THREE.Color("#fff7ad");
-                spikeMaterial.emissiveIntensity = 6.5;
-              }
-              clonedMaterial.toneMapped = false;
-            } else if (meshTintsEnabled && "emissive" in clonedMaterial) {
-              (clonedMaterial as THREE.MeshStandardMaterial).emissive =
-                new THREE.Color(tint);
-              (clonedMaterial as THREE.MeshStandardMaterial).emissiveIntensity =
-                0.18;
-            }
-            clonedMaterial.transparent = opacity < 1;
-            clonedMaterial.opacity = opacity;
-            return clonedMaterial;
-          },
-        );
+      if (!kirishiacLayeredRotation && child.isMesh) {
         child.material = Array.isArray(child.material)
-          ? materials
-          : materials[0];
+          ? cloneShipMaterials(child.material)
+          : cloneShipMaterials(child.material);
       }
     });
     if (rotatingPartConfig && rotatingPartRef.current) {
@@ -2013,8 +2120,14 @@ function GlbModel({
       };
     });
     return { cloned: c, anchors: anchorPoints };
-  }, [scene, tint, opacity, meshTintsEnabled, rotatingPartConfig]);
+  }, [scene, tint, opacity, meshTintsEnabled, rotatingPartConfig, kirishiacLayeredRotation]);
   useFrame(({ clock }) => {
+    if (kirishiacRotatingLayerRef.current) {
+      const progress = (clock.getElapsedTime() % 30) / 30;
+      kirishiacRotatingLayerRef.current.rotation.z = progress * Math.PI * 2;
+      kirishiacRotatingLayerRef.current.updateMatrixWorld(true);
+      return;
+    }
     if (!rotatingPartConfig || !rotatingPartRef.current) return;
     const cycleSeconds = Math.max(0.1, rotatingPartConfig.secondsPerRotation);
     const progress = (clock.getElapsedTime() % cycleSeconds) / cycleSeconds;
@@ -2036,7 +2149,7 @@ function GlbModel({
     rotatingPartRef.current.updateMatrixWorld();
   });
   const s = useMemo(
-    () => shipScale(cloned) * modelScaleMultiplier(filename),
+    () => modelAbsoluteScale(filename) ?? shipScale(cloned) * modelScaleMultiplier(filename),
     [cloned, filename],
   );
   const flip = FLIP_MODELS.has(filename);
@@ -2880,9 +2993,11 @@ function BoardModelVisual({
 }) {
   const fighterFilename = canonicalFighterSquadronFilename(filename);
   if (!fighterFilename) {
+    const visualFilename =
+      DEFAULT_VISUAL_MODEL_FILENAMES[filename.toLowerCase()] ?? filename;
     return (
       <ShipModel3D
-        filename={filename}
+        filename={visualFilename}
         tint={tint}
         opacity={opacity}
         meshTintsEnabled={meshTintsEnabled}
@@ -5447,6 +5562,13 @@ type SelfRepairModalState = {
   confirmingClose?: boolean;
 };
 
+type SelfRepairPromptCandidate = {
+  key: string;
+  unitId: number;
+  unitName: string;
+  dice: number;
+};
+
 type SelfRepairResult = {
   dice: number;
   rolls: number[];
@@ -5954,9 +6076,10 @@ function isKirishiacVisualBeamWeapon(
   unit: { name: string; modelFilename: string },
   weapon: Pick<Weapon, "name" | "traits" | "arc">,
 ): boolean {
-  const text = `${unit.name} ${unit.modelFilename} ${weapon.name} ${weapon.traits ?? ""}`.toLowerCase();
+  const text = `${unit.name} ${unit.modelFilename}`.toLowerCase();
+  const weaponName = (weapon.name ?? "").toLowerCase();
   const isForward = /\bf\b|\bforward\b/i.test(weapon.arc ?? "");
-  return isForward && text.includes("kirishiac") && /\bbeam\b/i.test(weapon.traits ?? weapon.name);
+  return isForward && text.includes("kirishiac") && weaponName.includes("hyper graviton blaster");
 }
 
 function effectiveUiAttackDice(weapon: Weapon): number {
@@ -8801,6 +8924,8 @@ export default function GameBoard() {
   const [dogfightTargetPicking, setDogfightTargetPicking] = useState(false);
   const [selfRepairModal, setSelfRepairModal] =
     useState<SelfRepairModalState | null>(null);
+  const [skippedSelfRepairPromptKeys, setSkippedSelfRepairPromptKeys] =
+    useState<Set<string>>(() => new Set());
   const [aiWeaponFxReplay, setAiWeaponFxReplay] =
     useState<AiWeaponFxReplay | null>(null);
   const lastSeenAiWeaponFxKeyRef = useRef<string | null>(null);
@@ -11251,6 +11376,67 @@ export default function GameBoard() {
       : myUserId === game.opponentId
         ? Boolean(game.endPhaseOpponentPassed)
         : false);
+  useEffect(() => {
+    if (currentPhase !== "end") setSkippedSelfRepairPromptKeys(new Set());
+  }, [currentPhase, game?.currentRound]);
+  const selfRepairPromptCandidates = useMemo<SelfRepairPromptCandidate[]>(() => {
+    if (!game || !isMyEndPhaseWindow || myEndPhasePassed) return [];
+    const currentRound = game.currentRound ?? 0;
+    return units
+      .filter((unit) => {
+        if (unit.ownerId !== myUserId || unit.isDestroyed) return false;
+        if (unit.hullPoints <= 0 || unit.hullPoints >= unit.maxHullPoints)
+          return false;
+        if ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
+          return false;
+        if ((unit.lastSelfRepairRound ?? 0) === currentRound) return false;
+        return parseUiSelfRepairDice(getShipModelForUnit(unit)?.traits ?? "") > 0;
+      })
+      .map((unit) => {
+        const dice = parseUiSelfRepairDice(getShipModelForUnit(unit)?.traits ?? "");
+        return {
+          key: `${game.id}:${currentRound}:${myUserId}:${unit.id}`,
+          unitId: unit.id,
+          unitName: unit.name,
+          dice,
+        };
+      });
+  }, [
+    game,
+    getShipModelForUnit,
+    isMyEndPhaseWindow,
+    myEndPhasePassed,
+    myUserId,
+    units,
+  ]);
+  const activeSelfRepairPrompt =
+    selfRepairModal || diceModal || dogfightModal || terrainHazardModal
+      ? null
+      : (selfRepairPromptCandidates.find(
+          (candidate) => !skippedSelfRepairPromptKeys.has(candidate.key),
+        ) ?? null);
+  const skipSelfRepairPrompt = useCallback((candidate: SelfRepairPromptCandidate) => {
+    setSkippedSelfRepairPromptKeys((prev) => {
+      const next = new Set(prev);
+      next.add(candidate.key);
+      return next;
+    });
+  }, []);
+  const repairFromSelfRepairPrompt = useCallback(
+    (candidate: SelfRepairPromptCandidate) => {
+      skipSelfRepairPrompt(candidate);
+      setSelectedUnit(candidate.unitId);
+      const modal: SelfRepairModalState = {
+        unitId: candidate.unitId,
+        unitName: candidate.unitName,
+        dice: candidate.dice,
+        phase: "ready",
+      };
+      setSelfRepairModal(modal);
+      void commitSelfRepair(modal);
+    },
+    [commitSelfRepair, skipSelfRepairPrompt],
+  );
   const unitCanUseDamageControlNow = useCallback(
     (unit: BoardUnit): boolean => {
       if (!isMyEndPhaseWindow || myEndPhasePassed) return false;
@@ -18989,6 +19175,38 @@ export default function GameBoard() {
         </DialogContent>
       </Dialog>
 
+      {activeSelfRepairPrompt && (
+        <div
+          className="fixed left-1/2 top-20 z-[65] w-[min(18rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded border border-sky-300/55 bg-black/90 p-3 text-center shadow-2xl shadow-sky-950/40 backdrop-blur"
+          data-testid="self-repair-prompt"
+        >
+          <div className="font-mono text-sm font-bold uppercase tracking-[0.18em] text-sky-100">
+            Repair {activeSelfRepairPrompt.unitName}?
+          </div>
+          <div className="mt-3 flex justify-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => repairFromSelfRepairPrompt(activeSelfRepairPrompt)}
+              className="bg-sky-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-sky-200"
+              data-testid="button-self-repair-prompt-repair"
+            >
+              Repair
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => skipSelfRepairPrompt(activeSelfRepairPrompt)}
+              className="border-slate-600 bg-slate-950 font-mono text-xs uppercase tracking-widest text-slate-100 hover:bg-slate-800"
+              data-testid="button-self-repair-prompt-skip"
+            >
+              Skip
+            </Button>
+          </div>
+        </div>
+      )}
+
       {diceModal && (
         <DiceRollModal
           modal={diceModal}
@@ -19733,15 +19951,7 @@ function SelfRepairDiceModal({
               <div className="mt-1 font-mono text-xs text-slate-300">
                 The hull repair has already been applied.
               </div>
-              <div className="mt-3 flex justify-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={cancelClose}
-                  className="border-slate-600 bg-slate-900 font-mono text-xs uppercase text-slate-100 hover:bg-slate-800"
-                >
-                  Keep Open
-                </Button>
+              <div className="mt-3 flex justify-center">
                 <Button
                   size="sm"
                   onClick={confirmClose}
@@ -19811,6 +20021,9 @@ function DiceRollModal({
   const critVisible = phase === "crit-rolling" || phase === "crit-shown";
   const crits = result?.criticalsApplied ?? [];
   const hasCrits = crits.length > 0;
+  const ancientSuppressedCrits = result
+    ? Math.max(0, (result.criticalHits ?? 0) - crits.length)
+    : 0;
   const damageDiceCount = result?.damageRolls.length ?? 0;
   const hasDamageDice = damageDiceCount > 0;
   // Final summary only after the entire reveal is done (last crit shown,
@@ -20574,6 +20787,16 @@ function DiceRollModal({
             resolve.
           </div>
         )}
+        {phase === "damage-shown" && ancientSuppressedCrits > 0 && (
+          <div
+            className="mt-2 rounded border border-violet-400/35 bg-violet-500/10 px-2 py-1.5 text-center font-mono text-[11px] text-violet-100"
+            data-testid="ancient-suppressed-crits"
+          >
+            {ancientSuppressedCrits} crit
+            {ancientSuppressedCrits === 1 ? "" : "s"} suppressed by Ancient
+            traits.
+          </div>
+        )}
         {phase === "crit-ready" && (
           <div
             className="mt-3 text-sm font-mono text-red-300/90 text-center py-2 border-t border-red-500/30 pt-3"
@@ -20736,6 +20959,18 @@ function DiceRollModal({
                   {result.criticalHits > 0 && (
                     <span className="text-red-400">{result.criticalHits}C</span>
                   )}
+                </span>
+              </div>
+            )}
+            {ancientSuppressedCrits > 0 && (
+              <div
+                className="flex justify-between gap-3 text-violet-200"
+                data-testid="row-ancient-suppressed-crits"
+              >
+                <span className="text-muted-foreground">Ancient traits</span>
+                <span>
+                  {ancientSuppressedCrits} crit
+                  {ancientSuppressedCrits === 1 ? "" : "s"} suppressed
                 </span>
               </div>
             )}

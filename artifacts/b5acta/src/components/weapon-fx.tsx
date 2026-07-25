@@ -465,7 +465,7 @@ function modelScaleForTargetSizeIgnoring(
   return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
 }
 
-function isKirishiacBeamAttack({
+function isKirishiacAttacker({
   weapon,
   attackerName,
   attackerModelFilename,
@@ -476,6 +476,12 @@ function isKirishiacBeamAttack({
 }): boolean {
   const text = `${attackerName ?? ""} ${attackerModelFilename ?? ""} ${weapon.name ?? ""} ${weapon.traits ?? ""}`.toLowerCase();
   return text.includes("kirishiac");
+}
+
+function isKirishiacMainForwardBeam(weapon: Pick<Weapon, "name" | "traits"> & { arc?: string }): boolean {
+  const name = (weapon.name ?? "").toLowerCase();
+  const arc = (weapon.arc ?? "").toLowerCase();
+  return name.includes("hyper graviton blaster") && (!arc || arc === "forward");
 }
 
 function kirishiacBeamEmitterPoint(from: THREE.Vector3, to: THREE.Vector3): THREE.Vector3 {
@@ -763,9 +769,11 @@ function KirishiacOuterBeamShellFx({
 function KirishiacBeamFx({
   from,
   to,
+  outerShell = true,
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
+  outerShell?: boolean;
 }) {
   const startRef = useRef<number>(performance.now());
   const beamFrom = useMemo(
@@ -774,7 +782,7 @@ function KirishiacBeamFx({
   );
   return (
     <>
-      <KirishiacOuterBeamShellFx from={from} to={to} startRef={startRef} />
+      {outerShell ? <KirishiacOuterBeamShellFx from={from} to={to} startRef={startRef} /> : null}
       <KirishiacInnerCombatBeamFx from={beamFrom} to={to} startRef={startRef} />
     </>
   );
@@ -1589,7 +1597,7 @@ export function WeaponFx({
 }: {
   from: THREE.Vector3;
   to: THREE.Vector3;
-  weapon: Pick<Weapon, "id" | "name" | "traits" | "attackDice">;
+  weapon: Pick<Weapon, "id" | "name" | "traits" | "attackDice" | "arc">;
   attackerFaction: string;
   attackerName?: string;
   attackerModelFilename?: string;
@@ -1599,13 +1607,15 @@ export function WeaponFx({
   const kind = classifyWeapon(weapon);
 
   if (kind === "beam") {
-    if (isKirishiacBeamAttack({ weapon, attackerName, attackerModelFilename })) {
-      const raisedFrom = from.clone();
-      raisedFrom.y += 1;
+    if (isKirishiacAttacker({ weapon, attackerName, attackerModelFilename })) {
       return (
         <>
           <Suspense fallback={null}>
-            <KirishiacBeamFx from={raisedFrom} to={to} />
+            <KirishiacBeamFx
+              from={from}
+              to={to}
+              outerShell={isKirishiacMainForwardBeam(weapon)}
+            />
           </Suspense>
           {Array.from({ length: hits }).map((_, i) => (
             <TargetImpactFx
