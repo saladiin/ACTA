@@ -365,18 +365,12 @@ type SlowLoadingCooldowns = Record<string, number>;
 
 type ParsedShipTraits = ReturnType<typeof parseShipTraits>;
 
-function targetIsShadowOrVorlon(model: { faction?: string | null }): boolean {
-  return /\b(?:shadow|vorlon)\b/i.test(model.faction ?? "");
-}
-
 function stealthPenetrationIgnoresTarget(
   attackerTraits: ParsedShipTraits,
-  targetTraits: ParsedShipTraits,
-  targetModel: { faction?: string | null },
+  _targetTraits: ParsedShipTraits,
+  _targetModel: { faction?: string | null },
 ): boolean {
-  return attackerTraits.stealthPenetration
-    && !targetTraits.ancient
-    && !targetIsShadowOrVorlon(targetModel);
+  return attackerTraits.stealthPenetration;
 }
 
 function criticalAffectsCrew(entry: NonNullable<ReturnType<typeof findEntry>>): boolean {

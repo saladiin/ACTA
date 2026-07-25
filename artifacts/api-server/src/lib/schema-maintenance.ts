@@ -5,6 +5,8 @@ import { SHIP_AI_PROFILE_SEEDS } from "./ai-opponent";
 import { logger } from "./logger";
 
 const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
+  { name: "Lordship", priority: "ancient" },
+  { name: "Kirishiac Lordship", priority: "ancient" },
   { name: "Shadow Cruiser (Ancient)", priority: "armageddon" },
   { name: "Shadow Cruiser", priority: "armageddon" },
   { name: "Sharlin War Cruiser", priority: "war" },
@@ -97,6 +99,8 @@ const POINT_COST_BY_PRIORITY: Record<string, number> = {
 };
 
 const CSV_MODEL_FILENAMES: Record<string, string> = {
+  lordship: "kirishiac1.glb",
+  "kirishiac lordship": "kirishiac1.glb",
   "shadow cruiser (ancient)": "battlecrab.glb",
   "hyperion cruiser": "hyperion.glb",
   "orestes-class battleship": "orestes.glb",
@@ -264,6 +268,44 @@ const BATTLECRAB_WEAPONS = [
     range: 24,
     attackDice: 6,
     traits: "Beam; Precise; Quad Damage",
+  },
+];
+
+const LORDSHIP_WEAPONS = [
+  {
+    name: "Hyper Graviton Blaster",
+    arc: "Forward",
+    range: 20,
+    attackDice: 12,
+    traits: "Beam; Precise; Triple Damage",
+  },
+  {
+    name: "Anti-Gravity Beam",
+    arc: "Forward",
+    range: 12,
+    attackDice: 2,
+    traits: "Mini-Beam; Precise",
+  },
+  {
+    name: "Anti-Gravity Beam",
+    arc: "Aft",
+    range: 12,
+    attackDice: 2,
+    traits: "Mini-Beam; Precise",
+  },
+  {
+    name: "Anti-Gravity Beam",
+    arc: "Port",
+    range: 12,
+    attackDice: 2,
+    traits: "Mini-Beam; Precise",
+  },
+  {
+    name: "Anti-Gravity Beam",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 2,
+    traits: "Mini-Beam; Precise",
   },
 ];
 
@@ -2064,6 +2106,34 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     description:
       "Narn Regime Rongoth-class destroyer with heavy pulse fire and light ion support",
     weapons: RONGOTH_WEAPONS,
+  },
+  {
+    name: "Lordship",
+    aliases: ["Lordship", "The Lordship", "Kirishiac Lordship"],
+    filename: "kirishiac1.glb",
+    faction: "Kirishiac",
+    pointCost: 600,
+    priorityLevel: "ancient",
+    shipClass: "Ancient Warship",
+    hull: 6,
+    troops: 0,
+    damage: 150,
+    damageThreshold: 15,
+    hullRating: 6,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Ancient",
+    traits:
+      "Ancient; Adaptive Armour; Advanced Anti-Fighter 8; Advanced Jump Engine; Flight Computer; Stealth Penetration; Redundant Systems; Self Repair:2d6",
+    smallCraft: null,
+    weaponRange: 20,
+    weaponDamage: 12,
+    description:
+      "Kirishiac Lordship ancient warship with orbiting anti-gravity beam segments and a hyper graviton blaster",
+    weapons: LORDSHIP_WEAPONS,
   },
 ];
 
