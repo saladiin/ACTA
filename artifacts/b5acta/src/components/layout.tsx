@@ -50,7 +50,7 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
 
   return (
     <div
-      className="min-h-[100dvh] flex flex-col md:flex-row bg-background text-foreground selection:bg-primary/30"
+      className="min-h-[100dvh] pb-5 flex flex-col md:flex-row bg-background text-foreground selection:bg-primary/30"
       data-input={inputProfile.input}
       data-layout={inputProfile.layout}
       data-platform={inputProfile.platform}
@@ -226,6 +226,12 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
           {children}
         </div>
       </main>
+      <div
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-[55] border-t border-border/70 bg-black/85 px-3 py-1 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground backdrop-blur"
+        data-testid="mongoose-attribution-banner"
+      >
+        Based on 'Babylon 5: A Call to Arms' by Mongoose Publishing
+      </div>
     </div>
   );
 }
