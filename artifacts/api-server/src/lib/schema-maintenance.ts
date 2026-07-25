@@ -99,8 +99,8 @@ const POINT_COST_BY_PRIORITY: Record<string, number> = {
 };
 
 const CSV_MODEL_FILENAMES: Record<string, string> = {
-  lordship: "kirishiac1.glb",
-  "kirishiac lordship": "kirishiac1.glb",
+  lordship: "kirishiac.glb",
+  "kirishiac lordship": "kirishiac.glb",
   "shadow cruiser (ancient)": "battlecrab.glb",
   "hyperion cruiser": "hyperion.glb",
   "orestes-class battleship": "orestes.glb",
@@ -2110,7 +2110,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Lordship",
     aliases: ["Lordship", "The Lordship", "Kirishiac Lordship"],
-    filename: "kirishiac1.glb",
+    filename: "kirishiac.glb",
     faction: "Kirishiac",
     pointCost: 600,
     priorityLevel: "ancient",

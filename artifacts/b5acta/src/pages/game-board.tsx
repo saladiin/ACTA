@@ -1490,6 +1490,8 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "flyer.glb",
   "battlecrab.glb",
   DEAD_BATTLECRAB_MODEL_FILENAME,
+  "kirishiac.glb",
+  "kirishiac1.glb",
   "primus.glb",
   "whitestar.glb",
   "avenger.glb",
@@ -1523,6 +1525,8 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "sharlin.glb": 1.5,
   "avioki.glb": 1.5,
   "battlecrab.glb": 1.5,
+  "kirishiac.glb": 0.55,
+  "kirishiac1.glb": 0.55,
   [ORION_SPACE_STATION_MODEL_FILENAME]: 3,
   [DEAD_BATTLECRAB_MODEL_FILENAME]: 0.975,
   [DEAD_BINTAK_MODEL_FILENAME]: 1.75,
@@ -1540,9 +1544,13 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
 };
 const MODEL_VISUAL_Y_OFFSETS: Record<string, number> = {
   [ORION_SPACE_STATION_MODEL_FILENAME]: 2,
-  "kirishiac.glb": 1,
-  "kirishiac1.glb": 1,
+  "kirishiac.glb": 0.2,
+  "kirishiac1.glb": 0.2,
 };
+const MODEL_CENTER_ON_HORIZONTAL_BOUNDS = new Set([
+  "kirishiac.glb",
+  "kirishiac1.glb",
+]);
 const FIGHTER_SQUADRON_MODELS = new Set([
   "aurora.glb",
   "black-omega.glb",
@@ -1976,6 +1984,22 @@ function GlbModel({
         rotatingPartRef.current,
         rotatingPartConfig.pivotModelPosition,
       );
+    }
+    if (MODEL_CENTER_ON_HORIZONTAL_BOUNDS.has(filenameKey)) {
+      c.updateMatrixWorld(true);
+      const visibleBounds = new THREE.Box3();
+      const childBounds = new THREE.Box3();
+      c.traverse((child: any) => {
+        if (!child.isMesh || child.visible === false) return;
+        childBounds.setFromObject(child);
+        if (!childBounds.isEmpty()) visibleBounds.union(childBounds);
+      });
+      if (!visibleBounds.isEmpty()) {
+        const center = new THREE.Vector3();
+        visibleBounds.getCenter(center);
+        c.position.x -= center.x;
+        c.position.z -= center.z;
+      }
     }
     c.updateMatrixWorld(true);
     const rootInverse = new THREE.Matrix4().copy(c.matrixWorld).invert();
