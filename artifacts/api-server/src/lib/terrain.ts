@@ -42,6 +42,7 @@ const BOARD_MIN_X = -24;
 const BOARD_MAX_X = 24;
 const BOARD_MIN_Z = -36;
 const BOARD_MAX_Z = 36;
+const TERRAIN_PLACEMENT_CLEARANCE_EPSILON = 0.01;
 const BOARD_RECT: DeploymentRect = {
   type: "rect",
   xMin: BOARD_MIN_X,
@@ -186,9 +187,60 @@ function pointAllowedForTerrain(
   forbiddenRects: DeploymentRect[],
   existing: TerrainObject[],
 ): boolean {
-  if (!circleFullyInsideRect(x, z, radius, BOARD_RECT)) return false;
-  if (forbiddenRects.some((rect) => circleIntersectsRect(x, z, radius, rect))) return false;
-  return !existing.some((field) => Math.hypot(field.x - x, field.z - z) < field.radiusInches + radius + 1);
+  const validatedRadius = radius + TERRAIN_PLACEMENT_CLEARANCE_EPSILON;
+  if (!circleFullyInsideRect(x, z, validatedRadius, BOARD_RECT)) return false;
+  if (forbiddenRects.some((rect) => circleIntersectsRect(x, z, validatedRadius, rect))) return false;
+  return !existing.some(
+    (field) =>
+      Math.hypot(field.x - x, field.z - z) <
+      field.radiusInches + radius + 1 + TERRAIN_PLACEMENT_CLEARANCE_EPSILON,
+  );
+}
+
+function findBoardWideTerrainPosition(
+  radius: number,
+  forbiddenRects: DeploymentRect[],
+  existing: TerrainObject[],
+): { x: number; z: number } | null {
+  let best: { x: number; z: number; clearance: number } | null = null;
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    const x = randomBetween(BOARD_MIN_X + radius, BOARD_MAX_X - radius);
+    const z = randomBetween(BOARD_MIN_Z + radius, BOARD_MAX_Z - radius);
+    if (!pointAllowedForTerrain(x, z, radius, forbiddenRects, existing)) continue;
+    const clearance = existing.length === 0
+      ? Number.POSITIVE_INFINITY
+      : Math.min(
+          ...existing.map(
+            (field) => Math.hypot(field.x - x, field.z - z) - field.radiusInches - radius,
+          ),
+        );
+    if (!best || clearance > best.clearance) best = { x, z, clearance };
+  }
+  return best ? { x: best.x, z: best.z } : null;
+}
+
+function automaticTerrainObject(
+  kind: TerrainKind,
+  ordinal: number,
+  x: number,
+  z: number,
+  radius: number,
+  asteroidVariant: (typeof ASTEROID_FIELD_VARIANTS)[number] | null,
+): TerrainObject {
+  return {
+    id: kind === "gas-cloud" ? `gas-cloud-${ordinal}` : `asteroid-field-${ordinal}`,
+    kind,
+    name: kind === "gas-cloud" ? `Dust Cloud ${ordinal}` : `Asteroid Field ${ordinal}`,
+    x: Number(x.toFixed(3)),
+    z: Number(z.toFixed(3)),
+    radiusInches: radius,
+    density: kind === "gas-cloud" ? 0 : asteroidDensityFromD6(),
+    modelFilename: kind === "gas-cloud" ? "" : asteroidVariant?.modelFilename ?? ASTEROID_FIELD_MODEL,
+    rotationDeg: Math.floor(randomBetween(0, 360)),
+    footprintScaleX: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
+    footprintScaleZ: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
+    shapeSeed: Math.floor(randomBetween(1, 1_000_000)),
+  };
 }
 
 export function normalizeTerrainSelection(value: unknown): TerrainSelection {
@@ -250,22 +302,32 @@ export function generateTerrainConfig(
       const z = randomBetween(zMin + radius, zMax - radius);
       if (!pointAllowedForTerrain(x, z, radius, forbiddenRects, objects)) continue;
       const ordinal = objects.length + 1;
-      objects.push({
-        id: kind === "gas-cloud" ? `gas-cloud-${ordinal}` : `asteroid-field-${ordinal}`,
-        kind,
-        name: kind === "gas-cloud" ? `Dust Cloud ${ordinal}` : `Asteroid Field ${ordinal}`,
-        x: Number(x.toFixed(3)),
-        z: Number(z.toFixed(3)),
-        radiusInches: radius,
-        density: kind === "gas-cloud" ? 0 : asteroidDensityFromD6(),
-        modelFilename: kind === "gas-cloud" ? "" : asteroidVariant?.modelFilename ?? ASTEROID_FIELD_MODEL,
-        rotationDeg: Math.floor(randomBetween(0, 360)),
-        footprintScaleX: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
-        footprintScaleZ: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
-        shapeSeed: Math.floor(randomBetween(1, 1_000_000)),
-      });
+      objects.push(automaticTerrainObject(kind, ordinal, x, z, radius, asteroidVariant));
       break;
     }
+  }
+  for (let fillAttempt = 0; objects.length < count && fillAttempt < count * 3; fillAttempt += 1) {
+    let asteroidVariant = kind === "asteroid-field" ? asteroidFieldVariantFromD6() : null;
+    let radius = kind === "gas-cloud"
+      ? Number(randomBetween(GAS_CLOUD_MIN_RADIUS_INCHES, GAS_CLOUD_MAX_RADIUS_INCHES).toFixed(3))
+      : asteroidVariant?.radiusInches ?? ASTEROID_FIELD_RADIUS_INCHES;
+    let position = findBoardWideTerrainPosition(radius, forbiddenRects, objects);
+    if (!position && kind === "asteroid-field" && radius > ASTEROID_FIELD_RADIUS_INCHES) {
+      asteroidVariant = ASTEROID_FIELD_VARIANTS[0];
+      radius = ASTEROID_FIELD_RADIUS_INCHES;
+      position = findBoardWideTerrainPosition(radius, forbiddenRects, objects);
+    }
+    if (!position) continue;
+    objects.push(
+      automaticTerrainObject(
+        kind,
+        objects.length + 1,
+        position.x,
+        position.z,
+        radius,
+        asteroidVariant,
+      ),
+    );
   }
   return { version: 1, objects };
 }

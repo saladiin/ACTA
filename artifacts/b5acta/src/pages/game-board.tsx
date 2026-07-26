@@ -6149,15 +6149,29 @@ type TerrainHazardRoll = {
   fieldId: string;
   fieldName: string;
   density: number;
+  segmentInchesInside?: number;
   inchesInside: number;
+  checkReused?: boolean;
+  automaticFailure?: boolean;
   checkRolls: number[];
   crewQuality?: number;
   checkTotal: number;
   passed: boolean;
   attackDice: number;
+  cumulativeAttackDice?: number;
   hitThreshold: number;
   attackRolls: number[];
   hits: number;
+  dodgeRolls?: number[];
+  dodgesSuccessful?: number;
+  remainingHits?: number;
+  shieldedHits?: number;
+  attackTableRolls?: number[];
+  bulkheadHits?: number;
+  solidHits?: number;
+  criticalHits?: number;
+  superAp?: boolean;
+  damageMultiplier?: number;
   damage: number;
   crewLost: number;
   damageTable?: {
@@ -10187,9 +10201,9 @@ export default function GameBoard() {
   );
   const stageDisplacedFighterPlacementAtPointer = useCallback(
     (clientX: number, clientY: number) => {
-      if (!currentDisplacedFighterToPlace) return false;
+      if (!currentDisplacedFighterToPlace) return null;
       const pos = screenToBoard(clientX, clientY, threeRef);
-      if (!pos) return false;
+      if (!pos) return null;
       const [rawX, rawZ] = pos;
       const next = resolveDisplacedFighterPlacementCandidate(
         currentDisplacedFighterToPlace,
@@ -10203,13 +10217,38 @@ export default function GameBoard() {
         z: next.z,
       });
       setDisplacedFighterConfirmPopover(null);
-      return true;
+      return { x: next.x, z: next.z };
     },
     [
       currentDisplacedFighterToPlace,
       resolveDisplacedFighterPlacementCandidate,
       stagedDisplacedFighterPlacement,
     ],
+  );
+  const showDisplacedFighterConfirmPopoverAtBoardPoint = useCallback(
+    (x: number, z: number, container: HTMLElement) => {
+      const width = 92;
+      const height = 48;
+      const projected = boardToScreen(x, z, threeRef);
+      const left = Math.max(
+        8,
+        Math.min(
+          container.clientWidth - width - 8,
+          (projected?.x ?? container.clientWidth / 2) + 18,
+        ),
+      );
+      const top = Math.max(
+        8,
+        Math.min(
+          container.clientHeight - height - 8,
+          (projected?.y ?? container.clientHeight / 2) - height / 2,
+        ),
+      );
+      setMoveConfirmPopover(null);
+      setFighterLaunchConfirmPopover(null);
+      setDisplacedFighterConfirmPopover({ x: left, y: top });
+    },
+    [],
   );
   const enemyFighterContactsForUnit = useCallback(
     (
@@ -11272,9 +11311,15 @@ export default function GameBoard() {
   );
   const showTerrainHazardsForMove = useCallback(
     (updatedUnit: TerrainHazardMoveResult) => {
-      const hazards = Array.isArray(updatedUnit.asteroidHazards)
+      const hazards = (Array.isArray(updatedUnit.asteroidHazards)
         ? updatedUnit.asteroidHazards
-        : [];
+        : []).filter(
+          (hazard) =>
+            !hazard.checkReused ||
+            hazard.attackDice > 0 ||
+            hazard.damage > 0 ||
+            hazard.crewLost > 0,
+        );
       if (hazards.length === 0) return;
       setTerrainHazardModal({
         unitName: updatedUnit.name,
@@ -14903,7 +14948,9 @@ export default function GameBoard() {
                 return;
               }
               setActivationFeedback(
-                "Drag displaced fighter placement, then right-click for check/X.",
+                isTouchInput
+                  ? "Drag displaced fighter placement, then use check/X to confirm or cancel."
+                  : "Drag displaced fighter placement, then right-click for check/X.",
               );
               return;
             }
@@ -15166,11 +15213,22 @@ export default function GameBoard() {
           }}
           onPointerUp={(e) => {
             if (displacedFighterPlacementDraggingRef.current) {
+              const finalPlacement = stageDisplacedFighterPlacementAtPointer(
+                e.clientX,
+                e.clientY,
+              );
               displacedFighterPlacementDraggingRef.current = false;
               try {
                 e.currentTarget.releasePointerCapture(e.pointerId);
               } catch {
                 // Best effort only; some browsers release capture automatically.
+              }
+              if (isTouchInput && finalPlacement) {
+                showDisplacedFighterConfirmPopoverAtBoardPoint(
+                  finalPlacement.x,
+                  finalPlacement.z,
+                  e.currentTarget,
+                );
               }
               boardPointerDownRef.current = null;
               return;
@@ -19823,7 +19881,7 @@ export default function GameBoard() {
         </div>
       </div>
 
-      {/* ── DICE ROLL MODAL ── */}
+      {/* Result and confirmation modals */}
       {/* AI firing activation summary */}
       <Dialog
         open={pendingAiFiringSummary !== null}
@@ -20498,7 +20556,12 @@ function TerrainHazardDiceModal({
                     {hazard.fieldName}
                   </div>
                   <div className="mt-1 font-mono text-[10px] text-slate-400">
-                    {hazard.inchesInside}" through field - density {hazard.density}
+                    {hazard.inchesInside}" cumulative through field
+                    {hazard.segmentInchesInside != null &&
+                    Math.abs(hazard.segmentInchesInside - hazard.inchesInside) > 0.01
+                      ? ` (${hazard.segmentInchesInside}" this segment)`
+                      : ""}
+                    {" - "}density {hazard.density}
                   </div>
                 </div>
                 <div
@@ -20510,7 +20573,9 @@ function TerrainHazardDiceModal({
                 >
                   {rolling
                     ? "Rolling"
-                    : hazard.passed
+                    : hazard.automaticFailure
+                      ? "Automatic Impact"
+                      : hazard.passed
                       ? "Check Passed"
                       : "Check Failed"}
                 </div>
@@ -20518,30 +20583,34 @@ function TerrainHazardDiceModal({
 
               <div className="mt-3">
                 <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-                  Density Check - 1D6 + CQ need {hazard.density}+
+                  {hazard.automaticFailure
+                    ? "Adrift ship - density check automatically failed"
+                    : `Density Check - 1D6 + CQ need ${hazard.density}+`}
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {hazard.checkRolls.map((roll, idx) => (
-                    <DiceFace
-                      key={`${hazard.fieldId}-check-${idx}`}
-                      value={roll}
-                      rolling={rolling}
-                      tone={hazard.passed ? "solid" : "bulkhead"}
-                    />
-                  ))}
-                  <span className="font-mono text-xs font-semibold text-slate-400">
-                    + CQ {hazard.crewQuality ?? 0}
-                  </span>
-                  <span className="font-mono text-sm font-bold text-slate-200">
-                    {rolling ? "..." : `= ${hazard.checkTotal}`}
-                  </span>
-                </div>
+                {!hazard.automaticFailure && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {hazard.checkRolls.map((roll, idx) => (
+                      <DiceFace
+                        key={`${hazard.fieldId}-check-${idx}`}
+                        value={roll}
+                        rolling={rolling}
+                        tone={hazard.passed ? "solid" : "bulkhead"}
+                      />
+                    ))}
+                    <span className="font-mono text-xs font-semibold text-slate-400">
+                      + CQ {hazard.crewQuality ?? 0}
+                    </span>
+                    <span className="font-mono text-sm font-bold text-slate-200">
+                      {rolling ? "..." : `= ${hazard.checkTotal}`}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {!hazard.passed && (
                 <div className="mt-4">
                   <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-                    Asteroid Attack - {hazard.attackDice}AD vs Hull {hazard.hitThreshold}+
+                    Asteroid Attack - {hazard.attackDice}AD vs Hull {hazard.hitThreshold}+ - Super AP, Triple Damage
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     {hazard.attackRolls.map((roll, idx) => (
@@ -20558,10 +20627,44 @@ function TerrainHazardDiceModal({
                       </span>
                     )}
                   </div>
+                  {(hazard.dodgeRolls?.length ?? 0) > 0 && (
+                    <div className="mt-3">
+                      <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                        Dodge - {hazard.dodgesSuccessful ?? 0} avoided
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {hazard.dodgeRolls?.map((roll, idx) => (
+                          <DiceFace
+                            key={`${hazard.fieldId}-dodge-${idx}`}
+                            value={roll}
+                            rolling={rolling}
+                            tone="solid"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(hazard.attackTableRolls?.length ?? 0) > 0 && (
+                    <div className="mt-3">
+                      <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                        Attack Table - {hazard.bulkheadHits ?? 0} bulkhead, {hazard.solidHits ?? 0} solid, {hazard.criticalHits ?? 0} critical
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {hazard.attackTableRolls?.map((roll, idx) => (
+                          <DiceFace
+                            key={`${hazard.fieldId}-table-${idx}`}
+                            value={roll}
+                            rolling={rolling}
+                            tone={roll === 1 ? "bulkhead" : roll === 6 ? "crit" : "solid"}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-2 font-mono text-xs text-slate-200">
                     {rolling
                       ? "Resolving impact..."
-                      : `${hazard.hits} hit(s), ${hazard.damage} damage, ${hazard.crewLost} crew`}
+                      : `${hazard.hits} hit(s), ${hazard.dodgesSuccessful ?? 0} dodged, ${hazard.shieldedHits ?? 0} shielded, ${hazard.damage} damage, ${hazard.crewLost} crew`}
                   </div>
                   {!rolling && hazard.damageTable && (
                     <div className="mt-1 font-mono text-[10px] text-orange-200/90">

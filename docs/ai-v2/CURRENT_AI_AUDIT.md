@@ -4,6 +4,16 @@ Status: **REFERENCE SNAPSHOT - DO NOT TREAT AS IMPLEMENTATION AUTHORIZATION**
 
 Audit date: 2026-07-26
 
+Implementation update, 2026-07-26:
+
+- AI V1 now continues through its remaining legal weapon systems during one
+  firing activation, refreshing the attacker and targets after every shot.
+- The result is summarized for the human player by target, while individual
+  weapon attacks remain in the attack audit log.
+- This is sequential greedy selection, not the deferred complete firing-package
+  planner. Coordinated declarations, damage reservations, and Attack Dice split
+  planning remain future AI V2 work.
+
 ## Scope
 
 This audit records the state examined during the AI design discussion. Source
@@ -96,9 +106,15 @@ ships by tactical urgency, such as:
 
 ### Firing
 
-The current AI evaluates eligible attacks, selects a weapon and target, fires,
-and can then end the firing activation. This leaves multiweapon capital ships
-unable to plan and resolve their full legal firing package intelligently.
+The audited AI originally selected one weapon and target, fired, and ended the
+firing activation. AI V1 now repeats that existing choice after every shot
+until no legal unfired weapon remains. This allows multiweapon capital ships to
+use their legal systems, retarget after destruction, and produce a grouped
+player-facing summary.
+
+The lightweight change does not plan the whole package in advance. A later
+weapon cannot reserve damage or influence the first weapon's choice, and the AI
+does not yet plan Attack Dice splitting.
 
 Attack value does not comprehensively account for:
 
@@ -206,4 +222,3 @@ ship identity, whole-activation planning, and fleet intent are under-modeled.
 The recommended path is an additive, feature-flagged AI V2 built after the
 dependency gates are understood. An all-at-once replacement inside the current
 route module is specifically not recommended.
-

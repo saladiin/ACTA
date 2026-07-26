@@ -71,6 +71,11 @@ import {
   type TerrainKind,
 } from "../lib/terrain";
 import {
+  additionalAsteroidAttackDice,
+  cumulativeAsteroidAttackDice,
+  resolveAsteroidAttack,
+} from "../lib/asteroid-hazards";
+import {
   CreateGameBody,
   GetGameParams,
   AcceptGameParams,
@@ -934,18 +939,44 @@ type AsteroidMovementHazard = {
   fieldId: string;
   fieldName: string;
   density: number;
+  segmentInchesInside: number;
   inchesInside: number;
+  cumulativeInchesInsideExact: number;
+  checkReused: boolean;
+  automaticFailure: boolean;
   checkRolls: number[];
   crewQuality: number;
   checkTotal: number;
   passed: boolean;
   attackDice: number;
+  cumulativeAttackDice: number;
   hitThreshold: number;
   attackRolls: number[];
   hits: number;
+  dodgeRolls: number[];
+  dodgesSuccessful: number;
+  remainingHits: number;
+  shieldedHits: number;
+  attackTableRolls: number[];
+  bulkheadHits: number;
+  solidHits: number;
+  criticalHits: number;
+  superAp: true;
+  damageMultiplier: 3;
   damage: number;
   crewLost: number;
   damageTable: { overkill: number; roll: number; total: number; outcome: "adrift" | "destroyed" | "exploding-end-of-next" } | null;
+};
+
+type AsteroidMovementSegment = {
+  start: { x: number; z: number };
+  end: { x: number; z: number };
+};
+
+type AsteroidMovementHazardOptions = {
+  segments?: AsteroidMovementSegment[];
+  automaticFailure?: boolean;
+  reusePriorActivation?: boolean;
 };
 
 function pointInsideCircle(
@@ -1062,11 +1093,53 @@ function segmentLengthInsidePolygon(
 function formatAsteroidMovementHazards(hazards: AsteroidMovementHazard[]): string {
   if (hazards.length === 0) return "";
   const parts = hazards.map((hazard) => {
+    if (hazard.automaticFailure) {
+      return `${hazard.fieldName} automatically struck the adrift ship; asteroid attack ${hazard.attackDice} AD (Super AP, Triple Damage) scored ${hazard.hits} hit(s), ${hazard.damage} damage, ${hazard.crewLost} crew`;
+    }
     const check = `${hazard.fieldName} density ${hazard.density} check ${hazard.checkTotal} (${hazard.checkRolls[0]} + CQ ${hazard.crewQuality})`;
-    if (hazard.passed) return `${check} passed`;
-    return `${check} failed; asteroid attack ${hazard.attackDice} AD vs Hull ${hazard.hitThreshold}+ scored ${hazard.hits} hit(s), ${hazard.damage} damage, ${hazard.crewLost} crew`;
+    if (hazard.passed) {
+      return hazard.checkReused
+        ? `${hazard.fieldName} continued traversal (${hazard.inchesInside}" cumulative); prior density check passed`
+        : `${check} passed`;
+    }
+    const checkLabel = hazard.checkReused ? `${hazard.fieldName} prior density check failed` : `${check} failed`;
+    return `${checkLabel}; asteroid attack ${hazard.attackDice} AD (Super AP, Triple Damage) vs Hull ${hazard.hitThreshold}+ scored ${hazard.hits} hit(s), ${hazard.damage} damage, ${hazard.crewLost} crew`;
   });
   return ` Asteroids: ${parts.join("; ")}.`;
+}
+
+async function priorAsteroidHazardsForActivation(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  unitId: number,
+): Promise<Map<string, AsteroidMovementHazard>> {
+  const rows = await tx.select({ payload: gameMovementAuditLogsTable.payload })
+    .from(gameMovementAuditLogsTable)
+    .where(and(
+      eq(gameMovementAuditLogsTable.gameId, game.id),
+      eq(gameMovementAuditLogsTable.round, game.currentRound),
+      eq(gameMovementAuditLogsTable.phase, game.phase),
+      eq(gameMovementAuditLogsTable.unitId, unitId),
+    ));
+  const byField = new Map<string, AsteroidMovementHazard>();
+  for (const row of rows) {
+    const rawHazards = row.payload && typeof row.payload === "object"
+      ? (row.payload as Record<string, unknown>).asteroidHazards
+      : null;
+    if (!Array.isArray(rawHazards)) continue;
+    for (const raw of rawHazards) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const hazard = raw as Partial<AsteroidMovementHazard>;
+      if (typeof hazard.fieldId !== "string") continue;
+      const previous = byField.get(hazard.fieldId);
+      const cumulative = Number(hazard.cumulativeInchesInsideExact ?? hazard.inchesInside) || 0;
+      const previousCumulative = Number(previous?.cumulativeInchesInsideExact ?? previous?.inchesInside) || 0;
+      if (!previous || cumulative >= previousCumulative) {
+        byField.set(hazard.fieldId, hazard as AsteroidMovementHazard);
+      }
+    }
+  }
+  return byField;
 }
 
 async function applyAsteroidMovementHazards(
@@ -1076,22 +1149,29 @@ async function applyAsteroidMovementHazards(
   unitAfterMove: typeof gameUnitsTable.$inferSelect,
   moveModel: typeof shipModelsTable.$inferSelect,
   actualStepInches: number,
+  options: AsteroidMovementHazardOptions = {},
 ): Promise<{ unit: typeof gameUnitsTable.$inferSelect; hazards: AsteroidMovementHazard[]; gameCompleted: boolean; winnerId: string | null }> {
   if (actualStepInches <= 1e-6) {
     return { unit: unitAfterMove, hazards: [], gameCompleted: false, winnerId: null };
   }
 
-  const start = { x: unitBeforeMove.hexQ, z: unitBeforeMove.hexR };
-  const end = { x: unitAfterMove.hexQ, z: unitAfterMove.hexR };
+  const movementSegments = options.segments?.filter(
+    (segment) => Math.hypot(segment.end.x - segment.start.x, segment.end.z - segment.start.z) > 1e-6,
+  ) ?? [{
+    start: { x: unitBeforeMove.hexQ, z: unitBeforeMove.hexR },
+    end: { x: unitAfterMove.hexQ, z: unitAfterMove.hexR },
+  }];
   const fields = normalizeTerrainConfig(game.terrainConfig).objects.filter((field) => field.kind === "asteroid-field");
   const hazardSegments = fields
     .map((field) => {
       const polygon = terrainObjectPolygon(field);
       return {
         field,
-        inchesInside: polygon
-          ? segmentLengthInsidePolygon(start, end, polygon)
-          : segmentLengthInsideCircle(start, end, { x: field.x, z: field.z }, field.radiusInches),
+        inchesInside: movementSegments.reduce((total, segment) => total + (
+          polygon
+            ? segmentLengthInsidePolygon(segment.start, segment.end, polygon)
+            : segmentLengthInsideCircle(segment.start, segment.end, { x: field.x, z: field.z }, field.radiusInches)
+        ), 0),
       };
     })
     .filter((entry) => entry.inchesInside > 0.01);
@@ -1099,57 +1179,105 @@ async function applyAsteroidMovementHazards(
     return { unit: unitAfterMove, hazards: [], gameCompleted: false, winnerId: null };
   }
 
-  const hitThreshold = Math.max(2, Math.min(6, Math.trunc(moveModel.hullRating || 4)));
+  const priorHazards = options.reusePriorActivation === false
+    ? new Map<string, AsteroidMovementHazard>()
+    : await priorAsteroidHazardsForActivation(tx, game, unitAfterMove.id);
   const movingFighter = shipModelIsFighter(moveModel);
+  const moveCritRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unitAfterMove.id));
+  const moveCrits = deriveCritEffects((moveCritRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(row => ({
+    effectKey: row.effectKey,
+    randomArc: row.randomArc,
+    randomWeaponId: row.randomWeaponId,
+    lostTraits: row.lostTraits ?? [],
+  })));
+  const targetTraits = parseShipTraits(filterLostTraits(moveModel.traits, moveCrits.lostTraitNames));
   const hazards: AsteroidMovementHazard[] = [];
   let totalDamage = 0;
   let totalCrewLost = 0;
-  let totalHits = 0;
+  let totalRemainingHits = 0;
+  const shieldsBefore = unitAfterMove.shieldsCurrent;
+  let shieldsCurrent = shieldsBefore;
 
-  for (const { field, inchesInside } of hazardSegments) {
-    const checkRolls = [rollD6()];
+  for (const { field, inchesInside: segmentInchesInside } of hazardSegments) {
+    const prior = priorHazards.get(field.id);
+    const checkReused = Boolean(prior);
+    const automaticFailure = options.automaticFailure === true;
+    const priorInchesInside = Number(prior?.cumulativeInchesInsideExact ?? prior?.inchesInside) || 0;
+    const cumulativeInchesInside = priorInchesInside + segmentInchesInside;
     const crewQuality = movingFighter
       ? 6
       : Math.max(0, Math.trunc(unitAfterMove.crewQuality || 0));
-    const checkTotal = checkRolls[0]! + crewQuality;
-    const passed = checkTotal >= field.density;
-    const attackDice = passed ? 0 : Math.max(1, Math.ceil(inchesInside - 1e-6));
-    const attackRolls: number[] = [];
-    let hits = 0;
-    if (!passed) {
-      for (let i = 0; i < attackDice; i++) {
-        const roll = rollD6();
-        attackRolls.push(roll);
-        if (roll >= hitThreshold) hits++;
-      }
-      totalHits += hits;
-      if (movingFighter && hits > 0) {
-        totalDamage = Math.max(totalDamage, unitAfterMove.hullPoints);
-      } else {
-        totalDamage += hits;
-        if (unitAfterMove.maxCrewPoints > 0) totalCrewLost += hits;
-      }
-    }
+    const checkRolls = automaticFailure
+      ? []
+      : checkReused
+        ? [...(prior?.checkRolls ?? [])]
+        : [rollD6()];
+    const checkTotal = automaticFailure
+      ? 0
+      : checkReused
+        ? prior?.checkTotal ?? 0
+        : (checkRolls[0] ?? 0) + crewQuality;
+    const passed = automaticFailure ? false : checkReused ? prior?.passed === true : checkTotal >= field.density;
+    const cumulativeAttackDice = passed ? 0 : cumulativeAsteroidAttackDice(cumulativeInchesInside);
+    const priorAttackDice = passed ? 0 : prior?.cumulativeAttackDice ?? prior?.attackDice ?? 0;
+    const attackDice = passed
+      ? 0
+      : additionalAsteroidAttackDice(cumulativeInchesInside, priorAttackDice);
+    const attack = resolveAsteroidAttack({
+      attackDice,
+      hullRating: moveModel.hullRating,
+      dodgeTarget: targetTraits.dodge,
+      dodgeActive: !automaticFailure && targetTraits.dodge > 0,
+      shieldsCurrent,
+      geg: targetTraits.geg,
+      adaptiveArmour: targetTraits.adaptiveArmour,
+      blastDoorsActive: unitAfterMove.specialAction === "blast-doors",
+      hasCrewTrack: unitAfterMove.maxCrewPoints > 0,
+      fighter: movingFighter,
+      fighterHullPoints: unitAfterMove.hullPoints,
+    }, rollD6);
+    shieldsCurrent = attack.shieldsAfter;
+    totalRemainingHits += attack.remainingHits;
+    totalDamage = movingFighter
+      ? Math.max(totalDamage, attack.damage)
+      : totalDamage + attack.damage;
+    totalCrewLost += attack.crewLost;
     hazards.push({
       fieldId: field.id,
       fieldName: field.name,
       density: field.density,
-      inchesInside: Number(inchesInside.toFixed(2)),
+      segmentInchesInside: Number(segmentInchesInside.toFixed(2)),
+      inchesInside: Number(cumulativeInchesInside.toFixed(2)),
+      cumulativeInchesInsideExact: cumulativeInchesInside,
+      checkReused,
+      automaticFailure,
       checkRolls,
       crewQuality,
       checkTotal,
       passed,
       attackDice,
-      hitThreshold,
-      attackRolls,
-      hits,
-      damage: movingFighter && hits > 0 ? unitAfterMove.hullPoints : hits,
-      crewLost: movingFighter ? 0 : unitAfterMove.maxCrewPoints > 0 ? hits : 0,
+      cumulativeAttackDice,
+      hitThreshold: attack.hitThreshold,
+      attackRolls: attack.attackRolls,
+      hits: attack.hits,
+      dodgeRolls: attack.dodgeRolls,
+      dodgesSuccessful: attack.dodgesSuccessful,
+      remainingHits: attack.remainingHits,
+      shieldedHits: attack.shieldedHits,
+      attackTableRolls: attack.attackTableRolls,
+      bulkheadHits: attack.bulkheadHits,
+      solidHits: attack.solidHits,
+      criticalHits: attack.criticalHits,
+      superAp: true,
+      damageMultiplier: 3,
+      damage: attack.damage,
+      crewLost: attack.crewLost,
       damageTable: null,
     });
   }
 
-  if (totalDamage <= 0 && totalCrewLost <= 0 && totalHits <= 0) {
+  if (totalDamage <= 0 && totalCrewLost <= 0 && totalRemainingHits <= 0 && shieldsCurrent === shieldsBefore) {
     return { unit: unitAfterMove, hazards, gameCompleted: false, winnerId: null };
   }
 
@@ -1157,8 +1285,8 @@ async function applyAsteroidMovementHazards(
   const targetCrewAfter = unitAfterMove.maxCrewPoints > 0
     ? Math.max(0, unitAfterMove.crewPoints - totalCrewLost)
     : unitAfterMove.crewPoints;
-  let nextDamageState = movingFighter && totalHits > 0 ? "destroyed" : unitAfterMove.damageState;
-  let targetDestroyed = movingFighter && totalHits > 0 ? true : unitAfterMove.isDestroyed;
+  let nextDamageState = movingFighter && totalRemainingHits > 0 ? "destroyed" : unitAfterMove.damageState;
+  let targetDestroyed = movingFighter && totalRemainingHits > 0 ? true : unitAfterMove.isDestroyed;
   let damageTable: AsteroidMovementHazard["damageTable"] = null;
   if (!movingFighter && targetHullAfter === 0 && unitAfterMove.damageState === "normal" && !unitAfterMove.isDestroyed) {
     const overkill = Math.max(0, totalDamage - unitAfterMove.hullPoints);
@@ -1197,7 +1325,7 @@ async function applyAsteroidMovementHazards(
   const [damagedUnit] = await tx.update(gameUnitsTable).set({
     hullPoints: targetHullAfter,
     crewPoints: targetCrewAfter,
-    shieldsCurrent: targetWillBeCrippled ? 0 : unitAfterMove.shieldsCurrent,
+    shieldsCurrent: targetWillBeCrippled ? 0 : shieldsCurrent,
     interceptorDiceRemaining: targetWillBeCrippled ? 0 : unitAfterMove.interceptorDiceRemaining,
     interceptorThresholdCurrent: targetWillBeCrippled ? 2 : unitAfterMove.interceptorThresholdCurrent,
     damageState: nextDamageState,
@@ -4160,7 +4288,11 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
     turnsMadeThisActivation: selectedPlan.turns,
     allStopReady: false,
   }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
-  const asteroidResult = await applyAsteroidMovementHazards(tx, game, unit, movedUnit, model, moved);
+  const asteroidResult = await applyAsteroidMovementHazards(tx, game, unit, movedUnit, model, moved, {
+    segments: selectedPlan.steps
+      .filter((step): step is Extract<AiManeuverStep, { kind: "forward" }> => step.kind === "forward")
+      .map((step) => ({ start: step.from, end: step.to })),
+  });
   const finalMovedUnit = asteroidResult.unit;
   await recordMovementAuditLog(tx, {
     game,
@@ -6318,14 +6450,22 @@ async function rollOverRoundAfterEndPhase(
       ))
       .returning();
     if (driftedUnit) {
+      const driftModel = await getShipModelForUnit(tx, u);
+      const asteroidResult = driftModel
+        ? await applyAsteroidMovementHazards(tx, game, u, driftedUnit, driftModel, driftDistance, {
+            automaticFailure: true,
+            reusePriorActivation: false,
+          })
+        : { unit: driftedUnit, hazards: [], gameCompleted: false, winnerId: null };
+      const finalDriftedUnit = asteroidResult.unit;
       await recordMovementAuditLog(tx, {
         game,
         actorKind: "system",
         actorPlayerId: null,
         unitBefore: u,
-        unitAfter: driftedUnit,
+        unitAfter: finalDriftedUnit,
         movementKind: "adrift-drift",
-        summary: `${u.name} drifted ${driftDistance}" during end-phase adrift movement.`,
+        summary: `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
         payload: {
           rulesPath: "end-phase-adrift-drift",
           effectiveState: state,
@@ -6334,8 +6474,15 @@ async function rollOverRoundAfterEndPhase(
           driftTo,
           critEffects: (critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>)
             .map(r => ({ id: r.id, effectKey: r.effectKey, name: r.name })),
+          asteroidHazards: asteroidResult.hazards,
+          gameCompleted: asteroidResult.gameCompleted,
+          winnerId: asteroidResult.winnerId,
         },
       });
+      if (asteroidResult.gameCompleted) {
+        const [completedGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, game.id));
+        return completedGame ?? game;
+      }
     }
   }
 
@@ -12049,14 +12196,22 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
           ))
           .returning();
         if (driftedUnit) {
+          const driftModel = await getShipModelForUnit(tx, u);
+          const asteroidResult = driftModel
+            ? await applyAsteroidMovementHazards(tx, game, u, driftedUnit, driftModel, driftDistance, {
+                automaticFailure: true,
+                reusePriorActivation: false,
+              })
+            : { unit: driftedUnit, hazards: [], gameCompleted: false, winnerId: null };
+          const finalDriftedUnit = asteroidResult.unit;
           await recordMovementAuditLog(tx, {
             game,
             actorKind: "system",
             actorPlayerId: null,
             unitBefore: u,
-            unitAfter: driftedUnit,
+            unitAfter: finalDriftedUnit,
             movementKind: "adrift-drift",
-            summary: `${u.name} drifted ${driftDistance}" during end-phase adrift movement.`,
+            summary: `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
             payload: {
               rulesPath: "end-phase-adrift-drift",
               effectiveState: state,
@@ -12065,8 +12220,15 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
               driftTo,
               critEffects: (critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>)
                 .map(r => ({ id: r.id, effectKey: r.effectKey, name: r.name })),
+              asteroidHazards: asteroidResult.hazards,
+              gameCompleted: asteroidResult.gameCompleted,
+              winnerId: asteroidResult.winnerId,
             },
           });
+          if (asteroidResult.gameCompleted) {
+            const [completedGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, game.id));
+            return completedGame ?? game;
+          }
         }
       }
 
