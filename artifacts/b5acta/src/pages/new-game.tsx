@@ -31,8 +31,8 @@ export default function NewGame() {
     useState<DeploymentSide>("challenger");
   const [ambushBoxWidth, setAmbushBoxWidth] = useState<number>(16);
   const [ambushBoxDepth, setAmbushBoxDepth] = useState<number>(16);
-  const [terrain, setTerrain] = useState<"none" | "asteroid-fields">("none");
-  const [asteroidFieldCount, setAsteroidFieldCount] = useState<3 | 6 | 9>(3);
+  const [terrain, setTerrain] = useState<"none" | "asteroid-fields" | "gas-clouds">("none");
+  const [terrainCount, setTerrainCount] = useState<3 | 6 | 9>(3);
   const [stations, setStations] = useState<"none" | "enabled">("none");
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
   const [matchName, setMatchName] = useState("");
@@ -69,8 +69,10 @@ export default function NewGame() {
           ambushBoxDepth:
             deploymentPreset === "ambush-center" ? ambushBoxDepth : undefined,
           terrain,
+          terrainCount:
+            terrain !== "none" ? terrainCount : undefined,
           asteroidFieldCount:
-            terrain === "asteroid-fields" ? asteroidFieldCount : undefined,
+            terrain === "asteroid-fields" ? terrainCount : undefined,
           stations,
           crewQualityMode,
         },
@@ -344,7 +346,7 @@ export default function NewGame() {
           <Select
             value={terrain}
             onValueChange={(value) =>
-              setTerrain(value as "none" | "asteroid-fields")
+              setTerrain(value as "none" | "asteroid-fields" | "gas-clouds")
             }
           >
             <SelectTrigger data-testid="select-terrain" className="bg-background">
@@ -353,35 +355,37 @@ export default function NewGame() {
             <SelectContent className="bg-card border-border">
               <SelectItem value="none">None</SelectItem>
               <SelectItem value="asteroid-fields">Asteroid fields</SelectItem>
+              <SelectItem value="gas-clouds">Gas clouds</SelectItem>
             </SelectContent>
           </Select>
 
-          {terrain === "asteroid-fields" && (
+          {terrain !== "none" && (
             <div className="mt-3">
               <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
-                Asteroid fields
+                {terrain === "gas-clouds" ? "Gas clouds" : "Asteroid fields"}
               </div>
               <Select
-                value={String(asteroidFieldCount)}
+                value={String(terrainCount)}
                 onValueChange={(value) =>
-                  setAsteroidFieldCount(Number(value) as 3 | 6 | 9)
+                  setTerrainCount(Number(value) as 3 | 6 | 9)
                 }
               >
-                <SelectTrigger data-testid="select-asteroid-field-count" className="bg-background">
+                <SelectTrigger data-testid="select-terrain-count" className="bg-background">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
-                  <SelectItem value="3">3 fields</SelectItem>
-                  <SelectItem value="6">6 fields</SelectItem>
-                  <SelectItem value="9">9 fields</SelectItem>
+                  <SelectItem value="3">3 {terrain === "gas-clouds" ? "clouds" : "fields"}</SelectItem>
+                  <SelectItem value="6">6 {terrain === "gas-clouds" ? "clouds" : "fields"}</SelectItem>
+                  <SelectItem value="9">9 {terrain === "gas-clouds" ? "clouds" : "fields"}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           )}
 
           <p className="mt-2 text-[11px] text-muted-foreground font-mono">
-            Asteroid fields are placed by the server before deployment. Standard
-            setups exclude deployment zones; ambush setups exclude the center box.
+            Terrain is placed by the server before deployment. Standard setups
+            exclude deployment zones; ambush setups exclude the center box.
+            Gas clouds use dust-cloud LOS and stealth/CQ modifiers.
           </p>
         </section>
 

@@ -104,9 +104,12 @@ import {
   type LineOfSightObstacle,
 } from "@/lib/line-of-sight";
 import {
+  ASTEROID_FIELD_MODEL_MEDIUM,
   ASTEROID_FIELD_SOURCE_DIAMETER,
-  lineOfSightObstaclesFromTerrainConfig,
   normalizeTerrainConfig,
+  lineOfSightObstaclesFromTerrainConfig,
+  pointInsideTerrainObject,
+  terrainObjectPolygon,
   type TerrainObject,
 } from "@/lib/terrain";
 import skyboxUrl from "@assets/skybox_1780215222009.png";
@@ -1710,6 +1713,12 @@ type BoardSmokeTuning = {
 };
 
 const BOARD_SMOKE_TEXTURE_FILENAME = "cloud01-8x8.webp";
+const BOARD_GAS_CLOUD_TEXTURE_FILENAMES = [
+  "cloud01-8x8.webp",
+  "cloud02-8x8.webp",
+  "cloud03-8x8.webp",
+  "cloud04-8x8.webp",
+] as const;
 const BOARD_PRAXIS_TEXTURE_FILENAME = "praxis.png";
 const ORGANIC_BATTLECRAB_MODEL_FILENAME = "battlecrab.glb";
 const ORGANIC_BATTLECRAB_TUNING = {
@@ -1719,7 +1728,10 @@ const ORGANIC_BATTLECRAB_TUNING = {
   normalStrength: 0.9,
 } as const;
 const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
-  [BOARD_SMOKE_TEXTURE_FILENAME]: "20260719-032240",
+  "cloud01-8x8.webp": "20260725-cloud01-tga",
+  "cloud02-8x8.webp": "20260725-cloud02-tga",
+  "cloud03-8x8.webp": "20260725-cloud03-tga",
+  "cloud04-8x8.webp": "20260725-cloud04-tga",
   [BOARD_PRAXIS_TEXTURE_FILENAME]: "20260720-120000",
   "shadow_flesh_base_tile.png": "20260720-organic-v1",
   "shadow_flesh_normal.png": "20260720-organic-v1",
@@ -1750,6 +1762,11 @@ function boardTextureUrl(filename: string): string {
   const revision =
     BOARD_TEXTURE_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
   return `${basePath}/api/textures/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
+function terrainVisualSeededUnit(seed: number, index: number): number {
+  const value = Math.sin(seed * 12.9898 + index * 78.233) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 type OrganicBattlecrabShader = {
@@ -1940,6 +1957,22 @@ function applyRotatingPartPivotOverride(
   });
 }
 
+function applyObjectMaterialOpacity(root: THREE.Object3D, opacity: number) {
+  root.traverse((child: any) => {
+    if (!child.isMesh) return;
+    const materials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
+    for (const material of materials) {
+      if (!material) continue;
+      material.transparent = opacity < 0.999;
+      material.opacity = opacity;
+      material.depthWrite = opacity >= 0.999;
+      material.needsUpdate = true;
+    }
+  });
+}
+
 function GlbModel({
   url,
   tint,
@@ -1947,6 +1980,7 @@ function GlbModel({
   opacity = 1,
   meshTintsEnabled = true,
   damageAnchorEffects = false,
+  terrainMeshHighlight = false,
 }: {
   url: string;
   tint: string;
@@ -1954,6 +1988,7 @@ function GlbModel({
   opacity?: number;
   meshTintsEnabled?: boolean;
   damageAnchorEffects?: boolean;
+  terrainMeshHighlight?: boolean;
 }) {
   const { scene } = useGLTF(url);
   const filenameKey = filename.toLowerCase();
@@ -1981,6 +2016,12 @@ function GlbModel({
       const clonedMaterial = material?.clone
         ? material.clone()
         : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+      if (terrainMeshHighlight && "color" in clonedMaterial) {
+        const colorMaterial = clonedMaterial as THREE.Material & { color?: THREE.Color };
+        if (colorMaterial.color instanceof THREE.Color) {
+          colorMaterial.color = colorMaterial.color.clone().lerp(new THREE.Color("#030712"), 0.88);
+        }
+      }
       if (isKirishiacSpikeMaterial) {
         const spikeMaterial = clonedMaterial as THREE.MeshStandardMaterial;
         if (spikeMaterial.color instanceof THREE.Color) {
@@ -1993,9 +2034,9 @@ function GlbModel({
         clonedMaterial.toneMapped = false;
       } else if (meshTintsEnabled && "emissive" in clonedMaterial) {
         (clonedMaterial as THREE.MeshStandardMaterial).emissive =
-          new THREE.Color(tint);
+          new THREE.Color(terrainMeshHighlight ? "#030712" : tint);
         (clonedMaterial as THREE.MeshStandardMaterial).emissiveIntensity =
-          0.18;
+          terrainMeshHighlight ? 0.64 : 0.18;
       }
       clonedMaterial.transparent = opacity < 1;
       clonedMaterial.opacity = opacity;
@@ -2120,7 +2161,10 @@ function GlbModel({
       };
     });
     return { cloned: c, anchors: anchorPoints };
-  }, [scene, tint, opacity, meshTintsEnabled, rotatingPartConfig, kirishiacLayeredRotation]);
+  }, [scene, tint, meshTintsEnabled, terrainMeshHighlight, rotatingPartConfig, kirishiacLayeredRotation]);
+  useEffect(() => {
+    applyObjectMaterialOpacity(cloned, opacity);
+  }, [cloned, opacity]);
   useFrame(({ clock }) => {
     if (kirishiacRotatingLayerRef.current) {
       const progress = (clock.getElapsedTime() % 30) / 30;
@@ -2239,6 +2283,7 @@ function ShipModelFallback({
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "asteroid-light.glb": "20260721-field-v2",
+  "asteroids_medium.glb": "20260725-medium-v1",
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
   "bintak.glb": "20260724-221703",
@@ -2287,12 +2332,14 @@ function ShipModel3D({
   opacity = 1,
   meshTintsEnabled = true,
   damageAnchorEffects = false,
+  terrainMeshHighlight = false,
 }: {
   filename: string;
   tint: string;
   opacity?: number;
   meshTintsEnabled?: boolean;
   damageAnchorEffects?: boolean;
+  terrainMeshHighlight?: boolean;
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const assetRevision =
@@ -2328,6 +2375,7 @@ function ShipModel3D({
         opacity={opacity}
         meshTintsEnabled={meshTintsEnabled}
         damageAnchorEffects={damageAnchorEffects}
+        terrainMeshHighlight={terrainMeshHighlight}
       />
     );
   return (
@@ -2984,12 +3032,14 @@ function BoardModelVisual({
   opacity = 1,
   meshTintsEnabled = true,
   damageAnchorEffects = false,
+  terrainMeshHighlight = false,
 }: {
   filename: string;
   tint: string;
   opacity?: number;
   meshTintsEnabled?: boolean;
   damageAnchorEffects?: boolean;
+  terrainMeshHighlight?: boolean;
 }) {
   const fighterFilename = canonicalFighterSquadronFilename(filename);
   if (!fighterFilename) {
@@ -3002,6 +3052,7 @@ function BoardModelVisual({
         opacity={opacity}
         meshTintsEnabled={meshTintsEnabled}
         damageAnchorEffects={damageAnchorEffects}
+        terrainMeshHighlight={terrainMeshHighlight}
       />
     );
   }
@@ -3020,6 +3071,7 @@ function BoardModelVisual({
             opacity={opacity}
             meshTintsEnabled={meshTintsEnabled}
             damageAnchorEffects={false}
+            terrainMeshHighlight={terrainMeshHighlight}
           />
         </group>
       ))}
@@ -3033,6 +3085,7 @@ function TerrainAsteroidField({ field }: { field: TerrainObject }) {
     MODEL_ASSET_REVISIONS[field.modelFilename.toLowerCase()] ?? APP_BUILD_SHA;
   const url = `${basePath}/api/models/${field.modelFilename}?v=${encodeURIComponent(revision)}`;
   const { scene } = useGLTF(url);
+  const isMediumVariant = field.modelFilename.toLowerCase() === ASTEROID_FIELD_MODEL_MEDIUM;
   const cloned = useMemo(() => {
     const c = scene.clone(true);
     c.traverse((child: any) => {
@@ -3062,33 +3115,72 @@ function TerrainAsteroidField({ field }: { field: TerrainObject }) {
     });
     return c;
   }, [scene]);
+  const footprintGeometry = useMemo(() => {
+    const polygon = terrainObjectPolygon(field) ?? [];
+    const points = [...polygon, polygon[0]].filter(Boolean).map(
+      (point) => new THREE.Vector3(point.x - field.x, 0, point.z - field.z),
+    );
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }, [field]);
+
+  useEffect(() => () => {
+    footprintGeometry.dispose();
+  }, [footprintGeometry]);
+
+  const mediumBounds = {
+    sourceDiameter: 9.08,
+    centerX: 0.749,
+    centerZ: -1.143,
+    minY: -0.69,
+  };
+  const terrainRotationRad = ((field.rotationDeg ?? 0) * Math.PI) / 180;
+  const meshLift = 1;
   const diameter = field.radiusInches * 2;
-  const scale = diameter / ASTEROID_FIELD_SOURCE_DIAMETER;
+  const visualDiameter = isMediumVariant ? Math.min(diameter, 10.5) : diameter;
+  const scale = visualDiameter / (isMediumVariant ? mediumBounds.sourceDiameter : ASTEROID_FIELD_SOURCE_DIAMETER);
+  const visualOffset: [number, number, number] = isMediumVariant
+    ? [
+        -mediumBounds.centerX * scale,
+        -mediumBounds.minY * scale + meshLift,
+        -mediumBounds.centerZ * scale,
+      ]
+    : [0, meshLift, 0];
   return (
     <group position={[field.x, 0.03, field.z]} renderOrder={2}>
-      <group scale={[scale, scale, scale]}>
-        <primitive object={cloned} />
+      <group rotation={[0, terrainRotationRad, 0]}>
+        <group position={visualOffset} scale={[scale, scale, scale]}>
+          <primitive object={cloned} />
+        </group>
       </group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]}>
-        <ringGeometry args={[field.radiusInches - 0.035, field.radiusInches + 0.035, 72]} />
-        <meshBasicMaterial
-          color="#38bdf8"
-          transparent
-          opacity={0.78}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]}>
-        <circleGeometry args={[field.radiusInches, 72]} />
-        <meshBasicMaterial
-          color="#0e7490"
-          transparent
-          opacity={0.08}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      {footprintGeometry.attributes.position?.count >= 3 ? (
+        <lineLoop raycast={() => null} position={[0, 0.014, 0]}>
+          <primitive object={footprintGeometry} attach="geometry" />
+          <lineBasicMaterial color="#38bdf8" transparent opacity={0.86} depthWrite={false} />
+        </lineLoop>
+      ) : (
+        <>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]}>
+            <ringGeometry args={[field.radiusInches - 0.035, field.radiusInches + 0.035, 72]} />
+            <meshBasicMaterial
+              color="#38bdf8"
+              transparent
+              opacity={0.78}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]}>
+            <circleGeometry args={[field.radiusInches, 72]} />
+            <meshBasicMaterial
+              color="#0e7490"
+              transparent
+              opacity={0.08}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        </>
+      )}
       <Billboard position={[0, 0.95, 0]}>
         <Text
           fontSize={0.28}
@@ -3105,13 +3197,220 @@ function TerrainAsteroidField({ field }: { field: TerrainObject }) {
   );
 }
 
+function TerrainGasCloud({ field }: { field: TerrainObject }) {
+  const outlineGeometry = useMemo(() => {
+    const polygon = terrainObjectPolygon(field) ?? [];
+    const points = [...polygon, polygon[0]].filter(Boolean).map(
+      (point) => new THREE.Vector3(point.x - field.x, 0, point.z - field.z),
+    );
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }, [field]);
+
+  useEffect(() => () => outlineGeometry.dispose(), [outlineGeometry]);
+
+  const rotation = ((field.rotationDeg ?? 0) * Math.PI) / 180;
+
+  return (
+    <group position={[field.x, 0.035, field.z]} renderOrder={2}>
+      <lineLoop raycast={() => null}>
+        <primitive object={outlineGeometry} attach="geometry" />
+        <lineBasicMaterial color="#22d3ee" transparent opacity={0.82} depthWrite={false} />
+      </lineLoop>
+      <group rotation={[0, rotation, 0]}>
+        <TerrainGasCloudHaze field={field} />
+      </group>
+      <Billboard position={[0, 1.75, 0]}>
+        <Text
+          fontSize={0.24}
+          color="#67e8f9"
+          anchorX="center"
+          anchorY="middle"
+          outlineColor="#020617"
+          outlineWidth={0.032}
+        >
+          {field.name}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+function TerrainGasCloudHaze({ field }: { field: TerrainObject }) {
+  const sourceTextures = useLoader(
+    THREE.TextureLoader,
+    BOARD_GAS_CLOUD_TEXTURE_FILENAMES.map((filename) => boardTextureUrl(filename)),
+  );
+  const cloudGroupRef = useRef<THREE.Group>(null);
+  const elapsedRef = useRef(0);
+  const columns = 8;
+  const rows = 8;
+  const frameCount = columns * rows;
+  const vfxTuning = {
+    color: "#22d3ee",
+    speed: 0.36,
+    size: 2.2,
+    fade: 2.05,
+    intensity: 0.4,
+    spread: 1.9,
+    arc: 0.82,
+  } as const;
+  const vfxFootprintRadius = 3.25 * vfxTuning.spread;
+  const uniformScale = field.radiusInches / vfxFootprintRadius;
+  const visualSpread = vfxTuning.spread * uniformScale;
+  const visualSize = vfxTuning.size * uniformScale;
+  const speed = vfxTuning.speed;
+  const intensity = vfxTuning.intensity;
+  const fade = vfxTuning.fade;
+  const arc = vfxTuning.arc * uniformScale;
+  const textureSeed = field.shapeSeed ?? 1;
+
+  const instances = useMemo(() => {
+    const lowLayer = Array.from({ length: 24 }, (_, i) => {
+      const layerRow = Math.floor(i / 6);
+      const column = i % 6;
+      const progress = column / 5;
+      const rowOffset = layerRow - 1.5;
+      const edgeFade = Math.sin(progress * Math.PI);
+      return {
+        x:
+          (progress - 0.5) * visualSpread * 5.8 +
+          rowOffset * visualSpread * 0.22 +
+          Math.sin(i * 1.73) * visualSpread * 0.12,
+        z:
+          rowOffset * visualSpread * 0.72 +
+          Math.cos(i * 1.29) * visualSpread * 0.18,
+        y: (0.38 + layerRow * 0.11 + edgeFade * 0.28) * uniformScale + arc,
+        scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08) * visualSize,
+        opacity: (0.085 + edgeFade * 0.045) * intensity * fade,
+        phase: i * 6.3,
+        rotation: rowOffset * 0.24 + Math.sin(i * 0.81) * 0.18,
+      };
+    });
+    const highLayer = Array.from({ length: 12 }, (_, highIndex) => {
+      const row = Math.floor(highIndex / 4);
+      const column = highIndex % 4;
+      const progress = column / 3;
+      const rowOffset = row - 1;
+      const edgeFade = Math.sin(progress * Math.PI);
+      const i = highIndex + 24;
+      return {
+        x:
+          (progress - 0.5) * visualSpread * 5.15 +
+          rowOffset * visualSpread * 0.36 +
+          Math.sin(i * 1.41) * visualSpread * 0.24,
+        z:
+          rowOffset * visualSpread * 0.88 +
+          Math.cos(i * 1.17) * visualSpread * 0.28,
+        y: (1.45 + row * 0.22 + edgeFade * 0.38) * uniformScale + arc,
+        scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12) * visualSize,
+        opacity: (0.045 + edgeFade * 0.026) * intensity * fade,
+        phase: i * 6.3,
+        rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24,
+      };
+    });
+    return [...lowLayer, ...highLayer];
+  }, [arc, uniformScale, visualSize, visualSpread]);
+
+  const frameTextures = useMemo(
+    () =>
+      instances.map((_, index) => {
+        const textureChoice = Math.floor(terrainVisualSeededUnit(textureSeed, index + 101) * sourceTextures.length);
+        const sourceTexture = sourceTextures[textureChoice] ?? sourceTextures[0]!;
+        const texture = sourceTexture.clone();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(1 / columns, 1 / rows);
+        texture.needsUpdate = true;
+        return texture;
+      }),
+    [instances, sourceTextures, textureSeed],
+  );
+
+  useEffect(() => () => {
+    for (const texture of frameTextures) texture.dispose();
+  }, [frameTextures]);
+
+  useFrame((_, delta) => {
+    elapsedRef.current += delta;
+    const elapsed = elapsedRef.current;
+    const frameRate = 14 * clampSmokeValue(speed, 0.15, 2.5);
+    for (let i = 0; i < frameTextures.length; i += 1) {
+      const texture = frameTextures[i];
+      const frame = Math.floor(elapsed * frameRate + (instances[i]?.phase ?? 0)) % frameCount;
+      const column = frame % columns;
+      const row = Math.floor(frame / columns);
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
+    if (cloudGroupRef.current) {
+      cloudGroupRef.current.children.forEach((child, i) => {
+        const instance = instances[i];
+        if (!instance) return;
+        const driftPhase = elapsed * speed * 0.48 + instance.phase;
+        child.position.set(
+          instance.x + Math.sin(driftPhase) * visualSpread * 0.08,
+          instance.y + Math.sin(driftPhase * 1.5) * 0.06 * uniformScale,
+          instance.z + Math.cos(driftPhase * 0.9) * visualSpread * 0.08,
+        );
+        child.rotation.y = instance.rotation + Math.sin(driftPhase * 0.35) * 0.08;
+        const pulse = 1 + Math.sin(driftPhase * 1.1) * 0.045;
+        child.scale.setScalar(pulse);
+      });
+    }
+  });
+
+  return (
+    <>
+      <group ref={cloudGroupRef}>
+        {instances.map((instance, i) => (
+          <Billboard
+            key={i}
+            position={[instance.x, instance.y, instance.z]}
+            follow
+            lockX={false}
+            lockY={false}
+            lockZ={false}
+          >
+            <mesh
+              rotation={[0, 0, instance.rotation]}
+              scale={[instance.scale * 1.45, instance.scale * 1.08, instance.scale]}
+              raycast={() => null}
+            >
+              <planeGeometry args={[2.15, 2.15]} />
+              <meshBasicMaterial
+                map={frameTextures[i]}
+                color={vfxTuning.color}
+                transparent
+                opacity={instance.opacity}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                side={THREE.DoubleSide}
+                toneMapped={false}
+              />
+            </mesh>
+          </Billboard>
+        ))}
+      </group>
+      <pointLight
+        color={vfxTuning.color}
+        intensity={0.95 * intensity}
+        distance={7 * visualSpread}
+        position={[0, 1.1 * uniformScale, 0]}
+      />
+    </>
+  );
+}
+
 function TerrainFields({ fields }: { fields: TerrainObject[] }) {
   if (fields.length === 0) return null;
   return (
     <Suspense fallback={null}>
-      {fields.map((field) => (
-        <TerrainAsteroidField key={field.id} field={field} />
-      ))}
+      {fields.map((field) =>
+        field.kind === "gas-cloud"
+          ? <TerrainGasCloud key={field.id} field={field} />
+          : <TerrainAsteroidField key={field.id} field={field} />,
+      )}
     </Suspense>
   );
 }
@@ -3810,6 +4109,7 @@ function GameUnit3D({
   shipStatusDisplayMode = "bar",
   isFighter = false,
   scoutSupportEffects = [],
+  terrainFields = [],
 }: {
   unit: {
     id: number;
@@ -3846,6 +4146,7 @@ function GameUnit3D({
   shipStatusDisplayMode?: UiShipStatusDisplayMode;
   isFighter?: boolean;
   scoutSupportEffects?: ScoutSupportVisualEffect[];
+  terrainFields?: TerrainObject[];
   // When set, draws a translucent "weapon coverage" sector at full range for
   // the currently-selected firing weapon so the player can see eligible
   // targets. Only rendered for the active firing ship.
@@ -3941,7 +4242,17 @@ function GameUnit3D({
   const visualAttackStartRef = useRef(0);
   const pulseHalo = Boolean((phaseViable || lightBlueHighlight) && !visuallyDestroyed);
   const dimOpacityScale = targetIneligible ? 0.38 : 1;
-  const modelOpacity = hasPreview ? 0.28 : targetIneligible ? 0.24 : 1;
+  const terrainCovered = !hasPreview && !visuallyDestroyed
+    ? terrainFields.some((field) =>
+        pointInsideTerrainObject({ x: unit.hexQ, z: unit.hexR }, field),
+      )
+    : false;
+  const terrainMeshHighlight = terrainCovered && !lightBlueHighlight && !targetIneligible;
+  const modelOpacity = hasPreview
+    ? 0.28
+    : targetIneligible
+      ? 0.24
+      : 1;
   const usesAnchoredDeadMeshVisual = [
     DEAD_BINTAK_MODEL_FILENAME,
     DEAD_HYPERION_MODEL_FILENAME,
@@ -3967,6 +4278,7 @@ function GameUnit3D({
     (visuallyDestroyed || fireLevel >= 0.7);
 
   useFrame(({ clock }) => {
+    const elapsedSeconds = clock.getElapsedTime();
     const modelHeading = modelHeadingRef.current;
     if (modelHeading) {
       let visualHeading = unit.heading;
@@ -4021,18 +4333,18 @@ function GameUnit3D({
     }
     const targetMat = targetMaterialRef.current;
     if (targetMat) {
-      const t = (Math.sin(clock.getElapsedTime() * 4.5) + 1) / 2;
+      const t = (Math.sin(elapsedSeconds * 4.5) + 1) / 2;
       targetMat.opacity = 0.58 + t * 0.24;
       targetMat.emissiveIntensity = 0.7 + t * 0.55;
     }
     const dcDiskMat = damageControlDiskMaterialRef.current;
     if (dcDiskMat) {
-      const t = (Math.sin(clock.getElapsedTime() * 4.2) + 1) / 2;
+      const t = (Math.sin(elapsedSeconds * 4.2) + 1) / 2;
       dcDiskMat.opacity = 0.16 + t * 0.28;
     }
     const dogfightRimMat = dogfightRimMaterialRef.current;
     if (dogfightRimMat) {
-      const t = (Math.sin(clock.getElapsedTime() * 4.8) + 1) / 2;
+      const t = (Math.sin(elapsedSeconds * 4.8) + 1) / 2;
       dogfightRimMat.opacity = 0.5 + t * 0.28;
       dogfightRimMat.emissiveIntensity = 0.7 + t * 0.55;
     }
@@ -4206,6 +4518,7 @@ function GameUnit3D({
                 opacity={modelOpacity}
                 meshTintsEnabled={shipMeshTintsEnabled}
                 damageAnchorEffects={!hasPreview && usesAnchoredDeadMeshVisual}
+                terrainMeshHighlight={terrainMeshHighlight}
               />
             </Suspense>
           </ModelErrorBoundary>
@@ -15179,6 +15492,7 @@ export default function GameBoard() {
                   scoutSupportEffects={
                     scoutSupportEffectsByTargetId.get(unit.id) ?? []
                   }
+                  terrainFields={terrainFields}
                   dogfightLocked={dogfightingFighterUnitIds.has(unit.id)}
                   launchHighlight={
                     endPhaseLaunchPrompt?.mode === "highlight" &&

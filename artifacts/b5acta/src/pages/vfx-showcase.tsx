@@ -160,6 +160,7 @@ type SpecialStation = {
     | "damage-glow-core"
     | "dead-hulk-point-sparks"
     | "godot-jump-point-mesh"
+    | "gas-cloud-terrain"
     | "cloud-flipbook-damage"
     | "missile-impact-flipbook-test"
     | "standalone-flipbook-preview"
@@ -1096,54 +1097,19 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     ],
   },
   {
-    id: "terrain-hazards",
-    name: "Terrain Hazards",
-    summary: "Environmental VFX candidates for asteroid fields, dust clouds, anomalies, and scenario markers.",
+    id: "gas-cloud-terrain",
+    name: "Gas Cloud Terrain",
+    summary: "High-quality gas-cloud VFX candidates for future terrain: layered haze, sensor-obscuring banks, and ionized color depth.",
     stations: [
       {
         kind: "special",
-        id: "asteroid-scrape",
-        label: "Asteroid Scrape",
-        note: "Fragment scatter for asteroid-field movement checks.",
-        effect: "debris-sparks",
-        position: [-17, -22],
-        tuning: { color: "#a16207", secondaryColor: "#facc15", speed: 0.72, size: 0.9, fade: 1.4, intensity: 0.8, spread: 1.45, count: 22, arc: 1.45, thickness: 0.9 },
-      },
-      {
-        kind: "ambient",
-        id: "dust-cloud-bank",
-        label: "Dust Cloud",
-        note: "Low-opacity drifting haze for sensor-obscuring terrain.",
-        effect: "smoke",
+        id: "ionized-gas-cloud",
+        label: "Ionized Gas Cloud",
+        note: "Wide irregular terrain footprint with layered horizontal drift and an ionized inner glow.",
+        effect: "gas-cloud-terrain",
         position: [0, -22],
-        tuning: CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING,
-      },
-      {
-        kind: "special",
-        id: "gravity-well",
-        label: "Gravity Well",
-        note: "Lens shell for gravity anomalies or terrain pull zones.",
-        effect: "gravity-lens",
-        position: [17, -22],
-        tuning: { color: "#93c5fd", secondaryColor: "#f0abfc", speed: 0.45, size: 1.05, fade: 1.9, intensity: 0.7, spread: 1.15, count: 5, arc: 3.2, thickness: 0.8 },
-      },
-      {
-        kind: "special",
-        id: "radiation-front",
-        label: "Radiation Front",
-        note: "Expanding hazard pulse for dangerous clouds or scenario waves.",
-        effect: "energy-mine",
-        position: [-9, 8],
-        tuning: { color: "#bef264", secondaryColor: "#22d3ee", speed: 0.42, size: 1.25, fade: 1.45, intensity: 0.72, spread: 1.2, count: 4, arc: 3.2, thickness: 0.9 },
-      },
-      {
-        kind: "special",
-        id: "spatial-anomaly",
-        label: "Spatial Anomaly",
-        note: "Noise-sheet distortion for unstable terrain regions.",
-        effect: "vortex-noise-sheets",
-        position: [10, 8],
-        tuning: { color: "#818cf8", secondaryColor: "#67e8f9", speed: 0.5, size: 1.1, fade: 1.8, intensity: 0.62, spread: 1.25, count: 7, arc: 3.1, thickness: 0.9 },
+        textureFilename: "cloud01-8x8.webp",
+        tuning: { color: "#22d3ee", secondaryColor: "#f97316", speed: 0.36, size: 1.18, fade: 1.65, intensity: 0.78, spread: 2.35, count: 36, arc: 0.82, thickness: 0.62 },
       },
     ],
   },
@@ -2547,6 +2513,206 @@ function CloudFlipbookDamageEmitter({
         </Billboard>
       ))}
       <pointLight color={tuning.secondaryColor} intensity={1.2 * tuning.intensity} distance={5 * tuning.spread} position={[0, 1.2, 0]} />
+    </group>
+  );
+}
+
+function GasCloudTerrainEffect({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const textureFilename = station.textureFilename ?? "cloud01-8x8.webp";
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+  const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
+  const sourceTexture = useLoader(THREE.TextureLoader, url);
+  const cloudGroupRef = useRef<THREE.Group>(null);
+  const elapsedRef = useRef(0);
+  const columns = 8;
+  const rows = 8;
+  const frameCount = columns * rows;
+
+  const footprint = useMemo(() => {
+    const rawPoints: Vec2[] = [
+      [-3.05, -0.62],
+      [-2.42, -1.2],
+      [-1.1, -1.05],
+      [-0.18, -1.36],
+      [1.06, -1.06],
+      [2.66, -1.16],
+      [3.22, -0.44],
+      [2.88, 0.52],
+      [1.38, 1.08],
+      [0.02, 1.28],
+      [-1.44, 0.92],
+      [-2.72, 0.42],
+    ];
+    const points = rawPoints.map(
+      ([x, z]) => new THREE.Vector2(x * tuning.spread, z * tuning.spread),
+    );
+    const outlineGeometry = new THREE.BufferGeometry().setFromPoints(
+      points.map((point) => new THREE.Vector3(point.x, 0, point.y)),
+    );
+    return { outlineGeometry };
+  }, [tuning.spread]);
+
+  useEffect(
+    () => () => {
+      footprint.outlineGeometry.dispose();
+    },
+    [footprint],
+  );
+
+  const instances = useMemo(
+    () => {
+      const lowLayer = Array.from({ length: 24 }, (_, i) => {
+        const layerRow = Math.floor(i / 6);
+        const column = i % 6;
+        const progress = column / 5;
+        const rowOffset = layerRow - 1.5;
+        const edgeFade = Math.sin(progress * Math.PI);
+        return {
+          x:
+            (progress - 0.5) * tuning.spread * 5.8 +
+            rowOffset * tuning.spread * 0.22 +
+            Math.sin(i * 1.73) * tuning.spread * 0.12,
+          z:
+            rowOffset * tuning.spread * 0.72 +
+            Math.cos(i * 1.29) * tuning.spread * 0.18,
+          y: 0.38 + layerRow * 0.11 + edgeFade * 0.28 + tuning.arc,
+          scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08) * tuning.size,
+          opacity: (0.085 + edgeFade * 0.045) * tuning.intensity * tuning.fade,
+          phase: i * 6.3,
+          rotation: (rowOffset * 0.24) + Math.sin(i * 0.81) * 0.18,
+        };
+      });
+      const highLayer = Array.from({ length: 12 }, (_, highIndex) => {
+        const row = Math.floor(highIndex / 4);
+        const column = highIndex % 4;
+        const progress = column / 3;
+        const rowOffset = row - 1;
+        const edgeFade = Math.sin(progress * Math.PI);
+        const i = highIndex + 24;
+        return {
+          x:
+            (progress - 0.5) * tuning.spread * 5.15 +
+            rowOffset * tuning.spread * 0.36 +
+            Math.sin(i * 1.41) * tuning.spread * 0.24,
+          z:
+            rowOffset * tuning.spread * 0.88 +
+            Math.cos(i * 1.17) * tuning.spread * 0.28,
+          y: 1.45 + row * 0.22 + edgeFade * 0.38 + tuning.arc,
+          scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12) * tuning.size,
+          opacity: (0.045 + edgeFade * 0.026) * tuning.intensity * tuning.fade,
+          phase: i * 6.3,
+          rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24,
+        };
+      });
+      return [...lowLayer, ...highLayer];
+    },
+    [tuning.arc, tuning.fade, tuning.intensity, tuning.size, tuning.spread],
+  );
+
+  const frameTextures = useMemo(
+    () =>
+      instances.map(() => {
+        const texture = sourceTexture.clone();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(1 / columns, 1 / rows);
+        texture.needsUpdate = true;
+        return texture;
+      }),
+    [instances, sourceTexture],
+  );
+
+  useEffect(() => () => {
+    for (const texture of frameTextures) texture.dispose();
+  }, [frameTextures]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const elapsed = elapsedRef.current;
+    const frameRate = 14 * clamp(tuning.speed, 0.15, 2.5);
+    for (let i = 0; i < frameTextures.length; i += 1) {
+      const texture = frameTextures[i];
+      const frame = Math.floor(elapsed * frameRate + (instances[i]?.phase ?? 0)) % frameCount;
+      const column = frame % columns;
+      const row = Math.floor(frame / columns);
+      texture.offset.x = column / columns;
+      texture.offset.y = 1 - (row + 1) / rows;
+    }
+    if (cloudGroupRef.current) {
+      cloudGroupRef.current.children.forEach((child, i) => {
+        const instance = instances[i];
+        if (!instance) return;
+        const driftPhase = elapsed * tuning.speed * 0.48 + instance.phase;
+        child.position.set(
+          instance.x + Math.sin(driftPhase) * tuning.spread * 0.08,
+          instance.y + Math.sin(driftPhase * 1.5) * 0.06,
+          instance.z + Math.cos(driftPhase * 0.9) * tuning.spread * 0.08,
+        );
+        child.rotation.y = instance.rotation + Math.sin(driftPhase * 0.35) * 0.08;
+        const pulse = 1 + Math.sin(driftPhase * 1.1) * 0.045;
+        child.scale.setScalar(pulse);
+      });
+    }
+  });
+
+  return (
+    <group position={[station.position[0], 0, station.position[1]]}>
+      <lineLoop position={[0, 0.045, 0]} raycast={() => null}>
+        <primitive object={footprint.outlineGeometry} attach="geometry" />
+        <lineBasicMaterial
+          color={tuning.color}
+          transparent
+          opacity={0.34 * tuning.intensity}
+          depthWrite={false}
+        />
+      </lineLoop>
+      <group ref={cloudGroupRef}>
+        {instances.map((instance, i) => (
+          <Billboard
+            key={i}
+            position={[instance.x, instance.y, instance.z]}
+            follow
+            lockX={false}
+            lockY={false}
+            lockZ={false}
+          >
+            <mesh
+              rotation={[0, 0, instance.rotation]}
+              scale={[instance.scale * 1.45, instance.scale * 1.08, instance.scale]}
+              raycast={() => null}
+            >
+              <planeGeometry args={[2.15, 2.15]} />
+              <meshBasicMaterial
+                map={frameTextures[i]}
+                color={tuning.color}
+                transparent
+                opacity={instance.opacity}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                side={THREE.DoubleSide}
+                toneMapped={false}
+              />
+            </mesh>
+          </Billboard>
+        ))}
+      </group>
+      <pointLight
+        color={tuning.color}
+        intensity={0.95 * tuning.intensity}
+        distance={7 * tuning.spread}
+        position={[0, 1.1, 0]}
+      />
     </group>
   );
 }
@@ -6747,6 +6913,11 @@ function SpecialFxStation({
         <DeadHulkPointSparks station={station} tuning={tuning} paused={animationPaused} />
       ) : null}
       {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
+      {station.effect === "gas-cloud-terrain" ? (
+        <Suspense fallback={null}>
+          <GasCloudTerrainEffect station={station} tuning={tuning} paused={animationPaused} />
+        </Suspense>
+      ) : null}
       {station.effect === "cloud-flipbook-damage" && station.textureFilename ? (
         <Suspense fallback={null}>
           <CloudFlipbookDamageEmitter position={station.position} tuning={tuning} textureFilename={station.textureFilename} paused={animationPaused} />

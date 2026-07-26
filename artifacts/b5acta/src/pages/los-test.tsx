@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { findBlockingLineOfSightObstacle, type BoardPoint } from "@/lib/line-of-sight";
 
-type SceneObjectId = "tester" | "target" | "asteroid";
+type SceneObjectId = "tester" | "target" | "asteroid" | "gasCloud";
 
 type Placement = {
   x: number;
@@ -42,6 +42,21 @@ const HYPERION_MODEL = "hyperion.glb";
 // Exported base footprint is ~1.78 units wide; scale to a 4" terrain footprint.
 const ASTEROID_SCALE = 4 / 1.78;
 const HYPERION_LENGTH_INCHES = 2.4;
+const GAS_CLOUD_FOOTPRINT: BoardPoint[] = [
+  { x: -3.05, z: -0.62 },
+  { x: -2.42, z: -1.2 },
+  { x: -1.1, z: -1.05 },
+  { x: -0.18, z: -1.36 },
+  { x: 1.06, z: -1.06 },
+  { x: 2.66, z: -1.16 },
+  { x: 3.22, z: -0.44 },
+  { x: 2.88, z: 0.52 },
+  { x: 1.38, z: 1.08 },
+  { x: 0.02, z: 1.28 },
+  { x: -1.44, z: 0.92 },
+  { x: -2.72, z: 0.42 },
+];
+const GAS_CLOUD_SCALE = 0.72;
 
 const HYPERION_WEAPONS: TestWeapon[] = [
   { id: "heavy-laser-forward", name: "Heavy Laser Cannon", arc: "Boresight Forward", range: 18, attackDice: 4, traits: "Beam; Double Damage" },
@@ -67,6 +82,7 @@ const INITIAL_PLACEMENTS: Placements = {
   tester: { x: -8, z: 0, heading: 90 },
   target: { x: 8, z: 0, heading: -90 },
   asteroid: { x: 0, z: 0, heading: 0 },
+  gasCloud: { x: 0, z: 6, heading: 0 },
 };
 
 function modelUrl(filename: string): string {
@@ -158,6 +174,20 @@ function transformedFootprint(local: BoardPoint[], placement: Placement): BoardP
   return local.map((point) => {
     const x = point.x * ASTEROID_SCALE;
     const z = point.z * ASTEROID_SCALE;
+    return {
+      x: placement.x + x * cos - z * sin,
+      z: placement.z + x * sin + z * cos,
+    };
+  });
+}
+
+function transformedPolygon(local: BoardPoint[], placement: Placement, scale = 1): BoardPoint[] {
+  const heading = (placement.heading * Math.PI) / 180;
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  return local.map((point) => {
+    const x = point.x * scale;
+    const z = point.z * scale;
     return {
       x: placement.x + x * cos - z * sin,
       z: placement.z + x * sin + z * cos,
@@ -279,6 +309,85 @@ function AsteroidAndBase({
   );
 }
 
+function GasCloudTerrain({
+  placement,
+  selected,
+  blocked,
+  onSelect,
+}: {
+  placement: Placement;
+  selected: boolean;
+  blocked: boolean;
+  onSelect: () => void;
+}) {
+  const outlinePoints = useMemo(
+    () =>
+      [...GAS_CLOUD_FOOTPRINT, GAS_CLOUD_FOOTPRINT[0]]
+        .filter(Boolean)
+        .map((point) => [point.x * GAS_CLOUD_SCALE, 0.06, point.z * GAS_CLOUD_SCALE] as [number, number, number]),
+    [],
+  );
+  const clouds = useMemo(
+    () =>
+      Array.from({ length: 10 }, (_, i) => {
+        const row = Math.floor(i / 5);
+        const column = i % 5;
+        const progress = column / 4;
+        const rowOffset = row - 0.5;
+        const edgeFade = Math.sin(progress * Math.PI);
+        return {
+          x: (progress - 0.5) * 3.8 + rowOffset * 0.45 + Math.sin(i * 1.7) * 0.18,
+          z: rowOffset * 1.05 + Math.cos(i * 1.2) * 0.24,
+          y: 0.75 + row * 0.42 + edgeFade * 0.38,
+          scale: 1.05 + edgeFade * 0.28 + (i % 2) * 0.14,
+          opacity: 0.09 + edgeFade * 0.04,
+        };
+      }),
+    [],
+  );
+
+  return (
+    <group
+      position={[placement.x, 0, placement.z]}
+      rotation={[0, (placement.heading * Math.PI) / 180, 0]}
+      onClick={(event: ThreeEvent<MouseEvent>) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <Line
+        points={outlinePoints}
+        color={blocked ? "#ef4444" : selected ? "#facc15" : "#22d3ee"}
+        lineWidth={2}
+        transparent
+        opacity={selected ? 1 : 0.78}
+      />
+      {clouds.map((cloud, i) => (
+        <mesh
+          key={i}
+          position={[cloud.x, cloud.y, cloud.z]}
+          rotation={[0, Math.sin(i * 0.8) * 0.28, Math.sin(i * 1.1) * 0.1]}
+          scale={[cloud.scale * 1.65, cloud.scale * 0.5, cloud.scale]}
+          raycast={() => null}
+        >
+          <sphereGeometry args={[0.5, 16, 8]} />
+          <meshBasicMaterial
+            color="#22d3ee"
+            transparent
+            opacity={cloud.opacity}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+      <Text position={[0, 2.25, 0]} fontSize={0.34} color="#67e8f9" anchorX="center" anchorY="middle">
+        Dust Cloud
+      </Text>
+    </group>
+  );
+}
+
 function HyperionMarker({
   id,
   label,
@@ -355,6 +464,7 @@ function LosScene({
   selectedWeapon,
   footprint,
   blocked,
+  blockedBy,
   targetInArc,
   targetInRange,
   dirty,
@@ -367,6 +477,7 @@ function LosScene({
   selectedWeapon: TestWeapon;
   footprint: BoardPoint[];
   blocked: boolean;
+  blockedBy: "asteroid" | "gas-cloud" | null;
   targetInArc: boolean;
   targetInRange: boolean;
   dirty: boolean;
@@ -379,6 +490,7 @@ function LosScene({
   const tester = committed.tester;
   const target = committed.target;
   const footprintLine = [...footprint, footprint[0]].filter(Boolean).map((point) => [point.x, 0.08, point.z] as [number, number, number]);
+  const gasBlocks = blockedBy === "gas-cloud";
 
   return (
     <>
@@ -412,12 +524,18 @@ function LosScene({
         {footprintLine.length > 2 ? (
           <Line
             points={footprintLine}
-            color={blocked ? "#ef4444" : selected === "asteroid" ? "#facc15" : "#38bdf8"}
+            color={blockedBy === "asteroid" ? "#ef4444" : selected === "asteroid" ? "#facc15" : "#38bdf8"}
             lineWidth={2}
             transparent
             opacity={0.95}
           />
         ) : null}
+        <GasCloudTerrain
+          placement={activePlacements.gasCloud}
+          selected={selected === "gasCloud"}
+          blocked={gasBlocks}
+          onSelect={() => setSelected("gasCloud")}
+        />
         <HyperionMarker
           id="tester"
           label="Tester"
@@ -478,6 +596,10 @@ export default function LosTest() {
     () => transformedFootprint(asteroidBoundary, staged.asteroid),
     [asteroidBoundary, staged.asteroid],
   );
+  const committedGasFootprint = useMemo(
+    () => transformedPolygon(GAS_CLOUD_FOOTPRINT, committed.gasCloud, GAS_CLOUD_SCALE),
+    [committed.gasCloud],
+  );
   const losBlock = useMemo(
     () =>
       findBlockingLineOfSightObstacle(
@@ -491,18 +613,29 @@ export default function LosTest() {
             effect: "blocked",
             polygon: committedFootprint,
           },
+          {
+            id: "gas-cloud-test",
+            name: "Dust Cloud",
+            kind: "gas-cloud",
+            effect: "blocked",
+            polygon: committedGasFootprint,
+            blocksFromInside: false,
+          },
         ],
       ),
-    [committed, committedFootprint],
+    [committed, committedFootprint, committedGasFootprint],
   );
   const dirty = JSON.stringify(staged) !== JSON.stringify(committed);
   const blocked = Boolean(losBlock);
+  const blockedBy = losBlock?.obstacle.kind === "gas-cloud" ? "gas-cloud" : losBlock ? "asteroid" : null;
   const targetDistance = centerDistance(committed.tester, committed.target);
   const targetInRange = targetDistance <= selectedWeapon.range + 1e-6;
   const targetInArc = isTargetInArc(committed.tester, committed.target, selectedWeapon.arc);
   const targetLegal = targetInRange && targetInArc && !blocked;
   const testerInsideAsteroid = committedFootprint.length >= 3 && pointInPolygon(committed.tester, committedFootprint);
   const targetInsideAsteroid = committedFootprint.length >= 3 && pointInPolygon(committed.target, committedFootprint);
+  const testerInsideGasCloud = pointInPolygon(committed.tester, committedGasFootprint);
+  const targetInsideGasCloud = pointInPolygon(committed.target, committedGasFootprint);
   const asteroidLosCase = testerInsideAsteroid
     ? targetInsideAsteroid
       ? "Both inside field: fire allowed"
@@ -512,6 +645,15 @@ export default function LosTest() {
       : blocked
         ? "Opposite sides: LOS blocked"
         : "Outside field: LOS clear";
+  const gasCloudLosCase = testerInsideGasCloud
+    ? targetInsideGasCloud
+      ? "Both inside cloud: fire allowed"
+      : "Firing out of cloud: allowed"
+    : targetInsideGasCloud
+      ? "Firing into cloud: allowed"
+      : blockedBy === "gas-cloud"
+        ? "Opposite sides of cloud: LOS blocked"
+        : "Cloud not blocking LOS";
 
   const setStagedPlacement = (id: SceneObjectId, placement: Placement) => {
     setStaged((current) => ({ ...current, [id]: placement }));
@@ -544,8 +686,8 @@ export default function LosTest() {
           <div className="mr-auto">
             <h1 className="font-mono text-lg font-bold uppercase tracking-[0.18em]">Terrain LOS Test</h1>
             <p className="text-xs text-muted-foreground">
-              Asteroid fields may be overlapped. Confirm placement, then compare range, arc, LOS, and inside-field effects.
-              Movement density checks are separate and are not resolved in this LOS sandbox.
+              Asteroids and dust clouds may be overlapped. Confirm placement, then compare range, arc, LOS, and inside-terrain effects.
+              Dust clouds block LOS across them, but shooting into or out of the same cloud is allowed.
             </p>
           </div>
           <Badge variant={targetLegal ? "default" : "destructive"}>
@@ -558,7 +700,7 @@ export default function LosTest() {
             {targetInArc ? `In ${selectedWeapon.arc}` : `Not in ${selectedWeapon.arc}`}
           </Badge>
           <Badge variant={blocked ? "destructive" : "default"}>
-            {blocked ? "LOS Blocked" : "LOS Clear"}
+            {blocked ? `LOS Blocked by ${blockedBy === "gas-cloud" ? "Dust Cloud" : "Asteroid"}` : "LOS Clear"}
           </Badge>
           <Badge variant={testerInsideAsteroid ? "default" : "outline"}>
             Tester {testerInsideAsteroid ? "inside" : "outside"} field
@@ -570,6 +712,19 @@ export default function LosTest() {
             {targetInsideAsteroid ? "Target gains Stealth 3+" : "No asteroid Stealth"}
           </Badge>
           <Badge variant={blocked ? "destructive" : "outline"}>{asteroidLosCase}</Badge>
+          <Badge variant={testerInsideGasCloud ? "default" : "outline"}>
+            Tester {testerInsideGasCloud ? "inside" : "outside"} cloud
+          </Badge>
+          <Badge variant={targetInsideGasCloud ? "default" : "outline"}>
+            Target {targetInsideGasCloud ? "inside" : "outside"} cloud
+          </Badge>
+          <Badge variant={targetInsideGasCloud ? "default" : "outline"}>
+            {targetInsideGasCloud ? "Target gains Stealth 2+" : "No cloud Stealth"}
+          </Badge>
+          <Badge variant={testerInsideGasCloud ? "default" : "outline"}>
+            {testerInsideGasCloud ? "Tester CQ -1; Run Silent +2" : "No cloud CQ modifier"}
+          </Badge>
+          <Badge variant={blockedBy === "gas-cloud" ? "destructive" : "outline"}>{gasCloudLosCase}</Badge>
           {dirty ? <Badge variant="outline">Unconfirmed placement</Badge> : null}
           <select
             className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground"
@@ -583,7 +738,7 @@ export default function LosTest() {
             ))}
           </select>
           <div className="flex items-center gap-2">
-            {(["tester", "target", "asteroid"] as SceneObjectId[]).map((id) => (
+            {(["tester", "target", "asteroid", "gasCloud"] as SceneObjectId[]).map((id) => (
               <Button key={id} variant={selected === id ? "default" : "outline"} size="sm" onClick={() => setSelected(id)}>
                 {id}
               </Button>
@@ -619,6 +774,7 @@ export default function LosTest() {
                 selectedWeapon={selectedWeapon}
                 footprint={stagedFootprint}
                 blocked={blocked}
+                blockedBy={blockedBy}
                 targetInArc={targetInArc}
                 targetInRange={targetInRange}
                 dirty={dirty}

@@ -1,7 +1,7 @@
 import type { DeploymentConfig, DeploymentRect } from "./deployment-zones";
-import type { LineOfSightObstacle } from "./line-of-sight";
+import type { BoardPoint, LineOfSightObstacle } from "./line-of-sight";
 
-export type TerrainKind = "asteroid-field";
+export type TerrainKind = "asteroid-field" | "gas-cloud";
 
 export type TerrainObject = {
   id: string;
@@ -12,6 +12,10 @@ export type TerrainObject = {
   radiusInches: number;
   density: number;
   modelFilename: string;
+  rotationDeg?: number;
+  footprintScaleX?: number;
+  footprintScaleZ?: number;
+  shapeSeed?: number;
 };
 
 export type TerrainConfig = {
@@ -19,7 +23,8 @@ export type TerrainConfig = {
   objects: TerrainObject[];
 };
 
-export type TerrainSelection = "none" | "asteroid-fields";
+export type TerrainSelection = "none" | "asteroid-fields" | "gas-clouds";
+export type TerrainCount = 0 | 3 | 6 | 9;
 
 const BOARD_MIN_X = -24;
 const BOARD_MAX_X = 24;
@@ -35,6 +40,52 @@ const BOARD_RECT: DeploymentRect = {
 
 export const ASTEROID_FIELD_RADIUS_INCHES = 2;
 export const ASTEROID_FIELD_MODEL = "asteroid-light.glb";
+export const ASTEROID_FIELD_MODEL_MEDIUM = "asteroids_medium.glb";
+export const ASTEROID_FIELD_MEDIUM_RADIUS_INCHES = ASTEROID_FIELD_RADIUS_INCHES * 3;
+const ASTEROID_FIELD_VARIANTS = [
+  { modelFilename: ASTEROID_FIELD_MODEL, radiusInches: ASTEROID_FIELD_RADIUS_INCHES },
+  { modelFilename: ASTEROID_FIELD_MODEL_MEDIUM, radiusInches: ASTEROID_FIELD_MEDIUM_RADIUS_INCHES },
+] as const;
+export const ASTEROID_LIGHT_FOOTPRINT_POINTS: BoardPoint[] = [
+  { x: -1.04, z: -0.32 },
+  { x: -0.72, z: -0.82 },
+  { x: -0.08, z: -1.02 },
+  { x: 0.58, z: -0.76 },
+  { x: 1.08, z: -0.12 },
+  { x: 0.78, z: 0.58 },
+  { x: 0.18, z: 0.98 },
+  { x: -0.62, z: 0.74 },
+  { x: -1.08, z: 0.2 },
+];
+export const ASTEROID_MEDIUM_FOOTPRINT_POINTS: BoardPoint[] = [
+  { x: -1.1, z: -0.34 },
+  { x: -0.86, z: -0.82 },
+  { x: -0.24, z: -1.02 },
+  { x: 0.34, z: -0.86 },
+  { x: 0.96, z: -0.52 },
+  { x: 1.08, z: 0.18 },
+  { x: 0.58, z: 0.74 },
+  { x: -0.08, z: 1 },
+  { x: -0.78, z: 0.7 },
+  { x: -1.02, z: 0.18 },
+];
+export const GAS_CLOUD_MIN_RADIUS_INCHES = 2.5;
+export const GAS_CLOUD_MAX_RADIUS_INCHES = 3.5;
+export const GAS_CLOUD_RADIUS_INCHES = 3;
+export const GAS_CLOUD_FOOTPRINT_POINTS: BoardPoint[] = [
+  { x: -3.05, z: -0.62 },
+  { x: -2.42, z: -1.2 },
+  { x: -1.1, z: -1.05 },
+  { x: -0.18, z: -1.36 },
+  { x: 1.06, z: -1.06 },
+  { x: 2.66, z: -1.16 },
+  { x: 3.22, z: -0.44 },
+  { x: 2.88, z: 0.52 },
+  { x: 1.38, z: 1.08 },
+  { x: 0.02, z: 1.28 },
+  { x: -1.44, z: 0.92 },
+  { x: -2.72, z: 0.42 },
+];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -71,6 +122,16 @@ function asteroidDensityFromD6(): number {
   if (roll === 4) return 8;
   if (roll === 5) return 9;
   return 10;
+}
+
+function asteroidFieldVariantFromD6(): (typeof ASTEROID_FIELD_VARIANTS)[number] {
+  const index = Math.floor(Math.random() * ASTEROID_FIELD_VARIANTS.length);
+  return ASTEROID_FIELD_VARIANTS[index] ?? ASTEROID_FIELD_VARIANTS[0];
+}
+
+function terrainSeededUnit(seed: number, index: number): number {
+  const value = Math.sin(seed * 12.9898 + index * 78.233) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function terrainForbiddenRects(deploymentConfig: DeploymentConfig): DeploymentRect[] {
@@ -119,17 +180,29 @@ function pointAllowedForTerrain(
 }
 
 export function normalizeTerrainSelection(value: unknown): TerrainSelection {
-  return value === "asteroid-fields" ? "asteroid-fields" : "none";
+  return value === "asteroid-fields" || value === "gas-clouds" ? value : "none";
 }
 
-export function normalizeAsteroidFieldCount(value: unknown): 0 | 3 | 6 | 9 {
+export function normalizeAsteroidFieldCount(value: unknown): TerrainCount {
   const count = Math.trunc(Number(value));
   return count === 3 || count === 6 || count === 9 ? count : 0;
 }
 
+export function normalizeTerrainCount(value: unknown): TerrainCount {
+  return normalizeAsteroidFieldCount(value);
+}
+
 export function generateAsteroidTerrainConfig(
   deploymentConfig: DeploymentConfig,
-  count: 0 | 3 | 6 | 9,
+  count: TerrainCount,
+): TerrainConfig {
+  return generateTerrainConfig(deploymentConfig, "asteroid-field", count);
+}
+
+export function generateTerrainConfig(
+  deploymentConfig: DeploymentConfig,
+  kind: Exclude<TerrainKind, never>,
+  count: TerrainCount,
 ): TerrainConfig {
   if (count === 0) return { version: 1, objects: [] };
   const { columns, rows } = terrainCountGrid(count);
@@ -143,23 +216,32 @@ export function generateAsteroidTerrainConfig(
   const objects: TerrainObject[] = [];
   for (const cell of cells) {
     if (objects.length >= count) break;
+    const asteroidVariant = kind === "asteroid-field" ? asteroidFieldVariantFromD6() : null;
+    const radius = kind === "gas-cloud"
+      ? Number(randomBetween(GAS_CLOUD_MIN_RADIUS_INCHES, GAS_CLOUD_MAX_RADIUS_INCHES).toFixed(3))
+      : asteroidVariant?.radiusInches ?? ASTEROID_FIELD_RADIUS_INCHES;
     const xMin = BOARD_MIN_X + cell.column * cellWidth;
     const xMax = xMin + cellWidth;
     const zMin = BOARD_MIN_Z + cell.row * cellDepth;
     const zMax = zMin + cellDepth;
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      const x = randomBetween(xMin + ASTEROID_FIELD_RADIUS_INCHES, xMax - ASTEROID_FIELD_RADIUS_INCHES);
-      const z = randomBetween(zMin + ASTEROID_FIELD_RADIUS_INCHES, zMax - ASTEROID_FIELD_RADIUS_INCHES);
-      if (!pointAllowedForTerrain(x, z, ASTEROID_FIELD_RADIUS_INCHES, forbiddenRects, objects)) continue;
+      const x = randomBetween(xMin + radius, xMax - radius);
+      const z = randomBetween(zMin + radius, zMax - radius);
+      if (!pointAllowedForTerrain(x, z, radius, forbiddenRects, objects)) continue;
+      const ordinal = objects.length + 1;
       objects.push({
-        id: `asteroid-field-${objects.length + 1}`,
-        kind: "asteroid-field",
-        name: `Asteroid Field ${objects.length + 1}`,
+        id: kind === "gas-cloud" ? `gas-cloud-${ordinal}` : `asteroid-field-${ordinal}`,
+        kind,
+        name: kind === "gas-cloud" ? `Dust Cloud ${ordinal}` : `Asteroid Field ${ordinal}`,
         x: Number(x.toFixed(3)),
         z: Number(z.toFixed(3)),
-        radiusInches: ASTEROID_FIELD_RADIUS_INCHES,
-        density: asteroidDensityFromD6(),
-        modelFilename: ASTEROID_FIELD_MODEL,
+        radiusInches: radius,
+        density: kind === "gas-cloud" ? 0 : asteroidDensityFromD6(),
+        modelFilename: kind === "gas-cloud" ? "" : asteroidVariant?.modelFilename ?? ASTEROID_FIELD_MODEL,
+        rotationDeg: Math.floor(randomBetween(0, 360)),
+        footprintScaleX: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
+        footprintScaleZ: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
+        shapeSeed: Math.floor(randomBetween(1, 1_000_000)),
       });
       break;
     }
@@ -174,19 +256,37 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
     ? rawObjects
         .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
         .map((item, index): TerrainObject | null => {
-          if (item.kind !== "asteroid-field") return null;
+          if (item.kind !== "asteroid-field" && item.kind !== "gas-cloud") return null;
           const x = Number(item.x);
           const z = Number(item.z);
           if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+          const kind = item.kind;
+          const modelFilename = typeof item.modelFilename === "string" && item.modelFilename ? item.modelFilename : ASTEROID_FIELD_MODEL;
+          const fallbackSeed = index + 1;
+          const shapeSeed = Number.isFinite(Number(item.shapeSeed)) ? Math.max(0, Math.trunc(Number(item.shapeSeed))) : fallbackSeed;
+          const fallbackRotationDeg = Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
+          const defaultRadius = kind === "gas-cloud"
+            ? GAS_CLOUD_RADIUS_INCHES
+            : modelFilename === ASTEROID_FIELD_MODEL_MEDIUM
+              ? ASTEROID_FIELD_MEDIUM_RADIUS_INCHES
+              : ASTEROID_FIELD_RADIUS_INCHES;
           return {
-            id: typeof item.id === "string" && item.id ? item.id.slice(0, 80) : `asteroid-field-${index + 1}`,
-            kind: "asteroid-field",
-            name: typeof item.name === "string" && item.name ? item.name.slice(0, 80) : `Asteroid Field ${index + 1}`,
+            id: typeof item.id === "string" && item.id ? item.id.slice(0, 80) : `${kind}-${index + 1}`,
+            kind,
+            name: typeof item.name === "string" && item.name ? item.name.slice(0, 80) : kind === "gas-cloud" ? `Dust Cloud ${index + 1}` : `Asteroid Field ${index + 1}`,
             x: clamp(x, BOARD_MIN_X, BOARD_MAX_X),
             z: clamp(z, BOARD_MIN_Z, BOARD_MAX_Z),
-            radiusInches: clamp(Number(item.radiusInches) || ASTEROID_FIELD_RADIUS_INCHES, 0.5, 8),
-            density: clamp(Math.trunc(Number(item.density) || 6), 6, 10),
-            modelFilename: typeof item.modelFilename === "string" && item.modelFilename ? item.modelFilename : ASTEROID_FIELD_MODEL,
+            radiusInches: kind === "gas-cloud"
+              ? clamp(Number(item.radiusInches) || defaultRadius, GAS_CLOUD_MIN_RADIUS_INCHES, GAS_CLOUD_MAX_RADIUS_INCHES)
+              : modelFilename === ASTEROID_FIELD_MODEL_MEDIUM
+                ? clamp(Number(item.radiusInches) || defaultRadius, ASTEROID_FIELD_MEDIUM_RADIUS_INCHES, 12)
+                : clamp(Number(item.radiusInches) || defaultRadius, 0.5, 8),
+            density: kind === "gas-cloud" ? 0 : clamp(Math.trunc(Number(item.density) || 6), 6, 10),
+            modelFilename: kind === "gas-cloud" ? "" : modelFilename,
+            rotationDeg: Number.isFinite(Number(item.rotationDeg)) ? clamp(Number(item.rotationDeg), 0, 360) : fallbackRotationDeg,
+            footprintScaleX: Number.isFinite(Number(item.footprintScaleX)) ? clamp(Number(item.footprintScaleX), 0.65, 1.45) : kind === "gas-cloud" ? 1 : 0.94 + terrainSeededUnit(shapeSeed, 41) * 0.18,
+            footprintScaleZ: Number.isFinite(Number(item.footprintScaleZ)) ? clamp(Number(item.footprintScaleZ), 0.65, 1.45) : kind === "gas-cloud" ? 1 : 0.94 + terrainSeededUnit(shapeSeed, 43) * 0.18,
+            shapeSeed,
           };
         })
         .filter((item): item is TerrainObject => item !== null)
@@ -196,21 +296,88 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
 }
 
 export function lineOfSightObstaclesFromTerrainConfig(raw: unknown): LineOfSightObstacle[] {
-  return normalizeTerrainConfig(raw).objects.map((field) => ({
-    id: field.id,
-    name: field.name,
-    kind: field.kind,
-    effect: "blocked",
-    x: field.x,
-    z: field.z,
-    radiusInches: field.radiusInches,
-    active: true,
-    blocksFromInside: false,
-  }));
+  return normalizeTerrainConfig(raw).objects.map((field) => {
+    const polygon = terrainObjectPolygon(field);
+    return {
+      id: field.id,
+      name: field.name,
+      kind: field.kind,
+      effect: "blocked" as const,
+      x: polygon ? undefined : field.x,
+      z: polygon ? undefined : field.z,
+      radiusInches: polygon ? undefined : field.radiusInches,
+      polygon: polygon ?? undefined,
+      active: true,
+      blocksFromInside: false,
+    };
+  });
+}
+
+function pointInsidePolygon(point: BoardPoint, polygon: BoardPoint[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]!;
+    const b = polygon[j]!;
+    const intersects =
+      (a.z > point.z) !== (b.z > point.z) &&
+      point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z || 1e-6) + a.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+export function terrainObjectPolygon(field: TerrainObject): BoardPoint[] | null {
+  const basePoints = field.kind === "gas-cloud"
+    ? GAS_CLOUD_FOOTPRINT_POINTS
+    : field.kind === "asteroid-field"
+      ? field.modelFilename === ASTEROID_FIELD_MODEL_MEDIUM
+        ? ASTEROID_MEDIUM_FOOTPRINT_POINTS
+        : ASTEROID_LIGHT_FOOTPRINT_POINTS
+      : null;
+  if (!basePoints) return null;
+  const seed = field.shapeSeed ?? 0;
+  const scaleX = field.footprintScaleX ?? 1;
+  const scaleZ = field.footprintScaleZ ?? 1;
+  const variedPoints = basePoints.map((point, index) => {
+    const jitter = field.kind === "gas-cloud"
+      ? 0.9 + terrainSeededUnit(seed, index) * 0.2
+      : 0.93 + terrainSeededUnit(seed, index) * 0.14;
+    return {
+      x: point.x * scaleX * jitter,
+      z: point.z * scaleZ * jitter,
+    };
+  });
+  const rawRadius = Math.max(...variedPoints.map((point) => Math.hypot(point.x, point.z)));
+  const scale = field.radiusInches / rawRadius;
+  const rotation = ((field.rotationDeg ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return variedPoints.map((point) => {
+    const x = point.x * scale;
+    const z = point.z * scale;
+    return {
+      x: field.x + x * cos - z * sin,
+      z: field.z + x * sin + z * cos,
+    };
+  });
+}
+
+export function pointInsideTerrainObject(point: BoardPoint, field: TerrainObject): boolean {
+  const polygon = terrainObjectPolygon(field);
+  if (polygon) return pointInsidePolygon(point, polygon);
+  return Math.hypot(point.x - field.x, point.z - field.z) <= field.radiusInches + 1e-6;
 }
 
 export function pointInsideAsteroidField(point: { x: number; z: number }, raw: unknown): TerrainObject | null {
   return normalizeTerrainConfig(raw).objects.find((field) =>
-    Math.hypot(point.x - field.x, point.z - field.z) <= field.radiusInches + 1e-6,
+    field.kind === "asteroid-field" &&
+    pointInsideTerrainObject(point, field),
+  ) ?? null;
+}
+
+export function pointInsideGasCloud(point: { x: number; z: number }, raw: unknown): TerrainObject | null {
+  return normalizeTerrainConfig(raw).objects.find((field) =>
+    field.kind === "gas-cloud" &&
+    pointInsideTerrainObject(point, field),
   ) ?? null;
 }

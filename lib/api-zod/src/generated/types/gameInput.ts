@@ -62,8 +62,10 @@ export interface GameInput {
      */
   ambushBoxDepth?: number;
   /** Optional terrain package for this engagement. */
-  terrain?: 'none' | 'asteroid-fields';
-  /** Number of asteroid fields to generate when terrain=asteroid-fields. Supported values: 3, 6, or 9. */
+  terrain?: 'none' | 'asteroid-fields' | 'gas-clouds';
+  /** Number of terrain objects to generate when terrain is enabled. Supported values: 3, 6, or 9. */
+  terrainCount?: number;
+  /** Legacy terrain count for asteroid fields. Supported values: 3, 6, or 9. */
   asteroidFieldCount?: number;
   /** Optional station package for this engagement. */
   stations?: 'none' | 'enabled';

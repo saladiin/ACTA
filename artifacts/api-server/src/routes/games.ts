@@ -53,12 +53,14 @@ import {
   type LineOfSightObstacle,
 } from "../lib/line-of-sight";
 import {
-  generateAsteroidTerrainConfig,
+  generateTerrainConfig,
   lineOfSightObstaclesFromTerrainConfig,
   normalizeTerrainConfig,
-  normalizeAsteroidFieldCount,
+  normalizeTerrainCount,
   normalizeTerrainSelection,
   pointInsideAsteroidField,
+  pointInsideGasCloud,
+  terrainObjectPolygon,
 } from "../lib/terrain";
 import {
   CreateGameBody,
@@ -719,6 +721,38 @@ function weaponLineOfSightBlock(
   return findBlockingLineOfSightObstacle(attacker, target, obstacles);
 }
 
+function terrainAdjustedStealthForTarget(
+  baseStealth: number,
+  targetPoint: BoardPoint,
+  terrainConfig: unknown,
+): number {
+  const targetAsteroidField = pointInsideAsteroidField(targetPoint, terrainConfig);
+  const targetGasCloud = pointInsideGasCloud(targetPoint, terrainConfig);
+  let adjusted = baseStealth;
+  if (targetAsteroidField) adjusted = Math.max(adjusted, baseStealth > 0 ? baseStealth + 2 : 3);
+  if (targetGasCloud) adjusted = Math.max(adjusted, baseStealth > 0 ? baseStealth + 1 : 2);
+  return adjusted;
+}
+
+function terrainStealthSourceName(targetPoint: BoardPoint, terrainConfig: unknown): string | null {
+  return pointInsideAsteroidField(targetPoint, terrainConfig)?.name
+    ?? pointInsideGasCloud(targetPoint, terrainConfig)?.name
+    ?? null;
+}
+
+function terrainAdjustedCrewQuality(
+  baseCrewQuality: number,
+  unitPoint: BoardPoint,
+  terrainConfig: unknown,
+  checkKind?: "run-silent" | "special-action" | "scout-support",
+): number {
+  let adjusted = Math.max(0, Math.trunc(baseCrewQuality || 0));
+  const insideGasCloud = Boolean(pointInsideGasCloud(unitPoint, terrainConfig));
+  if (insideGasCloud) adjusted -= 1;
+  if (insideGasCloud && checkKind === "run-silent") adjusted += 2;
+  return Math.max(0, adjusted);
+}
+
 type AsteroidMovementHazard = {
   fieldId: string;
   fieldName: string;
@@ -784,6 +818,70 @@ function segmentLengthInsideCircle(
   return inside;
 }
 
+function pointInsidePolygon(point: { x: number; z: number }, polygon: Array<{ x: number; z: number }>): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]!;
+    const b = polygon[j]!;
+    const intersects =
+      (a.z > point.z) !== (b.z > point.z) &&
+      point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z || 1e-6) + a.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function segmentSegmentParameter(
+  start: { x: number; z: number },
+  end: { x: number; z: number },
+  a: { x: number; z: number },
+  b: { x: number; z: number },
+): number | null {
+  const r = { x: end.x - start.x, z: end.z - start.z };
+  const s = { x: b.x - a.x, z: b.z - a.z };
+  const denominator = r.x * s.z - r.z * s.x;
+  if (Math.abs(denominator) <= 1e-9) return null;
+
+  const tNumerator = (a.x - start.x) * s.z - (a.z - start.z) * s.x;
+  const uNumerator = (a.x - start.x) * r.z - (a.z - start.z) * r.x;
+  const t = tNumerator / denominator;
+  const u = uNumerator / denominator;
+  if (t <= 1e-9 || t >= 1 - 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
+  return t;
+}
+
+function segmentLengthInsidePolygon(
+  start: { x: number; z: number },
+  end: { x: number; z: number },
+  polygon: Array<{ x: number; z: number }>,
+): number {
+  if (polygon.length < 3) return 0;
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const segmentLength = Math.hypot(dx, dz);
+  if (segmentLength <= 1e-9) return 0;
+
+  const cuts = [0, 1];
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i]!;
+    const b = polygon[(i + 1) % polygon.length]!;
+    const t = segmentSegmentParameter(start, end, a, b);
+    if (t != null) cuts.push(t);
+  }
+  cuts.sort((left, right) => left - right);
+
+  let inside = 0;
+  for (let i = 0; i < cuts.length - 1; i += 1) {
+    const from = cuts[i]!;
+    const to = cuts[i + 1]!;
+    if (to - from <= 1e-9) continue;
+    const mid = (from + to) / 2;
+    const sample = { x: start.x + dx * mid, z: start.z + dz * mid };
+    if (pointInsidePolygon(sample, polygon)) inside += (to - from) * segmentLength;
+  }
+  return inside;
+}
+
 function formatAsteroidMovementHazards(hazards: AsteroidMovementHazard[]): string {
   if (hazards.length === 0) return "";
   const parts = hazards.map((hazard) => {
@@ -810,10 +908,15 @@ async function applyAsteroidMovementHazards(
   const end = { x: unitAfterMove.hexQ, z: unitAfterMove.hexR };
   const fields = normalizeTerrainConfig(game.terrainConfig).objects.filter((field) => field.kind === "asteroid-field");
   const hazardSegments = fields
-    .map((field) => ({
-      field,
-      inchesInside: segmentLengthInsideCircle(start, end, { x: field.x, z: field.z }, field.radiusInches),
-    }))
+    .map((field) => {
+      const polygon = terrainObjectPolygon(field);
+      return {
+        field,
+        inchesInside: polygon
+          ? segmentLengthInsidePolygon(start, end, polygon)
+          : segmentLengthInsideCircle(start, end, { x: field.x, z: field.z }, field.radiusInches),
+      };
+    })
     .filter((entry) => entry.inchesInside > 0.01);
   if (hazardSegments.length === 0) {
     return { unit: unitAfterMove, hazards: [], gameCompleted: false, winnerId: null };
@@ -4339,12 +4442,11 @@ async function resolveBasicAiWeaponFire(
   const critFloor = attackerCrits.weaponsHitOn4 ? 4 : 0;
   const hitThreshold = Math.max(1, Math.max(baseThreshold, critFloor) - attackRollModifier(wt));
 
-  const targetAsteroidField = pointInsideAsteroidField(tPos, game.terrainConfig);
-  const terrainAdjustedStealth = targetAsteroidField
-    ? targetTraits.stealth > 0
-      ? targetTraits.stealth + 2
-      : 3
-    : targetTraits.stealth;
+  const terrainAdjustedStealth = terrainAdjustedStealthForTarget(
+    targetTraits.stealth,
+    tPos,
+    game.terrainConfig,
+  );
   let stealthCheckPassed = true;
   let stealthCheckTarget: number | null = null;
   let stealthCheckRoll: number | null = null;
@@ -4631,7 +4733,7 @@ async function resolveBasicAiWeaponFire(
       stealthCheckRoll,
       stealthCheckPassed,
       stealthCheckNat6Auto,
-      asteroidFieldStealthSource: targetAsteroidField?.name ?? null,
+      asteroidFieldStealthSource: terrainStealthSourceName(tPos, game.terrainConfig),
       terrainAdjustedStealth,
       stealthFailWastedSlowLoading,
       attackRolls,
@@ -6179,10 +6281,14 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     ambushBoxDepth: parsed.data.ambushBoxDepth,
   });
   const terrainSelection = normalizeTerrainSelection(parsed.data.terrain);
-  const asteroidFieldCount = terrainSelection === "asteroid-fields"
-    ? normalizeAsteroidFieldCount(parsed.data.asteroidFieldCount)
+  const terrainCount = terrainSelection !== "none"
+    ? normalizeTerrainCount(parsed.data.terrainCount ?? parsed.data.asteroidFieldCount)
     : 0;
-  const terrainConfig = generateAsteroidTerrainConfig(deploymentConfig, asteroidFieldCount);
+  const terrainConfig = generateTerrainConfig(
+    deploymentConfig,
+    terrainSelection === "gas-clouds" ? "gas-cloud" : "asteroid-field",
+    terrainCount,
+  );
   const stationSelection = normalizeStationSelection(parsed.data.stations);
   const stationConfig = createStationConfig(stationSelection);
   // crewQualityMode: belt-and-braces validation. Zod schema already restricts
@@ -9844,12 +9950,11 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // the sheet, even if the threshold somehow exceeds 6.
       // Energy Mine ignores Stealth entirely. Scout Counter-Stealth and
       // Fleet Support each reduce the effective Stealth before clamping.
-      const targetAsteroidField = pointInsideAsteroidField(tPos, game.terrainConfig);
-      const terrainAdjustedStealth = targetAsteroidField
-        ? targetTraits.stealth > 0
-          ? targetTraits.stealth + 2
-          : 3
-        : targetTraits.stealth;
+      const terrainAdjustedStealth = terrainAdjustedStealthForTarget(
+        targetTraits.stealth,
+        tPos,
+        game.terrainConfig,
+      );
       const effectiveStealth = Math.max(0,
         terrainAdjustedStealth - scoutStealthReduction - fleetSupportStealthReduction,
       );
@@ -10583,7 +10688,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           stealthCheckPassed,
           stealthCheckNat6Auto,
           stealthFailWastedSlowLoading,
-          asteroidFieldStealthSource: targetAsteroidField?.name ?? null,
+          asteroidFieldStealthSource: terrainStealthSourceName(tPos, game.terrainConfig),
           terrainAdjustedStealth,
           attackRolls,
           attackRollKinds,
@@ -10868,7 +10973,13 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       let success = true;
       if (cqRequired !== null) {
         cqRoll = rollD6();
-        cqTotal = cqRoll + unit.crewQuality;
+        const effectiveCrewQuality = terrainAdjustedCrewQuality(
+          unit.crewQuality,
+          { x: unit.hexQ, z: unit.hexR },
+          game.terrainConfig,
+          action === "run-silent" ? "run-silent" : "special-action",
+        );
+        cqTotal = cqRoll + effectiveCrewQuality;
         success = cqTotal >= cqRequired;
       }
 
@@ -11160,7 +11271,12 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
 
       // CQ check: 1d6 + crewQuality ≥ 8.
       const cqRoll = rollD6();
-      const cqTotal = cqRoll + scout.crewQuality;
+      const cqTotal = cqRoll + terrainAdjustedCrewQuality(
+        scout.crewQuality,
+        { x: scout.hexQ, z: scout.hexR },
+        game.terrainConfig,
+        "scout-support",
+      );
       const success = cqTotal >= SCOUT_CQ_REQUIRED;
       // Failed attempts still occupy the per-round slot (the scout tried
       // and burned its window), so we record a "-failed" suffix mirroring
