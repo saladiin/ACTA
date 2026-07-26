@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,6 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Swords, Globe2, Lock, UserRound, Cpu } from "lucide-react";
 import { PRIORITY_LEVELS, type PriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 import type { DeploymentPreset, DeploymentSide } from "@/lib/deployment-zones";
+
+type TerrainSelection = "none" | "asteroid-fields" | "gas-clouds" | "mixed-terrain";
+type TerrainPlacementMode = "automatic" | "manual";
 
 export default function NewGame() {
   const [, setLocation] = useLocation();
@@ -31,14 +34,31 @@ export default function NewGame() {
     useState<DeploymentSide>("challenger");
   const [ambushBoxWidth, setAmbushBoxWidth] = useState<number>(16);
   const [ambushBoxDepth, setAmbushBoxDepth] = useState<number>(16);
-  const [terrain, setTerrain] = useState<"none" | "asteroid-fields" | "gas-clouds">("none");
-  const [terrainCount, setTerrainCount] = useState<3 | 6 | 9>(3);
+  const [terrainPlacement, setTerrainPlacement] =
+    useState<TerrainPlacementMode>("automatic");
+  const [terrain, setTerrain] = useState<TerrainSelection>("none");
+  const [terrainCount, setTerrainCount] = useState<number>(3);
   const [stations, setStations] = useState<"none" | "enabled">("none");
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
   const [matchName, setMatchName] = useState("");
 
   const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
+  const terrainCountOptions =
+    terrainPlacement === "manual" ? [4, 6, 8] : [3, 6, 9];
+
+  useEffect(() => {
+    if (!terrainCountOptions.includes(terrainCount)) {
+      setTerrainCount(terrainCountOptions[0] ?? 3);
+    }
+  }, [terrainCount, terrainCountOptions]);
+
+  const terrainPackageLabel = (value: TerrainSelection): string => {
+    if (value === "asteroid-fields") return "Asteroid fields";
+    if (value === "gas-clouds") return "Gas clouds";
+    if (value === "mixed-terrain") return "Mixed terrain";
+    return "Terrain";
+  };
 
   const canSubmit =
     !!allocationPoints &&
@@ -68,6 +88,8 @@ export default function NewGame() {
             deploymentPreset === "ambush-center" ? ambushBoxWidth : undefined,
           ambushBoxDepth:
             deploymentPreset === "ambush-center" ? ambushBoxDepth : undefined,
+          terrainPlacement:
+            terrain !== "none" ? terrainPlacement : undefined,
           terrain,
           terrainCount:
             terrain !== "none" ? terrainCount : undefined,
@@ -343,10 +365,30 @@ export default function NewGame() {
 
         <section>
           {sectionHeader(7, "Terrain")}
+          <div className="mb-3">
+            <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
+              Placement
+            </div>
+            <Select
+              value={terrainPlacement}
+              onValueChange={(value) =>
+                setTerrainPlacement(value as TerrainPlacementMode)
+              }
+            >
+              <SelectTrigger data-testid="select-terrain-placement" className="bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-card border-border">
+                <SelectItem value="automatic">Automatic placement</SelectItem>
+                <SelectItem value="manual">Manual player placement</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <Select
             value={terrain}
             onValueChange={(value) =>
-              setTerrain(value as "none" | "asteroid-fields" | "gas-clouds")
+              setTerrain(value as TerrainSelection)
             }
           >
             <SelectTrigger data-testid="select-terrain" className="bg-background">
@@ -356,36 +398,39 @@ export default function NewGame() {
               <SelectItem value="none">None</SelectItem>
               <SelectItem value="asteroid-fields">Asteroid fields</SelectItem>
               <SelectItem value="gas-clouds">Gas clouds</SelectItem>
+              <SelectItem value="mixed-terrain">Mixed terrain</SelectItem>
             </SelectContent>
           </Select>
 
           {terrain !== "none" && (
             <div className="mt-3">
               <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
-                {terrain === "gas-clouds" ? "Gas clouds" : "Asteroid fields"}
+                {terrainPackageLabel(terrain)}
               </div>
               <Select
                 value={String(terrainCount)}
                 onValueChange={(value) =>
-                  setTerrainCount(Number(value) as 3 | 6 | 9)
+                  setTerrainCount(Number(value))
                 }
               >
                 <SelectTrigger data-testid="select-terrain-count" className="bg-background">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
-                  <SelectItem value="3">3 {terrain === "gas-clouds" ? "clouds" : "fields"}</SelectItem>
-                  <SelectItem value="6">6 {terrain === "gas-clouds" ? "clouds" : "fields"}</SelectItem>
-                  <SelectItem value="9">9 {terrain === "gas-clouds" ? "clouds" : "fields"}</SelectItem>
+                  {terrainCountOptions.map((count) => (
+                    <SelectItem key={count} value={String(count)}>
+                      {count} pieces
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
           <p className="mt-2 text-[11px] text-muted-foreground font-mono">
-            Terrain is placed by the server before deployment. Standard setups
-            exclude deployment zones; ambush setups exclude the center box.
-            Gas clouds use dust-cloud LOS and stealth/CQ modifiers.
+            Automatic terrain is placed by the server. Manual terrain is placed
+            by commanders before deployment; human games alternate placement,
+            while AI games let the human commander place every piece.
           </p>
         </section>
 

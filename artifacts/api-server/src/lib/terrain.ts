@@ -2,6 +2,7 @@ import type { DeploymentConfig, DeploymentRect } from "./deployment-zones";
 import type { BoardPoint, LineOfSightObstacle } from "./line-of-sight";
 
 export type TerrainKind = "asteroid-field" | "gas-cloud";
+export type ManualTerrainVariant = "asteroid-light" | "asteroid-medium";
 
 export type TerrainObject = {
   id: string;
@@ -21,10 +22,21 @@ export type TerrainObject = {
 export type TerrainConfig = {
   version: 1;
   objects: TerrainObject[];
+  manualPlacement?: TerrainManualPlacementState;
 };
 
-export type TerrainSelection = "none" | "asteroid-fields" | "gas-clouds";
+export type TerrainSelection = "none" | "asteroid-fields" | "gas-clouds" | "mixed-terrain";
 export type TerrainCount = 0 | 3 | 6 | 9;
+export type ManualTerrainCount = 0 | 4 | 6 | 8;
+export type TerrainPlacementMode = "automatic" | "manual";
+
+export type TerrainManualPlacementState = {
+  enabled: boolean;
+  terrainSelection: Exclude<TerrainSelection, "none">;
+  totalCount: ManualTerrainCount;
+  playerOrder: string[];
+  nextPlayerId: string | null;
+};
 
 const BOARD_MIN_X = -24;
 const BOARD_MAX_X = 24;
@@ -134,7 +146,7 @@ function terrainSeededUnit(seed: number, index: number): number {
   return value - Math.floor(value);
 }
 
-function terrainForbiddenRects(deploymentConfig: DeploymentConfig): DeploymentRect[] {
+export function terrainForbiddenRects(deploymentConfig: DeploymentConfig): DeploymentRect[] {
   if (deploymentConfig.preset === "ambush-center") {
     const centerZones = [
       ...deploymentConfig.challenger.zones,
@@ -180,7 +192,11 @@ function pointAllowedForTerrain(
 }
 
 export function normalizeTerrainSelection(value: unknown): TerrainSelection {
-  return value === "asteroid-fields" || value === "gas-clouds" ? value : "none";
+  return value === "asteroid-fields" || value === "gas-clouds" || value === "mixed-terrain" ? value : "none";
+}
+
+export function normalizeTerrainPlacementMode(value: unknown): TerrainPlacementMode {
+  return value === "manual" ? "manual" : "automatic";
 }
 
 export function normalizeAsteroidFieldCount(value: unknown): TerrainCount {
@@ -190,6 +206,11 @@ export function normalizeAsteroidFieldCount(value: unknown): TerrainCount {
 
 export function normalizeTerrainCount(value: unknown): TerrainCount {
   return normalizeAsteroidFieldCount(value);
+}
+
+export function normalizeManualTerrainCount(value: unknown): ManualTerrainCount {
+  const count = Math.trunc(Number(value));
+  return count === 4 || count === 6 || count === 8 ? count : 0;
 }
 
 export function generateAsteroidTerrainConfig(
@@ -249,6 +270,124 @@ export function generateTerrainConfig(
   return { version: 1, objects };
 }
 
+export function generateTerrainSelectionConfig(
+  deploymentConfig: DeploymentConfig,
+  selection: TerrainSelection,
+  count: TerrainCount,
+): TerrainConfig {
+  if (selection === "mixed-terrain") {
+    if (count === 0) return { version: 1, objects: [] };
+    const { columns, rows } = terrainCountGrid(count);
+    const forbiddenRects = terrainForbiddenRects(deploymentConfig);
+    const cellWidth = (BOARD_MAX_X - BOARD_MIN_X) / columns;
+    const cellDepth = (BOARD_MAX_Z - BOARD_MIN_Z) / rows;
+    const cells = shuffle(Array.from({ length: columns * rows }, (_, index) => ({
+      column: index % columns,
+      row: Math.floor(index / columns),
+    })));
+    const objects: TerrainObject[] = [];
+    for (const cell of cells) {
+      if (objects.length >= count) break;
+      const roll = Math.random();
+      const kind: TerrainKind = roll < 0.34 ? "gas-cloud" : "asteroid-field";
+      const candidate = terrainObjectForPlacement(
+        kind,
+        objects.length + 1,
+        0,
+        0,
+        { variant: roll > 0.67 ? "asteroid-medium" : "asteroid-light" },
+      );
+      const radius = candidate.radiusInches;
+      const xMin = BOARD_MIN_X + cell.column * cellWidth;
+      const xMax = xMin + cellWidth;
+      const zMin = BOARD_MIN_Z + cell.row * cellDepth;
+      const zMax = zMin + cellDepth;
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const x = randomBetween(xMin + radius, xMax - radius);
+        const z = randomBetween(zMin + radius, zMax - radius);
+        if (!pointAllowedForTerrain(x, z, radius, forbiddenRects, objects)) continue;
+        objects.push({
+          ...candidate,
+          x: Number(x.toFixed(3)),
+          z: Number(z.toFixed(3)),
+        });
+        break;
+      }
+    }
+    return { version: 1, objects };
+  }
+  if (selection === "gas-clouds") return generateTerrainConfig(deploymentConfig, "gas-cloud", count);
+  if (selection === "asteroid-fields") return generateTerrainConfig(deploymentConfig, "asteroid-field", count);
+  return { version: 1, objects: [] };
+}
+
+export function createManualTerrainConfig(
+  selection: Exclude<TerrainSelection, "none">,
+  totalCount: ManualTerrainCount,
+  playerOrder: string[] = [],
+  nextPlayerId: string | null = null,
+): TerrainConfig {
+  return {
+    version: 1,
+    objects: [],
+    manualPlacement: {
+      enabled: true,
+      terrainSelection: selection,
+      totalCount,
+      playerOrder,
+      nextPlayerId,
+    },
+  };
+}
+
+export function terrainObjectForPlacement(
+  kind: TerrainKind,
+  ordinal: number,
+  x: number,
+  z: number,
+  options: { variant?: ManualTerrainVariant; rotationDeg?: number } = {},
+): TerrainObject {
+  const variant = options.variant === "asteroid-medium" ? "asteroid-medium" : "asteroid-light";
+  const asteroidMedium = kind === "asteroid-field" && variant === "asteroid-medium";
+  const radius = kind === "gas-cloud"
+    ? GAS_CLOUD_RADIUS_INCHES
+    : asteroidMedium
+      ? ASTEROID_FIELD_MEDIUM_RADIUS_INCHES
+      : ASTEROID_FIELD_RADIUS_INCHES;
+  const shapeSeed = ordinal * 1009 + (kind === "gas-cloud" ? 317 : asteroidMedium ? 509 : 113);
+  const rotationDeg = Number.isFinite(Number(options.rotationDeg))
+    ? (((Number(options.rotationDeg) % 360) + 360) % 360)
+    : Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
+  return {
+    id: kind === "gas-cloud" ? `gas-cloud-${ordinal}` : `asteroid-field-${ordinal}`,
+    kind,
+    name: kind === "gas-cloud"
+      ? `Dust Cloud ${ordinal}`
+      : asteroidMedium
+        ? `Medium Asteroid Field ${ordinal}`
+        : `Asteroid Field ${ordinal}`,
+    x: Number(x.toFixed(3)),
+    z: Number(z.toFixed(3)),
+    radiusInches: radius,
+    density: kind === "gas-cloud" ? 0 : asteroidDensityFromD6(),
+    modelFilename: kind === "gas-cloud"
+      ? ""
+      : asteroidMedium
+        ? ASTEROID_FIELD_MODEL_MEDIUM
+        : ASTEROID_FIELD_MODEL,
+    rotationDeg,
+    footprintScaleX: Number((
+      (kind === "gas-cloud" ? 0.88 : 0.92) +
+      terrainSeededUnit(shapeSeed, 41) * (kind === "gas-cloud" ? 0.3 : 0.2)
+    ).toFixed(3)),
+    footprintScaleZ: Number((
+      (kind === "gas-cloud" ? 0.88 : 0.92) +
+      terrainSeededUnit(shapeSeed, 43) * (kind === "gas-cloud" ? 0.3 : 0.2)
+    ).toFixed(3)),
+    shapeSeed,
+  };
+}
+
 export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 1, objects: [] };
   const rawObjects = (raw as { objects?: unknown }).objects;
@@ -292,7 +431,29 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
         .filter((item): item is TerrainObject => item !== null)
         .slice(0, 12)
     : [];
-  return { version: 1, objects };
+  const rawManual = (raw as { manualPlacement?: unknown }).manualPlacement;
+  let manualPlacement: TerrainManualPlacementState | undefined;
+  if (rawManual && typeof rawManual === "object" && !Array.isArray(rawManual)) {
+    const manual = rawManual as Record<string, unknown>;
+    const selection = normalizeTerrainSelection(manual.terrainSelection);
+    const totalCount = normalizeManualTerrainCount(manual.totalCount);
+    const playerOrder = Array.isArray(manual.playerOrder)
+      ? manual.playerOrder.filter((value): value is string => typeof value === "string" && value.length > 0).slice(0, 2)
+      : [];
+    const nextPlayerId = typeof manual.nextPlayerId === "string" && manual.nextPlayerId.length > 0
+      ? manual.nextPlayerId
+      : null;
+    if (manual.enabled === true && selection !== "none" && totalCount > 0) {
+      manualPlacement = {
+        enabled: true,
+        terrainSelection: selection,
+        totalCount,
+        playerOrder,
+        nextPlayerId,
+      };
+    }
+  }
+  return manualPlacement ? { version: 1, objects, manualPlacement } : { version: 1, objects };
 }
 
 export function lineOfSightObstaclesFromTerrainConfig(raw: unknown): LineOfSightObstacle[] {

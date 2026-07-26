@@ -109,7 +109,10 @@ import {
   normalizeTerrainConfig,
   lineOfSightObstaclesFromTerrainConfig,
   pointInsideTerrainObject,
+  terrainObjectForPlacementPreview,
   terrainObjectPolygon,
+  type ManualTerrainVariant,
+  type TerrainKind,
   type TerrainObject,
 } from "@/lib/terrain";
 import skyboxUrl from "@assets/skybox_1780215222009.png";
@@ -161,6 +164,7 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCcw,
+  RotateCw,
   Check,
   X,
   Cpu,
@@ -188,6 +192,7 @@ function hexToWorld(q: number, r: number): [number, number, number] {
 // Board is 48" wide × 72" deep, 1 world unit = 1 inch
 const BOARD_W = 48;
 const BOARD_D = 72;
+type ManualTerrainChoice = "asteroid-light" | "asteroid-medium" | "gas-cloud";
 const UNIT_FOCUS_CAMERA_DISTANCE = 18; // Tune this to change double-tap zoom level.
 const UNIT_FOCUS_TARGET_HEIGHT = 1.4;
 const BOARD_FOCUS_CAMERA_DISTANCE = 30;
@@ -400,6 +405,33 @@ type AiWeaponFxReplay = {
   hits: number;
 };
 
+type AiFiringSummaryTarget = {
+  targetUnitId: number;
+  targetName: string;
+  weaponNames: string[];
+  weaponsFired: number;
+  hits: number;
+  hullDamage: number;
+  crewDamage: number;
+  destroyed: boolean;
+  crippled: boolean;
+  damageState: string;
+};
+
+type AiFiringActivationSummary = {
+  id: string;
+  at: string;
+  round: number;
+  turn: number;
+  attackerUnitId: number;
+  attackerName: string;
+  weaponsFired: number;
+  totalHits: number;
+  totalHullDamage: number;
+  totalCrewDamage: number;
+  targets: AiFiringSummaryTarget[];
+};
+
 type AntiFighterUiTarget = {
   targetUnitId: number;
   targetName: string;
@@ -574,6 +606,67 @@ function readAntiFighterLastResult(
   return pending?.lastResult ?? null;
 }
 
+function readAiFiringSummary(raw: unknown): AiFiringActivationSummary | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const state = raw as Record<string, unknown>;
+  const value = state.aiFiringSummary;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const summary = value as Record<string, unknown>;
+  if (
+    typeof summary.id !== "string" ||
+    typeof summary.at !== "string" ||
+    typeof summary.round !== "number" ||
+    typeof summary.turn !== "number" ||
+    typeof summary.attackerUnitId !== "number" ||
+    typeof summary.attackerName !== "string" ||
+    typeof summary.weaponsFired !== "number" ||
+    typeof summary.totalHits !== "number" ||
+    typeof summary.totalHullDamage !== "number" ||
+    typeof summary.totalCrewDamage !== "number" ||
+    !Array.isArray(summary.targets)
+  ) {
+    return null;
+  }
+  const targets: AiFiringSummaryTarget[] = [];
+  for (const entry of summary.targets) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const target = entry as Record<string, unknown>;
+    if (
+      typeof target.targetUnitId !== "number" ||
+      typeof target.targetName !== "string" ||
+      !Array.isArray(target.weaponNames) ||
+      !target.weaponNames.every((name) => typeof name === "string") ||
+      typeof target.weaponsFired !== "number" ||
+      typeof target.hits !== "number" ||
+      typeof target.hullDamage !== "number" ||
+      typeof target.crewDamage !== "number" ||
+      typeof target.destroyed !== "boolean" ||
+      typeof target.crippled !== "boolean" ||
+      typeof target.damageState !== "string"
+    ) {
+      return null;
+    }
+    targets.push(target as AiFiringSummaryTarget);
+  }
+  return {
+    id: summary.id,
+    at: summary.at,
+    round: summary.round,
+    turn: summary.turn,
+    attackerUnitId: summary.attackerUnitId,
+    attackerName: summary.attackerName,
+    weaponsFired: summary.weaponsFired,
+    totalHits: summary.totalHits,
+    totalHullDamage: summary.totalHullDamage,
+    totalCrewDamage: summary.totalCrewDamage,
+    targets,
+  };
+}
+
+function aiFiringSummaryStorageKey(gameId: number): string {
+  return `b5acta:ai-firing-summary:${gameId}`;
+}
+
 function readAiDiagnostics(raw: unknown): AiDiagnostics {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const state = raw as Record<string, unknown>;
@@ -634,6 +727,7 @@ function readAiDiagnostics(raw: unknown): AiDiagnostics {
 function aiProgressSignature(game: GameDetail["game"]): string {
   const state = readAiDiagnostics(game.aiState);
   const displacement = readFighterDisplacementUiState(game.aiState);
+  const firingSummary = readAiFiringSummary(game.aiState);
   return [
     game.status,
     game.phase,
@@ -647,6 +741,7 @@ function aiProgressSignature(game: GameDetail["game"]): string {
     state.status ?? "",
     state.lastStep ?? "",
     state.lastActionAt ?? "",
+    firingSummary?.id ?? "",
     displacement?.readyToPlace ? "displace-ready" : "",
     currentFighterDisplacementOwnerId(displacement) ?? "",
     displacement?.entries.map((entry) => entry.unitId).join(",") ?? "",
@@ -656,8 +751,17 @@ function aiProgressSignature(game: GameDetail["game"]): string {
 function shouldStopAiAutoRun(
   game: GameDetail["game"],
   myUserId: string,
+  acknowledgedFiringSummaryId: string | null = null,
 ): boolean {
   if (game.status !== "active") return true;
+  const firingSummary = readAiFiringSummary(game.aiState);
+  if (
+    myUserId !== AI_OPPONENT_ID &&
+    firingSummary &&
+    firingSummary.id !== acknowledgedFiringSummaryId
+  ) {
+    return true;
+  }
   const displacement = readFighterDisplacementUiState(game.aiState);
   if (currentFighterDisplacementOwnerId(displacement) === AI_OPPONENT_ID)
     return false;
@@ -3412,6 +3516,155 @@ function TerrainFields({ fields }: { fields: TerrainObject[] }) {
           : <TerrainAsteroidField key={field.id} field={field} />,
       )}
     </Suspense>
+  );
+}
+
+function TerrainPlacementPreview({
+  field,
+  legal,
+}: {
+  field: TerrainObject;
+  legal: boolean;
+}) {
+  const geometry = useMemo(() => {
+    const polygon = terrainObjectPolygon(field) ?? [];
+    const points = [...polygon, polygon[0]].filter(Boolean).map(
+      (point) => new THREE.Vector3(point.x - field.x, 0, point.z - field.z),
+    );
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }, [field]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  const color = legal ? "#22c55e" : "#ef4444";
+  return (
+    <group position={[field.x, 0.055, field.z]} renderOrder={6}>
+      <lineLoop raycast={() => null}>
+        <primitive object={geometry} attach="geometry" />
+        <lineBasicMaterial color={color} transparent opacity={0.95} depthWrite={false} />
+      </lineLoop>
+      <Billboard position={[0, 1.1, 0]}>
+        <Text
+          fontSize={0.22}
+          color={legal ? "#bbf7d0" : "#fecaca"}
+          anchorX="center"
+          anchorY="middle"
+          outlineColor="#020617"
+          outlineWidth={0.03}
+        >
+          {legal ? "Place terrain" : "Illegal terrain"}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+function isBoardSizedRect(rect: { xMin: number; xMax: number; zMin: number; zMax: number }): boolean {
+  return rect.xMin <= -BOARD_W / 2 + 1e-6 &&
+    rect.xMax >= BOARD_W / 2 - 1e-6 &&
+    rect.zMin <= -BOARD_D / 2 + 1e-6 &&
+    rect.zMax >= BOARD_D / 2 - 1e-6;
+}
+
+function manualTerrainForbiddenRects(config: DeploymentConfig) {
+  if (config.preset === "ambush-center") {
+    const centerZones = [
+      ...config.challenger.zones,
+      ...config.opponent.zones,
+    ].filter((zone) => !isBoardSizedRect(zone));
+    if (centerZones.length > 0) return centerZones;
+    return [
+      ...(config.challenger.exclusions ?? []),
+      ...(config.opponent.exclusions ?? []),
+    ];
+  }
+  return [
+    ...config.challenger.zones,
+    ...config.opponent.zones,
+  ];
+}
+
+function boardPointInRect(point: { x: number; z: number }, rect: { xMin: number; xMax: number; zMin: number; zMax: number }): boolean {
+  return point.x >= rect.xMin - 1e-6 &&
+    point.x <= rect.xMax + 1e-6 &&
+    point.z >= rect.zMin - 1e-6 &&
+    point.z <= rect.zMax + 1e-6;
+}
+
+function polygonContainsBoardPoint(point: { x: number; z: number }, polygon: Array<{ x: number; z: number }>): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]!;
+    const b = polygon[j]!;
+    const intersects =
+      (a.z > point.z) !== (b.z > point.z) &&
+      point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z || 1e-6) + a.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function boardSegmentsIntersect(a: { x: number; z: number }, b: { x: number; z: number }, c: { x: number; z: number }, d: { x: number; z: number }): boolean {
+  const cross = (p: { x: number; z: number }, q: { x: number; z: number }, r: { x: number; z: number }) =>
+    (q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x);
+  const onSegment = (p: { x: number; z: number }, q: { x: number; z: number }, r: { x: number; z: number }) =>
+    Math.min(p.x, r.x) - 1e-6 <= q.x &&
+    q.x <= Math.max(p.x, r.x) + 1e-6 &&
+    Math.min(p.z, r.z) - 1e-6 <= q.z &&
+    q.z <= Math.max(p.z, r.z) + 1e-6;
+  const c1 = cross(a, b, c);
+  const c2 = cross(a, b, d);
+  const c3 = cross(c, d, a);
+  const c4 = cross(c, d, b);
+  if (Math.abs(c1) <= 1e-6 && onSegment(a, c, b)) return true;
+  if (Math.abs(c2) <= 1e-6 && onSegment(a, d, b)) return true;
+  if (Math.abs(c3) <= 1e-6 && onSegment(c, a, d)) return true;
+  if (Math.abs(c4) <= 1e-6 && onSegment(c, b, d)) return true;
+  return (c1 > 0) !== (c2 > 0) && (c3 > 0) !== (c4 > 0);
+}
+
+function boardPolygonIntersectsRect(
+  polygon: Array<{ x: number; z: number }>,
+  rect: { xMin: number; xMax: number; zMin: number; zMax: number },
+): boolean {
+  if (polygon.some((point) => boardPointInRect(point, rect))) return true;
+  const corners = [
+    { x: rect.xMin, z: rect.zMin },
+    { x: rect.xMax, z: rect.zMin },
+    { x: rect.xMax, z: rect.zMax },
+    { x: rect.xMin, z: rect.zMax },
+  ];
+  if (corners.some((corner) => polygonContainsBoardPoint(corner, polygon))) return true;
+  const rectEdges = [
+    [corners[0]!, corners[1]!],
+    [corners[1]!, corners[2]!],
+    [corners[2]!, corners[3]!],
+    [corners[3]!, corners[0]!],
+  ] as const;
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i]!;
+    const b = polygon[(i + 1) % polygon.length]!;
+    if (rectEdges.some(([c, d]) => boardSegmentsIntersect(a, b, c, d))) return true;
+  }
+  return false;
+}
+
+function manualTerrainPreviewLegal(
+  field: TerrainObject,
+  deploymentConfig: DeploymentConfig,
+): boolean {
+  const polygon = terrainObjectPolygon(field) ?? [];
+  if (polygon.length < 3) return false;
+  if (polygon.some((point) =>
+    point.x < -BOARD_W / 2 - 1e-6 ||
+    point.x > BOARD_W / 2 + 1e-6 ||
+    point.z < -BOARD_D / 2 - 1e-6 ||
+    point.z > BOARD_D / 2 + 1e-6
+  )) {
+    return false;
+  }
+  return !manualTerrainForbiddenRects(deploymentConfig).some((rect) =>
+    boardPolygonIntersectsRect(polygon, rect),
   );
 }
 
@@ -8691,10 +8944,12 @@ export default function GameBoard() {
   const game = gameData?.game;
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
-  const terrainFields = useMemo(
-    () => normalizeTerrainConfig(game?.terrainConfig).objects,
+  const terrainConfig = useMemo(
+    () => normalizeTerrainConfig(game?.terrainConfig),
     [game?.terrainConfig],
   );
+  const terrainFields = terrainConfig.objects;
+  const manualTerrainPlacement = terrainConfig.manualPlacement ?? null;
   const lineOfSightObstacles = useMemo<LineOfSightObstacle[]>(() => {
     return lineOfSightObstaclesFromTerrainConfig(game?.terrainConfig);
   }, [game?.terrainConfig]);
@@ -8720,6 +8975,54 @@ export default function GameBoard() {
   const isOpponent = game?.opponentId === myUserId;
   const isParticipant = Boolean(isChallenger || isOpponent);
   const isAdminObserver = Boolean(game && adminMe?.isAdmin && !isParticipant);
+  const aiFiringSummary = useMemo(
+    () => readAiFiringSummary(game?.aiState),
+    [game?.aiState],
+  );
+  const [acknowledgedAiFiringSummaryId, setAcknowledgedAiFiringSummaryId] =
+    useState<string | null>(() => {
+      if (typeof window === "undefined") return null;
+      try {
+        return window.sessionStorage.getItem(aiFiringSummaryStorageKey(gameId));
+      } catch {
+        return null;
+      }
+    });
+  const acknowledgedAiFiringSummaryIdRef = useRef<string | null>(
+    acknowledgedAiFiringSummaryId,
+  );
+  useEffect(() => {
+    let stored: string | null = null;
+    try {
+      stored = window.sessionStorage.getItem(aiFiringSummaryStorageKey(gameId));
+    } catch {
+      stored = null;
+    }
+    acknowledgedAiFiringSummaryIdRef.current = stored;
+    setAcknowledgedAiFiringSummaryId(stored);
+  }, [gameId]);
+  const pendingAiFiringSummary =
+    game?.opponentKind === "ai" &&
+    myUserId !== AI_OPPONENT_ID &&
+    aiFiringSummary &&
+    aiFiringSummary.id !== acknowledgedAiFiringSummaryId
+      ? aiFiringSummary
+      : null;
+  const acknowledgeAiFiringSummary = useCallback(() => {
+    if (!pendingAiFiringSummary) return;
+    const summaryId = pendingAiFiringSummary.id;
+    acknowledgedAiFiringSummaryIdRef.current = summaryId;
+    setAcknowledgedAiFiringSummaryId(summaryId);
+    try {
+      window.sessionStorage.setItem(
+        aiFiringSummaryStorageKey(gameId),
+        summaryId,
+      );
+    } catch {
+      // Session storage is an enhancement; the in-memory acknowledgement
+      // still lets this client continue the match.
+    }
+  }, [gameId, pendingAiFiringSummary]);
   const fighterDisplacement = useMemo(
     () => readFighterDisplacementUiState(game?.aiState),
     [game?.aiState],
@@ -9429,7 +9732,8 @@ export default function GameBoard() {
       diceModal !== null ||
       dogfightModal !== null ||
       selfRepairModal !== null ||
-      terrainHazardModal !== null;
+      terrainHazardModal !== null ||
+      pendingAiFiringSummary !== null;
     pausePollingRef.current = open;
     if (open) {
       void qc
@@ -9440,7 +9744,15 @@ export default function GameBoard() {
           // consumed here.
         });
     }
-  }, [diceModal, dogfightModal, selfRepairModal, terrainHazardModal, qc, gameId]);
+  }, [
+    diceModal,
+    dogfightModal,
+    selfRepairModal,
+    terrainHazardModal,
+    pendingAiFiringSummary,
+    qc,
+    gameId,
+  ]);
   const [turnMoves, setTurnMoves] = useState<
     Array<{
       unitId: number;
@@ -9698,13 +10010,28 @@ export default function GameBoard() {
       try {
         for (let step = 0; step < AI_AUTO_STEP_LIMIT; step++) {
           if (respectToggle && !aiAutoRunEnabledRef.current) break;
-          if (step === 0 && shouldStopAiAutoRun(game, myUserId)) break;
+          if (
+            step === 0 &&
+            shouldStopAiAutoRun(
+              game,
+              myUserId,
+              acknowledgedAiFiringSummaryIdRef.current,
+            )
+          )
+            break;
           const next = await runAiStep.mutateAsync({ gameId });
           await qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
           const nextSignature = aiProgressSignature(next);
           if (nextSignature === lastSignature) break;
           lastSignature = nextSignature;
-          if (shouldStopAiAutoRun(next, myUserId)) break;
+          if (
+            shouldStopAiAutoRun(
+              next,
+              myUserId,
+              acknowledgedAiFiringSummaryIdRef.current,
+            )
+          )
+            break;
           if (respectToggle && !aiAutoRunEnabledRef.current) break;
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
@@ -9723,7 +10050,14 @@ export default function GameBoard() {
       return;
     }
     if (!aiAutoRunEnabled || autoAiRunning || runAiStep.isPending) return;
-    if (shouldStopAiAutoRun(game, myUserId)) return;
+    if (
+      shouldStopAiAutoRun(
+        game,
+        myUserId,
+        acknowledgedAiFiringSummaryIdRef.current,
+      )
+    )
+      return;
     void runAiUntilHuman(true);
   }, [
     aiAutoRunEnabled,
@@ -9731,6 +10065,7 @@ export default function GameBoard() {
     game,
     isAdminObserver,
     myUserId,
+    acknowledgedAiFiringSummaryId,
     runAiStep.isPending,
     runAiUntilHuman,
   ]);
@@ -10076,6 +10411,146 @@ export default function GameBoard() {
       : myUserId === game.opponentId
         ? "opponent"
         : null;
+  const [manualTerrainChoice, setManualTerrainChoice] =
+    useState<ManualTerrainChoice>("asteroid-light");
+  const [manualTerrainRotationDeg, setManualTerrainRotationDeg] =
+    useState(0);
+  const [manualTerrainPreviewPoint, setManualTerrainPreviewPoint] =
+    useState<{ x: number; z: number } | null>(null);
+  const manualTerrainComplete = Boolean(
+    manualTerrainPlacement?.enabled &&
+      terrainFields.length >= manualTerrainPlacement.totalCount,
+  );
+  const manualTerrainPending = Boolean(
+    game?.status === "deploying" &&
+      manualTerrainPlacement?.enabled &&
+      !manualTerrainComplete,
+  );
+  const canPlaceManualTerrain = Boolean(
+    manualTerrainPending && manualTerrainPlacement?.nextPlayerId === myUserId,
+  );
+  const manualTerrainOrdinal = terrainFields.length + 1;
+  const manualTerrainChoiceOptions = useMemo<ManualTerrainChoice[]>(() => {
+    if (manualTerrainPlacement?.terrainSelection === "gas-clouds") {
+      return ["gas-cloud"];
+    }
+    if (manualTerrainPlacement?.terrainSelection === "asteroid-fields") {
+      return ["asteroid-light", "asteroid-medium"];
+    }
+    if (manualTerrainPlacement?.terrainSelection === "mixed-terrain") {
+      return ["asteroid-light", "asteroid-medium", "gas-cloud"];
+    }
+    return ["asteroid-light"];
+  }, [manualTerrainPlacement?.terrainSelection]);
+  const activeManualTerrainChoice = manualTerrainChoiceOptions.includes(manualTerrainChoice)
+    ? manualTerrainChoice
+    : manualTerrainChoiceOptions[0] ?? "asteroid-light";
+  const activeManualTerrainKind: TerrainKind =
+    activeManualTerrainChoice === "gas-cloud" ? "gas-cloud" : "asteroid-field";
+  const activeManualTerrainVariant: ManualTerrainVariant | undefined =
+    activeManualTerrainKind === "asteroid-field"
+      ? activeManualTerrainChoice === "asteroid-medium"
+        ? "asteroid-medium"
+        : "asteroid-light"
+      : undefined;
+  useEffect(() => {
+    if (!manualTerrainChoiceOptions.includes(manualTerrainChoice)) {
+      setManualTerrainChoice(manualTerrainChoiceOptions[0] ?? "asteroid-light");
+    }
+  }, [manualTerrainChoice, manualTerrainChoiceOptions]);
+  const manualTerrainPreview = useMemo(
+    () =>
+      manualTerrainPreviewPoint
+        ? terrainObjectForPlacementPreview(
+            activeManualTerrainKind,
+            manualTerrainOrdinal,
+            manualTerrainPreviewPoint.x,
+            manualTerrainPreviewPoint.z,
+            {
+              variant: activeManualTerrainVariant,
+              rotationDeg: manualTerrainRotationDeg,
+            },
+          )
+        : null,
+    [
+      activeManualTerrainKind,
+      activeManualTerrainVariant,
+      manualTerrainOrdinal,
+      manualTerrainPreviewPoint,
+      manualTerrainRotationDeg,
+    ],
+  );
+  const manualTerrainPreviewIsLegal = useMemo(
+    () =>
+      manualTerrainPreview
+        ? manualTerrainPreviewLegal(manualTerrainPreview, deploymentConfig)
+        : false,
+    [deploymentConfig, manualTerrainPreview],
+  );
+  const placeManualTerrain = useMutation({
+    mutationFn: ({
+      kind,
+      variant,
+      rotationDeg,
+      x,
+      z,
+    }: {
+      kind: TerrainKind;
+      variant?: ManualTerrainVariant;
+      rotationDeg: number;
+      x: number;
+      z: number;
+    }) =>
+      customFetch<{ game: GameDetail["game"]; terrain: TerrainObject }>(
+        `/api/games/${gameId}/terrain/place`,
+        {
+          method: "POST",
+          body: JSON.stringify({ kind, variant, rotationDeg, x, z }),
+          responseType: "json",
+        },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData<any>(getGetGameQueryKey(gameId), (old: any) =>
+        old ? { ...old, game: result.game } : old,
+      );
+      setManualTerrainPreviewPoint(null);
+      setActivationFeedback(null);
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        cleanApiErrorMessage(err, "Terrain placement failed"),
+      );
+    },
+  });
+  useEffect(() => {
+    if (!canPlaceManualTerrain) setManualTerrainPreviewPoint(null);
+  }, [canPlaceManualTerrain]);
+  useEffect(() => {
+    if (!canPlaceManualTerrain) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "q" && event.key !== "Q" && event.key !== "e" && event.key !== "E") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const step = event.key === "q" || event.key === "Q" ? -15 : 15;
+      setManualTerrainRotationDeg((current) => (((current + step) % 360) + 360) % 360);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [canPlaceManualTerrain]);
   const clampToDeployZone = useCallback(
     (x: number, z: number, baseRadius = 0): [number, number] => {
       const cx = Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, x));
@@ -10120,9 +10595,11 @@ export default function GameBoard() {
     },
     [clampToDeployZone],
   );
-  const deploymentBoardTitle = aiDeploymentControlActive
-    ? "Deploy AI fleet"
-    : "Deploy your fleet";
+  const deploymentBoardTitle = manualTerrainPending
+    ? "Place terrain"
+    : aiDeploymentControlActive
+      ? "Deploy AI fleet"
+      : "Deploy your fleet";
   const canDevRedeployAiOpponent =
     devAiCommanderActive && game?.status === "deploying";
   const myDeploymentLocked = Boolean(
@@ -10318,6 +10795,12 @@ export default function GameBoard() {
   );
   const stageShipAtBoardPoint = useCallback(
     (ship: ShipModel, rawX: number, rawZ: number) => {
+      if (manualTerrainPending) {
+        setActivationFeedback(
+          "Finish manual terrain placement before staging ships.",
+        );
+        return;
+      }
       const purchaseUnitCount = multiUnitPurchaseCount(ship);
       const isMultiUnitPurchase = purchaseUnitCount > 1;
       const groupId = isMultiUnitPurchase
@@ -10419,6 +10902,7 @@ export default function GameBoard() {
       clampToDeployZone,
       deploymentConfig,
       deploymentBlockers,
+      manualTerrainPending,
       mySide,
       myUserId,
       shipModels,
@@ -13954,6 +14438,12 @@ export default function GameBoard() {
   };
 
   const handleYardsDeploy = useCallback(() => {
+    if (manualTerrainPending) {
+      setActivationFeedback(
+        "Manual terrain placement must be completed before fleet deployment.",
+      );
+      return;
+    }
     if (currentStagedUnits.length === 0) return;
     if (deploymentOverlapWarning) {
       setActivationFeedback(deploymentOverlapWarning);
@@ -14089,6 +14579,7 @@ export default function GameBoard() {
     deploymentOverlapWarning,
     deployFleet,
     gameId,
+    manualTerrainPending,
     qc,
     myUserId,
   ]);
@@ -14138,6 +14629,7 @@ export default function GameBoard() {
     Boolean(draggingId) ||
     Boolean(movementGesture) ||
     Boolean(pendingFighterLaunchPlacement) ||
+    canPlaceManualTerrain ||
     canPlaceCurrentDisplacedFighter;
   const gameChatPanel = canUseGameChat ? (
     <div className="border-b border-border" data-testid="game-chat-panel">
@@ -14478,6 +14970,15 @@ export default function GameBoard() {
               stageDisplacedFighterPlacementAtPointer(e.clientX, e.clientY);
               return;
             }
+            if (canPlaceManualTerrain && !placeManualTerrain.isPending) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              setManualTerrainPreviewPoint({
+                x: snapBoardCoord(pos[0]),
+                z: snapBoardCoord(pos[1]),
+              });
+              return;
+            }
             // Staged unit drag (deploy phase)
             if (draggingId) {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
@@ -14674,6 +15175,52 @@ export default function GameBoard() {
               boardPointerDownRef.current = null;
               return;
             }
+            if (canPlaceManualTerrain && !placeManualTerrain.isPending) {
+              const start = boardPointerDownRef.current;
+              const dx = start ? e.clientX - start.x : 0;
+              const dy = start ? e.clientY - start.y : 0;
+              const elapsed = start ? performance.now() - start.time : 0;
+              const target = e.target as HTMLElement | null;
+              const boardTap =
+                Boolean(start) &&
+                dx * dx + dy * dy <= 144 &&
+                elapsed <= 700 &&
+                target?.tagName?.toLowerCase() === "canvas";
+              if (boardTap) {
+                const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+                if (pos) {
+                  const x = snapBoardCoord(pos[0]);
+                  const z = snapBoardCoord(pos[1]);
+                  const field = terrainObjectForPlacementPreview(
+                    activeManualTerrainKind,
+                    manualTerrainOrdinal,
+                    x,
+                    z,
+                    {
+                      variant: activeManualTerrainVariant,
+                      rotationDeg: manualTerrainRotationDeg,
+                    },
+                  );
+                  if (!manualTerrainPreviewLegal(field, deploymentConfig)) {
+                    setManualTerrainPreviewPoint({ x, z });
+                    setActivationFeedback(
+                      "Terrain footprint must stay inside the board and outside deployment areas.",
+                    );
+                    boardPointerDownRef.current = null;
+                    return;
+                  }
+                  placeManualTerrain.mutate({
+                    kind: activeManualTerrainKind,
+                    variant: activeManualTerrainVariant,
+                    rotationDeg: manualTerrainRotationDeg,
+                    x,
+                    z,
+                  });
+                  boardPointerDownRef.current = null;
+                  return;
+                }
+              }
+            }
             if (
               tapPlacementShip &&
               game.status === "deploying" &&
@@ -14756,6 +15303,7 @@ export default function GameBoard() {
           }}
           onPointerCancel={() => {
             displacedFighterPlacementDraggingRef.current = false;
+            setManualTerrainPreviewPoint(null);
             setDraggingId(null);
             if (
               movementGesture?.kind === "forward" ||
@@ -14766,6 +15314,7 @@ export default function GameBoard() {
           }}
           onPointerLeave={() => {
             displacedFighterPlacementDraggingRef.current = false;
+            setManualTerrainPreviewPoint(null);
             setDraggingId(null);
             if (
               movementGesture?.kind === "forward" ||
@@ -14783,6 +15332,12 @@ export default function GameBoard() {
           onDrop={(e) => {
             e.preventDefault();
             setIsDragOver(false);
+            if (manualTerrainPending) {
+              setActivationFeedback(
+                "Finish manual terrain placement before staging ships.",
+              );
+              return;
+            }
             const ship = draggedShipRef.current!;
             if (!ship) return;
             const pos = screenToBoard(e.clientX, e.clientY, threeRef);
@@ -15226,6 +15781,125 @@ export default function GameBoard() {
               </Link>
             </div>
           )}
+          {manualTerrainPending && manualTerrainPlacement && (
+            <div
+              className="absolute left-3 top-3 z-30 w-[min(380px,calc(100%-1.5rem))] rounded border border-cyan-300/45 bg-black/88 px-3 py-2 shadow-xl shadow-cyan-950/30 backdrop-blur"
+              data-testid="manual-terrain-placement-panel"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-cyan-200">
+                    Terrain setup
+                  </div>
+                  <div className="mt-1 text-[11px] font-mono text-slate-200">
+                    {terrainFields.length}/{manualTerrainPlacement.totalCount} placed
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase tracking-wider ${
+                    canPlaceManualTerrain
+                      ? "border-emerald-300/50 bg-emerald-300/10 text-emerald-200"
+                      : "border-slate-500/50 bg-slate-900/80 text-slate-300"
+                  }`}
+                >
+                  {canPlaceManualTerrain
+                    ? "your turn"
+                    : manualTerrainPlacement.nextPlayerId === game.challengerId
+                      ? "host turn"
+                      : "opponent turn"}
+                </span>
+              </div>
+              {canPlaceManualTerrain ? (
+                <div className="mt-2 space-y-2">
+                  {manualTerrainChoiceOptions.length > 1 && (
+                    <div className="grid grid-cols-3 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setManualTerrainChoice("asteroid-light")}
+                        className={`rounded border px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider ${
+                          activeManualTerrainChoice === "asteroid-light"
+                            ? "border-cyan-200 bg-cyan-300/15 text-cyan-100"
+                            : "border-slate-600 bg-slate-950/80 text-slate-300"
+                        }`}
+                        data-testid="button-manual-terrain-asteroid-light"
+                      >
+                        Light
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setManualTerrainChoice("asteroid-medium")}
+                        className={`rounded border px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider ${
+                          activeManualTerrainChoice === "asteroid-medium"
+                            ? "border-cyan-200 bg-cyan-300/15 text-cyan-100"
+                            : "border-slate-600 bg-slate-950/80 text-slate-300"
+                        }`}
+                        data-testid="button-manual-terrain-asteroid-medium"
+                      >
+                        Medium
+                      </button>
+                      {manualTerrainChoiceOptions.includes("gas-cloud") && (
+                        <button
+                          type="button"
+                          onClick={() => setManualTerrainChoice("gas-cloud")}
+                          className={`rounded border px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider ${
+                            activeManualTerrainChoice === "gas-cloud"
+                              ? "border-cyan-200 bg-cyan-300/15 text-cyan-100"
+                              : "border-slate-600 bg-slate-950/80 text-slate-300"
+                          }`}
+                          data-testid="button-manual-terrain-cloud"
+                        >
+                          Cloud
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setManualTerrainRotationDeg((current) => (((current - 15) % 360) + 360) % 360)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded border border-slate-600 bg-slate-950/80 text-slate-200 hover:border-cyan-200 hover:text-cyan-100"
+                      data-testid="button-manual-terrain-rotate-left"
+                      title="Rotate left"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                    <div className="h-7 min-w-12 rounded border border-slate-700 bg-slate-950/70 px-2 text-center font-mono text-[10px] leading-7 text-slate-300">
+                      {Math.round(manualTerrainRotationDeg)} deg
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setManualTerrainRotationDeg((current) => (((current + 15) % 360) + 360) % 360)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded border border-slate-600 bg-slate-950/80 text-slate-200 hover:border-cyan-200 hover:text-cyan-100"
+                      data-testid="button-manual-terrain-rotate-right"
+                      title="Rotate right"
+                    >
+                      <RotateCw className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    Q / E rotate
+                  </div>
+                  {manualTerrainChoiceOptions.length > 1 && !manualTerrainChoiceOptions.includes("gas-cloud") && (
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                      Asteroid fields
+                    </div>
+                  )}
+                  <div className="text-[11px] font-mono text-slate-300">
+                    Click a legal board point. The full footprint must stay out of deployment zones and inside the border.
+                  </div>
+                  {placeManualTerrain.isPending && (
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-cyan-200">
+                      placing...
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-2 text-[11px] font-mono text-slate-300">
+                  Waiting for the next commander to place terrain.
+                </div>
+              )}
+            </div>
+          )}
           {isoCameraControlsEnabled && (
             <TacticalCameraControls
               selectedDisabled={!selectedUnitData}
@@ -15286,6 +15960,12 @@ export default function GameBoard() {
               <DeploymentZones config={deploymentConfig} mySide={mySide} />
             )}
             <TerrainFields fields={terrainFields} />
+            {manualTerrainPreview && canPlaceManualTerrain && (
+              <TerrainPlacementPreview
+                field={manualTerrainPreview}
+                legal={manualTerrainPreviewIsLegal}
+              />
+            )}
             {game.status === "deploying" &&
               carriedFighterDeploymentGuideCarrier && (
                 <CarriedFighterDeploymentGuide
@@ -16169,7 +16849,7 @@ export default function GameBoard() {
                 </div>
               </div>
             )}
-          {game.status === "deploying" && isParticipant && !myDeploymentLocked && (
+          {game.status === "deploying" && isParticipant && !myDeploymentLocked && !manualTerrainPending && (
             <DeploymentAllocationHud
               units={currentStagedUnits}
               scenarioPriority={scenarioPriority}
@@ -16396,7 +17076,7 @@ export default function GameBoard() {
           )}
 
           {/* ── FLEET YARDS (deploy phase, current player not yet deployed) ── */}
-          {game.status === "deploying" && isParticipant && !myDeploymentLocked && (
+          {game.status === "deploying" && isParticipant && !myDeploymentLocked && !manualTerrainPending && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">
                 Fleet Yards
@@ -16554,11 +17234,17 @@ export default function GameBoard() {
                 {filteredModels.map((ship) => (
                   <div
                     key={ship.id}
-                    draggable
+                    draggable={!manualTerrainPending}
                     role={isTouchInput ? "button" : undefined}
                     tabIndex={isTouchInput ? 0 : undefined}
                     data-testid={`ship-card-${ship.id}`}
                     onClick={() => {
+                      if (manualTerrainPending) {
+                        setActivationFeedback(
+                          "Finish manual terrain placement before staging ships.",
+                        );
+                        return;
+                      }
                       if (!isTouchInput) return;
                       setTapPlacementShip((prev) =>
                         prev?.id === ship.id ? null : ship,
@@ -16567,6 +17253,13 @@ export default function GameBoard() {
                       if (mobileGameChrome) setOpsPanelOpen(false);
                     }}
                     onDragStart={(e) => {
+                      if (manualTerrainPending) {
+                        e.preventDefault();
+                        setActivationFeedback(
+                          "Finish manual terrain placement before staging ships.",
+                        );
+                        return;
+                      }
                       draggedShipRef.current = ship;
                       e.dataTransfer.effectAllowed = "copy";
                       e.dataTransfer.setData("text/plain", ship.name);
@@ -16574,7 +17267,11 @@ export default function GameBoard() {
                     onDragEnd={() => {
                       draggedShipRef.current = null;
                     }}
-                    className={`flex items-center justify-between px-2 py-1.5 rounded border bg-background hover:border-primary/40 hover:bg-primary/5 cursor-grab active:cursor-grabbing select-none transition-colors ${
+                    className={`flex items-center justify-between px-2 py-1.5 rounded border bg-background hover:border-primary/40 hover:bg-primary/5 select-none transition-colors ${
+                      manualTerrainPending
+                        ? "cursor-not-allowed opacity-50"
+                        : "cursor-grab active:cursor-grabbing"
+                    } ${
                       tapPlacementShip?.id === ship.id
                         ? "border-primary/80 bg-primary/10 text-primary"
                         : "border-border"
@@ -19127,6 +19824,112 @@ export default function GameBoard() {
       </div>
 
       {/* ── DICE ROLL MODAL ── */}
+      {/* AI firing activation summary */}
+      <Dialog
+        open={pendingAiFiringSummary !== null}
+        onOpenChange={(open) => {
+          if (!open) acknowledgeAiFiringSummary();
+        }}
+      >
+        <DialogContent
+          className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-lg flex-col gap-0 overflow-hidden border-amber-300/70 bg-black/95 p-0 font-mono text-amber-50 shadow-[0_0_45px_rgba(251,191,36,0.24)]"
+          data-testid="dialog-ai-firing-summary"
+        >
+          <DialogHeader className="shrink-0 border-b border-amber-300/25 px-4 py-4 pr-12 text-left">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-amber-300/70 bg-amber-300 text-black">
+                <Swords className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-sm uppercase tracking-[0.18em] text-amber-200">
+                  AI Firing Summary
+                </DialogTitle>
+                <DialogDescription className="mt-1 truncate text-[11px] text-amber-100/65">
+                  Round {pendingAiFiringSummary?.round ?? 0} ·{" "}
+                  {pendingAiFiringSummary?.attackerName ?? "AI ship"} completed
+                  firing
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+            <div className="divide-y divide-amber-300/15 border border-amber-300/25 bg-amber-300/5">
+              {pendingAiFiringSummary?.targets.map((target) => {
+                const outcome = target.destroyed
+                  ? "Destroyed"
+                  : target.damageState === "exploding-end-of-next"
+                    ? "Exploding"
+                    : target.damageState === "adrift"
+                      ? "Adrift"
+                      : target.crippled
+                        ? "Crippled"
+                        : null;
+                return (
+                  <div
+                    key={target.targetUnitId}
+                    className="px-3 py-3"
+                    data-testid={`ai-firing-summary-target-${target.targetUnitId}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="min-w-0 text-xs leading-relaxed text-amber-50">
+                        <span className="font-bold text-amber-200">
+                          {pendingAiFiringSummary.attackerName}
+                        </span>{" "}
+                        attacked{" "}
+                        <span className="font-bold text-cyan-200">
+                          {target.targetName}
+                        </span>{" "}
+                        for{" "}
+                        <span className="font-bold text-red-300">
+                          {target.hullDamage} hull
+                        </span>
+                        ,{" "}
+                        <span className="font-bold text-sky-300">
+                          {target.crewDamage} crew
+                        </span>
+                        .
+                      </p>
+                      {outcome && (
+                        <Badge
+                          variant="outline"
+                          className="shrink-0 border-red-400/60 bg-red-500/10 text-[9px] uppercase text-red-200"
+                        >
+                          {outcome}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                      {target.weaponsFired} weapon
+                      {target.weaponsFired === 1 ? "" : "s"} · {target.hits} hit
+                      {target.hits === 1 ? "" : "s"} ·{" "}
+                      {target.weaponNames.join(", ")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 gap-3 border-t border-amber-300/25 bg-black/95 px-4 py-3 sm:items-center sm:justify-between sm:space-x-0">
+            <div className="text-[10px] uppercase tracking-wider text-slate-400">
+              {pendingAiFiringSummary?.weaponsFired ?? 0} weapons ·{" "}
+              {pendingAiFiringSummary?.targets.length ?? 0} targets ·{" "}
+              {pendingAiFiringSummary?.totalHullDamage ?? 0} hull ·{" "}
+              {pendingAiFiringSummary?.totalCrewDamage ?? 0} crew
+            </div>
+            <Button
+              type="button"
+              onClick={acknowledgeAiFiringSummary}
+              className="bg-amber-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-amber-200"
+              data-testid="button-continue-ai-firing"
+            >
+              Continue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={bugReportOpen}
         onOpenChange={(open) => {

@@ -53,14 +53,22 @@ import {
   type LineOfSightObstacle,
 } from "../lib/line-of-sight";
 import {
+  createManualTerrainConfig,
   generateTerrainConfig,
+  generateTerrainSelectionConfig,
   lineOfSightObstaclesFromTerrainConfig,
+  normalizeManualTerrainCount,
   normalizeTerrainConfig,
   normalizeTerrainCount,
+  normalizeTerrainPlacementMode,
   normalizeTerrainSelection,
   pointInsideAsteroidField,
   pointInsideGasCloud,
+  terrainForbiddenRects,
+  terrainObjectForPlacement,
   terrainObjectPolygon,
+  type ManualTerrainVariant,
+  type TerrainKind,
 } from "../lib/terrain";
 import {
   CreateGameBody,
@@ -751,6 +759,175 @@ function terrainAdjustedCrewQuality(
   if (insideGasCloud) adjusted -= 1;
   if (insideGasCloud && checkKind === "run-silent") adjusted += 2;
   return Math.max(0, adjusted);
+}
+
+function parsePlaceTerrainBody(raw: unknown): {
+  success: true;
+  data: {
+    kind?: TerrainKind;
+    variant?: ManualTerrainVariant;
+    rotationDeg?: number;
+    x: number;
+    z: number;
+  };
+} | { success: false; error: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { success: false, error: "Terrain placement body must be an object" };
+  }
+  const body = raw as Record<string, unknown>;
+  const x = Number(body.x);
+  const z = Number(body.z);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) {
+    return { success: false, error: "Terrain placement requires numeric x and z" };
+  }
+  const kind = body.kind === "asteroid-field" || body.kind === "gas-cloud"
+    ? body.kind
+    : undefined;
+  if (body.kind !== undefined && !kind) {
+    return { success: false, error: "Terrain kind must be asteroid-field or gas-cloud" };
+  }
+  const variant = body.variant === "asteroid-medium" || body.variant === "asteroid-light"
+    ? body.variant
+    : undefined;
+  if (body.variant !== undefined && !variant) {
+    return { success: false, error: "Terrain variant must be asteroid-light or asteroid-medium" };
+  }
+  const rawRotation = body.rotationDeg === undefined ? undefined : Number(body.rotationDeg);
+  if (rawRotation !== undefined && !Number.isFinite(rawRotation)) {
+    return { success: false, error: "Terrain rotation must be numeric" };
+  }
+  const rotationDeg = rawRotation === undefined
+    ? undefined
+    : (((rawRotation % 360) + 360) % 360);
+  return {
+    success: true,
+    data: {
+      kind,
+      variant,
+      rotationDeg,
+      x: snapBoardCoord(x),
+      z: snapBoardCoord(z),
+    },
+  };
+}
+
+function pointInRect(point: BoardPoint, rect: { xMin: number; xMax: number; zMin: number; zMax: number }): boolean {
+  return point.x >= rect.xMin - 1e-6 &&
+    point.x <= rect.xMax + 1e-6 &&
+    point.z >= rect.zMin - 1e-6 &&
+    point.z <= rect.zMax + 1e-6;
+}
+
+function polygonContainsPoint(point: BoardPoint, polygon: BoardPoint[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]!;
+    const b = polygon[j]!;
+    const intersects =
+      (a.z > point.z) !== (b.z > point.z) &&
+      point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z || 1e-6) + a.x;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function segmentIntersectsSegment(a: BoardPoint, b: BoardPoint, c: BoardPoint, d: BoardPoint): boolean {
+  const cross = (p: BoardPoint, q: BoardPoint, r: BoardPoint) =>
+    (q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x);
+  const onSegment = (p: BoardPoint, q: BoardPoint, r: BoardPoint) =>
+    Math.min(p.x, r.x) - 1e-6 <= q.x &&
+    q.x <= Math.max(p.x, r.x) + 1e-6 &&
+    Math.min(p.z, r.z) - 1e-6 <= q.z &&
+    q.z <= Math.max(p.z, r.z) + 1e-6;
+  const c1 = cross(a, b, c);
+  const c2 = cross(a, b, d);
+  const c3 = cross(c, d, a);
+  const c4 = cross(c, d, b);
+  if (Math.abs(c1) <= 1e-6 && onSegment(a, c, b)) return true;
+  if (Math.abs(c2) <= 1e-6 && onSegment(a, d, b)) return true;
+  if (Math.abs(c3) <= 1e-6 && onSegment(c, a, d)) return true;
+  if (Math.abs(c4) <= 1e-6 && onSegment(c, b, d)) return true;
+  return (c1 > 0) !== (c2 > 0) && (c3 > 0) !== (c4 > 0);
+}
+
+function polygonIntersectsRect(
+  polygon: BoardPoint[],
+  rect: { xMin: number; xMax: number; zMin: number; zMax: number },
+): boolean {
+  if (polygon.some((point) => pointInRect(point, rect))) return true;
+  const corners: BoardPoint[] = [
+    { x: rect.xMin, z: rect.zMin },
+    { x: rect.xMax, z: rect.zMin },
+    { x: rect.xMax, z: rect.zMax },
+    { x: rect.xMin, z: rect.zMax },
+  ];
+  if (corners.some((corner) => polygonContainsPoint(corner, polygon))) return true;
+  const rectEdges: Array<[BoardPoint, BoardPoint]> = [
+    [corners[0]!, corners[1]!],
+    [corners[1]!, corners[2]!],
+    [corners[2]!, corners[3]!],
+    [corners[3]!, corners[0]!],
+  ];
+  for (let i = 0; i < polygon.length; i += 1) {
+    const a = polygon[i]!;
+    const b = polygon[(i + 1) % polygon.length]!;
+    if (rectEdges.some(([c, d]) => segmentIntersectsSegment(a, b, c, d))) return true;
+  }
+  return false;
+}
+
+function terrainFootprintClearForManualPlacement(
+  terrain: ReturnType<typeof terrainObjectForPlacement>,
+  deploymentConfig: ReturnType<typeof normalizeDeploymentConfig>,
+): boolean {
+  const polygon = terrainObjectPolygon(terrain);
+  const points = polygon && polygon.length >= 3
+    ? polygon
+    : [
+        { x: terrain.x - terrain.radiusInches, z: terrain.z },
+        { x: terrain.x, z: terrain.z - terrain.radiusInches },
+        { x: terrain.x + terrain.radiusInches, z: terrain.z },
+        { x: terrain.x, z: terrain.z + terrain.radiusInches },
+      ];
+  if (points.some((point) =>
+    point.x < BOARD_MIN_X - 1e-6 ||
+    point.x > BOARD_MAX_X + 1e-6 ||
+    point.z < BOARD_MIN_Z - 1e-6 ||
+    point.z > BOARD_MAX_Z + 1e-6
+  )) {
+    return false;
+  }
+  return !terrainForbiddenRects(deploymentConfig).some((rect) =>
+    polygonIntersectsRect(points, rect),
+  );
+}
+
+function terrainConfigReadyForDeployment(raw: unknown): boolean {
+  const terrain = normalizeTerrainConfig(raw);
+  const manual = terrain.manualPlacement;
+  return !manual?.enabled || terrain.objects.length >= manual.totalCount;
+}
+
+function activateManualTerrainForAcceptedGame(
+  raw: unknown,
+  challengerId: string,
+  opponentId: string,
+): Record<string, unknown> | null {
+  const terrain = normalizeTerrainConfig(raw);
+  const manual = terrain.manualPlacement;
+  if (!manual?.enabled) return null;
+  const playerOrder = [challengerId, opponentId];
+  const nextPlayerId = terrain.objects.length >= manual.totalCount
+    ? null
+    : playerOrder[terrain.objects.length % playerOrder.length] ?? challengerId;
+  return {
+    ...terrain,
+    manualPlacement: {
+      ...manual,
+      playerOrder,
+      nextPlayerId,
+    },
+  };
 }
 
 type AsteroidMovementHazard = {
@@ -2621,6 +2798,7 @@ type AiStatePatch = {
   decisionLog?: AiDecisionEntry[];
   lastAntiFighter?: Record<string, unknown>;
   lastDogfight?: Record<string, unknown>;
+  aiFiringSummary?: AiFiringActivationSummary;
   lastInitiativeTieRoll?: number;
   lastInitiativeTieRound?: number;
   lastError?: {
@@ -2628,6 +2806,33 @@ type AiStatePatch = {
     code: string;
     at: string;
   };
+};
+
+type AiFiringSummaryTarget = {
+  targetUnitId: number;
+  targetName: string;
+  weaponNames: string[];
+  weaponsFired: number;
+  hits: number;
+  hullDamage: number;
+  crewDamage: number;
+  destroyed: boolean;
+  crippled: boolean;
+  damageState: string;
+};
+
+type AiFiringActivationSummary = {
+  id: string;
+  at: string;
+  round: number;
+  turn: number;
+  attackerUnitId: number;
+  attackerName: string;
+  weaponsFired: number;
+  totalHits: number;
+  totalHullDamage: number;
+  totalCrewDamage: number;
+  targets: AiFiringSummaryTarget[];
 };
 
 type AiDecisionEntry = {
@@ -4057,6 +4262,7 @@ async function chooseAiFirePlan(
   tx: any,
   game: typeof gamesTable.$inferSelect,
   attacker: typeof gameUnitsTable.$inferSelect,
+  attemptedWeaponIds: ReadonlySet<number> = new Set<number>(),
 ): Promise<AiFirePlan | null> {
   if (attacker.isDestroyed || attacker.hullPoints <= 0 || (attacker.maxCrewPoints > 0 && attacker.crewPoints <= 0)) return null;
   const rawAction = attacker.specialAction ?? "";
@@ -4064,7 +4270,8 @@ async function chooseAiFirePlan(
   if (baseAction === "run-silent") return null;
 
   const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
-  if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot" || attacker.oneWeaponThisRound) && alreadyFired.length >= 1) {
+  const usedWeaponIds = Array.from(new Set([...alreadyFired, ...attemptedWeaponIds]));
+  if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot" || attacker.oneWeaponThisRound) && usedWeaponIds.length >= 1) {
     return null;
   }
 
@@ -4083,9 +4290,9 @@ async function chooseAiFirePlan(
     lostTraits: r.lostTraits ?? [],
   })));
   const attackerTraits = parseShipTraits(filterLostTraits(attackerModel.traits, attackerCrits.lostTraitNames));
-  if (skeletonPenaltiesApply(attacker, attackerTraits) && alreadyFired.length >= 1) return null;
-  const priorWeapons = alreadyFired.length > 0
-    ? await tx.select().from(weaponsTable).where(inArray(weaponsTable.id, alreadyFired))
+  if (skeletonPenaltiesApply(attacker, attackerTraits) && usedWeaponIds.length >= 1) return null;
+  const priorWeapons = usedWeaponIds.length > 0
+    ? await tx.select().from(weaponsTable).where(inArray(weaponsTable.id, usedWeaponIds))
     : [];
 
   const weapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, attackerShip.shipModelId));
@@ -4132,6 +4339,10 @@ async function chooseAiFirePlan(
   for (const weapon of weapons as Array<typeof weaponsTable.$inferSelect>) {
     if (alreadyFired.includes(weapon.id)) {
       rejected.push({ weaponId: weapon.id, weaponName: weapon.name, reason: "weapon-already-fired" });
+      continue;
+    }
+    if (attemptedWeaponIds.has(weapon.id)) {
+      rejected.push({ weaponId: weapon.id, weaponName: weapon.name, reason: "weapon-already-attempted" });
       continue;
     }
     if (attackerCrits.forbiddenWeaponIds.has(weapon.id)) {
@@ -4785,6 +4996,69 @@ async function resolveBasicAiWeaponFire(
     fighterRecovery,
     winnerId,
     gameCompleted,
+  };
+}
+
+type AiResolvedWeaponAttack = {
+  weaponId: number;
+  weaponName: string;
+  targetUnitId: number;
+  targetName: string;
+  hits: number;
+  hullDamage: number;
+  crewDamage: number;
+  targetDestroyed: boolean;
+  targetCrippled: boolean;
+  targetDamageState: string;
+};
+
+function summarizeAiFiringActivation(
+  game: typeof gamesTable.$inferSelect,
+  attacker: typeof gameUnitsTable.$inferSelect,
+  attacks: AiResolvedWeaponAttack[],
+): AiFiringActivationSummary {
+  const byTarget = new Map<number, AiFiringSummaryTarget>();
+  for (const attack of attacks) {
+    const existing = byTarget.get(attack.targetUnitId);
+    if (existing) {
+      if (!existing.weaponNames.includes(attack.weaponName)) {
+        existing.weaponNames.push(attack.weaponName);
+      }
+      existing.weaponsFired += 1;
+      existing.hits += attack.hits;
+      existing.hullDamage += attack.hullDamage;
+      existing.crewDamage += attack.crewDamage;
+      existing.destroyed = attack.targetDestroyed;
+      existing.crippled = attack.targetCrippled;
+      existing.damageState = attack.targetDamageState;
+      continue;
+    }
+    byTarget.set(attack.targetUnitId, {
+      targetUnitId: attack.targetUnitId,
+      targetName: attack.targetName,
+      weaponNames: [attack.weaponName],
+      weaponsFired: 1,
+      hits: attack.hits,
+      hullDamage: attack.hullDamage,
+      crewDamage: attack.crewDamage,
+      destroyed: attack.targetDestroyed,
+      crippled: attack.targetCrippled,
+      damageState: attack.targetDamageState,
+    });
+  }
+  const at = nowIso();
+  return {
+    id: `ai-fire-${game.id}-${game.currentRound}-${game.currentTurn}-${attacker.id}-${at}`,
+    at,
+    round: game.currentRound,
+    turn: game.currentTurn,
+    attackerUnitId: attacker.id,
+    attackerName: attacker.name,
+    weaponsFired: attacks.length,
+    totalHits: attacks.reduce((sum, attack) => sum + attack.hits, 0),
+    totalHullDamage: attacks.reduce((sum, attack) => sum + attack.hullDamage, 0),
+    totalCrewDamage: attacks.reduce((sum, attack) => sum + attack.crewDamage, 0),
+    targets: Array.from(byTarget.values()),
   };
 }
 
@@ -5755,9 +6029,36 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
       return finishAiActivation(tx, game, unit, "firing", patch);
     }
   }
-  const plan = await chooseAiFirePlan(tx, game, unit);
-  if (plan) {
-    const result = await resolveBasicAiWeaponFire(tx, game, unit, plan.weapon, plan.target);
+  const attemptedWeaponIds = new Set<number>();
+  const resolvedAttacks: AiResolvedWeaponAttack[] = [];
+  let currentUnit = unit;
+  let accumulatedAiState: Record<string, unknown> =
+    game.aiState && typeof game.aiState === "object" && !Array.isArray(game.aiState)
+      ? game.aiState as Record<string, unknown>
+      : {};
+  let latestShotPatch: AiStatePatch | null = null;
+  let gameCompleted = false;
+  const maxWeaponAttempts = 64;
+
+  while (attemptedWeaponIds.size < maxWeaponAttempts) {
+    const plan = await chooseAiFirePlan(tx, game, currentUnit, attemptedWeaponIds);
+    if (!plan) break;
+    attemptedWeaponIds.add(plan.weapon.id);
+
+    const result = await resolveBasicAiWeaponFire(tx, game, currentUnit, plan.weapon, plan.target);
+    resolvedAttacks.push({
+      weaponId: plan.weapon.id,
+      weaponName: plan.weapon.name,
+      targetUnitId: plan.target.id,
+      targetName: plan.target.name,
+      hits: result.hits,
+      hullDamage: result.finalDamage,
+      crewDamage: result.finalCrewLost,
+      targetDestroyed: result.targetDestroyed,
+      targetCrippled: isCrippledUnit(result.target),
+      targetDamageState: result.target.damageState,
+    });
+
     const message = `AI fired ${plan.weapon.name} at ${plan.target.name}: ${result.hits} hit(s), ${result.finalDamage} damage, ${result.finalCrewLost} crew.`;
     const decision = aiDecision(
       result.gameCompleted ? "firing.fire-weapon-game-over" : "firing.fire-weapon",
@@ -5785,25 +6086,61 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
         topCandidates: plan.topCandidates,
         rejected: plan.rejected,
       },
-      unit,
+      currentUnit,
     );
+    latestShotPatch = withAiDecisionLog(
+      accumulatedAiState,
+      aiState("acted", decision.step, {
+        message,
+        unitIds: [currentUnit.id, plan.target.id],
+      }),
+      decision,
+    );
+    accumulatedAiState = mergeAiState(accumulatedAiState, latestShotPatch);
+
     if (result.gameCompleted) {
+      gameCompleted = true;
+      break;
+    }
+
+    const [refreshedUnit] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, currentUnit.id),
+      eq(gameUnitsTable.gameId, game.id),
+      eq(gameUnitsTable.ownerId, AI_OPPONENT_ID),
+    ));
+    if (!refreshedUnit) throw new Error("AI active firing unit disappeared during its activation");
+    currentUnit = refreshedUnit;
+  }
+
+  if (resolvedAttacks.length > 0) {
+    const firingSummary = summarizeAiFiringActivation(game, unit, resolvedAttacks);
+    const targetIds = firingSummary.targets.map(target => target.targetUnitId);
+    const message = `AI ${unit.name} fired ${firingSummary.weaponsFired} weapon${firingSummary.weaponsFired === 1 ? "" : "s"} at ${firingSummary.targets.length} target${firingSummary.targets.length === 1 ? "" : "s"}.`;
+    const finalPatch = aiState(
+      "acted",
+      gameCompleted ? "firing.fire-weapons-game-over" : "firing.fire-weapons",
+      {
+        message,
+        unitIds: [unit.id, ...targetIds],
+        decisionLog: latestShotPatch?.decisionLog,
+        aiFiringSummary: firingSummary,
+      },
+    );
+
+    if (gameCompleted) {
       const [row] = await tx.update(gamesTable).set({
-        aiState: withAiDecisionLog(game.aiState, aiState("acted", "firing.fire-weapon-game-over", {
-          message,
-          unitIds: [unit.id, plan.target.id],
-        }), decision),
+        aiState: mergeAiState(accumulatedAiState, finalPatch),
       }).where(eq(gamesTable.id, game.id)).returning();
       return row;
     }
-    return finishAiActivation(tx, game, unit, "firing", withAiDecisionLog(
-      game.aiState,
-      aiState("acted", "firing.fire-weapon", {
-        message,
-        unitIds: [unit.id, plan.target.id],
-      }),
-      decision,
-    ));
+
+    return finishAiActivation(
+      tx,
+      { ...game, aiState: accumulatedAiState },
+      currentUnit,
+      "firing",
+      finalPatch,
+    );
   }
   const decision = aiDecision(
     "firing.pass-activation",
@@ -6281,14 +6618,27 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     ambushBoxDepth: parsed.data.ambushBoxDepth,
   });
   const terrainSelection = normalizeTerrainSelection(parsed.data.terrain);
-  const terrainCount = terrainSelection !== "none"
+  const terrainPlacementMode = normalizeTerrainPlacementMode(parsed.data.terrainPlacement);
+  const automaticTerrainCount = terrainSelection !== "none"
     ? normalizeTerrainCount(parsed.data.terrainCount ?? parsed.data.asteroidFieldCount)
     : 0;
-  const terrainConfig = generateTerrainConfig(
-    deploymentConfig,
-    terrainSelection === "gas-clouds" ? "gas-cloud" : "asteroid-field",
-    terrainCount,
-  );
+  const manualTerrainCount = terrainSelection !== "none"
+    ? normalizeManualTerrainCount(parsed.data.terrainCount)
+    : 0;
+  const terrainConfig = terrainSelection === "none"
+    ? { version: 1 as const, objects: [] }
+    : terrainPlacementMode === "manual"
+      ? createManualTerrainConfig(
+          terrainSelection,
+          manualTerrainCount || 4,
+          opponentKind === "ai" ? [userId] : [],
+          opponentKind === "ai" ? userId : null,
+        )
+      : generateTerrainSelectionConfig(
+          deploymentConfig,
+          terrainSelection,
+          automaticTerrainCount,
+        );
   const stationSelection = normalizeStationSelection(parsed.data.stations);
   const stationConfig = createStationConfig(stationSelection);
   // crewQualityMode: belt-and-braces validation. Zod schema already restricts
@@ -6860,8 +7210,19 @@ router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void
           }
         }
         const [me] = await tx.select().from(playersTable).where(eq(playersTable.clerkUserId, userId));
+        const nextTerrainConfig = activateManualTerrainForAcceptedGame(
+          game.terrainConfig,
+          game.challengerId,
+          userId,
+        );
         const result = await tx.update(gamesTable)
-          .set({ status: "deploying", opponentId: userId, opponentKind: "human", opponentName: me?.username ?? null })
+          .set({
+            status: "deploying",
+            opponentId: userId,
+            opponentKind: "human",
+            opponentName: me?.username ?? null,
+            ...(nextTerrainConfig ? { terrainConfig: nextTerrainConfig } : {}),
+          })
           .where(and(eq(gamesTable.id, params.data.gameId), eq(gamesTable.status, "open")))
           .returning();
         if (result.length === 0) throw Object.assign(new Error("Already claimed"), { status: 409 });
@@ -6930,6 +7291,86 @@ router.post("/games/:gameId/decline", requireAuth, async (req, res): Promise<voi
       throw Object.assign(new Error(`Cannot decline from status '${game.status}'`), { status: 400 });
     });
     res.json(DeclineGameResponse.parse(toGameDto(updated)));
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/terrain/place", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  const body = parsePlaceTerrainBody(req.body ?? {});
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  if (!body.success) {
+    res.status(400).json({ error: body.error });
+    return;
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "deploying") {
+        throw Object.assign(new Error("Terrain can only be placed before deployment"), { status: 400 });
+      }
+      const terrain = normalizeTerrainConfig(game.terrainConfig);
+      const manual = terrain.manualPlacement;
+      if (!manual?.enabled) {
+        throw Object.assign(new Error("This engagement does not use manual terrain placement"), { status: 400 });
+      }
+      if (terrain.objects.length >= manual.totalCount) {
+        throw Object.assign(new Error("Manual terrain placement is already complete"), { status: 400 });
+      }
+      if (!manual.nextPlayerId) {
+        throw Object.assign(new Error("Manual terrain placement is waiting for both commanders"), { status: 409 });
+      }
+      if (manual.nextPlayerId !== userId) {
+        throw Object.assign(new Error("It is not your terrain placement turn"), { status: 409 });
+      }
+      const kind: TerrainKind =
+        manual.terrainSelection === "mixed-terrain"
+          ? body.data.kind ?? "asteroid-field"
+          : manual.terrainSelection === "gas-clouds"
+            ? "gas-cloud"
+            : "asteroid-field";
+      const candidate = terrainObjectForPlacement(
+        kind,
+        terrain.objects.length + 1,
+        body.data.x,
+        body.data.z,
+        {
+          variant: kind === "asteroid-field" ? body.data.variant : undefined,
+          rotationDeg: body.data.rotationDeg,
+        },
+      );
+      const deploymentConfig = normalizeDeploymentConfig(game.deploymentConfig, game.deploymentDepth);
+      if (!terrainFootprintClearForManualPlacement(candidate, deploymentConfig)) {
+        throw Object.assign(new Error("Terrain footprint must stay inside the board and outside deployment areas"), { status: 400 });
+      }
+      const nextObjects = [...terrain.objects, candidate];
+      const nextPlayerId = nextObjects.length >= manual.totalCount
+        ? null
+        : manual.playerOrder[nextObjects.length % Math.max(1, manual.playerOrder.length)] ?? manual.nextPlayerId;
+      const nextTerrainConfig = {
+        version: 1 as const,
+        objects: nextObjects,
+        manualPlacement: {
+          ...manual,
+          nextPlayerId,
+        },
+      };
+      const [updated] = await tx.update(gamesTable)
+        .set({ terrainConfig: nextTerrainConfig })
+        .where(eq(gamesTable.id, game.id))
+        .returning();
+      return { game: updated, terrain: candidate };
+    });
+    res.status(201).json({ game: toGameDto(result.game), terrain: result.terrain });
   } catch (e) {
     const err = e as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
@@ -7140,6 +7581,9 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       const devAiRedeploy = isDevAiCommander(game, userId);
       if (game.status !== "deploying") {
         throw Object.assign(new Error("Game is not in deploying phase"), { status: 400 });
+      }
+      if (!terrainConfigReadyForDeployment(game.terrainConfig)) {
+        throw Object.assign(new Error("Manual terrain placement must be completed before fleet deployment"), { status: 400 });
       }
 
       const isChallenger = game.challengerId === playerUserId;

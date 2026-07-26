@@ -61,9 +61,11 @@ export interface GameInput {
      * @maximum 56
      */
   ambushBoxDepth?: number;
+  /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
+  terrainPlacement?: 'automatic' | 'manual';
   /** Optional terrain package for this engagement. */
-  terrain?: 'none' | 'asteroid-fields' | 'gas-clouds';
-  /** Number of terrain objects to generate when terrain is enabled. Supported values: 3, 6, or 9. */
+  terrain?: 'none' | 'asteroid-fields' | 'gas-clouds' | 'mixed-terrain';
+  /** Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8. */
   terrainCount?: number;
   /** Legacy terrain count for asteroid fields. Supported values: 3, 6, or 9. */
   asteroidFieldCount?: number;

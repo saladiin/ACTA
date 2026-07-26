@@ -1,6 +1,7 @@
 import type { LineOfSightObstacle } from "./line-of-sight";
 
 export type TerrainKind = "asteroid-field" | "gas-cloud";
+export type ManualTerrainVariant = "asteroid-light" | "asteroid-medium";
 
 export type TerrainObject = {
   id: string;
@@ -20,6 +21,18 @@ export type TerrainObject = {
 export type TerrainConfig = {
   version: 1;
   objects: TerrainObject[];
+  manualPlacement?: TerrainManualPlacementState;
+};
+
+export type TerrainSelection = "none" | "asteroid-fields" | "gas-clouds" | "mixed-terrain";
+export type ManualTerrainCount = 0 | 4 | 6 | 8;
+
+export type TerrainManualPlacementState = {
+  enabled: boolean;
+  terrainSelection: Exclude<TerrainSelection, "none">;
+  totalCount: ManualTerrainCount;
+  playerOrder: string[];
+  nextPlayerId: string | null;
 };
 
 export const ASTEROID_FIELD_MODEL = "asteroid-light.glb";
@@ -119,7 +132,35 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
         .filter((item): item is TerrainObject => item !== null)
         .slice(0, 12)
     : [];
-  return { version: 1, objects };
+  const rawManual = (raw as { manualPlacement?: unknown }).manualPlacement;
+  let manualPlacement: TerrainManualPlacementState | undefined;
+  if (rawManual && typeof rawManual === "object" && !Array.isArray(rawManual)) {
+    const manual = rawManual as Record<string, unknown>;
+    const terrainSelection =
+      manual.terrainSelection === "asteroid-fields" ||
+      manual.terrainSelection === "gas-clouds" ||
+      manual.terrainSelection === "mixed-terrain"
+        ? manual.terrainSelection
+        : null;
+    const count = Math.trunc(Number(manual.totalCount));
+    const totalCount = count === 4 || count === 6 || count === 8 ? count : 0;
+    const playerOrder = Array.isArray(manual.playerOrder)
+      ? manual.playerOrder.filter((value): value is string => typeof value === "string" && value.length > 0).slice(0, 2)
+      : [];
+    const nextPlayerId = typeof manual.nextPlayerId === "string" && manual.nextPlayerId.length > 0
+      ? manual.nextPlayerId
+      : null;
+    if (manual.enabled === true && terrainSelection && totalCount > 0) {
+      manualPlacement = {
+        enabled: true,
+        terrainSelection,
+        totalCount,
+        playerOrder,
+        nextPlayerId,
+      };
+    }
+  }
+  return manualPlacement ? { version: 1, objects, manualPlacement } : { version: 1, objects };
 }
 
 export function lineOfSightObstaclesFromTerrainConfig(raw: unknown): LineOfSightObstacle[] {
@@ -195,4 +236,51 @@ export function pointInsideTerrainObject(
   const polygon = terrainObjectPolygon(field);
   if (polygon && polygon.length >= 3) return pointInsidePolygon(point, polygon);
   return Math.hypot(point.x - field.x, point.z - field.z) <= field.radiusInches + 1e-6;
+}
+
+export function terrainObjectForPlacementPreview(
+  kind: TerrainKind,
+  ordinal: number,
+  x: number,
+  z: number,
+  options: { variant?: ManualTerrainVariant; rotationDeg?: number } = {},
+): TerrainObject {
+  const variant = options.variant === "asteroid-medium" ? "asteroid-medium" : "asteroid-light";
+  const asteroidMedium = kind === "asteroid-field" && variant === "asteroid-medium";
+  const shapeSeed = ordinal * 1009 + (kind === "gas-cloud" ? 317 : asteroidMedium ? 509 : 113);
+  const rotationDeg = Number.isFinite(Number(options.rotationDeg))
+    ? (((Number(options.rotationDeg) % 360) + 360) % 360)
+    : Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
+  return {
+    id: kind === "gas-cloud" ? `gas-cloud-${ordinal}` : `asteroid-field-${ordinal}`,
+    kind,
+    name: kind === "gas-cloud"
+      ? `Dust Cloud ${ordinal}`
+      : asteroidMedium
+        ? `Medium Asteroid Field ${ordinal}`
+        : `Asteroid Field ${ordinal}`,
+    x,
+    z,
+    radiusInches: kind === "gas-cloud"
+      ? GAS_CLOUD_RADIUS_INCHES
+      : asteroidMedium
+        ? ASTEROID_FIELD_MEDIUM_RADIUS_INCHES
+        : 2,
+    density: kind === "gas-cloud" ? 0 : 6,
+    modelFilename: kind === "gas-cloud"
+      ? ""
+      : asteroidMedium
+        ? ASTEROID_FIELD_MODEL_MEDIUM
+        : ASTEROID_FIELD_MODEL,
+    rotationDeg,
+    footprintScaleX: Number((
+      (kind === "gas-cloud" ? 0.88 : 0.92) +
+      terrainSeededUnit(shapeSeed, 41) * (kind === "gas-cloud" ? 0.3 : 0.2)
+    ).toFixed(3)),
+    footprintScaleZ: Number((
+      (kind === "gas-cloud" ? 0.88 : 0.92) +
+      terrainSeededUnit(shapeSeed, 43) * (kind === "gas-cloud" ? 0.3 : 0.2)
+    ).toFixed(3)),
+    shapeSeed,
+  };
 }

@@ -256,8 +256,9 @@ export const CreateGameBody = zod.object({
   "ambushPlayer": zod.enum(['challenger', 'opponent']).optional().describe('For ambush-center deployment, which player deploys in the center box.'),
   "ambushBoxWidth": zod.number().min(6).max(40).optional().describe('For ambush-center deployment, center box width in inches.'),
   "ambushBoxDepth": zod.number().min(6).max(56).optional().describe('For ambush-center deployment, center box depth in inches.'),
-  "terrain": zod.enum(['none', 'asteroid-fields', 'gas-clouds']).optional().describe('Optional terrain package for this engagement.'),
-  "terrainCount": zod.number().optional().describe('Number of terrain objects to generate when terrain is enabled. Supported values: 3, 6, or 9.'),
+  "terrainPlacement": zod.enum(['automatic', 'manual']).optional().describe('automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment.'),
+  "terrain": zod.enum(['none', 'asteroid-fields', 'gas-clouds', 'mixed-terrain']).optional().describe('Optional terrain package for this engagement.'),
+  "terrainCount": zod.number().optional().describe('Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8.'),
   "asteroidFieldCount": zod.number().optional().describe('Legacy terrain count for asteroid fields. Supported values: 3, 6, or 9.'),
   "stations": zod.enum(['none', 'enabled']).optional().describe('Optional station package for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).describe('standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.')
