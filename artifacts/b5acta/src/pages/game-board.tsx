@@ -13412,9 +13412,13 @@ export default function GameBoard() {
         heading: initial?.heading ?? carrier.heading,
       });
       setSelectedUnit(carrier.id);
-      setFighterBayFeedback(`Place ${item.name} within 3 inches.`);
+      setFighterBayFeedback(
+        touchGameControls
+          ? `Tap within the launch ring, then use Confirm Launch.`
+          : `Place ${item.name} within 3 inches.`,
+      );
     },
-    [clampEndPhaseLaunchPoint, findAutoLaunchSpot, shipModelById],
+    [clampEndPhaseLaunchPoint, findAutoLaunchSpot, shipModelById, touchGameControls],
   );
   const cancelFighterLaunchPlacement = useCallback(() => {
     setPendingFighterLaunchPlacement(null);
@@ -15729,7 +15733,9 @@ export default function GameBoard() {
                 prev ? { ...prev, x, z } : prev,
               );
               setFighterBayFeedback(
-                "Launch placement preview staged. Right-click for check/X or press Enter.",
+                touchGameControls
+                  ? "Launch placement preview staged. Use Confirm Launch or Cancel."
+                  : "Launch placement preview staged. Right-click for check/X or press Enter.",
               );
               return;
             }
@@ -17794,6 +17800,59 @@ export default function GameBoard() {
                 </button>
               </div>
             )}
+          {touchGameControls && pendingFighterLaunchPlacement && (
+            <div
+              className="pointer-events-auto absolute bottom-14 left-1/2 z-40 w-[min(92vw,24rem)] -translate-x-1/2 rounded border border-sky-300/55 bg-black/90 p-3 shadow-2xl shadow-sky-950/50 backdrop-blur-sm"
+              data-testid="touch-fighter-launch-confirm-strip"
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerMove={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-2 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-wider">
+                <span className="min-w-0 truncate text-sky-100">
+                  {pendingFighterLaunchPlacement.itemName}
+                </span>
+                <span
+                  className={
+                    pendingLaunchPlacementLegal
+                      ? "shrink-0 text-emerald-300"
+                      : "shrink-0 text-red-300"
+                  }
+                >
+                  {pendingLaunchPlacementLegal ? "Legal" : "Illegal"}
+                </span>
+              </div>
+              <div className="mb-3 font-mono text-[10px] leading-snug text-sky-100/75">
+                Tap inside the launch ring to move the preview, then confirm.
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-11 border-red-300/60 bg-red-400/10 text-xs font-bold uppercase tracking-widest text-red-100 hover:bg-red-400/20"
+                  disabled={fighterBayBusyKey !== null}
+                  onClick={cancelFighterLaunchPlacement}
+                  data-testid="button-touch-cancel-fighter-launch"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-11 bg-emerald-400 text-xs font-black uppercase tracking-widest text-black hover:bg-emerald-300 disabled:bg-slate-700 disabled:text-slate-400"
+                  disabled={
+                    !pendingLaunchPlacementLegal || fighterBayBusyKey !== null
+                  }
+                  onClick={confirmFighterLaunchPlacement}
+                  data-testid="button-touch-confirm-fighter-launch"
+                >
+                  {fighterBayBusyKey !== null
+                    ? "Launching..."
+                    : "Confirm Launch"}
+                </Button>
+              </div>
+            </div>
+          )}
           {displacedFighterConfirmPopover &&
             canPlaceCurrentDisplacedFighter &&
             stagedDisplacedFighterPlacement && (
