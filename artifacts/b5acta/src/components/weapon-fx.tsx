@@ -3,6 +3,7 @@ import { useFrame, useLoader } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Weapon } from "@workspace/api-client-react";
+import { VorlonConvergenceFx } from "@/components/vorlon-convergence-fx";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Weapon firing FX — beam / mesh projectile / missile, with per-hit impact flashes.
@@ -18,6 +19,7 @@ const FACTION_BEAM_COLOR: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
   "Minbari Federation": "#22ff66",
   "Shadows": "#b85cff",
+  "Vorlon Empire": "#35ff67",
 };
 const SHADOW_SLICER_COLOR = "#b85cff";
 const DEFAULT_BEAM_COLOR = "#ff2a2a";
@@ -27,6 +29,7 @@ const KIRISHIAC_BEAM_TEXTURE_FILENAME = "T_FirePanningCyl45.png";
 const KIRISHIAC_ATTACK_TURN_IN_MS = 1000;
 const KIRISHIAC_ATTACK_FIRE_MS = 3000;
 const KIRISHIAC_ATTACK_TOTAL_MS = 5000;
+const VORLON_ATTACK_CHARGE_MS = 1000;
 const KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES = 1.35;
 const KIRISHIAC_BEAM_TUNING = {
   color: "#facc15",
@@ -437,6 +440,23 @@ function configureProjectileTexture(texture: THREE.Texture, colorSpace: THREE.Co
 function assetUrl(kind: "models" | "textures", filename: string): string {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   return `${basePath}/api/${kind}/${filename}`;
+}
+
+function isVorlonSuperLightningCannon({
+  weapon,
+  attackerName,
+  attackerModelFilename,
+}: {
+  weapon: Pick<Weapon, "name">;
+  attackerName?: string;
+  attackerModelFilename?: string;
+}): boolean {
+  const attacker =
+    `${attackerName ?? ""} ${attackerModelFilename ?? ""}`.toLowerCase();
+  return (
+    attacker.includes("vorlon") &&
+    (weapon.name ?? "").toLowerCase().includes("super lightning cannon")
+  );
 }
 
 function versionedAssetUrl(kind: "models" | "textures", filename: string, revision: string): string {
@@ -1592,6 +1612,7 @@ export function WeaponFx({
   attackerFaction,
   attackerName,
   attackerModelFilename,
+  attackerHeading,
   hits,
   totalDice,
 }: {
@@ -1601,12 +1622,40 @@ export function WeaponFx({
   attackerFaction: string;
   attackerName?: string;
   attackerModelFilename?: string;
+  attackerHeading?: number;
   hits: number;
   totalDice: number;
 }) {
   const kind = classifyWeapon(weapon);
 
   if (kind === "beam") {
+    if (
+      isVorlonSuperLightningCannon({
+        weapon,
+        attackerName,
+        attackerModelFilename,
+      })
+    ) {
+      return (
+        <>
+          <Suspense fallback={null}>
+            <VorlonConvergenceFx
+              from={from}
+              to={to}
+              headingDegrees={attackerHeading}
+            />
+          </Suspense>
+          {Array.from({ length: hits }).map((_, i) => (
+            <TargetImpactFx
+              key={i}
+              position={to}
+              delayMs={VORLON_ATTACK_CHARGE_MS + 250 + i * 70}
+              seed={i + 80}
+            />
+          ))}
+        </>
+      );
+    }
     if (isKirishiacAttacker({ weapon, attackerName, attackerModelFilename })) {
       return (
         <>
