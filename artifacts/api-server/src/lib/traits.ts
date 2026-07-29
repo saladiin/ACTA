@@ -55,6 +55,7 @@ export interface ShipTraits {
   ancient: boolean;
   redundantSystems: boolean;
   stealthPenetration: boolean;
+  superiorTechnology: boolean;
   selfRepairDice: number;  // Self Repair Xd6; 0 when absent
   agile: boolean;
   superManeuverable: boolean;
@@ -70,6 +71,7 @@ export interface ShipTraits {
   dogfight: number;
   antiFighter: number;
   advancedAntiFighter: number;
+  psychicCrew: number;
 }
 
 export function parseShipTraits(s: string | null | undefined): ShipTraits {
@@ -83,9 +85,15 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     ancient: hasTrait(t, ["Ancient"]),
     redundantSystems: hasTrait(t, ["Redundant Systems"]),
     stealthPenetration: hasTrait(t, ["Stealth Penetration"]),
+    superiorTechnology: hasTrait(t, ["Superior Technology"]),
     selfRepairDice: numericTrait(t, ["Self Repair", "Self-Repair", "Self Repair:", "Self-repair"]),
     agile: hasTrait(t, ["Agile"]),
-    superManeuverable: hasTrait(t, ["Super Maneuverable", "Super Manoeuvrable"]),
+    superManeuverable: hasTrait(t, [
+      "Super Maneuverable",
+      "Super Manoeuvrable",
+      "Superb Maneuverability",
+      "Superb Manoeuvrability",
+    ]),
     lumbering: hasTrait(t, ["Lumbering"]),
     flightComputer: hasTrait(t, ["Flight Computer"]),
     scout: hasTrait(t, ["Scout"]),
@@ -98,6 +106,9 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     dogfight: numericTrait(t, ["Dogfight", "Dog Fight"]),
     antiFighter: numericTrait(t, ["Anti-Fighter", "Anti Fighter"]),
     advancedAntiFighter: numericTrait(t, ["Advanced Anti-Fighter", "Advanced Anti Fighter"]),
+    psychicCrew: hasTrait(t, ["Psychic Crew"])
+      ? Math.max(1, numericTrait(t, ["Psychic Crew"]))
+      : 0,
   };
 }
 

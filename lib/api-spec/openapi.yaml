@@ -649,6 +649,86 @@ paths:
         "400":
           description: Invalid phase, bay capacity, launch limit, or placement
 
+  /games/{gameId}/units/{unitId}/shadow-point-defense:
+    post:
+      operationId: chooseShadowPointDefense
+      tags: [turns]
+      summary: Toggle the Shadow Molecular Slicer Beam defensive conversion before movement
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Shadow defensive mode updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GameUnit" }
+
+  /games/{gameId}/units/{unitId}/shadow-maneuver-mode:
+    post:
+      operationId: chooseShadowManeuverMode
+      tags: [turns]
+      summary: Choose normal Superb Manoeuvrability or the Shadow opening-turn sweep
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShadowManeuverInput"
+      responses:
+        "200":
+          description: Shadow maneuver mode updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GameUnit" }
+
+  /games/{gameId}/units/{unitId}/telepathic-disruption:
+    post:
+      operationId: attemptTelepathicDisruption
+      tags: [turns]
+      summary: Make a Psychic Crew attack against a Shadow vessel
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelepathicDisruptionInput"
+      responses:
+        "200":
+          description: Opposed Crew Quality test resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelepathicDisruptionResult"
+
+  /games/{gameId}/units/{unitId}/shadow-fighter-dispersal:
+    post:
+      operationId: launchShadowFighterDispersal
+      tags: [turns]
+      summary: Launch up to six Shadow Fighter flights within 30 inches in place of firing
+      parameters:
+        - { name: gameId, in: path, required: true, schema: { type: integer } }
+        - { name: unitId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShadowFighterDispersalInput"
+      responses:
+        "200":
+          description: Shadow Fighter flights launched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShadowFighterDispersalResult"
+
   /games/{gameId}/units/{unitId}/recover-fighter:
     post:
       operationId: recoverFighter
@@ -773,9 +853,11 @@ components:
         name:     { type: string }
         filename: { type: string }
         faction:  { type: string }
+        rulesProfile: { type: string, enum: [standard, ancients, shadows, vorlons], description: "Immutable faction rules identity; never inferred from trait text." }
         pointCost:    { type: integer }
         priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
         hullPoints:   { type: integer }
+        physicalDisruptionThreshold: { type: integer, description: "Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable." }
         speed:        { type: integer }
         weaponRange:  { type: integer }
         weaponDamage: { type: integer }
@@ -927,6 +1009,24 @@ components:
         hullPoints:    { type: integer }
         maxHullPoints: { type: integer }
         damageThreshold: { type: integer, description: "Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull." }
+        physicalDisruptionThreshold: { type: integer, description: "Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold." }
+        permanentlyCrippled: { type: boolean, description: "Ancient Self Repair cannot remove a cripple state once reached." }
+        ancientStatusEffects:
+          type: array
+          items:
+            type: object
+            required: [kind, sourceUnitId, appliedRound, expiresAfterRound, releaseWhenSourceDestroyed]
+            properties:
+              kind: { type: string, enum: [physical-disruption, telepathic-disruption] }
+              sourceUnitId: { type: integer }
+              appliedRound: { type: integer }
+              expiresAfterRound: { type: integer }
+              releaseWhenSourceDestroyed: { type: boolean }
+        shadowPointDefenseRound: { type: integer }
+        shadowManeuverMode: { type: ["string", "null"], enum: [normal, sweep, null] }
+        mindScreamTargetIdsThisRound: { type: array, items: { type: integer } }
+        telepathicTargetsAttemptedThisRound: { type: array, items: { type: integer } }
+        telepathicDisruptionExhausted: { type: boolean }
         shieldsCurrent: { type: integer, description: "Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round." }
         lastDcRound:    { type: integer, description: "Last round (1-based) this unit attempted Damage Control. 0 = never." }
         lastSelfRepairRound: { type: integer, description: "Last round (1-based) this unit resolved Self Repair. 0 = never." }
@@ -934,7 +1034,7 @@ components:
         maxCrewPoints:  { type: integer, description: "Maximum crew complement, set at deploy from ship_model.crew." }
         crewThreshold:  { type: integer, description: "Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback." }
         damageState:    { type: string, enum: [normal, adrift, exploding-end-of-next, destroyed], description: "Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed." }
-        isCrippled:     { type: boolean, description: "Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral." }
+        isCrippled:     { type: boolean, description: "Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral." }
         isSkeletonCrew: { type: boolean, description: "Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral." }
         carriedFighters:
           type: array
@@ -985,6 +1085,10 @@ components:
           type: array
           items: { type: integer }
           description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
+        splitFireFirstTargetByWeapon:
+          type: object
+          additionalProperties: { type: integer }
+          description: "Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets."
         slowLoadingWeaponCooldowns:
           type: object
           additionalProperties: { type: integer }
@@ -1345,10 +1449,62 @@ components:
       properties:
         action:
           type: string
-          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble]
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble, regenerate]
         targetUnitId:
           type: ["integer", "null"]
           description: "Required for 'concentrate-fire' — the nominated enemy unit id."
+
+    ShadowManeuverInput:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [normal, sweep] }
+
+    TelepathicDisruptionInput:
+      type: object
+      required: [targetUnitId]
+      properties:
+        targetUnitId: { type: integer }
+
+    TelepathicDisruptionResult:
+      type: object
+      required: [success, attackerRoll, attackerPsychicCrew, attackerTotal, shadowRoll, shadowCrewQuality, shadowBonus, shadowTotal, attacker, target]
+      properties:
+        success: { type: boolean }
+        attackerRoll: { type: integer }
+        attackerPsychicCrew: { type: integer }
+        attackerTotal: { type: integer }
+        shadowRoll: { type: integer }
+        shadowCrewQuality: { type: integer }
+        shadowBonus: { type: integer }
+        shadowTotal: { type: integer }
+        attacker: { $ref: "#/components/schemas/GameUnit" }
+        target: { $ref: "#/components/schemas/GameUnit" }
+
+    ShadowFighterDispersalInput:
+      type: object
+      required: [placements]
+      properties:
+        placements:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            type: object
+            required: [hexQ, hexR, heading]
+            properties:
+              hexQ: { type: number }
+              hexR: { type: number }
+              heading: { type: integer }
+
+    ShadowFighterDispersalResult:
+      type: object
+      required: [carrier, fighters]
+      properties:
+        carrier: { $ref: "#/components/schemas/GameUnit" }
+        fighters:
+          type: array
+          items: { $ref: "#/components/schemas/GameUnit" }
 
     SpecialActionResult:
       type: object

@@ -20,6 +20,19 @@ export interface Weapon {
   traits?: string | null;
 }
 
+/**
+ * Immutable faction rules identity; never inferred from trait text.
+ */
+export type ShipModelRulesProfile = typeof ShipModelRulesProfile[keyof typeof ShipModelRulesProfile];
+
+
+export const ShipModelRulesProfile = {
+  standard: 'standard',
+  ancients: 'ancients',
+  shadows: 'shadows',
+  vorlons: 'vorlons',
+} as const;
+
 export type ShipModelPriorityLevel = typeof ShipModelPriorityLevel[keyof typeof ShipModelPriorityLevel];
 
 
@@ -38,9 +51,13 @@ export interface ShipModel {
   name: string;
   filename: string;
   faction: string;
+  /** Immutable faction rules identity; never inferred from trait text. */
+  rulesProfile?: ShipModelRulesProfile;
   pointCost: number;
   priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
+  /** Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable. */
+  physicalDisruptionThreshold?: number;
   speed: number;
   weaponRange: number;
   weaponDamage: number;
@@ -160,6 +177,18 @@ export const GameVisibility = {
 } as const;
 
 /**
+ * Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.
+ * @nullable
+ */
+export type GameDeploymentConfig = { [key: string]: unknown } | null;
+
+/**
+ * Structured terrain objects generated for this engagement.
+ * @nullable
+ */
+export type GameTerrainConfig = { [key: string]: unknown } | null;
+
+/**
  * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.
  */
 export type GameCrewQualityMode = typeof GameCrewQualityMode[keyof typeof GameCrewQualityMode];
@@ -187,10 +216,10 @@ export interface Game {
   /** @nullable */
   opponentName?: string | null;
   /**
-   * Player-authored title or desired conditions for the engagement.
-   * @maxLength 80
-   * @nullable
-   */
+     * Player-authored title or desired conditions for the engagement.
+     * @maxLength 80
+     * @nullable
+     */
   matchName?: string | null;
   status: GameStatus;
   /** @nullable */
@@ -242,10 +271,16 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
-  /** Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment. */
-  deploymentConfig?: Record<string, unknown> | null;
-  /** Structured terrain objects generated for this engagement. */
-  terrainConfig?: Record<string, unknown> | null;
+  /**
+     * Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.
+     * @nullable
+     */
+  deploymentConfig?: GameDeploymentConfig;
+  /**
+     * Structured terrain objects generated for this engagement.
+     * @nullable
+     */
+  terrainConfig?: GameTerrainConfig;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**
@@ -299,6 +334,90 @@ export const GameInputOpponentKind = {
 } as const;
 
 /**
+ * Deployment zone preset. Defaults to standard short-edge deployment.
+ */
+export type GameInputDeploymentPreset = typeof GameInputDeploymentPreset[keyof typeof GameInputDeploymentPreset];
+
+
+export const GameInputDeploymentPreset = {
+  'standard-short-edge': 'standard-short-edge',
+  'standard-long-edge': 'standard-long-edge',
+  'ambush-center': 'ambush-center',
+} as const;
+
+/**
+ * For ambush-center deployment, which player deploys in the center box.
+ */
+export type GameInputAmbushPlayer = typeof GameInputAmbushPlayer[keyof typeof GameInputAmbushPlayer];
+
+
+export const GameInputAmbushPlayer = {
+  challenger: 'challenger',
+  opponent: 'opponent',
+} as const;
+
+/**
+ * automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment.
+ */
+export type GameInputTerrainPlacement = typeof GameInputTerrainPlacement[keyof typeof GameInputTerrainPlacement];
+
+
+export const GameInputTerrainPlacement = {
+  automatic: 'automatic',
+  manual: 'manual',
+} as const;
+
+/**
+ * Optional terrain package for this engagement.
+ */
+export type GameInputTerrain = typeof GameInputTerrain[keyof typeof GameInputTerrain];
+
+
+export const GameInputTerrain = {
+  none: 'none',
+  'asteroid-fields': 'asteroid-fields',
+  'gas-clouds': 'gas-clouds',
+  'mixed-terrain': 'mixed-terrain',
+} as const;
+
+/**
+ * Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8.
+ */
+export type GameInputTerrainCount = typeof GameInputTerrainCount[keyof typeof GameInputTerrainCount];
+
+
+export const GameInputTerrainCount = {
+  NUMBER_3: 3,
+  NUMBER_4: 4,
+  NUMBER_6: 6,
+  NUMBER_8: 8,
+  NUMBER_9: 9,
+} as const;
+
+/**
+ * Legacy terrain count for asteroid fields.
+ */
+export type GameInputAsteroidFieldCount = typeof GameInputAsteroidFieldCount[keyof typeof GameInputAsteroidFieldCount];
+
+
+export const GameInputAsteroidFieldCount = {
+  NUMBER_3: 3,
+  NUMBER_6: 6,
+  NUMBER_9: 9,
+} as const;
+
+/**
+ * Optional station package for this engagement.
+ */
+export type GameInputStations = typeof GameInputStations[keyof typeof GameInputStations];
+
+
+export const GameInputStations = {
+  none: 'none',
+  enabled: 'enabled',
+} as const;
+
+/**
  * standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.
  */
 export type GameInputCrewQualityMode = typeof GameInputCrewQualityMode[keyof typeof GameInputCrewQualityMode];
@@ -323,10 +442,10 @@ export interface GameInput {
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
   /**
-   * Optional title or desired match conditions shown beneath the host commander's name.
-   * @maxLength 80
-   * @nullable
-   */
+     * Optional title or desired match conditions shown beneath the host commander's name.
+     * @maxLength 80
+     * @nullable
+     */
   matchName?: string | null;
   /**
      * Required when visibility=private. Stored hashed; required again on accept.
@@ -345,9 +464,9 @@ export interface GameInput {
      */
   deploymentDepth: number;
   /** Deployment zone preset. Defaults to standard short-edge deployment. */
-  deploymentPreset?: 'standard-short-edge' | 'standard-long-edge' | 'ambush-center';
+  deploymentPreset?: GameInputDeploymentPreset;
   /** For ambush-center deployment, which player deploys in the center box. */
-  ambushPlayer?: 'challenger' | 'opponent';
+  ambushPlayer?: GameInputAmbushPlayer;
   /**
      * For ambush-center deployment, center box width in inches.
      * @minimum 6
@@ -361,15 +480,15 @@ export interface GameInput {
      */
   ambushBoxDepth?: number;
   /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
-  terrainPlacement?: 'automatic' | 'manual';
+  terrainPlacement?: GameInputTerrainPlacement;
   /** Optional terrain package for this engagement. */
-  terrain?: 'none' | 'asteroid-fields' | 'gas-clouds' | 'mixed-terrain';
+  terrain?: GameInputTerrain;
   /** Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8. */
-  terrainCount?: number;
-  /** Legacy terrain count for asteroid fields. Supported values: 3, 6, or 9. */
-  asteroidFieldCount?: number;
+  terrainCount?: GameInputTerrainCount;
+  /** Legacy terrain count for asteroid fields. */
+  asteroidFieldCount?: GameInputAsteroidFieldCount;
   /** Optional station package for this engagement. */
-  stations?: 'none' | 'enabled';
+  stations?: GameInputStations;
   /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship. */
   crewQualityMode: GameInputCrewQualityMode;
 }
@@ -381,6 +500,33 @@ export interface AcceptGameInput {
      */
   password?: string | null;
 }
+
+export type GameUnitAncientStatusEffectsItemKind = typeof GameUnitAncientStatusEffectsItemKind[keyof typeof GameUnitAncientStatusEffectsItemKind];
+
+
+export const GameUnitAncientStatusEffectsItemKind = {
+  'physical-disruption': 'physical-disruption',
+  'telepathic-disruption': 'telepathic-disruption',
+} as const;
+
+export type GameUnitAncientStatusEffectsItem = {
+  kind: GameUnitAncientStatusEffectsItemKind;
+  sourceUnitId: number;
+  appliedRound: number;
+  expiresAfterRound: number;
+  releaseWhenSourceDestroyed: boolean;
+};
+
+/**
+ * @nullable
+ */
+export type GameUnitShadowManeuverMode = typeof GameUnitShadowManeuverMode[keyof typeof GameUnitShadowManeuverMode] | null;
+
+
+export const GameUnitShadowManeuverMode = {
+  normal: 'normal',
+  sweep: 'sweep',
+} as const;
 
 /**
  * Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed.
@@ -395,17 +541,12 @@ export const GameUnitDamageState = {
   destroyed: 'destroyed',
 } as const;
 
-/**
- * Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.
- */
-export type GameUnitSlowLoadingWeaponCooldowns = {[key: string]: number};
-
-/**
- * Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.
- */
-export interface GameUnitCarriedFighter {
+export type GameUnitCarriedFightersItem = {
   name: string;
-  /** Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog. */
+  /**
+     * Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.
+     * @nullable
+     */
   shipModelId: number | null;
   /** @minimum 0 */
   total: number;
@@ -417,7 +558,17 @@ export interface GameUnitCarriedFighter {
   recovered: number;
   /** @minimum 0 */
   destroyed: number;
-}
+};
+
+/**
+ * Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.
+ */
+export type GameUnitSplitFireFirstTargetByWeapon = {[key: string]: number};
+
+/**
+ * Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.
+ */
+export type GameUnitSlowLoadingWeaponCooldowns = {[key: string]: number};
 
 export interface CriticalEffect {
   id: number;
@@ -468,6 +619,17 @@ export interface GameUnit {
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
   damageThreshold: number;
+  /** Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold. */
+  physicalDisruptionThreshold?: number;
+  /** Ancient Self Repair cannot remove a cripple state once reached. */
+  permanentlyCrippled?: boolean;
+  ancientStatusEffects?: GameUnitAncientStatusEffectsItem[];
+  shadowPointDefenseRound?: number;
+  /** @nullable */
+  shadowManeuverMode?: GameUnitShadowManeuverMode;
+  mindScreamTargetIdsThisRound?: number[];
+  telepathicTargetsAttemptedThisRound?: number[];
+  telepathicDisruptionExhausted?: boolean;
   /** Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round. */
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
@@ -482,18 +644,21 @@ export interface GameUnit {
   crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
   damageState?: GameUnitDamageState;
-  /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  /** Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  isCrippled?: boolean;
+  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
+  isSkeletonCrew?: boolean;
   /** Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array. */
-  carriedFighters: GameUnitCarriedFighter[];
-  /** Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters. */
+  carriedFighters: GameUnitCarriedFightersItem[];
+  /**
+     * Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.
+     * @nullable
+     */
   launchedFromUnitId?: number | null;
   /** Round number for the current fighter bay operation counter. */
   fighterBayOperationsRound?: number;
   /** Launch/recovery operations used by this unit in fighterBayOperationsRound. */
   fighterBayOperationsUsed?: number;
-  isCrippled?: boolean;
-  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
-  isSkeletonCrew?: boolean;
   /** Unrepaired critical effects, oldest first. */
   criticals?: CriticalEffect[];
   hexQ: number;
@@ -519,6 +684,8 @@ export interface GameUnit {
   oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /** Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets. */
+  splitFireFirstTargetByWeapon?: GameUnitSplitFireFirstTargetByWeapon;
   /** Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again. */
   slowLoadingWeaponCooldowns: GameUnitSlowLoadingWeaponCooldowns;
   /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
@@ -592,12 +759,13 @@ export interface ShipPlacement {
   crewQuality?: number;
   /**
      * Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.
-     * @nullable
      * @minimum 0
+     * @nullable
      */
   launchedFromPlacementIndex?: number | null;
   /**
      * Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.
+     * @maxLength 80
      * @nullable
      */
   deploymentGroupId?: string | null;
@@ -834,7 +1002,8 @@ export const SpecialActionInputAction = {
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
   'all-hands-on-deck': 'all-hands-on-deck',
-  'scramble': 'scramble',
+  scramble: 'scramble',
+  regenerate: 'regenerate',
 } as const;
 
 export interface SpecialActionInput {
@@ -844,6 +1013,54 @@ export interface SpecialActionInput {
      * @nullable
      */
   targetUnitId?: number | null;
+}
+
+export type ShadowManeuverInputMode = typeof ShadowManeuverInputMode[keyof typeof ShadowManeuverInputMode];
+
+
+export const ShadowManeuverInputMode = {
+  normal: 'normal',
+  sweep: 'sweep',
+} as const;
+
+export interface ShadowManeuverInput {
+  mode: ShadowManeuverInputMode;
+}
+
+export interface TelepathicDisruptionInput {
+  targetUnitId: number;
+}
+
+export interface TelepathicDisruptionResult {
+  success: boolean;
+  attackerRoll: number;
+  attackerPsychicCrew: number;
+  attackerTotal: number;
+  shadowRoll: number;
+  shadowCrewQuality: number;
+  shadowBonus: number;
+  shadowTotal: number;
+  attacker: GameUnit;
+  target: GameUnit;
+}
+
+export type ShadowFighterDispersalInputPlacementsItem = {
+  hexQ: number;
+  hexR: number;
+  heading: number;
+};
+
+export interface ShadowFighterDispersalInput {
+  /**
+     * @minItems 1
+     * @maxItems 6
+     */
+  placements: ShadowFighterDispersalInputPlacementsItem[];
+}
+
+export interface ShadowFighterDispersalResult {
+  carrier: GameUnit;
+  fighters: GameUnit[];
 }
 
 export interface SpecialActionResult {
@@ -913,6 +1130,29 @@ export interface MoveUnitInput {
   toHexQ: number;
   toHexR: number;
   newHeading: number;
+}
+
+export interface LaunchFighterInput {
+  /** Fighter ship_model id from the carrier's carriedFighters entry. */
+  shipModelId: number;
+  hexQ: number;
+  hexR: number;
+  heading?: number;
+}
+
+export interface RecoverFighterInput {
+  /** Friendly carrier unit in base contact with the launched fighter. */
+  carrierUnitId: number;
+}
+
+export interface FighterLaunchResult {
+  carrier: GameUnit;
+  fighter: GameUnit;
+}
+
+export interface FighterRecoveryResult {
+  carrier: GameUnit;
+  recoveredUnitId: number;
 }
 
 export interface TurnInput {

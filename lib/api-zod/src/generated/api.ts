@@ -24,9 +24,11 @@ export const ListShipModelsResponseItem = zod.object({
   "name": zod.string(),
   "filename": zod.string(),
   "faction": zod.string(),
+  "rulesProfile": zod.enum(['standard', 'ancients', 'shadows', 'vorlons']).optional().describe('Immutable faction rules identity; never inferred from trait text.'),
   "pointCost": zod.number(),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "hullPoints": zod.number(),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable.'),
   "speed": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
@@ -133,9 +135,11 @@ export const ListFleetShipsResponseItem = zod.object({
   "name": zod.string(),
   "filename": zod.string(),
   "faction": zod.string(),
+  "rulesProfile": zod.enum(['standard', 'ancients', 'shadows', 'vorlons']).optional().describe('Immutable faction rules identity; never inferred from trait text.'),
   "pointCost": zod.number(),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "hullPoints": zod.number(),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable.'),
   "speed": zod.number(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
@@ -143,6 +147,7 @@ export const ListFleetShipsResponseItem = zod.object({
   "hullRating": zod.number().describe('Roll-to-hit target (≥) for attacks against this ship\'s class.'),
   "description": zod.string().nullish(),
   "traits": zod.string().nullish().describe('Semicolon-separated trait list (e.g. \'Lumbering; Agile; Interceptors 2\'). Parsed client-side.'),
+  "smallCraft": zod.string().nullish().describe('Printed carried fighter\/small-craft complement, parsed at deployment for carrier bay inventory.'),
   "weapons": zod.array(zod.object({
   "id": zod.number(),
   "shipModelId": zod.number(),
@@ -185,6 +190,8 @@ export const RemoveShipFromFleetParams = zod.object({
 /**
  * @summary List games for the authenticated user (active + completed)
  */
+export const listGamesResponseMatchNameMax = 80;
+
 
 export const listGamesResponseDeploymentDepthMin = 4;
 export const listGamesResponseDeploymentDepthMax = 30;
@@ -198,7 +205,7 @@ export const ListGamesResponseItem = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(listGamesResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -217,9 +224,11 @@ export const ListGamesResponseItem = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -237,8 +246,16 @@ export const ListGamesResponse = zod.array(ListGamesResponseItem)
 export const createGameBodyAllocationPointsMax = 99;
 
 export const createGameBodyOpponentKindDefault = `human`;
+export const createGameBodyMatchNameMax = 80;
+
 export const createGameBodyDeploymentDepthMin = 4;
 export const createGameBodyDeploymentDepthMax = 30;
+
+export const createGameBodyAmbushBoxWidthMin = 6;
+export const createGameBodyAmbushBoxWidthMax = 40;
+
+export const createGameBodyAmbushBoxDepthMin = 6;
+export const createGameBodyAmbushBoxDepthMax = 56;
 
 
 
@@ -248,18 +265,18 @@ export const CreateGameBody = zod.object({
   "allocationPoints": zod.number().min(1).max(createGameBodyAllocationPointsMax),
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
   "opponentKind": zod.enum(['human', 'ai']).default(createGameBodyOpponentKindDefault).describe('Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation.'),
-  "matchName": zod.string().max(80).nullish().describe('Optional title or desired match conditions shown beneath the host commander\'s name.'),
+  "matchName": zod.string().max(createGameBodyMatchNameMax).nullish().describe('Optional title or desired match conditions shown beneath the host commander\'s name.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
   "fleetId": zod.number().nullish().describe('Optional prefab fleet to commit at creation time; may also be chosen later during deploy.'),
   "deploymentDepth": zod.number().min(createGameBodyDeploymentDepthMin).max(createGameBodyDeploymentDepthMax).describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge.'),
   "deploymentPreset": zod.enum(['standard-short-edge', 'standard-long-edge', 'ambush-center']).optional().describe('Deployment zone preset. Defaults to standard short-edge deployment.'),
   "ambushPlayer": zod.enum(['challenger', 'opponent']).optional().describe('For ambush-center deployment, which player deploys in the center box.'),
-  "ambushBoxWidth": zod.number().min(6).max(40).optional().describe('For ambush-center deployment, center box width in inches.'),
-  "ambushBoxDepth": zod.number().min(6).max(56).optional().describe('For ambush-center deployment, center box depth in inches.'),
+  "ambushBoxWidth": zod.number().min(createGameBodyAmbushBoxWidthMin).max(createGameBodyAmbushBoxWidthMax).optional().describe('For ambush-center deployment, center box width in inches.'),
+  "ambushBoxDepth": zod.number().min(createGameBodyAmbushBoxDepthMin).max(createGameBodyAmbushBoxDepthMax).optional().describe('For ambush-center deployment, center box depth in inches.'),
   "terrainPlacement": zod.enum(['automatic', 'manual']).optional().describe('automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment.'),
   "terrain": zod.enum(['none', 'asteroid-fields', 'gas-clouds', 'mixed-terrain']).optional().describe('Optional terrain package for this engagement.'),
-  "terrainCount": zod.number().optional().describe('Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8.'),
-  "asteroidFieldCount": zod.number().optional().describe('Legacy terrain count for asteroid fields. Supported values: 3, 6, or 9.'),
+  "terrainCount": zod.union([zod.literal(3),zod.literal(4),zod.literal(6),zod.literal(8),zod.literal(9)]).optional().describe('Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8.'),
+  "asteroidFieldCount": zod.union([zod.literal(3),zod.literal(6),zod.literal(9)]).optional().describe('Legacy terrain count for asteroid fields.'),
   "stations": zod.enum(['none', 'enabled']).optional().describe('Optional station package for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).describe('standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship.')
 })
@@ -272,9 +289,21 @@ export const GetGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const getGameResponseGameMatchNameMax = 80;
+
 
 export const getGameResponseGameDeploymentDepthMin = 4;
 export const getGameResponseGameDeploymentDepthMax = 30;
+
+export const getGameResponseUnitsItemCarriedFightersItemTotalMin = 0;
+
+export const getGameResponseUnitsItemCarriedFightersItemAvailableMin = 0;
+
+export const getGameResponseUnitsItemCarriedFightersItemLaunchedMin = 0;
+
+export const getGameResponseUnitsItemCarriedFightersItemRecoveredMin = 0;
+
+export const getGameResponseUnitsItemCarriedFightersItemDestroyedMin = 0;
 
 export const getGameResponseUnitsItemCrewQualityMax = 7;
 
@@ -288,7 +317,7 @@ export const GetGameResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(getGameResponseGameMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -307,7 +336,7 @@ export const GetGameResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
@@ -333,6 +362,20 @@ export const GetGameResponse = zod.object({
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
@@ -340,20 +383,20 @@ export const GetGameResponse = zod.object({
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "carriedFighters": zod.array(zod.object({
   "name": zod.string(),
   "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
-  "total": zod.number().min(0),
-  "available": zod.number().min(0),
-  "launched": zod.number().min(0),
-  "recovered": zod.number().min(0),
-  "destroyed": zod.number().min(0)
+  "total": zod.number().min(getGameResponseUnitsItemCarriedFightersItemTotalMin),
+  "available": zod.number().min(getGameResponseUnitsItemCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(getGameResponseUnitsItemCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(getGameResponseUnitsItemCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(getGameResponseUnitsItemCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
-  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
-  "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
-  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
   "id": zod.number(),
   "gameUnitId": zod.number(),
@@ -385,9 +428,10 @@ export const GetGameResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
   "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -421,6 +465,8 @@ export const AcceptGameBody = zod.object({
   "password": zod.string().nullish().describe('Required if the engagement is private.')
 })
 
+export const acceptGameResponseMatchNameMax = 80;
+
 
 export const acceptGameResponseDeploymentDepthMin = 4;
 export const acceptGameResponseDeploymentDepthMax = 30;
@@ -434,7 +480,7 @@ export const AcceptGameResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(acceptGameResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -453,9 +499,11 @@ export const AcceptGameResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -473,6 +521,8 @@ export const DeclineGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const declineGameResponseMatchNameMax = 80;
+
 
 export const declineGameResponseDeploymentDepthMin = 4;
 export const declineGameResponseDeploymentDepthMax = 30;
@@ -486,7 +536,7 @@ export const DeclineGameResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(declineGameResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -505,9 +555,11 @@ export const DeclineGameResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -533,6 +585,8 @@ export const ConcedeGameParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const concedeGameResponseMatchNameMax = 80;
+
 
 export const concedeGameResponseDeploymentDepthMin = 4;
 export const concedeGameResponseDeploymentDepthMax = 30;
@@ -546,7 +600,7 @@ export const ConcedeGameResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(concedeGameResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -565,9 +619,11 @@ export const ConcedeGameResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(concedeGameResponseDeploymentDepthMin).max(concedeGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -587,6 +643,10 @@ export const DeployFleetParams = zod.object({
 
 export const deployFleetBodyPlacementsItemCrewQualityMax = 7;
 
+export const deployFleetBodyPlacementsItemLaunchedFromPlacementIndexMin = 0;
+
+export const deployFleetBodyPlacementsItemDeploymentGroupIdMax = 80;
+
 
 
 
@@ -599,10 +659,12 @@ export const DeployFleetBody = zod.object({
   "hexR": zod.number(),
   "heading": zod.number(),
   "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.'),
-  "launchedFromPlacementIndex": zod.number().min(0).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.'),
-  "deploymentGroupId": zod.string().max(80).nullish().describe('Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.')
+  "launchedFromPlacementIndex": zod.number().min(deployFleetBodyPlacementsItemLaunchedFromPlacementIndexMin).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.'),
+  "deploymentGroupId": zod.string().max(deployFleetBodyPlacementsItemDeploymentGroupIdMax).nullish().describe('Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.')
 })).min(1)
 })
+
+export const deployFleetResponseMatchNameMax = 80;
 
 
 export const deployFleetResponseDeploymentDepthMin = 4;
@@ -617,7 +679,7 @@ export const DeployFleetResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(deployFleetResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -636,9 +698,11 @@ export const DeployFleetResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -701,6 +765,8 @@ export const ActivateUnitParams = zod.object({
   "unitId": zod.coerce.number()
 })
 
+export const activateUnitResponseMatchNameMax = 80;
+
 
 export const activateUnitResponseDeploymentDepthMin = 4;
 export const activateUnitResponseDeploymentDepthMax = 30;
@@ -714,7 +780,7 @@ export const ActivateUnitResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(activateUnitResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -733,9 +799,11 @@ export const ActivateUnitResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -753,6 +821,8 @@ export const EndActivationParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const endActivationResponseMatchNameMax = 80;
+
 
 export const endActivationResponseDeploymentDepthMin = 4;
 export const endActivationResponseDeploymentDepthMax = 30;
@@ -766,7 +836,7 @@ export const EndActivationResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(endActivationResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -785,9 +855,11 @@ export const EndActivationResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -915,6 +987,8 @@ export const RollInitiativeParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const rollInitiativeResponseMatchNameMax = 80;
+
 
 export const rollInitiativeResponseDeploymentDepthMin = 4;
 export const rollInitiativeResponseDeploymentDepthMax = 30;
@@ -928,7 +1002,7 @@ export const RollInitiativeResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(rollInitiativeResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -947,9 +1021,11 @@ export const RollInitiativeResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(rollInitiativeResponseDeploymentDepthMin).max(rollInitiativeResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -967,6 +1043,8 @@ export const RunAiStepParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const runAiStepResponseMatchNameMax = 80;
+
 
 export const runAiStepResponseDeploymentDepthMin = 4;
 export const runAiStepResponseDeploymentDepthMax = 30;
@@ -980,7 +1058,7 @@ export const RunAiStepResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(runAiStepResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -999,9 +1077,11 @@ export const RunAiStepResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(runAiStepResponseDeploymentDepthMin).max(runAiStepResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1023,6 +1103,8 @@ export const ChooseFirstActivatorBody = zod.object({
   "activatorUserId": zod.string().describe('userId (challenger or opponent) who will activate the first ship this round.')
 })
 
+export const chooseFirstActivatorResponseMatchNameMax = 80;
+
 
 export const chooseFirstActivatorResponseDeploymentDepthMin = 4;
 export const chooseFirstActivatorResponseDeploymentDepthMax = 30;
@@ -1036,7 +1118,7 @@ export const ChooseFirstActivatorResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(chooseFirstActivatorResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -1055,9 +1137,11 @@ export const ChooseFirstActivatorResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(chooseFirstActivatorResponseDeploymentDepthMin).max(chooseFirstActivatorResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1075,6 +1159,8 @@ export const PassEndPhaseParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const passEndPhaseResponseMatchNameMax = 80;
+
 
 export const passEndPhaseResponseDeploymentDepthMin = 4;
 export const passEndPhaseResponseDeploymentDepthMax = 30;
@@ -1088,7 +1174,7 @@ export const PassEndPhaseResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(passEndPhaseResponseMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -1107,9 +1193,11 @@ export const PassEndPhaseResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(passEndPhaseResponseDeploymentDepthMin).max(passEndPhaseResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1131,6 +1219,16 @@ export const DamageControlParams = zod.object({
 export const DamageControlBody = zod.object({
   "effectId": zod.number().describe('id of the unit_critical_effects row to repair.')
 })
+
+export const damageControlResponseUnitCarriedFightersItemTotalMin = 0;
+
+export const damageControlResponseUnitCarriedFightersItemAvailableMin = 0;
+
+export const damageControlResponseUnitCarriedFightersItemLaunchedMin = 0;
+
+export const damageControlResponseUnitCarriedFightersItemRecoveredMin = 0;
+
+export const damageControlResponseUnitCarriedFightersItemDestroyedMin = 0;
 
 export const damageControlResponseUnitCrewQualityMax = 7;
 
@@ -1157,6 +1255,20 @@ export const DamageControlResponse = zod.object({
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
@@ -1164,20 +1276,20 @@ export const DamageControlResponse = zod.object({
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "carriedFighters": zod.array(zod.object({
   "name": zod.string(),
   "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
-  "total": zod.number().min(0),
-  "available": zod.number().min(0),
-  "launched": zod.number().min(0),
-  "recovered": zod.number().min(0),
-  "destroyed": zod.number().min(0)
+  "total": zod.number().min(damageControlResponseUnitCarriedFightersItemTotalMin),
+  "available": zod.number().min(damageControlResponseUnitCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(damageControlResponseUnitCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(damageControlResponseUnitCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(damageControlResponseUnitCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
-  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
-  "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
-  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
   "id": zod.number(),
   "gameUnitId": zod.number(),
@@ -1209,9 +1321,10 @@ export const DamageControlResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
   "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -1230,9 +1343,19 @@ export const ChooseSpecialActionParams = zod.object({
 })
 
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'all-hands-on-deck', 'scramble']),
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'all-hands-on-deck', 'scramble', 'regenerate']),
   "targetUnitId": zod.number().nullish().describe('Required for \'concentrate-fire\' — the nominated enemy unit id.')
 })
+
+export const chooseSpecialActionResponseUnitCarriedFightersItemTotalMin = 0;
+
+export const chooseSpecialActionResponseUnitCarriedFightersItemAvailableMin = 0;
+
+export const chooseSpecialActionResponseUnitCarriedFightersItemLaunchedMin = 0;
+
+export const chooseSpecialActionResponseUnitCarriedFightersItemRecoveredMin = 0;
+
+export const chooseSpecialActionResponseUnitCarriedFightersItemDestroyedMin = 0;
 
 export const chooseSpecialActionResponseUnitCrewQualityMax = 7;
 
@@ -1258,6 +1381,20 @@ export const ChooseSpecialActionResponse = zod.object({
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
@@ -1265,20 +1402,20 @@ export const ChooseSpecialActionResponse = zod.object({
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "carriedFighters": zod.array(zod.object({
   "name": zod.string(),
   "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
-  "total": zod.number().min(0),
-  "available": zod.number().min(0),
-  "launched": zod.number().min(0),
-  "recovered": zod.number().min(0),
-  "destroyed": zod.number().min(0)
+  "total": zod.number().min(chooseSpecialActionResponseUnitCarriedFightersItemTotalMin),
+  "available": zod.number().min(chooseSpecialActionResponseUnitCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(chooseSpecialActionResponseUnitCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(chooseSpecialActionResponseUnitCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(chooseSpecialActionResponseUnitCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
-  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
-  "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
-  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
   "id": zod.number(),
   "gameUnitId": zod.number(),
@@ -1310,9 +1447,10 @@ export const ChooseSpecialActionResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
   "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -1332,8 +1470,18 @@ export const ChooseScoutActionParams = zod.object({
 
 export const ChooseScoutActionBody = zod.object({
   "action": zod.enum(['counter-stealth', 'coord']).describe('counter-stealth = reduce target\'s Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam \/ Mini Beam \/ Energy Mine \/ Twin Linked weapons).'),
-  "targetUnitId": zod.number().optional().describe('Enemy unit id to support against. Must be within 36\" of the Scout. Omit during Movement to declare the Scout mode before resolving at Firing start.')
+  "targetUnitId": zod.number().describe('Enemy unit id to support against. Must be within 36\" of the Scout.')
 })
+
+export const chooseScoutActionResponseUnitCarriedFightersItemTotalMin = 0;
+
+export const chooseScoutActionResponseUnitCarriedFightersItemAvailableMin = 0;
+
+export const chooseScoutActionResponseUnitCarriedFightersItemLaunchedMin = 0;
+
+export const chooseScoutActionResponseUnitCarriedFightersItemRecoveredMin = 0;
+
+export const chooseScoutActionResponseUnitCarriedFightersItemDestroyedMin = 0;
 
 export const chooseScoutActionResponseUnitCrewQualityMax = 7;
 
@@ -1359,6 +1507,20 @@ export const ChooseScoutActionResponse = zod.object({
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
@@ -1366,20 +1528,20 @@ export const ChooseScoutActionResponse = zod.object({
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "carriedFighters": zod.array(zod.object({
   "name": zod.string(),
   "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
-  "total": zod.number().min(0),
-  "available": zod.number().min(0),
-  "launched": zod.number().min(0),
-  "recovered": zod.number().min(0),
-  "destroyed": zod.number().min(0)
+  "total": zod.number().min(chooseScoutActionResponseUnitCarriedFightersItemTotalMin),
+  "available": zod.number().min(chooseScoutActionResponseUnitCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(chooseScoutActionResponseUnitCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(chooseScoutActionResponseUnitCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(chooseScoutActionResponseUnitCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
-  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
-  "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
-  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
   "id": zod.number(),
   "gameUnitId": zod.number(),
@@ -1411,9 +1573,10 @@ export const ChooseScoutActionResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
   "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -1437,6 +1600,16 @@ export const MoveUnitBody = zod.object({
   "newHeading": zod.number()
 })
 
+export const moveUnitResponseCarriedFightersItemTotalMin = 0;
+
+export const moveUnitResponseCarriedFightersItemAvailableMin = 0;
+
+export const moveUnitResponseCarriedFightersItemLaunchedMin = 0;
+
+export const moveUnitResponseCarriedFightersItemRecoveredMin = 0;
+
+export const moveUnitResponseCarriedFightersItemDestroyedMin = 0;
+
 export const moveUnitResponseCrewQualityMax = 7;
 
 
@@ -1454,6 +1627,20 @@ export const MoveUnitResponse = zod.object({
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
   "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
   "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
@@ -1461,20 +1648,20 @@ export const MoveUnitResponse = zod.object({
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
   "carriedFighters": zod.array(zod.object({
   "name": zod.string(),
   "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
-  "total": zod.number().min(0),
-  "available": zod.number().min(0),
-  "launched": zod.number().min(0),
-  "recovered": zod.number().min(0),
-  "destroyed": zod.number().min(0)
+  "total": zod.number().min(moveUnitResponseCarriedFightersItemTotalMin),
+  "available": zod.number().min(moveUnitResponseCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(moveUnitResponseCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(moveUnitResponseCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(moveUnitResponseCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
-  "fighterBayOperationsUsed": zod.number().optional().describe('Launch/recovery operations used by this unit in fighterBayOperationsRound.'),
-  "isCrippled": zod.boolean().optional().describe('Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
-  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
   "id": zod.number(),
   "gameUnitId": zod.number(),
@@ -1506,9 +1693,10 @@ export const MoveUnitResponse = zod.object({
   "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
   "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
   "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
   "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
   "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
-  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
   "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
   "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
   "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
@@ -1518,15 +1706,1050 @@ export const MoveUnitResponse = zod.object({
 
 
 /**
+ * @summary Launch one carried fighter flight from a carrier during the End Phase
+ */
+export const LaunchFighterParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const LaunchFighterBody = zod.object({
+  "shipModelId": zod.number().describe('Fighter ship_model id from the carrier\'s carriedFighters entry.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number().optional()
+})
+
+export const launchFighterResponseCarrierCarriedFightersItemTotalMin = 0;
+
+export const launchFighterResponseCarrierCarriedFightersItemAvailableMin = 0;
+
+export const launchFighterResponseCarrierCarriedFightersItemLaunchedMin = 0;
+
+export const launchFighterResponseCarrierCarriedFightersItemRecoveredMin = 0;
+
+export const launchFighterResponseCarrierCarriedFightersItemDestroyedMin = 0;
+
+export const launchFighterResponseCarrierCrewQualityMax = 7;
+
+export const launchFighterResponseFighterCarriedFightersItemTotalMin = 0;
+
+export const launchFighterResponseFighterCarriedFightersItemAvailableMin = 0;
+
+export const launchFighterResponseFighterCarriedFightersItemLaunchedMin = 0;
+
+export const launchFighterResponseFighterCarriedFightersItemRecoveredMin = 0;
+
+export const launchFighterResponseFighterCarriedFightersItemDestroyedMin = 0;
+
+export const launchFighterResponseFighterCrewQualityMax = 7;
+
+
+
+export const LaunchFighterResponse = zod.object({
+  "carrier": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(launchFighterResponseCarrierCarriedFightersItemTotalMin),
+  "available": zod.number().min(launchFighterResponseCarrierCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(launchFighterResponseCarrierCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(launchFighterResponseCarrierCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(launchFighterResponseCarrierCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(launchFighterResponseCarrierCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+}),
+  "fighter": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(launchFighterResponseFighterCarriedFightersItemTotalMin),
+  "available": zod.number().min(launchFighterResponseFighterCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(launchFighterResponseFighterCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(launchFighterResponseFighterCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(launchFighterResponseFighterCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(launchFighterResponseFighterCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+})
+})
+
+
+/**
+ * @summary Toggle the Shadow Molecular Slicer Beam defensive conversion before movement
+ */
+export const ChooseShadowPointDefenseParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const chooseShadowPointDefenseResponseCarriedFightersItemTotalMin = 0;
+
+export const chooseShadowPointDefenseResponseCarriedFightersItemAvailableMin = 0;
+
+export const chooseShadowPointDefenseResponseCarriedFightersItemLaunchedMin = 0;
+
+export const chooseShadowPointDefenseResponseCarriedFightersItemRecoveredMin = 0;
+
+export const chooseShadowPointDefenseResponseCarriedFightersItemDestroyedMin = 0;
+
+export const chooseShadowPointDefenseResponseCrewQualityMax = 7;
+
+
+
+export const ChooseShadowPointDefenseResponse = zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(chooseShadowPointDefenseResponseCarriedFightersItemTotalMin),
+  "available": zod.number().min(chooseShadowPointDefenseResponseCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(chooseShadowPointDefenseResponseCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(chooseShadowPointDefenseResponseCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(chooseShadowPointDefenseResponseCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(chooseShadowPointDefenseResponseCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+})
+
+
+/**
+ * @summary Choose normal Superb Manoeuvrability or the Shadow opening-turn sweep
+ */
+export const ChooseShadowManeuverModeParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const ChooseShadowManeuverModeBody = zod.object({
+  "mode": zod.enum(['normal', 'sweep'])
+})
+
+export const chooseShadowManeuverModeResponseCarriedFightersItemTotalMin = 0;
+
+export const chooseShadowManeuverModeResponseCarriedFightersItemAvailableMin = 0;
+
+export const chooseShadowManeuverModeResponseCarriedFightersItemLaunchedMin = 0;
+
+export const chooseShadowManeuverModeResponseCarriedFightersItemRecoveredMin = 0;
+
+export const chooseShadowManeuverModeResponseCarriedFightersItemDestroyedMin = 0;
+
+export const chooseShadowManeuverModeResponseCrewQualityMax = 7;
+
+
+
+export const ChooseShadowManeuverModeResponse = zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(chooseShadowManeuverModeResponseCarriedFightersItemTotalMin),
+  "available": zod.number().min(chooseShadowManeuverModeResponseCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(chooseShadowManeuverModeResponseCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(chooseShadowManeuverModeResponseCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(chooseShadowManeuverModeResponseCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(chooseShadowManeuverModeResponseCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+})
+
+
+/**
+ * @summary Make a Psychic Crew attack against a Shadow vessel
+ */
+export const AttemptTelepathicDisruptionParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const AttemptTelepathicDisruptionBody = zod.object({
+  "targetUnitId": zod.number()
+})
+
+export const attemptTelepathicDisruptionResponseAttackerCarriedFightersItemTotalMin = 0;
+
+export const attemptTelepathicDisruptionResponseAttackerCarriedFightersItemAvailableMin = 0;
+
+export const attemptTelepathicDisruptionResponseAttackerCarriedFightersItemLaunchedMin = 0;
+
+export const attemptTelepathicDisruptionResponseAttackerCarriedFightersItemRecoveredMin = 0;
+
+export const attemptTelepathicDisruptionResponseAttackerCarriedFightersItemDestroyedMin = 0;
+
+export const attemptTelepathicDisruptionResponseAttackerCrewQualityMax = 7;
+
+export const attemptTelepathicDisruptionResponseTargetCarriedFightersItemTotalMin = 0;
+
+export const attemptTelepathicDisruptionResponseTargetCarriedFightersItemAvailableMin = 0;
+
+export const attemptTelepathicDisruptionResponseTargetCarriedFightersItemLaunchedMin = 0;
+
+export const attemptTelepathicDisruptionResponseTargetCarriedFightersItemRecoveredMin = 0;
+
+export const attemptTelepathicDisruptionResponseTargetCarriedFightersItemDestroyedMin = 0;
+
+export const attemptTelepathicDisruptionResponseTargetCrewQualityMax = 7;
+
+
+
+export const AttemptTelepathicDisruptionResponse = zod.object({
+  "success": zod.boolean(),
+  "attackerRoll": zod.number(),
+  "attackerPsychicCrew": zod.number(),
+  "attackerTotal": zod.number(),
+  "shadowRoll": zod.number(),
+  "shadowCrewQuality": zod.number(),
+  "shadowBonus": zod.number(),
+  "shadowTotal": zod.number(),
+  "attacker": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(attemptTelepathicDisruptionResponseAttackerCarriedFightersItemTotalMin),
+  "available": zod.number().min(attemptTelepathicDisruptionResponseAttackerCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(attemptTelepathicDisruptionResponseAttackerCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(attemptTelepathicDisruptionResponseAttackerCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(attemptTelepathicDisruptionResponseAttackerCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(attemptTelepathicDisruptionResponseAttackerCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+}),
+  "target": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(attemptTelepathicDisruptionResponseTargetCarriedFightersItemTotalMin),
+  "available": zod.number().min(attemptTelepathicDisruptionResponseTargetCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(attemptTelepathicDisruptionResponseTargetCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(attemptTelepathicDisruptionResponseTargetCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(attemptTelepathicDisruptionResponseTargetCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(attemptTelepathicDisruptionResponseTargetCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+})
+})
+
+
+/**
+ * @summary Launch up to six Shadow Fighter flights within 30 inches in place of firing
+ */
+export const LaunchShadowFighterDispersalParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const launchShadowFighterDispersalBodyPlacementsMax = 6;
+
+
+
+export const LaunchShadowFighterDispersalBody = zod.object({
+  "placements": zod.array(zod.object({
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number()
+})).min(1).max(launchShadowFighterDispersalBodyPlacementsMax)
+})
+
+export const launchShadowFighterDispersalResponseCarrierCarriedFightersItemTotalMin = 0;
+
+export const launchShadowFighterDispersalResponseCarrierCarriedFightersItemAvailableMin = 0;
+
+export const launchShadowFighterDispersalResponseCarrierCarriedFightersItemLaunchedMin = 0;
+
+export const launchShadowFighterDispersalResponseCarrierCarriedFightersItemRecoveredMin = 0;
+
+export const launchShadowFighterDispersalResponseCarrierCarriedFightersItemDestroyedMin = 0;
+
+export const launchShadowFighterDispersalResponseCarrierCrewQualityMax = 7;
+
+export const launchShadowFighterDispersalResponseFightersItemCarriedFightersItemTotalMin = 0;
+
+export const launchShadowFighterDispersalResponseFightersItemCarriedFightersItemAvailableMin = 0;
+
+export const launchShadowFighterDispersalResponseFightersItemCarriedFightersItemLaunchedMin = 0;
+
+export const launchShadowFighterDispersalResponseFightersItemCarriedFightersItemRecoveredMin = 0;
+
+export const launchShadowFighterDispersalResponseFightersItemCarriedFightersItemDestroyedMin = 0;
+
+export const launchShadowFighterDispersalResponseFightersItemCrewQualityMax = 7;
+
+
+
+export const LaunchShadowFighterDispersalResponse = zod.object({
+  "carrier": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(launchShadowFighterDispersalResponseCarrierCarriedFightersItemTotalMin),
+  "available": zod.number().min(launchShadowFighterDispersalResponseCarrierCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(launchShadowFighterDispersalResponseCarrierCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(launchShadowFighterDispersalResponseCarrierCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(launchShadowFighterDispersalResponseCarrierCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(launchShadowFighterDispersalResponseCarrierCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+}),
+  "fighters": zod.array(zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(launchShadowFighterDispersalResponseFightersItemCarriedFightersItemTotalMin),
+  "available": zod.number().min(launchShadowFighterDispersalResponseFightersItemCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(launchShadowFighterDispersalResponseFightersItemCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(launchShadowFighterDispersalResponseFightersItemCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(launchShadowFighterDispersalResponseFightersItemCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(launchShadowFighterDispersalResponseFightersItemCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+}))
+})
+
+
+/**
+ * @summary Recover one launched fighter flight into a carrier during the End Phase
+ */
+export const RecoverFighterParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "unitId": zod.coerce.number()
+})
+
+export const RecoverFighterBody = zod.object({
+  "carrierUnitId": zod.number().describe('Friendly carrier unit in base contact with the launched fighter.')
+})
+
+export const recoverFighterResponseCarrierCarriedFightersItemTotalMin = 0;
+
+export const recoverFighterResponseCarrierCarriedFightersItemAvailableMin = 0;
+
+export const recoverFighterResponseCarrierCarriedFightersItemLaunchedMin = 0;
+
+export const recoverFighterResponseCarrierCarriedFightersItemRecoveredMin = 0;
+
+export const recoverFighterResponseCarrierCarriedFightersItemDestroyedMin = 0;
+
+export const recoverFighterResponseCarrierCrewQualityMax = 7;
+
+
+
+export const RecoverFighterResponse = zod.object({
+  "carrier": zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "shipId": zod.number(),
+  "shipModelId": zod.number().describe('Canonical ship_model id for this deployed unit. Used by the client to resolve variant-specific weapons when multiple variants share one 3D model filename.'),
+  "name": zod.string(),
+  "modelFilename": zod.string(),
+  "faction": zod.string(),
+  "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "hullPoints": zod.number(),
+  "maxHullPoints": zod.number(),
+  "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
+  "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold.'),
+  "permanentlyCrippled": zod.boolean().optional().describe('Ancient Self Repair cannot remove a cripple state once reached.'),
+  "ancientStatusEffects": zod.array(zod.object({
+  "kind": zod.enum(['physical-disruption', 'telepathic-disruption']),
+  "sourceUnitId": zod.number(),
+  "appliedRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "releaseWhenSourceDestroyed": zod.boolean()
+})).optional(),
+  "shadowPointDefenseRound": zod.number().optional(),
+  "shadowManeuverMode": zod.union([zod.literal('normal'),zod.literal('sweep'),zod.literal(null)]).nullish(),
+  "mindScreamTargetIdsThisRound": zod.array(zod.number()).optional(),
+  "telepathicTargetsAttemptedThisRound": zod.array(zod.number()).optional(),
+  "telepathicDisruptionExhausted": zod.boolean().optional(),
+  "shieldsCurrent": zod.number().describe('Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round.'),
+  "lastDcRound": zod.number().optional().describe('Last round (1-based) this unit attempted Damage Control. 0 = never.'),
+  "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
+  "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
+  "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
+  "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
+  "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
+  "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
+  "isSkeletonCrew": zod.boolean().optional().describe('Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command\/Fleet Carrier\/Admiral.'),
+  "carriedFighters": zod.array(zod.object({
+  "name": zod.string(),
+  "shipModelId": zod.number().nullable().describe('Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog.'),
+  "total": zod.number().min(recoverFighterResponseCarrierCarriedFightersItemTotalMin),
+  "available": zod.number().min(recoverFighterResponseCarrierCarriedFightersItemAvailableMin),
+  "launched": zod.number().min(recoverFighterResponseCarrierCarriedFightersItemLaunchedMin),
+  "recovered": zod.number().min(recoverFighterResponseCarrierCarriedFightersItemRecoveredMin),
+  "destroyed": zod.number().min(recoverFighterResponseCarrierCarriedFightersItemDestroyedMin)
+})).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
+  "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
+  "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
+  "criticals": zod.array(zod.object({
+  "id": zod.number(),
+  "gameUnitId": zod.number(),
+  "effectKey": zod.string().describe('Stable key from the critical-hit table (e.g. \'engines-thrusters\').'),
+  "location": zod.number().describe('1=Engines, 3=Reactor, 4=Weapons, 5=Crew, 6=Vital.'),
+  "locationRoll": zod.number().optional().describe('Raw 1d6 location roll (1..6) the server made when generating this crit. Populated only on freshly-applied crits in FireWeaponResult.criticalsApplied for the per-crit reveal animation; absent on persisted rows returned by GET \/games (the DB doesn\'t store the raw rolls).'),
+  "effectRoll": zod.number().optional().describe('Raw 1d6 effect roll (1..6) within the location bucket. Same caveat as locationRoll: present only on freshly-applied crits.'),
+  "name": zod.string(),
+  "damageApplied": zod.number().describe('Hull damage applied when this row was created (reversed on DC success).'),
+  "crewApplied": zod.number().describe('Crew damage applied when this row was created (Slice C-only counter; logged for UI).'),
+  "randomArc": zod.string().nullish().describe('Arc rolled for arc-locked effects (Weapons-Offline, Catastrophic, Weapons-Control).'),
+  "randomWeaponId": zod.number().nullish().describe('Specific weapon rolled for Weapons-Offline.'),
+  "lostTraits": zod.array(zod.string()).describe('Ship traits dropped when this row was created (e.g. [\'Stealth\', \'Interceptors\']).'),
+  "appliedRound": zod.number(),
+  "repairable": zod.boolean().describe('False for Vital Systems (location 6) per the sheet.')
+})).optional().describe('Unrepaired critical effects, oldest first.'),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "heading": zod.number(),
+  "speed": zod.number(),
+  "turnAngle": zod.number(),
+  "turns": zod.number(),
+  "weaponRange": zod.number(),
+  "weaponDamage": zod.number(),
+  "crewQuality": zod.number().min(1).max(recoverFighterResponseCarrierCrewQualityMax).describe('Crew Quality: 1=Rookie, 2=Green, 3=Competent, 4=Veteran, 5=Elite, 6=Special Ops, 7=Ancient.'),
+  "isDestroyed": zod.boolean(),
+  "hasMovedThisRound": zod.boolean(),
+  "hasFiredThisRound": zod.boolean(),
+  "inchesMovedThisActivation": zod.number().optional().describe('Total inches travelled in the current movement activation (sum of \/move step distances). Reset to 0 on \/activate-unit. Used to enforce the ACTA minimum-speed rule at \/end-activation.'),
+  "oneWeaponThisRound": zod.boolean().optional().describe('True when this ship may fire only one weapon system this round, as the cost of a successful \'all-hands-on-deck\' declaration this round. Latched on successful declaration in \/special-action; cleared at round rollover.'),
+  "firedWeaponIds": zod.array(zod.number()).describe('Weapon ids that have already fired during the current firing activation. Reset on each \/activate-unit call and on round rollover.'),
+  "splitFireFirstTargetByWeapon": zod.record(zod.string(), zod.number()).optional().describe('Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.'),
+  "slowLoadingWeaponCooldowns": zod.record(zod.string(), zod.number()).describe('Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again.'),
+  "hitByUnitIdsThisRound": zod.array(zod.number()).optional().describe('Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth \'fleet support\' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover.'),
+  "specialAction": zod.string().nullish().describe('Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed \'-failed\' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship\'s damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.'),
+  "specialActionTargetId": zod.number().nullish().describe('Nominated target unit id for \'concentrate-fire\'; null otherwise.'),
+  "allStopReady": zod.boolean().optional().describe('True when this ship successfully declared All Stop and has not moved or pivoted since. Persists across round rollover. Prerequisite for declaring \'all-stop-pivot\' next round; cleared on \/move or successful \'all-stop-pivot\' declaration.'),
+  "scoutAction": zod.string().nullish().describe('Scout support action this Scout-trait ship declared this round. Values: \'counter-stealth\', \'counter-stealth-failed\', \'coord\', \'coord-failed\'. Null if no scout action used this round. Cleared at round rollover.'),
+  "scoutActionTargetId": zod.number().nullish().describe('Enemy unit id this Scout\'s support action is targeting. Null when no scout action declared.'),
+  "scoutCoordConsumed": zod.boolean().optional().describe('True once an allied weapon has spent this Scout\'s successful \'coord\' re-roll bonus on a single weapon system this round. Cleared at round rollover.')
+}),
+  "recoveredUnitId": zod.number()
+})
+
+
+/**
  * @summary Get open game challenges and active games summary
  */
+export const getLobbyResponsePendingChallengesItemMatchNameMax = 80;
+
 
 export const getLobbyResponsePendingChallengesItemDeploymentDepthMin = 4;
 export const getLobbyResponsePendingChallengesItemDeploymentDepthMax = 30;
 
+export const getLobbyResponseActiveGamesItemMatchNameMax = 80;
+
 
 export const getLobbyResponseActiveGamesItemDeploymentDepthMin = 4;
 export const getLobbyResponseActiveGamesItemDeploymentDepthMax = 30;
+
+export const getLobbyResponseRecentlyCompletedItemMatchNameMax = 80;
 
 
 export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMin = 4;
@@ -1542,7 +2765,7 @@ export const GetLobbyResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(getLobbyResponsePendingChallengesItemMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -1561,9 +2784,11 @@ export const GetLobbyResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1579,7 +2804,7 @@ export const GetLobbyResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(getLobbyResponseActiveGamesItemMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -1598,9 +2823,11 @@ export const GetLobbyResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1616,7 +2843,7 @@ export const GetLobbyResponse = zod.object({
   "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
   "challengerName": zod.string().nullish(),
   "opponentName": zod.string().nullish(),
-  "matchName": zod.string().max(80).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "matchName": zod.string().max(getLobbyResponseRecentlyCompletedItemMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
   "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
   "winnerId": zod.string().nullish(),
   "currentTurn": zod.number(),
@@ -1635,9 +2862,11 @@ export const GetLobbyResponse = zod.object({
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain/scenery.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),

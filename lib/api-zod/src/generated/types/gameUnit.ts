@@ -6,27 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CriticalEffect } from './criticalEffect';
+import type { GameUnitAncientStatusEffectsItem } from './gameUnitAncientStatusEffectsItem';
+import type { GameUnitCarriedFightersItem } from './gameUnitCarriedFightersItem';
 import type { GameUnitDamageState } from './gameUnitDamageState';
+import type { GameUnitShadowManeuverMode } from './gameUnitShadowManeuverMode';
 import type { GameUnitSlowLoadingWeaponCooldowns } from './gameUnitSlowLoadingWeaponCooldowns';
-
-/**
- * Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.
- */
-export interface GameUnitCarriedFighter {
-  name: string;
-  /** Resolved ship_model id for this fighter flight, when the fighter exists in the ship catalog. */
-  shipModelId: number | null;
-  /** @minimum 0 */
-  total: number;
-  /** @minimum 0 */
-  available: number;
-  /** @minimum 0 */
-  launched: number;
-  /** @minimum 0 */
-  recovered: number;
-  /** @minimum 0 */
-  destroyed: number;
-}
+import type { GameUnitSplitFireFirstTargetByWeapon } from './gameUnitSplitFireFirstTargetByWeapon';
 
 export interface GameUnit {
   id: number;
@@ -44,6 +29,17 @@ export interface GameUnit {
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
   damageThreshold: number;
+  /** Single Beam attack damage required to pin a Shadow vessel; separate from cripple threshold. */
+  physicalDisruptionThreshold?: number;
+  /** Ancient Self Repair cannot remove a cripple state once reached. */
+  permanentlyCrippled?: boolean;
+  ancientStatusEffects?: GameUnitAncientStatusEffectsItem[];
+  shadowPointDefenseRound?: number;
+  /** @nullable */
+  shadowManeuverMode?: GameUnitShadowManeuverMode;
+  mindScreamTargetIdsThisRound?: number[];
+  telepathicTargetsAttemptedThisRound?: number[];
+  telepathicDisruptionExhausted?: boolean;
   /** Current shield pool (Shields X). Initialized to ship_model.shieldMax at deploy; regens by shieldRegenRate at end of round. */
   shieldsCurrent: number;
   /** Last round (1-based) this unit attempted Damage Control. 0 = never. */
@@ -58,18 +54,21 @@ export interface GameUnit {
   crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
   damageState?: GameUnitDamageState;
-  /** Derived: hullPoints ≤ ½ maxHullPoints. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  /** Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°/1, only 1 weapon per arc fires, loses Fleet Carrier/Command/Interceptors/Admiral. */
+  isCrippled?: boolean;
+  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
+  isSkeletonCrew?: boolean;
   /** Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array. */
-  carriedFighters: GameUnitCarriedFighter[];
-  /** Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters. */
+  carriedFighters: GameUnitCarriedFightersItem[];
+  /**
+     * Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.
+     * @nullable
+     */
   launchedFromUnitId?: number | null;
   /** Round number for the current fighter bay operation counter. */
   fighterBayOperationsRound?: number;
   /** Launch/recovery operations used by this unit in fighterBayOperationsRound. */
   fighterBayOperationsUsed?: number;
-  isCrippled?: boolean;
-  /** Derived: crewPoints ≤ ½ maxCrewPoints. No SAs, only 1 weapon system fires, -2 DC, lose Command/Fleet Carrier/Admiral. */
-  isSkeletonCrew?: boolean;
   /** Unrepaired critical effects, oldest first. */
   criticals?: CriticalEffect[];
   hexQ: number;
@@ -95,12 +94,14 @@ export interface GameUnit {
   oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /** Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets. */
+  splitFireFirstTargetByWeapon?: GameUnitSplitFireFirstTargetByWeapon;
   /** Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again. */
   slowLoadingWeaponCooldowns: GameUnitSlowLoadingWeaponCooldowns;
   /** Allied attacker unit IDs that have landed at least one to-hit on this unit during the current round. Drives the Stealth 'fleet support' -1 modifier (see FireWeaponResult.fleetSupportStealthReduction). Cleared at round rollover. */
   hitByUnitIdsThisRound?: number[];
   /**
-     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship's damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound).
+     * Special Action chosen this round, if any. Values: all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, all-hands-on-deck, scramble. A failed CQ attempt is suffixed '-failed' (e.g. run-silent-failed). Come About variants: extra-turn adds +1 turn this activation; sharp-turn lets one turn exceed turnAngle by +45° (mandatory for Lumbering ships, which cannot use extra-turn). all-hands-on-deck is declared in the Movement Phase like every other Special Action; its effect is deferred to the End Phase, where on success it adds +2 to that ship's damage-control rolls AND lifts the once-per-round-per-ship DC cap (any number of crits may be repaired) — at the cost that the ship may fire only one weapon system this round (tracked via oneWeaponThisRound). scramble allows extra fighter launches in the End Phase.
      * @nullable
      */
   specialAction?: string | null;

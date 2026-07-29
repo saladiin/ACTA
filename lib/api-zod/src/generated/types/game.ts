@@ -7,10 +7,12 @@
  */
 import type { GameAiState } from './gameAiState';
 import type { GameCrewQualityMode } from './gameCrewQualityMode';
+import type { GameDeploymentConfig } from './gameDeploymentConfig';
 import type { GameOpponentKind } from './gameOpponentKind';
 import type { GamePhase } from './gamePhase';
 import type { GamePriorityLevel } from './gamePriorityLevel';
 import type { GameStatus } from './gameStatus';
+import type { GameTerrainConfig } from './gameTerrainConfig';
 import type { GameVisibility } from './gameVisibility';
 
 export interface Game {
@@ -25,10 +27,10 @@ export interface Game {
   /** @nullable */
   opponentName?: string | null;
   /**
-   * Player-authored title or desired conditions for the engagement.
-   * @maxLength 80
-   * @nullable
-   */
+     * Player-authored title or desired conditions for the engagement.
+     * @maxLength 80
+     * @nullable
+     */
   matchName?: string | null;
   status: GameStatus;
   /** @nullable */
@@ -80,10 +82,16 @@ export interface Game {
      * @maximum 30
      */
   deploymentDepth?: number;
-  /** Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment. */
-  deploymentConfig?: Record<string, unknown> | null;
-  /** Structured terrain objects generated for this engagement. */
-  terrainConfig?: Record<string, unknown> | null;
+  /**
+     * Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.
+     * @nullable
+     */
+  deploymentConfig?: GameDeploymentConfig;
+  /**
+     * Structured terrain objects generated for this engagement.
+     * @nullable
+     */
+  terrainConfig?: GameTerrainConfig;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**

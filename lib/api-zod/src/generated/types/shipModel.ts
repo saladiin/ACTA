@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ShipModelPriorityLevel } from './shipModelPriorityLevel';
+import type { ShipModelRulesProfile } from './shipModelRulesProfile';
 import type { Weapon } from './weapon';
 
 export interface ShipModel {
@@ -13,9 +14,13 @@ export interface ShipModel {
   name: string;
   filename: string;
   faction: string;
+  /** Immutable faction rules identity; never inferred from trait text. */
+  rulesProfile?: ShipModelRulesProfile;
   pointCost: number;
   priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
+  /** Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable. */
+  physicalDisruptionThreshold?: number;
   speed: number;
   weaponRange: number;
   weaponDamage: number;

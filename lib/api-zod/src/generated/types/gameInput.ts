@@ -5,9 +5,16 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { GameInputAmbushPlayer } from './gameInputAmbushPlayer';
+import type { GameInputAsteroidFieldCount } from './gameInputAsteroidFieldCount';
 import type { GameInputCrewQualityMode } from './gameInputCrewQualityMode';
+import type { GameInputDeploymentPreset } from './gameInputDeploymentPreset';
 import type { GameInputOpponentKind } from './gameInputOpponentKind';
 import type { GameInputPriorityLevel } from './gameInputPriorityLevel';
+import type { GameInputStations } from './gameInputStations';
+import type { GameInputTerrain } from './gameInputTerrain';
+import type { GameInputTerrainCount } from './gameInputTerrainCount';
+import type { GameInputTerrainPlacement } from './gameInputTerrainPlacement';
 import type { GameInputVisibility } from './gameInputVisibility';
 
 export interface GameInput {
@@ -24,10 +31,10 @@ export interface GameInput {
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
   /**
-   * Optional title or desired match conditions shown beneath the host commander's name.
-   * @maxLength 80
-   * @nullable
-   */
+     * Optional title or desired match conditions shown beneath the host commander's name.
+     * @maxLength 80
+     * @nullable
+     */
   matchName?: string | null;
   /**
      * Required when visibility=private. Stored hashed; required again on accept.
@@ -46,9 +53,9 @@ export interface GameInput {
      */
   deploymentDepth: number;
   /** Deployment zone preset. Defaults to standard short-edge deployment. */
-  deploymentPreset?: 'standard-short-edge' | 'standard-long-edge' | 'ambush-center';
+  deploymentPreset?: GameInputDeploymentPreset;
   /** For ambush-center deployment, which player deploys in the center box. */
-  ambushPlayer?: 'challenger' | 'opponent';
+  ambushPlayer?: GameInputAmbushPlayer;
   /**
      * For ambush-center deployment, center box width in inches.
      * @minimum 6
@@ -62,15 +69,15 @@ export interface GameInput {
      */
   ambushBoxDepth?: number;
   /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
-  terrainPlacement?: 'automatic' | 'manual';
+  terrainPlacement?: GameInputTerrainPlacement;
   /** Optional terrain package for this engagement. */
-  terrain?: 'none' | 'asteroid-fields' | 'gas-clouds' | 'mixed-terrain';
+  terrain?: GameInputTerrain;
   /** Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8. */
-  terrainCount?: number;
-  /** Legacy terrain count for asteroid fields. Supported values: 3, 6, or 9. */
-  asteroidFieldCount?: number;
+  terrainCount?: GameInputTerrainCount;
+  /** Legacy terrain count for asteroid fields. */
+  asteroidFieldCount?: GameInputAsteroidFieldCount;
   /** Optional station package for this engagement. */
-  stations?: 'none' | 'enabled';
+  stations?: GameInputStations;
   /** standard = all ships fixed at CQ 4 (Veteran). custom = the deploying commander picks CQ 1..7 per ship. */
   crewQualityMode: GameInputCrewQualityMode;
 }

@@ -13,7 +13,7 @@ From extracted page 1:
 - Ancients Initiative is +4 (`tmp/rules/acta_ancients_extracted.txt:20`, `:42`).
 - Priority Level Ancient exists for fleet construction. Conversion shown: Ancient 1, Armageddon 2, War 4, Battle 8, Raid 12, Skirmish 18, Patrol 30 (`:24-30`).
 - All Ancients have Crew Quality 7 (`:32`, `:51`).
-- Ancients ignore Stealth from non-Ancient, non-Shadow, non-Vorlon ships (`:33-35`, `:55-59`).
+- Ancients ignore the Stealth of any target (`:33-35`, `:55-59`).
 - Ancients cannot be boarded, cannot initiate boarding, are immune to crew-affecting critical hits, and have no Crew or Troops score (`:11-13`).
 - Redundant Systems: Ancients take damage normally, but critical hits are automatically repaired in the End Phase of the turn after they are inflicted, including Vital Systems criticals (`:36-41`, `:60-62`).
 - The sample stat block uses Ancient-specific/less common weapon terminology including Mini-Beam, Super AP, and "X2/X3 Damage" notation (`:51-65`).
@@ -114,8 +114,143 @@ Recommended implementation shape:
 - Keep this separate from normal no-crew/skeleton-crew logic so non-Ancient derelicts, stations, civilian craft, or future scenario objects can be handled independently.
 - Boarding resolution should not create crew-loss, troop-loss, capture, or prize-state side effects on Ancient units.
 
-Current status after the Ancient rules implementation:
-- Trait parsing supports `Ancient`, `Redundant Systems`, `Stealth Penetration`, and `Self Repair`.
-- CQ 7 and Ancient priority/FAP conversion are represented.
-- Ancient units ignore qualifying Stealth targets, gain +4 initiative while fielded, avoid no-crew adrift transitions, ignore crew-affecting criticals, and auto-clear critical-effect rows in End Phase via Redundant Systems.
-- Boarding remains intentionally unimplemented, with this section retained as the future implementation note.
+## 2026-07-28 Ancient Rules Implementation
+
+The implementation was deliberately divided into eight stages. Stages 1-6 are
+implemented. Stages 7-8 are explicitly deferred because they depend on larger
+board-state systems and should not be approximated with isolated buttons.
+
+### Stage 1 - Explicit rules profiles (implemented)
+
+- `ship_models.rules_profile` stores `standard`, `ancients`, `shadows`, or
+  `vorlons`.
+- `artifacts/api-server/src/lib/ancient-rules.ts` is the authoritative profile
+  helper. Faction-name matching remains only as a migration fallback.
+- Initiative, Crew Quality, Stealth handling, crew-critical immunity, and
+  Special Action availability read this profile rather than inferring Ancient
+  identity from a loose trait string.
+
+### Stage 2 - Separate thresholds (implemented)
+
+- `damage_threshold` remains the normal cripple threshold.
+- `physical_disruption_threshold` stores the parenthesized Shadow Damage value.
+- Shadow and Vorlon ships have no normal cripple threshold unless a future
+  specific unit says otherwise.
+- Shadow thresholds are populated as the printed quarter-Damage value
+  (`ceil(original Damage / 4)`), while Shadow fighters have no Physical
+  Disruption threshold.
+- Once a normal ship becomes Crippled, `permanently_crippled` keeps that state
+  latched even if Damage is later repaired.
+
+### Stage 3 - Shared combat corrections (implemented)
+
+- Player and AI attacks use the same multiplied-hit Shield absorption rule. A
+  partially depleted Shield still stops the complete hit that removes its last
+  point.
+- Player and AI critical-table damage and crew values inherit
+  Double/Triple/Quad Damage multipliers.
+- Player and AI suppress crew-affecting critical entries for Ancient, Shadow,
+  and Vorlon profiles.
+- Beam AD splitting is legal. The second Beam target must be within 4 inches of
+  the first target.
+- Shadow fighter Shields absorb the first otherwise-successful Anti-Fighter
+  result or dogfight defeat.
+
+### Stage 4 - Persistent damage and disruption state (implemented)
+
+- Redundant Systems repairs critical effects in the End Phase after the vessel
+  has lived with them for a complete turn, including Vital Systems.
+- Physical Disruption triggers only when one Beam attack inflicts at least the
+  vessel's printed threshold. It prevents further action in the current and
+  following turn, and releases early if the source attacker is destroyed. A
+  disrupted vessel is excluded from movement and firing activation eligibility,
+  allowing its commander to pass the phase when no other eligible units remain;
+  it is never required to satisfy minimum movement before being skipped.
+- Telepathic Disruption uses the attacker's Psychic Crew score in the opposed
+  roll. Only one ship may attempt to jam a given Shadow vessel per turn. A
+  failed telepath is exhausted for the rest of the battle.
+- Disruption effects are structured records in
+  `game_units.ancient_status_effects`, not overloaded damage states.
+
+### Stage 5 - Race Special Actions (implemented)
+
+- Ancient, Shadow, and Vorlon action whitelists are enforced by the server.
+- Shadow vessels currently expose Run Silent; Initiate Jump Point remains
+  unavailable until Stage 7.
+- Vorlon vessels also expose `Regenerate!` (CQ 9). A successful declaration
+  makes the ship Adrift, prevents attacks, and doubles that turn's Self Repair.
+- Vorlon/Ancient Jump actions remain hidden until the common jump subsystem is
+  complete.
+
+### Stage 6 - Shadow and Vorlon race abilities (implemented)
+
+- Shadow Molecular Slicer Beams can be converted before movement into point
+  defence for the round: half Range, remove Beam/Precise/damage multipliers,
+  gain Accurate, Mini-Beam, and Turret. This is a Shadow system choice, not a
+  Special Action: it has no Crew Quality check and does not consume the ship's
+  Special Action.
+- Shadow Ships and Scouts can select normal Super-Manoeuvrability or the
+  opening 90-degree turn followed by straight movement up to twice Speed.
+- Mind Scream checks every movement segment, excludes Shadow fighters, and
+  uses the correct vessel value: Scout 1 Crew, Stalker 2 Crew, Young Ship 1d6,
+  Ancient Ship/Battlecrab 2d6.
+- Fighter Dispersal Tube launches 1-6 carried Shadow Fighter flights in the
+  tube's printed Forward arc and within 30 inches. The source sheet says the
+  flights deploy "3 inches within each other"; the game intentionally replaces
+  that awkward pairwise rule with a house rule: Flight 1 is the lead flight and
+  every later flight must be within 4 inches of Flight 1.
+  The launched flights are marked moved/fired so they cannot act that turn.
+  Selecting a flight count now opens an explicit sequential placement preview:
+  the player positions and confirms every flight before the launch is
+  submitted. The client previews group cohesion, range, board bounds, and base
+  overlap while the server remains authoritative for every placement. The
+  board displays the true Forward-arc range sector rather than a 360-degree
+  launch circle. Once Flight 1 is confirmed, the board displays one stable
+  4-inch wing area around it. An illegal preview identifies the exact failed
+  constraint and measured distance. Client and server both use a 0.01-inch
+  tolerance to prevent thousandth-inch coordinate rounding from changing
+  legality at a visible range boundary.
+- Ships with Fighter Dispersal Tubes receive their full Shadow Fighter
+  complement and may deploy the full complement before battle.
+
+### Stage 7 - Hyperspace and Jump Point Disruptor (deferred)
+
+Do not implement this as a direct-fire weapon shortcut. It requires:
+
+- off-board/hyperspace unit state;
+- Shadow Hyperspace Mastery entry and exit timing;
+- jump-point board entities, ownership, arcs, and lifecycle;
+- normal and Advanced Jump Engine behavior;
+- targeting and closing a jump point with the Jump Point Disruptor;
+- damage to ships that used or occupy the disrupted point;
+- scenario, deployment, withdrawal, VFX, and AI support.
+
+The data and Special Action whitelists preserve the future action names, but no
+unit may currently select them.
+
+### Stage 8 - Shadow Merging (deferred)
+
+Do not represent merged ships by simply hiding one unit. The subsystem must
+preserve:
+
+- two same-type Shadow vessels in base contact at the end of Movement;
+- combined Shields and shared incoming Damage;
+- half of the faster vessel's Speed;
+- no attacks and no Dodge while merged;
+- one Self Repair beneficiary in each End Phase;
+- combined starting Damage for Physical Disruption;
+- hyperspace interaction;
+- later separation, remaining-Shield division, and the Stealth restriction
+  while separating;
+- audit logs, destruction, victory, selection, rendering, and AI behavior for
+  both underlying units.
+
+### Verification
+
+- `ancient-rules.test.ts` covers profile identity, initiative/CQ/Stealth
+  constants, Special Action whitelists, multiplied Shield absorption,
+  persistent Crippled state, and disruption duration/source release.
+- Server and client TypeScript checks are required before release.
+- Boarding remains intentionally unimplemented. The Internal Boarding Note
+  above is still authoritative and must use `rules_profile`, not zero Crew, as
+  its future legality gate.

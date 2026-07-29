@@ -28,12 +28,13 @@ export interface ShipPlacement {
   crewQuality?: number;
   /**
      * Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.
-     * @nullable
      * @minimum 0
+     * @nullable
      */
   launchedFromPlacementIndex?: number | null;
   /**
      * Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.
+     * @maxLength 80
      * @nullable
      */
   deploymentGroupId?: string | null;

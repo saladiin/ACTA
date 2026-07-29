@@ -25,6 +25,8 @@ import type {
   DamageControlInput,
   DamageControlResult,
   DeploymentInput,
+  FighterLaunchResult,
+  FighterRecoveryResult,
   FireWeaponInput,
   FireWeaponResult,
   Fleet,
@@ -34,17 +36,24 @@ import type {
   GameInput,
   GameUnit,
   HealthStatus,
+  LaunchFighterInput,
   LobbyState,
   MoveUnitInput,
   PlayerProfile,
+  RecoverFighterInput,
   ScoutActionInput,
   ScoutActionResult,
   SearchPlayersParams,
+  ShadowFighterDispersalInput,
+  ShadowFighterDispersalResult,
+  ShadowManeuverInput,
   Ship,
   ShipInput,
   ShipModel,
   SpecialActionInput,
   SpecialActionResult,
+  TelepathicDisruptionInput,
+  TelepathicDisruptionResult,
   Turn,
   TurnInput,
   UpdateProfileInput
@@ -2252,6 +2261,448 @@ export const useMoveUnit = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getMoveUnitMutationOptions(options));
+    }
+
+export const getLaunchFighterUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/launch-fighter`
+}
+
+/**
+ * @summary Launch one carried fighter flight from a carrier during the End Phase
+ */
+export const launchFighter = async (gameId: number,
+    unitId: number,
+    launchFighterInput: LaunchFighterInput, options?: RequestInit): Promise<FighterLaunchResult> => {
+
+  return customFetch<FighterLaunchResult>(getLaunchFighterUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      launchFighterInput,)
+  }
+);}
+
+
+
+
+export const getLaunchFighterMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof launchFighter>>, TError,{gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof launchFighter>>, TError,{gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}, TContext> => {
+
+const mutationKey = ['launchFighter'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof launchFighter>>, {gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  launchFighter(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LaunchFighterMutationResult = NonNullable<Awaited<ReturnType<typeof launchFighter>>>
+    export type LaunchFighterMutationBody = BodyType<LaunchFighterInput>
+    export type LaunchFighterMutationError = ErrorType<void>
+
+    /**
+ * @summary Launch one carried fighter flight from a carrier during the End Phase
+ */
+export const useLaunchFighter = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof launchFighter>>, TError,{gameId: number;unitId: number;data: BodyType<LaunchFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof launchFighter>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<LaunchFighterInput>},
+        TContext
+      > => {
+      return useMutation(getLaunchFighterMutationOptions(options));
+    }
+
+export const getChooseShadowPointDefenseUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/shadow-point-defense`
+}
+
+/**
+ * @summary Toggle the Shadow Molecular Slicer Beam defensive conversion before movement
+ */
+export const chooseShadowPointDefense = async (gameId: number,
+    unitId: number, options?: RequestInit): Promise<GameUnit> => {
+
+  return customFetch<GameUnit>(getChooseShadowPointDefenseUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getChooseShadowPointDefenseMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseShadowPointDefense>>, TError,{gameId: number;unitId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof chooseShadowPointDefense>>, TError,{gameId: number;unitId: number}, TContext> => {
+
+const mutationKey = ['chooseShadowPointDefense'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof chooseShadowPointDefense>>, {gameId: number;unitId: number}> = (props) => {
+          const {gameId,unitId} = props ?? {};
+
+          return  chooseShadowPointDefense(gameId,unitId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChooseShadowPointDefenseMutationResult = NonNullable<Awaited<ReturnType<typeof chooseShadowPointDefense>>>
+
+    export type ChooseShadowPointDefenseMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Toggle the Shadow Molecular Slicer Beam defensive conversion before movement
+ */
+export const useChooseShadowPointDefense = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseShadowPointDefense>>, TError,{gameId: number;unitId: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof chooseShadowPointDefense>>,
+        TError,
+        {gameId: number;unitId: number},
+        TContext
+      > => {
+      return useMutation(getChooseShadowPointDefenseMutationOptions(options));
+    }
+
+export const getChooseShadowManeuverModeUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/shadow-maneuver-mode`
+}
+
+/**
+ * @summary Choose normal Superb Manoeuvrability or the Shadow opening-turn sweep
+ */
+export const chooseShadowManeuverMode = async (gameId: number,
+    unitId: number,
+    shadowManeuverInput: ShadowManeuverInput, options?: RequestInit): Promise<GameUnit> => {
+
+  return customFetch<GameUnit>(getChooseShadowManeuverModeUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      shadowManeuverInput,)
+  }
+);}
+
+
+
+
+export const getChooseShadowManeuverModeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseShadowManeuverMode>>, TError,{gameId: number;unitId: number;data: BodyType<ShadowManeuverInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof chooseShadowManeuverMode>>, TError,{gameId: number;unitId: number;data: BodyType<ShadowManeuverInput>}, TContext> => {
+
+const mutationKey = ['chooseShadowManeuverMode'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof chooseShadowManeuverMode>>, {gameId: number;unitId: number;data: BodyType<ShadowManeuverInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  chooseShadowManeuverMode(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChooseShadowManeuverModeMutationResult = NonNullable<Awaited<ReturnType<typeof chooseShadowManeuverMode>>>
+    export type ChooseShadowManeuverModeMutationBody = BodyType<ShadowManeuverInput>
+    export type ChooseShadowManeuverModeMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Choose normal Superb Manoeuvrability or the Shadow opening-turn sweep
+ */
+export const useChooseShadowManeuverMode = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof chooseShadowManeuverMode>>, TError,{gameId: number;unitId: number;data: BodyType<ShadowManeuverInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof chooseShadowManeuverMode>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<ShadowManeuverInput>},
+        TContext
+      > => {
+      return useMutation(getChooseShadowManeuverModeMutationOptions(options));
+    }
+
+export const getAttemptTelepathicDisruptionUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/telepathic-disruption`
+}
+
+/**
+ * @summary Make a Psychic Crew attack against a Shadow vessel
+ */
+export const attemptTelepathicDisruption = async (gameId: number,
+    unitId: number,
+    telepathicDisruptionInput: TelepathicDisruptionInput, options?: RequestInit): Promise<TelepathicDisruptionResult> => {
+
+  return customFetch<TelepathicDisruptionResult>(getAttemptTelepathicDisruptionUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      telepathicDisruptionInput,)
+  }
+);}
+
+
+
+
+export const getAttemptTelepathicDisruptionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof attemptTelepathicDisruption>>, TError,{gameId: number;unitId: number;data: BodyType<TelepathicDisruptionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof attemptTelepathicDisruption>>, TError,{gameId: number;unitId: number;data: BodyType<TelepathicDisruptionInput>}, TContext> => {
+
+const mutationKey = ['attemptTelepathicDisruption'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof attemptTelepathicDisruption>>, {gameId: number;unitId: number;data: BodyType<TelepathicDisruptionInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  attemptTelepathicDisruption(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AttemptTelepathicDisruptionMutationResult = NonNullable<Awaited<ReturnType<typeof attemptTelepathicDisruption>>>
+    export type AttemptTelepathicDisruptionMutationBody = BodyType<TelepathicDisruptionInput>
+    export type AttemptTelepathicDisruptionMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Make a Psychic Crew attack against a Shadow vessel
+ */
+export const useAttemptTelepathicDisruption = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof attemptTelepathicDisruption>>, TError,{gameId: number;unitId: number;data: BodyType<TelepathicDisruptionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof attemptTelepathicDisruption>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<TelepathicDisruptionInput>},
+        TContext
+      > => {
+      return useMutation(getAttemptTelepathicDisruptionMutationOptions(options));
+    }
+
+export const getLaunchShadowFighterDispersalUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/shadow-fighter-dispersal`
+}
+
+/**
+ * @summary Launch up to six Shadow Fighter flights within 30 inches in place of firing
+ */
+export const launchShadowFighterDispersal = async (gameId: number,
+    unitId: number,
+    shadowFighterDispersalInput: ShadowFighterDispersalInput, options?: RequestInit): Promise<ShadowFighterDispersalResult> => {
+
+  return customFetch<ShadowFighterDispersalResult>(getLaunchShadowFighterDispersalUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      shadowFighterDispersalInput,)
+  }
+);}
+
+
+
+
+export const getLaunchShadowFighterDispersalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof launchShadowFighterDispersal>>, TError,{gameId: number;unitId: number;data: BodyType<ShadowFighterDispersalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof launchShadowFighterDispersal>>, TError,{gameId: number;unitId: number;data: BodyType<ShadowFighterDispersalInput>}, TContext> => {
+
+const mutationKey = ['launchShadowFighterDispersal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof launchShadowFighterDispersal>>, {gameId: number;unitId: number;data: BodyType<ShadowFighterDispersalInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  launchShadowFighterDispersal(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LaunchShadowFighterDispersalMutationResult = NonNullable<Awaited<ReturnType<typeof launchShadowFighterDispersal>>>
+    export type LaunchShadowFighterDispersalMutationBody = BodyType<ShadowFighterDispersalInput>
+    export type LaunchShadowFighterDispersalMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Launch up to six Shadow Fighter flights within 30 inches in place of firing
+ */
+export const useLaunchShadowFighterDispersal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof launchShadowFighterDispersal>>, TError,{gameId: number;unitId: number;data: BodyType<ShadowFighterDispersalInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof launchShadowFighterDispersal>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<ShadowFighterDispersalInput>},
+        TContext
+      > => {
+      return useMutation(getLaunchShadowFighterDispersalMutationOptions(options));
+    }
+
+export const getRecoverFighterUrl = (gameId: number,
+    unitId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/units/${unitId}/recover-fighter`
+}
+
+/**
+ * @summary Recover one launched fighter flight into a carrier during the End Phase
+ */
+export const recoverFighter = async (gameId: number,
+    unitId: number,
+    recoverFighterInput: RecoverFighterInput, options?: RequestInit): Promise<FighterRecoveryResult> => {
+
+  return customFetch<FighterRecoveryResult>(getRecoverFighterUrl(gameId,unitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      recoverFighterInput,)
+  }
+);}
+
+
+
+
+export const getRecoverFighterMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recoverFighter>>, TError,{gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recoverFighter>>, TError,{gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}, TContext> => {
+
+const mutationKey = ['recoverFighter'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recoverFighter>>, {gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}> = (props) => {
+          const {gameId,unitId,data} = props ?? {};
+
+          return  recoverFighter(gameId,unitId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecoverFighterMutationResult = NonNullable<Awaited<ReturnType<typeof recoverFighter>>>
+    export type RecoverFighterMutationBody = BodyType<RecoverFighterInput>
+    export type RecoverFighterMutationError = ErrorType<void>
+
+    /**
+ * @summary Recover one launched fighter flight into a carrier during the End Phase
+ */
+export const useRecoverFighter = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recoverFighter>>, TError,{gameId: number;unitId: number;data: BodyType<RecoverFighterInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recoverFighter>>,
+        TError,
+        {gameId: number;unitId: number;data: BodyType<RecoverFighterInput>},
+        TContext
+      > => {
+      return useMutation(getRecoverFighterMutationOptions(options));
     }
 
 export const getGetLobbyUrl = () => {

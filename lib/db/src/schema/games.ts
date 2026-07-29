@@ -21,6 +21,14 @@ export type CarriedFighterInventoryItem = {
   destroyed: number;
 };
 
+export type AncientStatusEffect = {
+  kind: "physical-disruption" | "telepathic-disruption";
+  sourceUnitId: number;
+  appliedRound: number;
+  expiresAfterRound: number;
+  releaseWhenSourceDestroyed: boolean;
+};
+
 export const gamesTable = pgTable("games", {
   id: serial("id").primaryKey(),
   challengerId: text("challenger_id").notNull(),
@@ -129,9 +137,40 @@ export const gameUnitsTable = pgTable("game_units", {
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
   // Printed Damage threshold from the ship sheet. When current hullPoints is
-  // at or below this value, the ship is Crippled. Older rows may carry 0 and
-  // fall back to half max hull in the route layer.
+  // at or below this value, the ship is Crippled. 0 means the profile has no
+  // normal cripple threshold.
   damageThreshold: integer("damage_threshold").notNull().default(0),
+  physicalDisruptionThreshold: integer("physical_disruption_threshold")
+    .notNull()
+    .default(0),
+  // Self Repair may raise hull above the printed threshold, but an Ancient
+  // that has ever become Crippled remains Crippled for the battle.
+  permanentlyCrippled: boolean("permanently_crippled")
+    .notNull()
+    .default(false),
+  ancientStatusEffects: jsonb("ancient_status_effects")
+    .$type<AncientStatusEffect[]>()
+    .notNull()
+    .default([]),
+  // Shadow-specific round state. These are ordinary profile abilities, not
+  // Special Actions, and therefore cannot share specialAction.
+  shadowPointDefenseRound: integer("shadow_point_defense_round")
+    .notNull()
+    .default(0),
+  shadowManeuverMode: text("shadow_maneuver_mode"),
+  mindScreamTargetIdsThisRound: jsonb("mind_scream_target_ids_this_round")
+    .$type<number[]>()
+    .notNull()
+    .default([]),
+  telepathicTargetsAttemptedThisRound: jsonb(
+    "telepathic_targets_attempted_this_round",
+  )
+    .$type<number[]>()
+    .notNull()
+    .default([]),
+  telepathicDisruptionExhausted: boolean("telepathic_disruption_exhausted")
+    .notNull()
+    .default(false),
   // Current shield pool (Shields X). Refilled toward shieldMax at the end of
   // each round per shieldRegenRate. Initialized to ship_model.shieldMax at
   // deploy. Absorbs incoming hits in the damage pipeline before the Attack
@@ -287,6 +326,10 @@ export const gameUnitsTable = pgTable("game_units", {
     .$type<number[]>()
     .notNull()
     .default([]),
+  splitFireFirstTargetByWeapon: jsonb("split_fire_first_target_by_weapon")
+    .$type<Record<string, number>>()
+    .notNull()
+    .default({}),
   // Slow-Loading weapon cooldowns, keyed by weapons.id. Value is the first
   // round in which that weapon may fire again. Example: fired in round 2 →
   // blocked in round 3 → usable again in round 4.

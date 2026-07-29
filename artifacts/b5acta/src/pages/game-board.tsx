@@ -35,6 +35,10 @@ import {
   useSurrenderGame,
   useConcedeGame,
   useChooseSpecialAction,
+  useChooseShadowPointDefense,
+  useChooseShadowManeuverMode,
+  useAttemptTelepathicDisruption,
+  useLaunchShadowFighterDispersal,
   useChooseScoutAction,
   useListFleets,
   useListFleetShips,
@@ -558,6 +562,39 @@ type FighterDisplacementUiState = {
   ownerOrder: string[];
   entries: FighterDisplacementUiEntry[];
 };
+
+type ShadowDispersalPlacementState = {
+  carrierId: number;
+  shipModelId: number;
+  itemName: string;
+  activeIndex: number;
+  placements: Array<{
+    hexQ: number;
+    hexR: number;
+    heading: number;
+  }>;
+};
+
+type ShadowDispersalPlacementValidation = {
+  legal: boolean;
+  shortReason: string;
+  detail: string;
+};
+
+function uiUnitPinnedForRound(
+  unit: Pick<GameUnit, "ancientStatusEffects">,
+  allUnits: Array<Pick<GameUnit, "id" | "isDestroyed">>,
+  currentRound: number,
+): boolean {
+  return (unit.ancientStatusEffects ?? []).some((effect) => {
+    if (effect.expiresAfterRound < currentRound) return false;
+    if (!effect.releaseWhenSourceDestroyed) return true;
+    const source = allUnits.find(
+      (candidate) => candidate.id === effect.sourceUnitId,
+    );
+    return Boolean(source && !source.isDestroyed);
+  });
+}
 
 function readFighterDisplacementUiState(
   raw: unknown,
@@ -1236,6 +1273,49 @@ function CarriedFighterDeploymentGuide({
   );
 }
 
+function ShadowDispersalCohesionGuide({
+  x,
+  z,
+  centerRadius,
+}: {
+  x: number;
+  z: number;
+  centerRadius: number;
+}) {
+  return (
+    <group position={[x, 0, z]}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.026, 0]}
+        renderOrder={4}
+      >
+        <circleGeometry args={[centerRadius, 72]} />
+        <meshBasicMaterial
+          color="#a78bfa"
+          transparent
+          opacity={0.045}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.03, 0]}
+        renderOrder={5}
+      >
+        <ringGeometry
+          args={[Math.max(0.05, centerRadius - 0.035), centerRadius + 0.035, 80]}
+        />
+        <meshBasicMaterial
+          color="#c4b5fd"
+          transparent
+          opacity={0.68}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 function EndPhaseFighterLaunchPreview({
   fighterModel,
   x,
@@ -1244,6 +1324,8 @@ function EndPhaseFighterLaunchPreview({
   legal,
   dogfightWarning = false,
   shipMeshTintsEnabled = true,
+  label,
+  invalidLabel,
 }: {
   fighterModel: ShipModel;
   x: number;
@@ -1252,6 +1334,8 @@ function EndPhaseFighterLaunchPreview({
   legal: boolean;
   dogfightWarning?: boolean;
   shipMeshTintsEnabled?: boolean;
+  label?: string;
+  invalidLabel?: string;
 }) {
   const color = !legal ? "#fb7185" : dogfightWarning ? "#d946ef" : "#67e8f9";
   const baseRadius = rulesBaseRadius({
@@ -1303,8 +1387,9 @@ function EndPhaseFighterLaunchPreview({
             <BoardModelVisual
               filename={fighterModel.filename}
               tint={color}
-              opacity={0.55}
+              opacity={0.82}
               meshTintsEnabled={shipMeshTintsEnabled}
+              ghostHighlight
             />
           </Suspense>
         </ModelErrorBoundary>
@@ -1318,7 +1403,9 @@ function EndPhaseFighterLaunchPreview({
         outlineWidth={0.03}
         outlineColor="black"
       >
-        {!legal ? "Illegal" : dogfightWarning ? "Dogfight" : "Place launch"}
+        {!legal
+          ? invalidLabel ?? "Illegal"
+          : label ?? (dogfightWarning ? "Dogfight" : "Place launch")}
       </CameraFacingText>
     </group>
   );
@@ -1535,6 +1622,13 @@ const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_BINTAK_MODEL_FILENAME = "dead-bintak.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
 const DEAD_OMEGA_MODEL_FILENAME = "dead-omega.glb";
+const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
+const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
+const RAIDER_NOVA_MODEL_FILENAME = "raider-nova.glb";
+const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
+const VORLON_FIGHTER_MODEL_FILENAME = "vorlon-fighter.glb";
+const VORLON_LIGHT_CRUISER_MODEL_FILENAME = "vorlon-light-cruiser.glb";
+const VORLON_TRANSPORT_MODEL_FILENAME = "vorlon-transport.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "kirishiac1.glb": "kirishiac.glb",
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
@@ -1569,6 +1663,13 @@ const ROTATING_MODEL_PARTS: Record<
     // offset from this point, causing the section to orbit instead of spin.
     pivotModelPosition: [-0.9458505291, 2.1391551393, -0.1529859525],
   },
+  [RAIDER_CARRIER_MODEL_FILENAME]: {
+    nodeName: "rotator_raider",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
+    axis: "z",
+    secondsPerRotation: 30,
+    pivotModelPosition: [0.0001, 0.9, -50.65],
+  },
   [ORION_SPACE_STATION_MODEL_FILENAME]: {
     nodeName: "orion_rotate",
     // Preserve the exported bind rotation and spin around the bone's Blender Y axis.
@@ -1590,6 +1691,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   EXPLORER_ROTATING_MODEL_FILENAME,
   PSI_CORPS_MOTHERSHIP_MODEL_FILENAME,
   COMMAND_HYPERION_MODEL_FILENAME,
+  RAIDER_CARRIER_MODEL_FILENAME,
   "black-omega.glb",
   "aurora.glb",
   "thunderbolt.glb",
@@ -1606,6 +1708,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "rongoth.glb",
   "frazi.glb",
   "spitfire.glb",
+  RAIDER_DELTA_MODEL_FILENAME,
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
@@ -1613,10 +1716,13 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "missile-hyperion.glb": 1.2,
   "avenger.glb": 1.2,
   "olympus.glb": 0.5,
+  "olympus-gunship.glb": 0.5,
+  "artemis.glb": 0.5,
   [EXPLORER_ROTATING_MODEL_FILENAME]: 2,
   "omega.glb": 1.5,
   [OMEGA_ROTATING_MODEL_FILENAME]: 1.5,
   "nova.glb": 1.15,
+  [RAIDER_NOVA_MODEL_FILENAME]: 1.15,
   "orestes.glb": 1.65,
   "tethys.glb": 0.4,
   "vorchan.glb": 0.5,
@@ -1631,6 +1737,11 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "sharlin.glb": 1.5,
   "avioki.glb": 1.5,
   "battlecrab.glb": 1.5,
+  [RAIDER_CARRIER_MODEL_FILENAME]: 0.75,
+  [SHADOW_SCOUT_MODEL_FILENAME]: 0.42,
+  "vorlon-dreadnought.glb": 1.5,
+  [VORLON_LIGHT_CRUISER_MODEL_FILENAME]: 1.2,
+  [VORLON_TRANSPORT_MODEL_FILENAME]: 0.6,
   "kirishiac.glb": 0.45,
   "kirishiac1.glb": 0.45,
   [ORION_SPACE_STATION_MODEL_FILENAME]: 3,
@@ -1647,6 +1758,8 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "sentri.glb": 0.165,
   "frazi.glb": 0.165,
   "spitfire.glb": 0.165,
+  [RAIDER_DELTA_MODEL_FILENAME]: 0.165,
+  [VORLON_FIGHTER_MODEL_FILENAME]: 0.165,
 };
 const MODEL_ABSOLUTE_SCALES: Record<string, number> = {
   "kirishiac.glb": 0.078,
@@ -1671,6 +1784,8 @@ const FIGHTER_SQUADRON_MODELS = new Set([
   "sentri.glb",
   "frazi.glb",
   "spitfire.glb",
+  RAIDER_DELTA_MODEL_FILENAME,
+  VORLON_FIGHTER_MODEL_FILENAME,
 ]);
 const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   aurora: "aurora.glb",
@@ -1688,9 +1803,17 @@ const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   frazi: "frazi.glb",
   spitfire: "spitfire.glb",
   "shadow fighter": "spitfire.glb",
+  "delta-v": RAIDER_DELTA_MODEL_FILENAME,
+  "delta v": RAIDER_DELTA_MODEL_FILENAME,
+  "raider delta": RAIDER_DELTA_MODEL_FILENAME,
+  "raider-delta": RAIDER_DELTA_MODEL_FILENAME,
+  zephyr: RAIDER_DELTA_MODEL_FILENAME,
+  "vorlon fighter": VORLON_FIGHTER_MODEL_FILENAME,
+  "vorlon fighter flight": VORLON_FIGHTER_MODEL_FILENAME,
+  "vorlon fighter wing": VORLON_FIGHTER_MODEL_FILENAME,
 };
 const FIGHTER_IDENTITY_PATTERN =
-  /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire)\b/i;
+  /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire|delta[-\s]?v|raider[-\s]?delta|zephyr|vorlon\s+fighter)\b/i;
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -1825,6 +1948,11 @@ const BOARD_GAS_CLOUD_TEXTURE_FILENAMES = [
 ] as const;
 const BOARD_PRAXIS_TEXTURE_FILENAME = "praxis.png";
 const ORGANIC_BATTLECRAB_MODEL_FILENAME = "battlecrab.glb";
+const ORGANIC_SHADOW_MODEL_FILENAMES = new Set([
+  ORGANIC_BATTLECRAB_MODEL_FILENAME,
+  SHADOW_SCOUT_MODEL_FILENAME,
+  "spitfire.glb",
+]);
 const ORGANIC_BATTLECRAB_TUNING = {
   speed: 2,
   intensity: 1.19,
@@ -2085,6 +2213,7 @@ function GlbModel({
   meshTintsEnabled = true,
   damageAnchorEffects = false,
   terrainMeshHighlight = false,
+  ghostHighlight = false,
 }: {
   url: string;
   tint: string;
@@ -2093,6 +2222,7 @@ function GlbModel({
   meshTintsEnabled?: boolean;
   damageAnchorEffects?: boolean;
   terrainMeshHighlight?: boolean;
+  ghostHighlight?: boolean;
 }) {
   const { scene } = useGLTF(url);
   const filenameKey = filename.toLowerCase();
@@ -2136,11 +2266,26 @@ function GlbModel({
           spikeMaterial.emissiveIntensity = 6.5;
         }
         clonedMaterial.toneMapped = false;
-      } else if (meshTintsEnabled && "emissive" in clonedMaterial) {
+      } else if (
+        (meshTintsEnabled || ghostHighlight) &&
+        "emissive" in clonedMaterial
+      ) {
         (clonedMaterial as THREE.MeshStandardMaterial).emissive =
           new THREE.Color(terrainMeshHighlight ? "#030712" : tint);
         (clonedMaterial as THREE.MeshStandardMaterial).emissiveIntensity =
-          terrainMeshHighlight ? 0.64 : 0.18;
+          terrainMeshHighlight ? 0.64 : ghostHighlight ? 1.15 : 0.18;
+        if (
+          ghostHighlight &&
+          "color" in clonedMaterial &&
+          (clonedMaterial as THREE.MeshStandardMaterial).color instanceof
+            THREE.Color
+        ) {
+          const highlighted = clonedMaterial as THREE.MeshStandardMaterial;
+          highlighted.color = highlighted.color
+            .clone()
+            .lerp(new THREE.Color(tint), 0.28);
+          highlighted.toneMapped = false;
+        }
       }
       clonedMaterial.transparent = opacity < 1;
       clonedMaterial.opacity = opacity;
@@ -2265,7 +2410,15 @@ function GlbModel({
       };
     });
     return { cloned: c, anchors: anchorPoints };
-  }, [scene, tint, meshTintsEnabled, terrainMeshHighlight, rotatingPartConfig, kirishiacLayeredRotation]);
+  }, [
+    scene,
+    tint,
+    meshTintsEnabled,
+    terrainMeshHighlight,
+    ghostHighlight,
+    rotatingPartConfig,
+    kirishiacLayeredRotation,
+  ]);
   useEffect(() => {
     applyObjectMaterialOpacity(cloned, opacity);
   }, [cloned, opacity]);
@@ -2386,9 +2539,11 @@ function ShipModelFallback({
 // Cache HEAD-check results so each URL is only fetched once per session
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "artemis.glb": "20260727-artemis-v1",
   "asteroid-light.glb": "20260721-field-v2",
   "asteroids_medium.glb": "20260725-medium-v1",
   "avioki.glb": "20260719-154941",
+  "vorlon-dreadnought.glb": "20260727-heavy-cruiser-v1",
   "black-omega.glb": "20260721-192023",
   "bintak.glb": "20260724-221703",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
@@ -2401,10 +2556,18 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "kirishiac1.glb": "20260725-beam-0100",
   "missile-hyperion.glb": "20260719-005010",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  "olympus-gunship.glb": "20260727-gunship-v1",
   "orestes.glb": "20260724-191655",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
+  [RAIDER_CARRIER_MODEL_FILENAME]: "20260728-202413",
+  [RAIDER_DELTA_MODEL_FILENAME]: "20260728-212845",
+  [RAIDER_NOVA_MODEL_FILENAME]: "20260728-221344",
   "rongoth.glb": "20260724-193659",
+  [SHADOW_SCOUT_MODEL_FILENAME]: "20260728-135155",
+  [VORLON_FIGHTER_MODEL_FILENAME]: "20260728-vorlon-fighter-v1",
+  [VORLON_LIGHT_CRUISER_MODEL_FILENAME]: "20260728-223454",
+  [VORLON_TRANSPORT_MODEL_FILENAME]: "20260728-vorlon-transport-v1",
   "vorchan.glb": "20260719-140443",
 };
 
@@ -2437,6 +2600,7 @@ function ShipModel3D({
   meshTintsEnabled = true,
   damageAnchorEffects = false,
   terrainMeshHighlight = false,
+  ghostHighlight = false,
 }: {
   filename: string;
   tint: string;
@@ -2444,6 +2608,7 @@ function ShipModel3D({
   meshTintsEnabled?: boolean;
   damageAnchorEffects?: boolean;
   terrainMeshHighlight?: boolean;
+  ghostHighlight?: boolean;
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const assetRevision =
@@ -2461,7 +2626,7 @@ function ShipModel3D({
         opacity={opacity}
       />
     );
-  if (isGlb && filename.toLowerCase() === ORGANIC_BATTLECRAB_MODEL_FILENAME) {
+  if (isGlb && ORGANIC_SHADOW_MODEL_FILENAMES.has(filename.toLowerCase())) {
     return (
       <OrganicBattlecrabGlbModel
         url={url}
@@ -2480,6 +2645,7 @@ function ShipModel3D({
         meshTintsEnabled={meshTintsEnabled}
         damageAnchorEffects={damageAnchorEffects}
         terrainMeshHighlight={terrainMeshHighlight}
+        ghostHighlight={ghostHighlight}
       />
     );
   return (
@@ -2609,6 +2775,23 @@ const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
   "aurora starfury": 4,
   "aurora starfury flight": 4,
   "aurora starfury wing": 4,
+  "delta-v": 8,
+  "delta-v fighter": 8,
+  "delta-v fighter flight": 8,
+  "delta-v fighter wing": 8,
+  "delta v": 8,
+  "delta v fighter": 8,
+  "delta v fighter flight": 8,
+  "delta v fighter wing": 8,
+  "raider delta": 8,
+  "raider delta fighter": 8,
+  "raider delta fighter flight": 8,
+  "raider delta flight": 8,
+  "zephyr": 8,
+  "zephyr flight": 8,
+  "vorlon fighter": 3,
+  "vorlon fighter flight": 3,
+  "vorlon fighter wing": 3,
   "thunderbolt starfury": 4,
   "thunderbolt starfury flight": 4,
   "thunderbolt starfury wing": 4,
@@ -2655,6 +2838,8 @@ const MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME: Record<string, number> = {
   "sentri.glb": 4,
   "frazi.glb": 5,
   "spitfire.glb": 2,
+  [RAIDER_DELTA_MODEL_FILENAME]: 8,
+  [VORLON_FIGHTER_MODEL_FILENAME]: 3,
   "tethys.glb": 2,
 };
 
@@ -2695,6 +2880,20 @@ type StagedFighterInventoryItem = {
 const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "aurora starfury": "Aurora Starfury Flight",
   "aurora starfury flight": "Aurora Starfury Flight",
+  "delta-v": "Delta-V Fighter Flight",
+  "delta-v fighter": "Delta-V Fighter Flight",
+  "delta-v fighter flight": "Delta-V Fighter Flight",
+  "delta-v flight": "Delta-V Fighter Flight",
+  "delta v": "Delta-V Fighter Flight",
+  "delta v fighter": "Delta-V Fighter Flight",
+  "delta v fighter flight": "Delta-V Fighter Flight",
+  "delta v flight": "Delta-V Fighter Flight",
+  "raider delta": "Delta-V Fighter Flight",
+  "raider delta fighter": "Delta-V Fighter Flight",
+  "raider delta fighter flight": "Delta-V Fighter Flight",
+  "raider delta flight": "Delta-V Fighter Flight",
+  zephyr: "Delta-V Fighter Flight",
+  "zephyr flight": "Delta-V Fighter Flight",
   "black omega": "Black Omega Starfury Flight",
   "black omega flight": "Black Omega Starfury Flight",
   "black omega starfury": "Black Omega Starfury Flight",
@@ -2867,6 +3066,8 @@ function isShadowCodedDamageVessel(unit: {
 
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
 const CARRIED_FIGHTER_DEPLOY_RADIUS_INCHES = 3;
+const SHADOW_DISPERSAL_COHESION_INCHES = 4;
+const SHADOW_DISPERSAL_DISTANCE_EPSILON = 0.01;
 
 function rulesBaseRadius(unit?: { baseRadiusInches?: number | null }): number {
   const radius = Number(unit?.baseRadiusInches);
@@ -3137,6 +3338,7 @@ function BoardModelVisual({
   meshTintsEnabled = true,
   damageAnchorEffects = false,
   terrainMeshHighlight = false,
+  ghostHighlight = false,
 }: {
   filename: string;
   tint: string;
@@ -3144,6 +3346,7 @@ function BoardModelVisual({
   meshTintsEnabled?: boolean;
   damageAnchorEffects?: boolean;
   terrainMeshHighlight?: boolean;
+  ghostHighlight?: boolean;
 }) {
   const fighterFilename = canonicalFighterSquadronFilename(filename);
   if (!fighterFilename) {
@@ -3157,6 +3360,7 @@ function BoardModelVisual({
         meshTintsEnabled={meshTintsEnabled}
         damageAnchorEffects={damageAnchorEffects}
         terrainMeshHighlight={terrainMeshHighlight}
+        ghostHighlight={ghostHighlight}
       />
     );
   }
@@ -3176,6 +3380,7 @@ function BoardModelVisual({
             meshTintsEnabled={meshTintsEnabled}
             damageAnchorEffects={false}
             terrainMeshHighlight={terrainMeshHighlight}
+            ghostHighlight={ghostHighlight}
           />
         </group>
       ))}
@@ -5744,16 +5949,19 @@ function RangeArcOverlay({
   flip,
   arcColorScheme = "classic",
   arcSide = null,
+  colorOverride,
 }: {
   arc: string;
   range: number;
   flip: boolean;
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
+  colorOverride?: string;
 }) {
   const canonicalArc = canonicalWeaponArc(arc);
   const def = ARC_DEFS[canonicalArc];
-  const color = arcDisplayColor(canonicalArc, arcColorScheme, arcSide);
+  const color =
+    colorOverride ?? arcDisplayColor(canonicalArc, arcColorScheme, arcSide);
   const geo = useMemo(() => {
     if (!def) return null;
     const segments = def.halfAngle < 0.3 ? 16 : 64;
@@ -6708,6 +6916,105 @@ function headingForwardVec(unit: { heading: number; modelFilename: string }): {
   return { x: sign * Math.sin(hRad), z: sign * Math.cos(hRad) };
 }
 
+type UiRulesProfile = "standard" | "ancients" | "shadows" | "vorlons";
+
+function uiRulesProfileForModel(
+  model: Pick<ShipModel, "rulesProfile" | "faction"> | null | undefined,
+): UiRulesProfile {
+  if (
+    model?.rulesProfile === "ancients"
+    || model?.rulesProfile === "shadows"
+    || model?.rulesProfile === "vorlons"
+  ) {
+    return model.rulesProfile;
+  }
+  const faction = (model?.faction ?? "").toLowerCase();
+  if (faction.includes("shadow")) return "shadows";
+  if (faction.includes("vorlon")) return "vorlons";
+  if (faction.includes("kirishiac")) return "ancients";
+  return "standard";
+}
+
+function uiShadowPointDefenseWeaponActive(
+  unit: Pick<GameUnit, "shadowPointDefenseRound">,
+  model: ShipModel | null | undefined,
+  weapon: Pick<Weapon, "traits">,
+  currentRound: number,
+): boolean {
+  const traits = weapon.traits ?? "";
+  return uiRulesProfileForModel(model) === "shadows"
+    && unit.shadowPointDefenseRound === currentRound
+    && /\bbeam\b/i.test(traits)
+    && !/\bmini[-\s]?beam\b/i.test(traits);
+}
+
+function buildShadowDispersalPlacements(
+  carrier: GameUnit,
+  fighterModel: Pick<ShipModel, "baseRadiusInches">,
+  units: GameUnit[],
+  isFighterUnit: (unit: GameUnit) => boolean,
+  count: number,
+): Array<{ hexQ: number; hexR: number; heading: number }> | null {
+  const formationOffsets: Record<number, Array<[number, number]>> = {
+    1: [[0, 0]],
+    2: [[-0.9, 0], [0.9, 0]],
+    3: [[-1.8, 0], [0, 0], [1.8, 0]],
+    4: [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]],
+    5: [[0, 0], [-1.8, 0], [1.8, 0], [0, -1.8], [0, 1.8]],
+    6: [[-1.8, -0.9], [0, -0.9], [1.8, -0.9], [-1.8, 0.9], [0, 0.9], [1.8, 0.9]],
+  };
+  const offsets = formationOffsets[count];
+  if (!offsets) return null;
+  const forward = headingForwardVec(carrier);
+  const right = { x: forward.z, z: -forward.x };
+  const fighterRadius = rulesBaseRadius(fighterModel);
+  const existing: UiBaseFootprint[] = units
+    .filter((unit) => !unit.isDestroyed)
+    .map((unit) => ({
+      id: unit.id,
+      x: unit.hexQ,
+      z: unit.hexR,
+      isFighter: isFighterUnit(unit),
+      baseRadiusInches: unit.baseRadiusInches,
+    }));
+
+  for (let distance = 24; distance >= 4; distance -= 1) {
+    const centerX = carrier.hexQ + forward.x * distance;
+    const centerZ = carrier.hexR + forward.z * distance;
+    const candidates: UiBaseFootprint[] = offsets.map(([side, depth], index) => ({
+      id: `shadow-dispersal-${index}`,
+      x: snapBoardCoord(centerX + right.x * side + forward.x * depth),
+      z: snapBoardCoord(centerZ + right.z * side + forward.z * depth),
+      isFighter: true,
+      baseRadiusInches: fighterRadius,
+    }));
+    const insideBoard = candidates.every(
+      (candidate) =>
+        candidate.x >= -BOARD_W / 2 + fighterRadius
+        && candidate.x <= BOARD_W / 2 - fighterRadius
+        && candidate.z >= -BOARD_D / 2 + fighterRadius
+        && candidate.z <= BOARD_D / 2 - fighterRadius,
+    );
+    if (!insideBoard) continue;
+    const overlaps = candidates.some((candidate, index) =>
+      existing.some((footprint) =>
+        uiBaseFootprintsIllegallyOverlap(candidate, footprint),
+      )
+      || candidates.some((other, otherIndex) =>
+        index !== otherIndex
+        && uiBaseFootprintsIllegallyOverlap(candidate, other),
+      ),
+    );
+    if (overlaps) continue;
+    return candidates.map((candidate) => ({
+      hexQ: candidate.x,
+      hexR: candidate.z,
+      heading: carrier.heading,
+    }));
+  }
+  return null;
+}
+
 function visualTurnDeltaToHeadingDelta(
   modelFilename: string,
   deltaDeg: number,
@@ -6767,7 +7074,9 @@ function parseUiMovementTraits(raw: string | null | undefined): {
     agile: /\bagile\b/i.test(text),
     superManeuverable:
       /\bsuper[-\s]?maneuverable\b/i.test(text) ||
-      /\bsuper[-\s]?manoeuvrable\b/i.test(text),
+      /\bsuper[-\s]?manoeuvrable\b/i.test(text) ||
+      /\bsuperb\s+maneuverability\b/i.test(text) ||
+      /\bsuperb\s+manoeuvrability\b/i.test(text),
   };
 }
 
@@ -6787,6 +7096,12 @@ function uiMovementTraitsForModel(
 function parseUiSelfRepairDice(raw: string | null | undefined): number {
   const match = (raw ?? "").match(/\bself[-\s]?repair\b\s*:?\s*(\d+)/i);
   return match ? Math.max(0, Number(match[1]) || 0) : 0;
+}
+
+function parseUiPsychicCrew(raw: string | null | undefined): number {
+  const match = (raw ?? "").match(/\bpsychic\s+crew(?:\s*:?\s*(\d+))?/i);
+  if (!match) return 0;
+  return Math.max(1, Number(match[1]) || 1);
 }
 
 function turnDistanceNeeded(
@@ -8879,7 +9194,7 @@ function TacticalCameraControls({
 export default function GameBoard() {
   const params = useParams<{ id: string }>();
   const gameId = parseInt(params.id ?? "0");
-  const { user } = useUser();
+  const user = temporaryUsernameAuthEnabled ? null : useUser().user;
   const devUserId = useDevUserId();
   const temporaryUsername = useTemporaryUsername();
   void temporaryUsername;
@@ -9189,6 +9504,10 @@ export default function GameBoard() {
     [],
   );
   const chooseSpecialAction = useChooseSpecialAction();
+  const chooseShadowPointDefense = useChooseShadowPointDefense();
+  const chooseShadowManeuverMode = useChooseShadowManeuverMode();
+  const attemptTelepathicDisruption = useAttemptTelepathicDisruption();
+  const launchShadowFighterDispersal = useLaunchShadowFighterDispersal();
   const chooseScoutAction = useChooseScoutAction();
   const declareScoutSupport = useMutation({
     mutationFn: ({
@@ -9274,6 +9593,14 @@ export default function GameBoard() {
       z: number;
       heading: number;
     } | null>(null);
+  const [
+    pendingShadowDispersalPlacement,
+    setPendingShadowDispersalPlacement,
+  ] = useState<ShadowDispersalPlacementState | null>(null);
+  const [
+    shadowDispersalConfirmPopover,
+    setShadowDispersalConfirmPopover,
+  ] = useState<{ x: number; y: number } | null>(null);
   const [fighterLaunchConfirmPopover, setFighterLaunchConfirmPopover] =
     useState<{ x: number; y: number } | null>(null);
   // For "Concentrate All Fire-power" we need a target picker before sending.
@@ -10102,6 +10429,251 @@ export default function GameBoard() {
         .filter((unit) => !displacedFighterUnitIds.has(unit.id))
         .map((unit) => ({ ...unit, isFighter: isFighterUnit(unit) })),
     [displacedFighterUnitIds, isFighterUnit, units],
+  );
+  const pendingShadowDispersalCarrier = useMemo(
+    () =>
+      pendingShadowDispersalPlacement
+        ? units.find(
+            (unit) =>
+              unit.id === pendingShadowDispersalPlacement.carrierId,
+          ) ?? null
+        : null,
+    [pendingShadowDispersalPlacement, units],
+  );
+  const pendingShadowDispersalFighterModel =
+    pendingShadowDispersalPlacement?.shipModelId != null
+      ? (shipModelById[pendingShadowDispersalPlacement.shipModelId] ?? null)
+      : null;
+  const activeShadowDispersalPlacement =
+    pendingShadowDispersalPlacement?.placements[
+      pendingShadowDispersalPlacement.activeIndex
+    ] ?? null;
+  const shadowDispersalPlacementValidation =
+    useMemo<ShadowDispersalPlacementValidation>(() => {
+    if (
+      !pendingShadowDispersalPlacement ||
+      !pendingShadowDispersalCarrier ||
+      !pendingShadowDispersalFighterModel ||
+      !activeShadowDispersalPlacement
+    ) {
+      return {
+        legal: false,
+        shortReason: "Unavailable",
+        detail: "Fighter placement is unavailable.",
+      };
+    }
+    const fighterRadius = rulesBaseRadius(
+      pendingShadowDispersalFighterModel,
+    );
+    const candidate: UiBaseFootprint = {
+      id: `shadow-dispersal-${pendingShadowDispersalPlacement.activeIndex}`,
+      x: activeShadowDispersalPlacement.hexQ,
+      z: activeShadowDispersalPlacement.hexR,
+      isFighter: true,
+      baseRadiusInches: fighterRadius,
+    };
+    if (
+      candidate.x < -BOARD_W / 2 + fighterRadius ||
+      candidate.x > BOARD_W / 2 - fighterRadius ||
+      candidate.z < -BOARD_D / 2 + fighterRadius ||
+      candidate.z > BOARD_D / 2 - fighterRadius
+    ) {
+      return {
+        legal: false,
+        shortReason: "Outside board",
+        detail: "The full fighter base must remain inside the board.",
+      };
+    }
+    const carrierFootprint: UiBaseFootprint = {
+      id: pendingShadowDispersalCarrier.id,
+      x: pendingShadowDispersalCarrier.hexQ,
+      z: pendingShadowDispersalCarrier.hexR,
+      isFighter: false,
+      baseRadiusInches: pendingShadowDispersalCarrier.baseRadiusInches,
+    };
+    if (
+      !isTargetInWeaponArc(
+        pendingShadowDispersalCarrier,
+        {
+          hexQ: candidate.x,
+          hexR: candidate.z,
+        },
+        "Forward",
+      )
+    ) {
+      return {
+        legal: false,
+        shortReason: "Outside forward arc",
+        detail:
+          "Fighter Dispersal Tube is a Forward-arc system; place the flight ahead of the Shadow vessel.",
+      };
+    }
+    const distanceFromCarrier = uiBaseFootprintEdgeDistance(
+      candidate,
+      carrierFootprint,
+    );
+    if (distanceFromCarrier > 30 + SHADOW_DISPERSAL_DISTANCE_EPSILON) {
+      return {
+        legal: false,
+        shortReason: "Beyond 30 inches",
+        detail: `${distanceFromCarrier.toFixed(1)} inches from the Shadow vessel; maximum range is 30 inches.`,
+      };
+    }
+    const overlappingUnit = unitsWithFighterFlags.find(
+      (other) =>
+        !other.isDestroyed &&
+        uiBaseFootprintsIllegallyOverlap(candidate, {
+          id: other.id,
+          x: other.hexQ,
+          z: other.hexR,
+          isFighter: other.isFighter,
+          baseRadiusInches: other.baseRadiusInches,
+        }),
+    );
+    if (overlappingUnit) {
+      return {
+        legal: false,
+        shortReason: "Base overlap",
+        detail: `The fighter base overlaps ${overlappingUnit.name}.`,
+      };
+    }
+    const confirmedPlacements =
+      pendingShadowDispersalPlacement.placements.slice(
+        0,
+        pendingShadowDispersalPlacement.activeIndex,
+      );
+    const confirmedFootprints = confirmedPlacements.map((placement, index) => {
+      const confirmed: UiBaseFootprint = {
+        id: `shadow-dispersal-confirmed-${index}`,
+        x: placement.hexQ,
+        z: placement.hexR,
+        isFighter: true,
+        baseRadiusInches: fighterRadius,
+      };
+      return confirmed;
+    });
+    const overlappingFlightIndex = confirmedFootprints.findIndex((confirmed) =>
+      uiBaseFootprintsIllegallyOverlap(candidate, confirmed),
+    );
+    if (overlappingFlightIndex >= 0) {
+      return {
+        legal: false,
+        shortReason: `Overlaps flight ${overlappingFlightIndex + 1}`,
+        detail: `The fighter base overlaps confirmed flight ${overlappingFlightIndex + 1}.`,
+      };
+    }
+    const leadFlight = confirmedFootprints[0];
+    if (
+      leadFlight &&
+      uiBaseFootprintEdgeDistance(candidate, leadFlight) >
+        SHADOW_DISPERSAL_COHESION_INCHES +
+          SHADOW_DISPERSAL_DISTANCE_EPSILON
+    ) {
+      const cohesionDistance = uiBaseFootprintEdgeDistance(
+        candidate,
+        leadFlight,
+      );
+      return {
+        legal: false,
+        shortReason: "Too far from lead",
+        detail: `${cohesionDistance.toFixed(1)} inches from the lead flight; every later flight must be within ${SHADOW_DISPERSAL_COHESION_INCHES} inches of Flight 1.`,
+      };
+    }
+    return {
+      legal: true,
+      shortReason: "Legal",
+      detail:
+        confirmedFootprints.length > 0
+          ? `${distanceFromCarrier.toFixed(1)} inches from the vessel; clear of bases and within ${SHADOW_DISPERSAL_COHESION_INCHES} inches of the lead flight.`
+          : `${distanceFromCarrier.toFixed(1)} inches from the vessel and clear of other bases.`,
+    };
+  }, [
+    activeShadowDispersalPlacement,
+    pendingShadowDispersalCarrier,
+    pendingShadowDispersalFighterModel,
+    pendingShadowDispersalPlacement,
+    unitsWithFighterFlags,
+  ]);
+  const shadowDispersalPlacementLegal =
+    shadowDispersalPlacementValidation.legal;
+  const shadowDispersalGuideRadius = useMemo(() => {
+    if (
+      !pendingShadowDispersalCarrier ||
+      !pendingShadowDispersalFighterModel
+    ) {
+      return 30;
+    }
+    return (
+      30 +
+      rulesBaseRadius(pendingShadowDispersalCarrier) +
+      rulesBaseRadius(pendingShadowDispersalFighterModel)
+    );
+  }, [
+    pendingShadowDispersalCarrier,
+    pendingShadowDispersalFighterModel,
+  ]);
+  const stageActiveShadowDispersalPlacement = useCallback(
+    (clientX: number, clientY: number): boolean => {
+      if (
+        !pendingShadowDispersalPlacement ||
+        !pendingShadowDispersalCarrier ||
+        !pendingShadowDispersalFighterModel
+      ) {
+        return false;
+      }
+      const point = screenToBoard(clientX, clientY, threeRef);
+      if (!point) return false;
+      const fighterRadius = rulesBaseRadius(
+        pendingShadowDispersalFighterModel,
+      );
+      let x = Math.max(
+        -BOARD_W / 2 + fighterRadius,
+        Math.min(BOARD_W / 2 - fighterRadius, point[0]),
+      );
+      let z = Math.max(
+        -BOARD_D / 2 + fighterRadius,
+        Math.min(BOARD_D / 2 - fighterRadius, point[1]),
+      );
+      const dx = x - pendingShadowDispersalCarrier.hexQ;
+      const dz = z - pendingShadowDispersalCarrier.hexR;
+      const centerLimit =
+        30 +
+        rulesBaseRadius(pendingShadowDispersalCarrier) +
+        fighterRadius;
+      const centerDistance = Math.hypot(dx, dz);
+      if (centerDistance > centerLimit && centerDistance > 1e-6) {
+        x =
+          pendingShadowDispersalCarrier.hexQ +
+          (dx / centerDistance) * centerLimit;
+        z =
+          pendingShadowDispersalCarrier.hexR +
+          (dz / centerDistance) * centerLimit;
+      }
+      x = Math.max(
+        -BOARD_W / 2 + fighterRadius,
+        Math.min(BOARD_W / 2 - fighterRadius, snapBoardCoord(x)),
+      );
+      z = Math.max(
+        -BOARD_D / 2 + fighterRadius,
+        Math.min(BOARD_D / 2 - fighterRadius, snapBoardCoord(z)),
+      );
+      setPendingShadowDispersalPlacement((current) => {
+        if (!current) return current;
+        const placements = current.placements.map((placement, index) =>
+          index === current.activeIndex
+            ? { ...placement, hexQ: x, hexR: z }
+            : placement,
+        );
+        return { ...current, placements };
+      });
+      setShadowDispersalConfirmPopover(null);
+      return true;
+    },
+    [
+      pendingShadowDispersalCarrier,
+      pendingShadowDispersalFighterModel,
+      pendingShadowDispersalPlacement,
+    ],
   );
   const currentDisplacedFighterUnit = useMemo(
     () =>
@@ -11309,6 +11881,151 @@ export default function GameBoard() {
     },
     [gameId, qc],
   );
+  const cancelShadowDispersalPlacement = useCallback(() => {
+    setShadowDispersalConfirmPopover(null);
+    setPendingShadowDispersalPlacement(null);
+    setActivationFeedback("Fighter Dispersal placement cancelled.");
+  }, []);
+  const beginShadowDispersalPlacement = useCallback(
+    (
+      carrier: GameUnit,
+      fighterModel: ShipModel,
+      count: number,
+      itemName: string,
+    ) => {
+      const placements = buildShadowDispersalPlacements(
+        carrier,
+        fighterModel,
+        units,
+        isFighterUnit,
+        count,
+      );
+      if (!placements) {
+        setActivationFeedback(
+          "No clear initial dispersal formation fits on the board. Reorient the Shadow ship or clear its launch lane.",
+        );
+        return;
+      }
+      setShadowDispersalConfirmPopover(null);
+      setPendingShadowDispersalPlacement({
+        carrierId: carrier.id,
+        shipModelId: fighterModel.id,
+        itemName,
+        activeIndex: 0,
+        placements,
+      });
+      setSelectedUnit(carrier.id);
+      setActivationFeedback(
+        `Place Shadow Fighter flight 1 of ${count}, then confirm.`,
+      );
+    },
+    [isFighterUnit, units],
+  );
+  const confirmShadowDispersalPlacement = useCallback(() => {
+    if (
+      !pendingShadowDispersalPlacement ||
+      !pendingShadowDispersalCarrier ||
+      !shadowDispersalPlacementLegal
+    ) {
+      setActivationFeedback(shadowDispersalPlacementValidation.detail);
+      return;
+    }
+    setShadowDispersalConfirmPopover(null);
+    const nextIndex = pendingShadowDispersalPlacement.activeIndex + 1;
+    if (nextIndex < pendingShadowDispersalPlacement.placements.length) {
+      setPendingShadowDispersalPlacement((current) =>
+        current ? { ...current, activeIndex: nextIndex } : current,
+      );
+      setActivationFeedback(
+        `Place Shadow Fighter flight ${nextIndex + 1} of ${pendingShadowDispersalPlacement.placements.length}, then confirm.`,
+      );
+      return;
+    }
+    launchShadowFighterDispersal.mutate(
+      {
+        gameId,
+        unitId: pendingShadowDispersalCarrier.id,
+        data: {
+          placements: pendingShadowDispersalPlacement.placements,
+        },
+      },
+      {
+        onSuccess: (result) => {
+          mergeUpdatedUnitIntoGame(result.carrier);
+          setPendingShadowDispersalPlacement(null);
+          setActivationFeedback(
+            `${result.fighters.length} Shadow Fighter flight${result.fighters.length === 1 ? "" : "s"} dispersed. They may act next turn.`,
+          );
+          void qc.invalidateQueries({
+            queryKey: getGetGameQueryKey(gameId),
+          });
+        },
+        onError: (err) =>
+          setActivationFeedback(
+            cleanApiErrorMessage(err, "Fighter Dispersal failed"),
+          ),
+      },
+    );
+  }, [
+    gameId,
+    launchShadowFighterDispersal,
+    mergeUpdatedUnitIntoGame,
+    pendingShadowDispersalCarrier,
+    pendingShadowDispersalPlacement,
+    qc,
+    shadowDispersalPlacementLegal,
+    shadowDispersalPlacementValidation.detail,
+  ]);
+  useEffect(() => {
+    if (!pendingShadowDispersalPlacement) return;
+    const placementStillActive =
+      game?.status === "active" &&
+      game.phase === "firing" &&
+      game.activePlayerId === myUserId &&
+      game.activeUnitId === pendingShadowDispersalPlacement.carrierId;
+    if (!placementStillActive) {
+      setShadowDispersalConfirmPopover(null);
+      setPendingShadowDispersalPlacement(null);
+    }
+  }, [
+    game?.activePlayerId,
+    game?.activeUnitId,
+    game?.phase,
+    game?.status,
+    myUserId,
+    pendingShadowDispersalPlacement,
+  ]);
+  useEffect(() => {
+    if (!pendingShadowDispersalPlacement) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (
+        event.key === "Enter" ||
+        event.key === " " ||
+        event.code === "Space"
+      ) {
+        event.preventDefault();
+        confirmShadowDispersalPlacement();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelShadowDispersalPlacement();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [
+    cancelShadowDispersalPlacement,
+    confirmShadowDispersalPlacement,
+    pendingShadowDispersalPlacement,
+  ]);
   const showTerrainHazardsForMove = useCallback(
     (updatedUnit: TerrainHazardMoveResult) => {
       const hazards = (Array.isArray(updatedUnit.asteroidHazards)
@@ -12953,9 +13670,15 @@ export default function GameBoard() {
   // otherwise they'd be stuck staring at "Pick a Ship" forever (e.g. every
   // remaining ship is destroyed, already activated this phase, or inert from
   // 0-hull / 0-crew in the firing phase).
+  const unitPinnedInCurrentRound = useCallback(
+    (unit: BoardUnit): boolean =>
+      uiUnitPinnedForRound(unit, units, game?.currentRound ?? 0),
+    [game?.currentRound, units],
+  );
   const unitEligibleForCurrentPhase = useCallback(
     (u: BoardUnit): boolean => {
       if (u.isDestroyed) return false;
+      if (unitPinnedInCurrentRound(u)) return false;
       const phaseDone =
         currentPhase === "firing" ? u.hasFiredThisRound : u.hasMovedThisRound;
       if (phaseDone) return false;
@@ -12978,7 +13701,12 @@ export default function GameBoard() {
       }
       return true;
     },
-    [currentPhase, enemyFighterContactsForUnit, isFighterUnit],
+    [
+      currentPhase,
+      enemyFighterContactsForUnit,
+      isFighterUnit,
+      unitPinnedInCurrentRound,
+    ],
   );
   const activationSegment = useMemo<"capital" | "fighter" | null>(() => {
     if (currentPhase !== "movement" && currentPhase !== "firing") return null;
@@ -13015,7 +13743,22 @@ export default function GameBoard() {
   const canPassPhase =
     isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
   const canPassAllFiring =
-    isMyActivation && currentPhase === "firing" && !antiFighterState;
+    isMyActivation &&
+    currentPhase === "firing" &&
+    activationSegment !== null &&
+    !antiFighterState;
+  const passAllFiringLabel =
+    activationSegment === "fighter"
+      ? "Pass All Fighter Firing"
+      : "Pass All Ship Firing";
+  const passAllFiringPendingLabel =
+    activationSegment === "fighter"
+      ? "Passing Fighters..."
+      : "Passing Ships...";
+  const passAllFiringConfirmLabel =
+    activationSegment === "fighter"
+      ? "Confirm Pass Fighters"
+      : "Confirm Pass Ships";
   const activationPickLabel =
     activationSegment === "fighter" ? "Pick a Fighter Flight" : "Pick a Ship";
   const activationPassLabel =
@@ -13166,6 +13909,9 @@ export default function GameBoard() {
     if (!activeUnitData || currentPhase !== "movement") {
       return { blocked: false, required: 0, moved: 0 };
     }
+    if (unitPinnedInCurrentRound(activeUnitData)) {
+      return { blocked: false, required: 0, moved: 0 };
+    }
     if (
       activeUnitData.damageState === "adrift" ||
       activeUnitData.damageState === "exploding-end-of-next"
@@ -13190,7 +13936,13 @@ export default function GameBoard() {
     const required = Math.max(1, effectiveUiSpeed(activeUnitData) / 2);
     const moved = getLedger(activeUnitData.id).distance;
     return { blocked: moved < required, required, moved };
-  }, [activeUnitData, currentPhase, getLedger, getShipModelForUnit]);
+  }, [
+    activeUnitData,
+    currentPhase,
+    getLedger,
+    getShipModelForUnit,
+    unitPinnedInCurrentRound,
+  ]);
   const activeActivationCommitted = useMemo(() => {
     if (!activeUnitData) return false;
     if (currentPhase === "firing") {
@@ -13936,6 +14688,13 @@ export default function GameBoard() {
         currentPhase === "firing"
           ? unit.hasFiredThisRound
           : unit.hasMovedThisRound;
+      if (unitPinnedInCurrentRound(unit)) {
+        setSelectedUnit(unitId);
+        setActivationFeedback(
+          `${unit.name} is physically disrupted and cannot act this turn. It does not count as an eligible activation; pass the phase if no other units remain.`,
+        );
+        return;
+      }
       // Firing-phase eligibility: a ship at 0 hull or 0 crew (when it has
       // a crew complement at all) can no longer fire — mirrors the server
       // check in /activate. Clicking such a ship in the firing phase is a
@@ -14167,6 +14926,7 @@ export default function GameBoard() {
   const handlePassAllFiring = useCallback(async () => {
     if (
       currentPhase !== "firing" ||
+      activationSegment === null ||
       !isMyActivation ||
       passAllFiringPending ||
       antiFighterState
@@ -14176,7 +14936,11 @@ export default function GameBoard() {
     setPassAllFiringPending(true);
     setActivationFeedback(null);
     try {
-      await customFetch(`/api/games/${gameId}/pass-firing`, { method: "POST" });
+      await customFetch(`/api/games/${gameId}/pass-firing`, {
+        method: "POST",
+        body: JSON.stringify({ segment: activationSegment }),
+        responseType: "json",
+      });
       mergeActiveUnitIntoGame(null);
       setSelectedUnit(null);
       setFiringWeaponPicking(null);
@@ -14186,16 +14950,20 @@ export default function GameBoard() {
       setOptimisticActiveUnitId(null);
       qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
     } catch (err) {
-      setActivationFeedback(cleanApiErrorMessage(err, "Pass All failed"));
+      setActivationFeedback(
+        cleanApiErrorMessage(err, `${passAllFiringLabel} failed`),
+      );
     } finally {
       setPassAllFiringPending(false);
     }
   }, [
+    activationSegment,
     antiFighterState,
     currentPhase,
     gameId,
     isMyActivation,
     mergeActiveUnitIntoGame,
+    passAllFiringLabel,
     passAllFiringPending,
     qc,
   ]);
@@ -14674,6 +15442,7 @@ export default function GameBoard() {
     Boolean(draggingId) ||
     Boolean(movementGesture) ||
     Boolean(pendingFighterLaunchPlacement) ||
+    Boolean(pendingShadowDispersalPlacement) ||
     canPlaceManualTerrain ||
     canPlaceCurrentDisplacedFighter;
   const gameChatPanel = canUseGameChat ? (
@@ -14833,6 +15602,28 @@ export default function GameBoard() {
           data-input={inputProfile.input}
           onContextMenu={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
+            if (pendingShadowDispersalPlacement) {
+              e.preventDefault();
+              const width = 92;
+              const height = 48;
+              setMoveConfirmPopover(null);
+              setDisplacedFighterConfirmPopover(null);
+              setFighterLaunchConfirmPopover(null);
+              setShadowDispersalConfirmPopover({
+                x: Math.max(
+                  8,
+                  Math.min(rect.width - width - 8, e.clientX - rect.left),
+                ),
+                y: Math.max(
+                  8,
+                  Math.min(rect.height - height - 8, e.clientY - rect.top),
+                ),
+              });
+              if (!shadowDispersalPlacementLegal) {
+                setActivationFeedback(shadowDispersalPlacementValidation.detail);
+              }
+              return;
+            }
             if (pendingFighterLaunchPlacement) {
               e.preventDefault();
               if (!pendingLaunchPlacementLegal) {
@@ -14897,11 +15688,27 @@ export default function GameBoard() {
             if (e.button !== 2) setMoveConfirmPopover(null);
             if (e.button !== 2) setDisplacedFighterConfirmPopover(null);
             if (e.button !== 2) setFighterLaunchConfirmPopover(null);
+            if (e.button !== 2) setShadowDispersalConfirmPopover(null);
             boardPointerDownRef.current = {
               x: e.clientX,
               y: e.clientY,
               time: performance.now(),
             };
+            if (
+              e.button === 0 &&
+              pendingShadowDispersalPlacement &&
+              pendingShadowDispersalCarrier &&
+              pendingShadowDispersalFighterModel &&
+              !launchShadowFighterDispersal.isPending
+            ) {
+              stageActiveShadowDispersalPlacement(e.clientX, e.clientY);
+              setActivationFeedback(
+                isTouchInput
+                  ? `Position flight ${pendingShadowDispersalPlacement.activeIndex + 1} of ${pendingShadowDispersalPlacement.placements.length}, then use check/X to confirm or cancel.`
+                  : `Position flight ${pendingShadowDispersalPlacement.activeIndex + 1} of ${pendingShadowDispersalPlacement.placements.length}, then right-click for check/X.`,
+              );
+              return;
+            }
             if (
               e.button === 0 &&
               pendingFighterLaunchPlacement &&
@@ -15071,6 +15878,16 @@ export default function GameBoard() {
                   return unit;
                 });
               });
+              return;
+            }
+            if (
+              pendingShadowDispersalPlacement &&
+              pendingShadowDispersalCarrier &&
+              pendingShadowDispersalFighterModel &&
+              !movementGesture &&
+              !launchShadowFighterDispersal.isPending
+            ) {
+              stageActiveShadowDispersalPlacement(e.clientX, e.clientY);
               return;
             }
             if (
@@ -15567,6 +16384,74 @@ export default function GameBoard() {
                 </div>
               </div>
             )}
+          {pendingShadowDispersalPlacement && activeShadowDispersalPlacement && (
+            <div
+              className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded border border-violet-300/60 bg-black/90 px-2 py-1.5 shadow-lg shadow-violet-500/20 backdrop-blur-sm"
+              data-testid="shadow-dispersal-placement-prompt"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerMove={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 truncate text-[10px] font-mono uppercase tracking-wider text-violet-100">
+                    Dispersal flight{" "}
+                    {pendingShadowDispersalPlacement.activeIndex + 1}/
+                    {pendingShadowDispersalPlacement.placements.length}
+                  </span>
+                  <span
+                    className={`shrink-0 text-[9px] font-mono uppercase tracking-widest ${
+                      shadowDispersalPlacementLegal
+                        ? "text-emerald-300"
+                        : "text-red-300"
+                    }`}
+                  >
+                    {shadowDispersalPlacementValidation.shortReason}
+                  </span>
+                </div>
+                <p
+                  className={`mt-0.5 max-w-[min(68vw,34rem)] truncate font-mono text-[9px] ${
+                    shadowDispersalPlacementLegal
+                      ? "text-emerald-100/80"
+                      : "text-red-100/90"
+                  }`}
+                  title={shadowDispersalPlacementValidation.detail}
+                  data-testid="shadow-dispersal-placement-reason"
+                >
+                  {shadowDispersalPlacementValidation.detail}
+                </p>
+              </div>
+              <button
+                type="button"
+                title={
+                  shadowDispersalPlacementLegal
+                    ? "Confirm this fighter position"
+                    : shadowDispersalPlacementValidation.detail
+                }
+                aria-label="Confirm this fighter position"
+                disabled={
+                  !shadowDispersalPlacementLegal ||
+                  launchShadowFighterDispersal.isPending
+                }
+                onClick={confirmShadowDispersalPlacement}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-emerald-300/60 bg-emerald-400/15 text-emerald-100 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500"
+                data-testid="button-confirm-shadow-dispersal-placement"
+              >
+                <Check className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="Cancel Fighter Dispersal placement"
+                disabled={launchShadowFighterDispersal.isPending}
+                onClick={cancelShadowDispersalPlacement}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-40"
+                data-testid="button-cancel-shadow-dispersal-placement"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
           {pendingFighterLaunchPlacement && (
             <div className="absolute left-3 top-3 z-30 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded border border-sky-300/55 bg-black/88 px-2 py-1.5 shadow-lg shadow-sky-500/15 backdrop-blur-sm">
               <span className="min-w-0 truncate text-[10px] font-mono uppercase tracking-wider text-sky-100">
@@ -16030,6 +16915,88 @@ export default function GameBoard() {
                   carrier={carriedFighterDeploymentGuideCarrier}
                 />
               )}
+            {pendingShadowDispersalPlacement &&
+              pendingShadowDispersalCarrier &&
+              pendingShadowDispersalFighterModel && (
+                <>
+                  <group
+                    position={[
+                      pendingShadowDispersalCarrier.hexQ,
+                      0,
+                      pendingShadowDispersalCarrier.hexR,
+                    ]}
+                    rotation={[
+                      0,
+                      (pendingShadowDispersalCarrier.heading * Math.PI) / 180,
+                      0,
+                    ]}
+                  >
+                    <RangeArcOverlay
+                      arc="Forward"
+                      range={shadowDispersalGuideRadius}
+                      flip={FLIP_MODELS.has(
+                        pendingShadowDispersalCarrier.modelFilename,
+                      )}
+                      colorOverride="#a78bfa"
+                    />
+                  </group>
+                  {pendingShadowDispersalPlacement.activeIndex > 0 && (
+                    <ShadowDispersalCohesionGuide
+                      x={
+                        pendingShadowDispersalPlacement.placements[0]!.hexQ
+                      }
+                      z={
+                        pendingShadowDispersalPlacement.placements[0]!.hexR
+                      }
+                      centerRadius={
+                        SHADOW_DISPERSAL_COHESION_INCHES +
+                        rulesBaseRadius(
+                          pendingShadowDispersalFighterModel,
+                        ) *
+                          2 +
+                        SHADOW_DISPERSAL_DISTANCE_EPSILON
+                      }
+                    />
+                  )}
+                  {pendingShadowDispersalPlacement.placements
+                    .slice(
+                      0,
+                      pendingShadowDispersalPlacement.activeIndex + 1,
+                    )
+                    .map((placement, index) => {
+                      const isCurrent =
+                        index ===
+                        pendingShadowDispersalPlacement.activeIndex;
+                      return (
+                        <EndPhaseFighterLaunchPreview
+                          key={`shadow-dispersal-preview-${index}`}
+                          fighterModel={pendingShadowDispersalFighterModel}
+                          x={placement.hexQ}
+                          z={placement.hexR}
+                          heading={placement.heading}
+                          legal={
+                            isCurrent
+                              ? shadowDispersalPlacementLegal
+                              : true
+                          }
+                          label={
+                            isCurrent
+                              ? `Place ${index + 1}/${pendingShadowDispersalPlacement.placements.length}`
+                              : index === 0
+                                ? "Lead flight"
+                                : `Flight ${index + 1}`
+                          }
+                          invalidLabel={
+                            isCurrent
+                              ? shadowDispersalPlacementValidation.shortReason
+                              : undefined
+                          }
+                          shipMeshTintsEnabled={shipMeshTintsEnabled}
+                        />
+                      );
+                    })}
+                </>
+              )}
             {pendingFighterLaunchPlacement &&
               pendingLaunchCarrier &&
               pendingLaunchFighterModel && (
@@ -16097,6 +17064,7 @@ export default function GameBoard() {
               const unitIsFighter = isFighterUnit(unit);
               if (unit.isDestroyed && unitIsFighter) return null;
               const weaponsForUnit = getWeaponsForUnit(unit);
+              const unitModel = getShipModelForUnit(unit);
               const phaseViable =
                 game.status === "active" &&
                 (currentPhase === "movement" || currentPhase === "firing") &&
@@ -16118,22 +17086,38 @@ export default function GameBoard() {
                   (x) => x.id === firingWeaponPicking,
                 );
                 if (w) {
+                  const shadowPointDefense =
+                    uiShadowPointDefenseWeaponActive(
+                      unit,
+                      unitModel,
+                      w,
+                      game.currentRound ?? 0,
+                    );
                   firingArc = {
-                    arc: w.arc,
+                    arc: shadowPointDefense ? "Turret" : w.arc,
                     range:
-                      w.range +
+                      (shadowPointDefense ? w.range / 2 : w.range) +
                       (unitIsFighter ? rulesBaseRadius(unit) : 0),
                   };
                 }
               }
               const projectedWeaponArcs =
                 weaponArcProjectionEnabled && selectedUnit === unit.id
-                  ? weaponsForUnit.map((w) => ({
-                      arc: w.arc,
-                      range:
-                        w.range +
-                        (unitIsFighter ? rulesBaseRadius(unit) : 0),
-                    }))
+                  ? weaponsForUnit.map((w) => {
+                      const shadowPointDefense =
+                        uiShadowPointDefenseWeaponActive(
+                          unit,
+                          unitModel,
+                          w,
+                          game.currentRound ?? 0,
+                        );
+                      return {
+                        arc: shadowPointDefense ? "Turret" : w.arc,
+                        range:
+                          (shadowPointDefense ? w.range / 2 : w.range) +
+                          (unitIsFighter ? rulesBaseRadius(unit) : 0),
+                      };
+                    })
                   : [];
               let targetingPreview: TargetingPreviewState | null = null;
               if (
@@ -16468,6 +17452,7 @@ export default function GameBoard() {
                     attackerFaction={attacker.faction}
                     attackerName={attacker.name}
                     attackerModelFilename={attacker.modelFilename}
+                    attackerHeading={attacker.heading}
                     hits={hits}
                     totalDice={diceModal.attackDice}
                   />
@@ -16498,6 +17483,7 @@ export default function GameBoard() {
                     attackerFaction={attacker.faction}
                     attackerName={attacker.name}
                     attackerModelFilename={attacker.modelFilename}
+                    attackerHeading={attacker.heading}
                     hits={aiWeaponFxReplay.hits}
                     totalDice={weapon.attackDice}
                   />
@@ -16712,6 +17698,59 @@ export default function GameBoard() {
               )}
             </div>
           )}
+          {shadowDispersalConfirmPopover &&
+            pendingShadowDispersalPlacement && (
+              <div
+                className="absolute z-40 flex items-center gap-1 rounded border border-violet-300/55 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
+                style={{
+                  left: shadowDispersalConfirmPopover.x,
+                  top: shadowDispersalConfirmPopover.y,
+                }}
+                data-testid="pc-shadow-dispersal-confirm-popover"
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerMove={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <button
+                  type="button"
+                  title={
+                    shadowDispersalPlacementLegal
+                      ? "Confirm fighter placement"
+                      : shadowDispersalPlacementValidation.detail
+                  }
+                  aria-label={
+                    shadowDispersalPlacementLegal
+                      ? "Confirm Shadow fighter placement"
+                      : shadowDispersalPlacementValidation.detail
+                  }
+                  disabled={
+                    !shadowDispersalPlacementLegal ||
+                    launchShadowFighterDispersal.isPending
+                  }
+                  onClick={confirmShadowDispersalPlacement}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-pc-confirm-shadow-dispersal"
+                >
+                  <Check className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  title="Cancel Fighter Dispersal"
+                  aria-label="Cancel Fighter Dispersal"
+                  disabled={launchShadowFighterDispersal.isPending}
+                  onClick={cancelShadowDispersalPlacement}
+                  className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                  data-testid="button-pc-cancel-shadow-dispersal"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            )}
           {fighterLaunchConfirmPopover &&
             pendingFighterLaunchPlacement &&
             pendingLaunchPlacementLegal && (
@@ -18469,7 +19508,11 @@ export default function GameBoard() {
                     }`}
                   >
                     {currentPhase === "firing"
-                      ? "Firing"
+                      ? activationSegment === "fighter"
+                        ? "Fighter Firing"
+                        : activationSegment === "capital"
+                          ? "Ship Firing"
+                          : "Firing"
                       : currentPhase === "initiative"
                         ? "Initiative"
                         : "Movement"}
@@ -18551,12 +19594,14 @@ export default function GameBoard() {
                     title={
                       antiFighterState
                         ? "Resolve pending Anti-Fighter allocation first"
-                        : undefined
+                        : activationSegment === "fighter"
+                          ? "Skip every remaining fighter-flight firing activation for your fleet"
+                          : "Skip every remaining capital-ship firing activation for your fleet"
                     }
                   >
                     {passAllFiringPending
-                      ? "Passing All..."
-                      : "Pass All Firing"}
+                      ? passAllFiringPendingLabel
+                      : passAllFiringLabel}
                   </Button>
                 )}
                 <Button
@@ -18626,8 +19671,16 @@ export default function GameBoard() {
                   !isAdriftActive &&
                   (() => {
                     if (isFighterUnit(selectedUnitData)) return null;
-                    const traitsForSA =
-                      getShipModelForUnit(selectedUnitData)?.traits ?? "";
+                    const modelForSA = getShipModelForUnit(selectedUnitData);
+                    const traitsForSA = modelForSA?.traits ?? "";
+                    const rulesProfile = uiRulesProfileForModel(modelForSA);
+                    const isShadowProfile = rulesProfile === "shadows";
+                    const isVorlonProfile = rulesProfile === "vorlons";
+                    const hasShadowBeam = (modelForSA?.weapons ?? []).some(
+                      (weapon) =>
+                        /\bbeam\b/i.test(weapon.traits ?? "") &&
+                        !/\bmini[-\s]?beam\b/i.test(weapon.traits ?? ""),
+                    );
                     const isLumbering = /\blumbering\b/i.test(traitsForSA);
                     const SPECIAL_ACTIONS: {
                       id:
@@ -18641,7 +19694,8 @@ export default function GameBoard() {
                         | "run-silent"
                         | "concentrate-fire"
                         | "all-hands-on-deck"
-                        | "scramble";
+                        | "scramble"
+                        | "regenerate";
                       label: string;
                       cq: number | null;
                       hint: string;
@@ -18720,7 +19774,35 @@ export default function GameBoard() {
                         cq: 7,
                         hint: "Launch +2 fighter flights in End Phase",
                       },
+                      {
+                        id: "regenerate",
+                        label: "Regenerate!",
+                        cq: 9,
+                        hint: "Adrift; no attacks; double Self Repair",
+                        hidden: !isVorlonProfile,
+                      },
                     ];
+                    const profileActionIds =
+                      rulesProfile === "shadows"
+                        ? new Set(["run-silent"])
+                        : rulesProfile === "vorlons"
+                          ? new Set([
+                              "all-stop",
+                              "all-stop-pivot",
+                              "come-about-extra-turn",
+                              "come-about-sharp-turn",
+                              "run-silent",
+                              "regenerate",
+                            ])
+                          : rulesProfile === "ancients"
+                            ? new Set([
+                                "all-stop",
+                                "all-stop-pivot",
+                                "come-about-extra-turn",
+                                "come-about-sharp-turn",
+                                "run-silent",
+                              ])
+                            : null;
                     const rawAction = selectedUnitData.specialAction ?? null;
                     const baseAction = rawAction
                       ? rawAction.replace(/-failed$/, "")
@@ -18766,10 +19848,130 @@ export default function GameBoard() {
                       getShipModelForUnit(selectedUnitData)?.traits ?? "",
                     );
                     return (
-                      <div
-                        className="space-y-1.5"
-                        data-testid="special-actions-panel"
-                      >
+                      <>
+                        {isShadowProfile && (
+                          <div
+                            className="space-y-1.5 border border-violet-400/35 bg-violet-500/5 p-2"
+                            data-testid="shadow-systems-panel"
+                          >
+                            <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-wider text-violet-200">
+                              <span>Shadow Systems</span>
+                              <span className="text-[8px] text-violet-200/65">
+                                No CQ check · no Special Action
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                              {hasShadowBeam && (
+                                <button
+                                  type="button"
+                                  aria-pressed={
+                                    selectedUnitData.shadowPointDefenseRound ===
+                                    (game.currentRound ?? 0)
+                                  }
+                                  disabled={
+                                    movedAlready ||
+                                    chooseShadowPointDefense.isPending
+                                  }
+                                  onClick={() => {
+                                    chooseShadowPointDefense.mutate(
+                                      {
+                                        gameId,
+                                        unitId: selectedUnitData.id,
+                                      },
+                                      {
+                                        onSuccess: (unit) => {
+                                          mergeUpdatedUnitIntoGame(unit);
+                                          qc.invalidateQueries({
+                                            queryKey:
+                                              getGetGameQueryKey(gameId),
+                                          });
+                                        },
+                                        onError: (err) =>
+                                          setActivationFeedback(
+                                            cleanApiErrorMessage(
+                                              err,
+                                              "Slicer point-defence selection failed",
+                                            ),
+                                          ),
+                                      },
+                                    );
+                                  }}
+                                  className="border border-violet-300/45 bg-violet-400/10 px-2 py-1 text-left font-mono text-[10px] text-violet-100 disabled:opacity-35"
+                                  data-testid="shadow-system-slicer-point-defence"
+                                >
+                                  <span className="block font-bold">
+                                    Slicer Point-Defence Mode
+                                  </span>
+                                  <span className="block text-[8px] opacity-70">
+                                    {selectedUnitData.shadowPointDefenseRound ===
+                                    (game.currentRound ?? 0)
+                                      ? "Active this round · half Range · Turret · Accurate Mini-Beam"
+                                      : "Select before movement · converts Molecular Slicer fire"}
+                                  </span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={
+                                  movedAlready ||
+                                  chooseShadowManeuverMode.isPending
+                                }
+                                onClick={() => {
+                                  const mode =
+                                    selectedUnitData.shadowManeuverMode ===
+                                    "sweep"
+                                      ? "normal"
+                                      : "sweep";
+                                  chooseShadowManeuverMode.mutate(
+                                    {
+                                      gameId,
+                                      unitId: selectedUnitData.id,
+                                      data: { mode },
+                                    },
+                                    {
+                                      onSuccess: (unit) => {
+                                        mergeUpdatedUnitIntoGame(unit);
+                                        qc.invalidateQueries({
+                                          queryKey:
+                                            getGetGameQueryKey(gameId),
+                                        });
+                                      },
+                                      onError: (err) =>
+                                        setActivationFeedback(
+                                          cleanApiErrorMessage(
+                                            err,
+                                            "Shadow manoeuvre selection failed",
+                                          ),
+                                        ),
+                                    },
+                                  );
+                                }}
+                                className="border border-violet-300/45 bg-violet-400/10 px-2 py-1 text-left font-mono text-[10px] text-violet-100 disabled:opacity-35"
+                                data-testid="shadow-system-manoeuvre-mode"
+                              >
+                                <span className="block font-bold">
+                                  {selectedUnitData.shadowManeuverMode ===
+                                  "sweep"
+                                    ? "Sweep Mode"
+                                    : "Normal Superb Manoeuvrability"}
+                                </span>
+                                <span className="block text-[8px] opacity-70">
+                                  Sweep: turn 90°, then move straight at up to
+                                  twice Speed
+                                </span>
+                              </button>
+                            </div>
+                            {movedAlready && (
+                              <div className="font-mono text-[8px] text-red-300/75">
+                                Shadow system choices lock when movement begins.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div
+                          className="space-y-1.5"
+                          data-testid="special-actions-panel"
+                        >
                         <div className="text-[10px] uppercase tracking-wider text-amber-400/80 font-mono flex items-center justify-between">
                           <span>
                             Special Action · CQ {selectedUnitData.crewQuality}
@@ -18854,7 +20056,10 @@ export default function GameBoard() {
                                 );
                               },
                             )}
-                            {SPECIAL_ACTIONS.filter((a) => !a.hidden).map(
+                            {SPECIAL_ACTIONS.filter((a) =>
+                              !a.hidden
+                              && (!profileActionIds || profileActionIds.has(a.id))
+                            ).map(
                               (a) => {
                                 const needsTarget = a.id === "concentrate-fire";
                                 const picking =
@@ -18877,13 +20082,18 @@ export default function GameBoard() {
                                 const needsAllStopPrereq =
                                   a.id === "all-stop-pivot" &&
                                   !selectedUnitData.allStopReady;
+                                const conflictsWithShadowSweep =
+                                  a.id === "run-silent" &&
+                                  selectedUnitData.shadowManeuverMode ===
+                                    "sweep";
                                 const disabled =
                                   chooseSpecialAction.isPending ||
                                   (needsTarget && !enemyAlive) ||
                                   alreadyMoved ||
                                   scoutActionLocked ||
                                   !!noSAReason ||
-                                  needsAllStopPrereq;
+                                  needsAllStopPrereq ||
+                                  conflictsWithShadowSweep;
                                 return (
                                   <button
                                     key={a.id}
@@ -18953,6 +20163,8 @@ export default function GameBoard() {
                                         ? "▸ Click an enemy ship to nominate"
                                         : needsAllStopPrereq
                                           ? "Requires All Stop last round"
+                                          : conflictsWithShadowSweep
+                                            ? "Unavailable in Shadow sweep mode"
                                           : a.hint}
                                     </div>
                                   </button>
@@ -18978,6 +20190,7 @@ export default function GameBoard() {
                           </div>
                         )}
                       </div>
+                      </>
                     );
                   })()}
 
@@ -19062,8 +20275,67 @@ export default function GameBoard() {
                       ...serverFired,
                       ...(pendingForThisUnit ?? []),
                     ]);
-                    const attackerTraits =
-                      getShipModelForUnit(attacker)?.traits ?? "";
+                    const attackerModel = getShipModelForUnit(attacker);
+                    const attackerTraits = attackerModel?.traits ?? "";
+                    const attackerRulesProfile =
+                      uiRulesProfileForModel(attackerModel);
+                    const psychicCrew = isFighterUnit(attacker)
+                      ? 0
+                      : parseUiPsychicCrew(attackerTraits);
+                    const telepathicTargets =
+                      psychicCrew > 0
+                        ? units.filter((target) => {
+                            if (
+                              target.ownerId === myUserId
+                              || target.isDestroyed
+                              || isFighterUnit(target)
+                              || uiRulesProfileForModel(
+                                getShipModelForUnit(target),
+                              ) !== "shadows"
+                            ) {
+                              return false;
+                            }
+                            const attemptMarker = 800_000_000 + target.id;
+                            const alreadyAttempted = units.some((unit) =>
+                              ((unit.firedWeaponIds ?? []) as number[]).includes(
+                                attemptMarker,
+                              ),
+                            );
+                            if (alreadyAttempted) return false;
+                            return (
+                              uiBaseFootprintEdgeDistance(
+                                {
+                                  id: attacker.id,
+                                  x: attacker.hexQ,
+                                  z: attacker.hexR,
+                                  baseRadiusInches:
+                                    attacker.baseRadiusInches,
+                                },
+                                {
+                                  id: target.id,
+                                  x: target.hexQ,
+                                  z: target.hexR,
+                                  baseRadiusInches: target.baseRadiusInches,
+                                },
+                              ) <=
+                              12 + 1e-6
+                            );
+                          })
+                        : [];
+                    const shadowDispersalBay =
+                      attackerRulesProfile === "shadows"
+                        ? (attacker.carriedFighters ?? []).find(
+                            (item) =>
+                              normalizeSmallCraftKey(item.name) ===
+                                "shadow fighter flight" &&
+                              item.available > 0 &&
+                              item.shipModelId != null,
+                          )
+                        : undefined;
+                    const shadowDispersalFighterModel =
+                      shadowDispersalBay?.shipModelId != null
+                        ? shipModelById[shadowDispersalBay.shipModelId]
+                        : undefined;
                     const skeletonFiringLimited =
                       attacker.isSkeletonCrew &&
                       !/\bflight\s+computer\b/i.test(attackerTraits);
@@ -19078,6 +20350,141 @@ export default function GameBoard() {
                           >
                             Locked in dogfight - use the Dogfight action. Normal
                             fighter attacks are unavailable.
+                          </div>
+                        )}
+                        {psychicCrew > 0 && (
+                          <div
+                            className="space-y-1 rounded border border-fuchsia-400/45 bg-fuchsia-500/10 p-2 font-mono text-[10px] text-fuchsia-100"
+                            data-testid="telepathic-disruption-panel"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold uppercase tracking-wider">
+                                Telepathic Disruption
+                              </span>
+                              <span className="text-[9px] opacity-70">
+                                Psychic Crew {psychicCrew}
+                              </span>
+                            </div>
+                            {attacker.telepathicDisruptionExhausted ? (
+                              <div className="text-red-200">
+                                Telepaths burned out for this battle.
+                              </div>
+                            ) : firedSet.size > 0 ? (
+                              <div className="text-red-200">
+                                Must be attempted before firing another weapon.
+                              </div>
+                            ) : telepathicTargets.length === 0 ? (
+                              <div className="opacity-70">
+                                No eligible Shadow vessel within 12 inches.
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 gap-1">
+                                {telepathicTargets.map((target) => (
+                                  <button
+                                    key={`telepathic-${target.id}`}
+                                    type="button"
+                                    disabled={
+                                      attemptTelepathicDisruption.isPending
+                                    }
+                                    onClick={() => {
+                                      attemptTelepathicDisruption.mutate(
+                                        {
+                                          gameId,
+                                          unitId: attacker.id,
+                                          data: { targetUnitId: target.id },
+                                        },
+                                        {
+                                          onSuccess: (result) => {
+                                            mergeUpdatedUnitIntoGame(
+                                              result.attacker,
+                                            );
+                                            mergeUpdatedUnitIntoGame(
+                                              result.target,
+                                            );
+                                            setActivationFeedback(
+                                              `${result.success ? "Telepathic Disruption succeeded" : "Telepathic Disruption failed"}: ${result.attackerRoll} + Psychic Crew ${result.attackerPsychicCrew} = ${result.attackerTotal} vs ${result.shadowRoll} + CQ ${result.shadowCrewQuality}${result.shadowBonus ? ` + ${result.shadowBonus}` : ""} = ${result.shadowTotal}.`,
+                                            );
+                                            void qc.invalidateQueries({
+                                              queryKey:
+                                                getGetGameQueryKey(gameId),
+                                            });
+                                          },
+                                          onError: (err) =>
+                                            setActivationFeedback(
+                                              cleanApiErrorMessage(
+                                                err,
+                                                "Telepathic Disruption failed",
+                                              ),
+                                            ),
+                                        },
+                                      );
+                                    }}
+                                    className="border border-fuchsia-300/45 bg-black/35 px-2 py-1 text-left hover:bg-fuchsia-400/15 disabled:opacity-40"
+                                  >
+                                    Jam {target.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {shadowDispersalBay && (
+                          <div
+                            className="space-y-1 rounded border border-violet-400/45 bg-violet-500/10 p-2 font-mono text-[10px] text-violet-100"
+                            data-testid="shadow-dispersal-panel"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold uppercase tracking-wider">
+                                Fighter Dispersal Tube
+                              </span>
+                              <span className="text-[9px] opacity-70">
+                                {shadowDispersalBay.available} ready
+                              </span>
+                            </div>
+                            <div className="opacity-70">
+                              Select a flight count, place each flight within
+                              30", then confirm. All flights must remain within
+                              3" of one another. Replaces all weapon fire.
+                            </div>
+                            <div className="grid grid-cols-3 gap-1">
+                              {Array.from(
+                                {
+                                  length: Math.min(
+                                    6,
+                                    shadowDispersalBay.available,
+                                  ),
+                                },
+                                (_, index) => index + 1,
+                              ).map((count) => (
+                                <button
+                                  key={`shadow-dispersal-${count}`}
+                                  type="button"
+                                  disabled={
+                                    firedSet.size > 0
+                                    || !shadowDispersalFighterModel
+                                    || launchShadowFighterDispersal.isPending
+                                    || pendingShadowDispersalPlacement !== null
+                                  }
+                                  onClick={() => {
+                                    if (!shadowDispersalFighterModel) {
+                                      setActivationFeedback(
+                                        "Shadow Fighter model is not linked.",
+                                      );
+                                      return;
+                                    }
+                                    beginShadowDispersalPlacement(
+                                      attacker,
+                                      shadowDispersalFighterModel,
+                                      count,
+                                      shadowDispersalBay.name,
+                                    );
+                                  }}
+                                  className="border border-violet-300/45 bg-black/35 px-2 py-1 text-center hover:bg-violet-400/15 disabled:opacity-40"
+                                >
+                                  Launch {count}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
                         <div className="text-[10px] uppercase tracking-wider text-red-300/80 font-mono">
@@ -19247,7 +20654,22 @@ export default function GameBoard() {
                             slowLoadingCooling ||
                             skeletonBlocked ||
                             crippledArcBlocked;
-                          const weaponTraitList = splitTraitList(w.traits);
+                          const shadowPointDefense =
+                            uiShadowPointDefenseWeaponActive(
+                              attacker,
+                              attackerModel,
+                              w,
+                              game.currentRound ?? 0,
+                            );
+                          const displayArc = shadowPointDefense
+                            ? "Turret"
+                            : w.arc;
+                          const displayRange = shadowPointDefense
+                            ? w.range / 2
+                            : w.range;
+                          const weaponTraitList = shadowPointDefense
+                            ? ["Accurate", "Mini-Beam"]
+                            : splitTraitList(w.traits);
                           return (
                             <div
                               key={w.id}
@@ -19285,13 +20707,13 @@ export default function GameBoard() {
                                     {w.name || w.arc}
                                   </span>
                                   <span className="text-[10px] opacity-70">
-                                    {w.attackDice}AD · r{w.range}"
+                                    {w.attackDice}AD · r{displayRange}"
                                   </span>
                                 </div>
                                 <div className="text-[10px] opacity-70 mt-0.5">
                                   {pcHoverHintsEnabled ? (
                                     <>
-                                      <span>{w.arc}</span>
+                                      <span>{displayArc}</span>
                                       {weaponTraitList.length > 0 && (
                                         <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
                                           {weaponTraitList.map((trait) => (
@@ -19308,8 +20730,12 @@ export default function GameBoard() {
                                     </>
                                   ) : (
                                     <>
-                                      {w.arc}
-                                      {w.traits ? ` · ${w.traits}` : ""}
+                                      {displayArc}
+                                      {shadowPointDefense
+                                        ? " · Accurate, Mini-Beam · Shadow point defence"
+                                        : w.traits
+                                          ? ` · ${w.traits}`
+                                          : ""}
                                     </>
                                   )}
                                 </div>
@@ -20201,17 +21627,21 @@ export default function GameBoard() {
                   <AlertTriangle className="h-6 w-6" />
                 </div>
                 <AlertDialogTitle className="font-mono text-lg uppercase tracking-[0.18em] text-yellow-200">
-                  Pass All Firing?
+                  {passAllFiringLabel}?
                 </AlertDialogTitle>
               </div>
               <AlertDialogDescription className="font-mono text-xs leading-relaxed text-yellow-100/85">
-                This will end every remaining firing activation for your fleet
-                this phase. No weapons will be fired, no dice will be rolled,
-                and the action cannot be undone after confirmation.
+                {activationSegment === "fighter"
+                  ? "This will end every remaining fighter-flight firing activation for your fleet. Your capital ships will remain available when Ship Firing begins."
+                  : "This will end every remaining capital-ship firing activation for your fleet. No further ship weapons will be fired this phase."}{" "}
+                No dice will be rolled, and the action cannot be undone after
+                confirmation.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="my-4 border border-yellow-300/35 bg-yellow-300/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-yellow-100/90">
-              Remaining eligible activations: {myEligibleActivations}
+              Remaining eligible{" "}
+              {activationSegment === "fighter" ? "fighter" : "ship"}{" "}
+              activations: {myEligibleActivations}
             </div>
             <AlertDialogFooter className="gap-2 sm:space-x-0">
               <AlertDialogCancel
@@ -20227,7 +21657,9 @@ export default function GameBoard() {
                 className="bg-yellow-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-yellow-200 disabled:bg-slate-700 disabled:text-slate-400"
                 data-testid="button-confirm-pass-all-firing"
               >
-                {passAllFiringPending ? "Passing..." : "Confirm Pass All"}
+                {passAllFiringPending
+                  ? passAllFiringPendingLabel
+                  : passAllFiringConfirmLabel}
               </AlertDialogAction>
             </AlertDialogFooter>
           </div>
