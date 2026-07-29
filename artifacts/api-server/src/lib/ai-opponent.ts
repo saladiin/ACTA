@@ -21,6 +21,7 @@ export const SHIP_AI_PROFILE_SEEDS: Array<{ name: string; aiProfile: ShipAiProfi
   { name: "Omega Destroyer", aiProfile: "jouster" },
   { name: "Omega Class Destroyer", aiProfile: "jouster" },
   { name: "Nova Dreadnought", aiProfile: "broadside" },
+  { name: "Salvaged Nova Dreadnought", aiProfile: "broadside" },
   { name: "Sagittarius", aiProfile: "standoff" },
   { name: "Sagittarius Missile Cruiser", aiProfile: "standoff" },
   { name: "Aurora Starfury Flight", aiProfile: "brawler" },
@@ -30,6 +31,7 @@ export const SHIP_AI_PROFILE_SEEDS: Array<{ name: string; aiProfile: ShipAiProfi
   { name: "Battlecrab", aiProfile: "apex-predator" },
   { name: "Shadow Cruiser", aiProfile: "apex-predator" },
   { name: "Shadow Cruiser (Ancient)", aiProfile: "apex-predator" },
+  { name: "Vorlon Heavy Cruiser", aiProfile: "apex-predator" },
 ];
 
 export const EARTH_ALLIANCE_SHIP_AI_PROFILE_SEEDS = SHIP_AI_PROFILE_SEEDS.filter(seed => seed.aiProfile !== "apex-predator");

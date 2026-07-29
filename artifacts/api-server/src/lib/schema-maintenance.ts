@@ -7,8 +7,14 @@ import { logger } from "./logger";
 const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Lordship", priority: "ancient" },
   { name: "Kirishiac Lordship", priority: "ancient" },
+  { name: "Vorlon Heavy Cruiser", priority: "armageddon" },
+  { name: "Vorlon Light Cruiser", priority: "war" },
+  { name: "Vorlon Transport", priority: "skirmish" },
+  { name: "Vorlon Fighter Flight", priority: "patrol" },
+  { name: "Vorlon Fighter Wing", priority: "patrol" },
   { name: "Shadow Cruiser (Ancient)", priority: "armageddon" },
   { name: "Shadow Cruiser", priority: "armageddon" },
+  { name: "Shadow Scout", priority: "raid" },
   { name: "Sharlin War Cruiser", priority: "war" },
   { name: "Tigara Attack Cruiser", priority: "raid" },
   { name: "Tigara-class Attack Cruiser", priority: "raid" },
@@ -55,18 +61,35 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Hyperion Missile Cruiser", priority: "raid" },
   { name: "Hyperion Pulse Cruiser", priority: "raid" },
   { name: "Hyperion Rail Cruiser", priority: "skirmish" },
+  { name: "Artemis-class Heavy Frigate", priority: "skirmish" },
+  { name: "Artemis-class Escort Frigate", priority: "skirmish" },
   { name: "Orestes Battleship", priority: "battle" },
   { name: "Orestes-class Battleship", priority: "battle" },
   { name: "Orion Starbase, Alpha Version (Variant)", priority: "battle" },
   { name: "Nova Dreadnought", priority: "raid" },
+  { name: "Nova-class Dreadnought", priority: "raid" },
+  { name: "Salvaged Nova Dreadnought", priority: "battle" },
+  { name: "Raiders Nova Dreadnought", priority: "battle" },
+  { name: "Raider Nova Dreadnought", priority: "battle" },
+  { name: "Strike Carrier", priority: "skirmish" },
+  { name: "Raider Strike Carrier", priority: "skirmish" },
   { name: "White Star", priority: "raid" },
   { name: "Tethys Cutter", priority: "patrol" },
   { name: "Tethys-class Cutter", priority: "patrol" },
+  { name: "Tethys-class Laser Boat", priority: "patrol" },
+  { name: "Tethys Laser Boat", priority: "patrol" },
+  { name: "Tethys-class Missile Boat", priority: "patrol" },
+  { name: "Tethys Missile Boat", priority: "patrol" },
   { name: "Olympus Corvette", priority: "skirmish" },
+  { name: "Olympus-class Corvette", priority: "skirmish" },
+  { name: "Olympus-class Gunship", priority: "skirmish" },
+  { name: "Olympus Gunship", priority: "skirmish" },
   { name: "Oracle Cruiser", priority: "skirmish" },
   { name: "Oracle Scout Cruiser", priority: "skirmish" },
   { name: "Sagittarius", priority: "skirmish" },
   { name: "Sagittarius Missile Cruiser", priority: "skirmish" },
+  { name: "Nova Starfury Flight", priority: "patrol" },
+  { name: "Nova Starfury Wing", priority: "patrol" },
   { name: "Nial Fighter Flight", priority: "patrol" },
   { name: "Sentri Flight", priority: "patrol" },
   { name: "Frazi Flight", priority: "patrol" },
@@ -101,7 +124,17 @@ const POINT_COST_BY_PRIORITY: Record<string, number> = {
 const CSV_MODEL_FILENAMES: Record<string, string> = {
   lordship: "kirishiac.glb",
   "kirishiac lordship": "kirishiac.glb",
+  "vorlon heavy cruiser": "vorlon-dreadnought.glb",
+  "vorlon light cruiser": "vorlon-light-cruiser.glb",
+  "vorlon transport": "vorlon-transport.glb",
+  "vorlon fighter flight": "vorlon-fighter.glb",
+  "vorlon fighter wing": "vorlon-fighter.glb",
   "shadow cruiser (ancient)": "battlecrab.glb",
+  "shadow scout": "shadow-scout.glb",
+  "strike carrier": "raider-carrier.glb",
+  "raider strike carrier": "raider-carrier.glb",
+  "raider carrier": "raider-carrier.glb",
+  "raider mothership": "raider-carrier.glb",
   "hyperion cruiser": "hyperion.glb",
   "orestes-class battleship": "orestes.glb",
   "orestes battleship": "orestes.glb",
@@ -261,6 +294,209 @@ const TETHYS_WEAPONS = [
   },
 ];
 
+const TETHYS_LASER_BOAT_WEAPONS = [
+  {
+    name: "Medium Laser Cannon",
+    arc: "Boresight Forward",
+    range: 15,
+    attackDice: 2,
+    traits: "Beam; Double Damage; Slow Loading",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Forward",
+    range: 6,
+    attackDice: 2,
+    traits: "Armor Piercing",
+  },
+];
+
+const TETHYS_MISSILE_BOAT_WEAPONS = [
+  {
+    name: "Missile Rack",
+    arc: "Forward",
+    range: 20,
+    attackDice: 2,
+    traits: "Armor Piercing; Precise; Slow Loading",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Forward",
+    range: 6,
+    attackDice: 2,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Port",
+    range: 6,
+    attackDice: 1,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Starboard",
+    range: 6,
+    attackDice: 1,
+    traits: "Armor Piercing",
+  },
+];
+
+const OLYMPUS_CORVETTE_EARLY_WEAPONS = [
+  {
+    name: "Railguns",
+    arc: "Turret",
+    range: 12,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Missile Rack",
+    arc: "Turret",
+    range: 30,
+    attackDice: 2,
+    traits: "Precise; Slow Loading; Super Armor Piercing",
+  },
+];
+
+const OLYMPUS_GUNSHIP_WEAPONS = [
+  {
+    name: "Medium Laser Cannon",
+    arc: "Boresight Forward",
+    range: 18,
+    attackDice: 4,
+    traits: "Beam; Double Damage",
+  },
+];
+
+const ORACLE_EARLY_WEAPONS = [
+  {
+    name: "Medium Laser Cannon",
+    arc: "Boresight Forward",
+    range: 15,
+    attackDice: 2,
+    traits: "Beam",
+  },
+  {
+    name: "Missile Rack",
+    arc: "Turret",
+    range: 30,
+    attackDice: 1,
+    traits: "Precise; Slow Loading; Super Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Forward",
+    range: 5,
+    attackDice: 2,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Port",
+    range: 5,
+    attackDice: 2,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Starboard",
+    range: 5,
+    attackDice: 2,
+    traits: "Armor Piercing",
+  },
+];
+
+const NOVA_DREADNOUGHT_EARLY_WEAPONS = [
+  {
+    name: "Heavy Plasma Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 6,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Heavy Plasma Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Heavy Plasma Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 8,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Heavy Plasma Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 8,
+    traits: "Armor Piercing; Double Damage",
+  },
+];
+
+const EXPLORER_EARLY_WEAPONS = [
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing; Twin Linked",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Forward",
+    range: 5,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Aft",
+    range: 5,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Port",
+    range: 5,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Starboard",
+    range: 5,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+];
+
 const BATTLECRAB_WEAPONS = [
   {
     name: "Molecular Slicer Beam",
@@ -268,6 +504,16 @@ const BATTLECRAB_WEAPONS = [
     range: 24,
     attackDice: 6,
     traits: "Beam; Precise; Quad Damage",
+  },
+];
+
+const SHADOW_SCOUT_WEAPONS = [
+  {
+    name: "Phasing Pulse Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Accurate; Double Damage; Super AP",
   },
 ];
 
@@ -306,6 +552,43 @@ const LORDSHIP_WEAPONS = [
     range: 12,
     attackDice: 2,
     traits: "Mini-Beam; Precise",
+  },
+];
+
+const VORLON_HEAVY_CRUISER_WEAPONS = [
+  {
+    name: "Super Lightning Cannon",
+    arc: "Forward",
+    range: 30,
+    attackDice: 6,
+    traits: "Beam; Precise; Quad Damage",
+  },
+  {
+    name: "Discharge Gun",
+    arc: "Forward",
+    range: 24,
+    attackDice: 10,
+    traits: "Beam; Double Damage; Precise",
+  },
+];
+
+const VORLON_LIGHT_CRUISER_WEAPONS = [
+  {
+    name: "Super Lightning Cannon",
+    arc: "Forward",
+    range: 30,
+    attackDice: 6,
+    traits: "Beam; Precise; Quad Damage",
+  },
+];
+
+const VORLON_TRANSPORT_WEAPONS = [
+  {
+    name: "Discharge Gun",
+    arc: "Forward",
+    range: 18,
+    attackDice: 2,
+    traits: "Beam; Double Damage; Precise",
   },
 ];
 
@@ -937,6 +1220,68 @@ const AVENGER_WEAPONS = [
   },
 ];
 
+const RAIDER_STRIKE_CARRIER_WEAPONS = [
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Forward",
+    range: 10,
+    attackDice: 8,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Port",
+    range: 10,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Starboard",
+    range: 10,
+    attackDice: 4,
+    traits: "",
+  },
+];
+
+const SALVAGED_NOVA_DREADNOUGHT_WEAPONS = [
+  {
+    name: "Combat Laser",
+    arc: "Boresight Forward",
+    range: 18,
+    attackDice: 6,
+    traits: "Beam",
+  },
+  {
+    name: "Heavy Plasma Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 8,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 12,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 12,
+    traits: "Armor Piercing; Double Damage",
+  },
+];
+
 const PRIMUS_WEAPONS = [
   {
     name: "Battle Laser",
@@ -1161,6 +1506,68 @@ const TINASHI_WEAPONS = [
   },
 ];
 
+const ARTEMIS_HEAVY_FRIGATE_WEAPONS = [
+  {
+    name: "Railguns",
+    arc: "Forward",
+    range: 12,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Railguns",
+    arc: "Aft",
+    range: 12,
+    attackDice: 2,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Railguns",
+    arc: "Port",
+    range: 12,
+    attackDice: 5,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Railguns",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 5,
+    traits: "Armor Piercing; Double Damage",
+  },
+];
+
+const ARTEMIS_ESCORT_FRIGATE_WEAPONS = [
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 8,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 8,
+    traits: "Armor Piercing",
+  },
+];
+
 type ShipMaintenanceSeed = {
   name: string;
   aliases: string[];
@@ -1347,6 +1754,33 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     ],
   },
   {
+    name: "Shadow Scout",
+    aliases: ["Shadow Scout"],
+    filename: "shadow-scout.glb",
+    faction: "Shadows",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Scout",
+    hull: 5,
+    troops: 0,
+    damage: 25,
+    damageThreshold: 7,
+    hullRating: 5,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 10,
+    turns: 0,
+    turnAngle: 0,
+    crewQuality: "Regular",
+    traits: "Atmospheric; Dodge 6+; Scout; Self Repair:1; Shields 5/5; Stealth +5",
+    smallCraft: null,
+    weaponRange: 8,
+    weaponDamage: 6,
+    description:
+      "Raid-level Shadow Scout with stealth, shields, self-repair, and a forward phasing pulse cannon",
+    weapons: SHADOW_SCOUT_WEAPONS,
+  },
+  {
     name: "Hyperion Heavy Cruiser",
     aliases: [
       "Hyperion Cruiser",
@@ -1371,11 +1805,11 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     turnAngle: 45,
     crewQuality: "Veteran",
     traits: "Anti-Fighter 2; Interceptors 2; Jump Engine",
-    smallCraft: "Aurora Starfury Flight (1)",
+    smallCraft: "Tiger Starfury Flight (1)",
     weaponRange: 18,
     weaponDamage: 4,
     description:
-      "Earth Alliance Hyperion-class heavy cruiser, baseline Raid-level laser and pulse platform",
+      "Earth Alliance Early Years Hyperion-class heavy cruiser, baseline Raid-level laser and plasma platform",
     weapons: [
       {
         name: "Heavy Laser Cannon",
@@ -1392,39 +1826,32 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
         traits: "Beam; Double Damage",
       },
       {
-        name: "Medium Pulse Cannon",
-        arc: "Forward",
-        range: 10,
-        attackDice: 4,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Aft",
-        range: 10,
-        attackDice: 2,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Port",
-        range: 10,
-        attackDice: 8,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Starboard",
-        range: 10,
-        attackDice: 8,
-        traits: "",
-      },
-      {
         name: "Plasma Cannon",
         arc: "Forward",
         range: 8,
         attackDice: 4,
         traits: "Armor Piercing; Twin Linked",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Aft",
+        range: 8,
+        attackDice: 2,
+        traits: "Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Port",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Starboard",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
       },
     ],
   },
@@ -1449,45 +1876,38 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     crewQuality: "Veteran",
     traits: "Anti-Fighter 2; Interceptors 2; Jump Engine; Shuttles 2",
     smallCraft: null,
-    weaponRange: 10,
-    weaponDamage: 8,
+    weaponRange: 8,
+    weaponDamage: 6,
     description:
-      "Earth Alliance Hyperion assault variant with troop capacity and close-range pulse/plasma batteries",
+      "Earth Alliance Early Years Hyperion assault variant with troop capacity, shuttles, and close-range plasma batteries",
     weapons: [
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Forward",
-        range: 10,
-        attackDice: 4,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Aft",
-        range: 10,
-        attackDice: 2,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Port",
-        range: 10,
-        attackDice: 8,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Starboard",
-        range: 10,
-        attackDice: 8,
-        traits: "",
-      },
       {
         name: "Plasma Cannon",
         arc: "Forward",
         range: 8,
         attackDice: 6,
         traits: "Armor Piercing; Twin Linked",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Aft",
+        range: 8,
+        attackDice: 2,
+        traits: "Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Port",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
+      },
+      {
+        name: "Plasma Cannon",
+        arc: "Starboard",
+        range: 8,
+        attackDice: 6,
+        traits: "Armor Piercing",
       },
     ],
   },
@@ -1511,7 +1931,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     turnAngle: 45,
     crewQuality: "Veteran",
     traits: "Anti-Fighter 4; Command +2; Interceptors 3; Jump Engine",
-    smallCraft: "Aurora Starfury Flight (1)",
+    smallCraft: "Tiger Starfury Flight (1)",
     weaponRange: 18,
     weaponDamage: 4,
     description:
@@ -1644,7 +2064,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     turnAngle: 45,
     crewQuality: "Veteran",
     traits: "Anti-Fighter 2; Interceptors 2; Jump Engine",
-    smallCraft: "Aurora Starfury Flight (1)",
+    smallCraft: "Tiger Starfury Flight (1)",
     weaponRange: 12,
     weaponDamage: 10,
     description:
@@ -1721,7 +2141,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     turnAngle: 45,
     crewQuality: "Veteran",
     traits: "Anti-Fighter 2; Interceptors 2; Jump Engine",
-    smallCraft: "Aurora Starfury Flight (1)",
+    smallCraft: "Tiger Starfury Flight (1)",
     weaponRange: 12,
     weaponDamage: 6,
     description:
@@ -1756,6 +2176,295 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
         traits: "Armor Piercing",
       },
     ],
+  },
+  {
+    name: "Artemis-class Heavy Frigate",
+    aliases: [
+      "Artemis-class Heavy Frigate",
+      "Artemis Heavy Frigate",
+      "Artemis",
+    ],
+    filename: "artemis.glb",
+    faction: "Earth Alliance",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Heavy Frigate",
+    hull: 5,
+    troops: 2,
+    damage: 18,
+    damageThreshold: 5,
+    hullRating: 5,
+    crew: 22,
+    crewThreshold: 6,
+    speed: 10,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 4; Interceptors 2",
+    smallCraft: null,
+    weaponRange: 12,
+    weaponDamage: 5,
+    description:
+      "Earth Alliance Artemis-class heavy frigate (in service 2190+) with four armor-piercing, double-damage railgun batteries",
+    weapons: ARTEMIS_HEAVY_FRIGATE_WEAPONS,
+  },
+  {
+    name: "Artemis-class Escort Frigate",
+    aliases: [
+      "Artemis-class Escort Frigate",
+      "Artemis Escort Frigate",
+    ],
+    filename: "artemis.glb",
+    faction: "Earth Alliance",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Escort Frigate",
+    hull: 5,
+    troops: 2,
+    damage: 18,
+    damageThreshold: 5,
+    hullRating: 5,
+    crew: 22,
+    crewThreshold: 6,
+    speed: 10,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 4; Escort; Interceptors 2",
+    smallCraft: null,
+    weaponRange: 8,
+    weaponDamage: 8,
+    description:
+      "Earth Alliance Artemis-class escort frigate variant (in service 2219-2242) replacing the railguns with armor-piercing plasma cannon",
+    weapons: ARTEMIS_ESCORT_FRIGATE_WEAPONS,
+  },
+  {
+    name: "Nova Dreadnought",
+    aliases: ["Nova Dreadnought", "Nova-class Dreadnought", "Nova"],
+    filename: "nova.glb",
+    faction: "Earth Alliance",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Dreadnought",
+    hull: 5,
+    troops: 2,
+    damage: 36,
+    damageThreshold: 9,
+    hullRating: 5,
+    crew: 45,
+    crewThreshold: 12,
+    speed: 6,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 2; Jump Engine; Lumbering",
+    smallCraft: "Nova Starfury Flight (4)",
+    weaponRange: 12,
+    weaponDamage: 8,
+    description:
+      "Earth Alliance Early Years Nova-class dreadnought with heavy plasma broadsides and Nova Starfury support",
+    weapons: NOVA_DREADNOUGHT_EARLY_WEAPONS,
+  },
+  {
+    name: "Salvaged Nova Dreadnought",
+    aliases: [
+      "Salvaged Nova Dreadnought",
+      "Raiders Nova Dreadnought",
+      "Raider Nova Dreadnought",
+      "Salvaged Nova",
+      "Raider Nova",
+    ],
+    filename: "raider-nova.glb",
+    faction: "Raiders",
+    pointCost: 225,
+    priorityLevel: "battle",
+    shipClass: "Dreadnought",
+    hull: 5,
+    troops: 2,
+    damage: 60,
+    damageThreshold: 20,
+    hullRating: 5,
+    crew: 85,
+    crewThreshold: 25,
+    speed: 4,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 3; Carrier 2; Interceptors 4; Jump Engine; Lumbering",
+    smallCraft: "Delta-V Fighter Flight (6)",
+    weaponRange: 18,
+    weaponDamage: 12,
+    description:
+      "Raiders Battle-level dreadnought rebuilt from a salvaged Nova hull (in service 2262+)",
+    weapons: SALVAGED_NOVA_DREADNOUGHT_WEAPONS,
+  },
+  {
+    name: "Strike Carrier",
+    aliases: [
+      "Strike Carrier",
+      "Raider Strike Carrier",
+      "Raider Carrier",
+      "Raider Mothership",
+    ],
+    filename: "raider-carrier.glb",
+    faction: "Raiders",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Strike Carrier",
+    hull: 4,
+    troops: 3,
+    damage: 32,
+    damageThreshold: 7,
+    hullRating: 4,
+    crew: 54,
+    crewThreshold: 12,
+    speed: 6,
+    turns: 1,
+    turnAngle: 45,
+    baseRadiusInches: 0.75,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 2; Carrier 4; Fleet Carrier; Lumbering",
+    smallCraft: "Delta-V Fighter Flight (4)",
+    weaponRange: 10,
+    weaponDamage: 8,
+    description:
+      "Raiders Skirmish-level Strike Carrier with fighter rails for Delta-V flights",
+    weapons: RAIDER_STRIKE_CARRIER_WEAPONS,
+  },
+  {
+    name: "Olympus Corvette",
+    aliases: ["Olympus Corvette", "Olympus-class Corvette", "Olympus"],
+    filename: "olympus.glb",
+    faction: "Earth Alliance",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Corvette",
+    hull: 5,
+    troops: 1,
+    damage: 18,
+    damageThreshold: 4,
+    hullRating: 5,
+    crew: 20,
+    crewThreshold: 4,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1",
+    smallCraft: null,
+    weaponRange: 30,
+    weaponDamage: 4,
+    description:
+      "Earth Alliance Early Years Olympus-class corvette with railguns, plasma cannon, and missile support",
+    weapons: OLYMPUS_CORVETTE_EARLY_WEAPONS,
+  },
+  {
+    name: "Olympus Gunship",
+    aliases: ["Olympus Gunship", "Olympus-class Gunship"],
+    filename: "olympus-gunship.glb",
+    faction: "Earth Alliance",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Gunship",
+    hull: 5,
+    troops: 1,
+    damage: 18,
+    damageThreshold: 4,
+    hullRating: 5,
+    crew: 20,
+    crewThreshold: 4,
+    speed: 6,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 1; Interceptors 1",
+    smallCraft: null,
+    weaponRange: 18,
+    weaponDamage: 4,
+    description:
+      "Earth Alliance Early Years Olympus gunship variant with a boresight medium laser",
+    weapons: OLYMPUS_GUNSHIP_WEAPONS,
+  },
+  {
+    name: "Oracle Scout Cruiser",
+    aliases: ["Oracle Scout Cruiser", "Oracle Cruiser", "Oracle-class Scout Cruiser"],
+    filename: "oracle.glb",
+    faction: "Earth Alliance",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Scout Cruiser",
+    hull: 4,
+    troops: 0,
+    damage: 16,
+    damageThreshold: 5,
+    hullRating: 4,
+    crew: 22,
+    crewThreshold: 6,
+    speed: 12,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 3; Interceptors 2; Jump Engine; Scout; Stealth +3",
+    smallCraft: null,
+    weaponRange: 30,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Early Years Oracle-class scout cruiser with stealth, scout systems, and light plasma batteries",
+    weapons: ORACLE_EARLY_WEAPONS,
+  },
+  {
+    name: "Tethys-class Laser Boat",
+    aliases: ["Tethys-class Laser Boat", "Tethys Laser Boat"],
+    filename: "tethys.glb",
+    faction: "Earth Alliance",
+    pointCost: 25,
+    priorityLevel: "patrol",
+    shipClass: "Laser Boat",
+    hull: 4,
+    troops: 0,
+    damage: 6,
+    damageThreshold: 2,
+    hullRating: 4,
+    crew: 8,
+    crewThreshold: 2,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1",
+    smallCraft: null,
+    weaponRange: 15,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Tethys laser boat variant using the Tethys mesh with a slow-loading boresight laser",
+    weapons: TETHYS_LASER_BOAT_WEAPONS,
+  },
+  {
+    name: "Tethys-class Missile Boat",
+    aliases: ["Tethys-class Missile Boat", "Tethys Missile Boat"],
+    filename: "tethys.glb",
+    faction: "Earth Alliance",
+    pointCost: 25,
+    priorityLevel: "patrol",
+    shipClass: "Missile Boat",
+    hull: 4,
+    troops: 0,
+    damage: 6,
+    damageThreshold: 2,
+    hullRating: 4,
+    crew: 8,
+    crewThreshold: 2,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1",
+    smallCraft: null,
+    weaponRange: 20,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Tethys missile boat variant using the Tethys mesh with short-ranged missile support",
+    weapons: TETHYS_MISSILE_BOAT_WEAPONS,
   },
   {
     name: "Orestes-class Battleship",
@@ -1906,48 +2615,12 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     crewQuality: "Regular",
     traits:
       "Anti-Fighter 6; Command +1; Interceptors 3; Jump Engine; Lumbering; Scout",
-    smallCraft: "Aurora Starfury Flight (6)",
-    weaponRange: 12,
+    smallCraft: "Tiger Starfury Flight (6)",
+    weaponRange: 8,
     weaponDamage: 6,
     description:
-      "Earth Alliance Explorer-class survey ship with command, scout, and long-range exploration systems",
-    weapons: [
-      {
-        name: "Heavy Pulse Cannon",
-        arc: "Forward",
-        range: 12,
-        attackDice: 6,
-        traits: "Double Damage; Twin Linked",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Forward",
-        range: 10,
-        attackDice: 6,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Aft",
-        range: 10,
-        attackDice: 6,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Port",
-        range: 10,
-        attackDice: 6,
-        traits: "",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Starboard",
-        range: 10,
-        attackDice: 6,
-        traits: "",
-      },
-    ],
+      "Earth Alliance Early Years Explorer-class survey ship with command, scout, and plasma support systems",
+    weapons: EXPLORER_EARLY_WEAPONS,
   },
   {
     name: "G'Lan-class Mag Cruiser",
@@ -2135,6 +2808,96 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
       "Kirishiac Lordship ancient warship with orbiting anti-gravity beam segments and a hyper graviton blaster",
     weapons: LORDSHIP_WEAPONS,
   },
+  {
+    name: "Vorlon Heavy Cruiser",
+    aliases: ["Vorlon Heavy Cruiser", "Vorlon Heavy Cruiser Armageddon"],
+    filename: "vorlon-dreadnought.glb",
+    faction: "Vorlon Empire",
+    pointCost: 600,
+    priorityLevel: "armageddon",
+    shipClass: "Heavy Cruiser",
+    hull: 5,
+    troops: 0,
+    damage: 90,
+    // The fleet-list profile gives no printed cripple value. Preserve the
+    // engine's standard half-damage threshold rather than inventing one.
+    damageThreshold: 45,
+    hullRating: 5,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 6,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Adaptive Armour; Advanced Anti-Fighter 4; Advanced Jump Engine; Flight Computer; Lumbering; Redundant Systems; Self Repair:3d6; Superior Technology",
+    smallCraft: null,
+    weaponRange: 30,
+    weaponDamage: 10,
+    description:
+      "Vorlon Empire Armageddon-level heavy cruiser, in service until 2261",
+    weapons: VORLON_HEAVY_CRUISER_WEAPONS,
+  },
+  {
+    name: "Vorlon Light Cruiser",
+    aliases: ["Vorlon Light Cruiser", "Vorlon Light Cruiser War"],
+    filename: "vorlon-light-cruiser.glb",
+    faction: "Vorlon Empire",
+    pointCost: 400,
+    priorityLevel: "war",
+    shipClass: "Light Cruiser",
+    hull: 5,
+    troops: 0,
+    damage: 55,
+    // The fleet-list profile gives no printed cripple value. Preserve the
+    // engine's standard half-damage threshold rather than inventing one.
+    damageThreshold: 28,
+    hullRating: 5,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 7,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Adaptive Armour; Advanced Anti-Fighter 4; Advanced Jump Engine; Flight Computer; Redundant Systems; Self Repair:2d6; Superior Technology",
+    smallCraft: null,
+    weaponRange: 30,
+    weaponDamage: 6,
+    description:
+      "Vorlon Empire War-level light cruiser with a focused super lightning cannon",
+    weapons: VORLON_LIGHT_CRUISER_WEAPONS,
+  },
+  {
+    name: "Vorlon Transport",
+    aliases: ["Vorlon Transport", "Transport"],
+    filename: "vorlon-transport.glb",
+    faction: "Vorlon Empire",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Transport",
+    hull: 5,
+    troops: 0,
+    damage: 12,
+    // The fleet-list profile gives no printed cripple value. Preserve the
+    // engine's standard half-damage threshold rather than inventing one.
+    damageThreshold: 6,
+    hullRating: 5,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 10,
+    turns: 1,
+    turnAngle: 90,
+    crewQuality: "Regular",
+    traits:
+      "Adaptive Armour; Advanced Anti-Fighter 1; Advanced Jump Engine; Flight Computer; Redundant Systems; Self Repair:1d6; Superior Technology",
+    smallCraft: null,
+    weaponRange: 18,
+    weaponDamage: 2,
+    description:
+      "Vorlon Empire Skirmish-level transport with a forward discharge gun",
+    weapons: VORLON_TRANSPORT_WEAPONS,
+  },
 ];
 
 const FIGHTER_FLIGHTS = [
@@ -2162,6 +2925,93 @@ const FIGHTER_FLIGHTS = [
         range: 2,
         attackDice: 2,
         traits: "Twin Linked",
+      },
+    ],
+  },
+  {
+    name: "Nova Starfury Flight",
+    filename: "aurora.glb",
+    faction: "Earth Alliance",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 4,
+    speed: 10,
+    traits: "Dodge 2+; Dogfight +1; Fighter; Super Maneuverable",
+    weaponRange: 2,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Early Years Nova Starfury fighter flight using the Aurora mesh as a temporary EA fighter placeholder",
+    aliases: ["Nova Starfury Flight", "Nova Starfury Wing", "Nova Flight"],
+    weapons: [
+      {
+        name: "Mini-Pulse Cannon",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "",
+      },
+    ],
+  },
+  {
+    name: "Delta-V Fighter Flight",
+    filename: "raider-delta.glb",
+    faction: "Raiders",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 3,
+    speed: 8,
+    traits: "Atmospheric; Dodge 2+; Dogfight +0; Fighter",
+    weaponRange: 2,
+    weaponDamage: 2,
+    description: "Raiders Delta-V (Zephyr) atmospheric fighter flight",
+    aliases: [
+      "Delta-V Fighter Flight",
+      "Delta-V Fighter Wing",
+      "Delta-V Flight",
+      "Delta V Fighter Flight",
+      "Delta V Flight",
+      "Raider Delta Fighter",
+      "Raider Delta Fighter Flight",
+      "Raider Delta Flight",
+      "Zephyr Flight",
+    ],
+    weapons: [
+      {
+        name: "Light Particle Gun",
+        arc: "Turret",
+        range: 2,
+        attackDice: 2,
+        traits: "Weak",
+      },
+    ],
+  },
+  {
+    name: "Vorlon Fighter Flight",
+    filename: "vorlon-fighter.glb",
+    faction: "Vorlon Empire",
+    pointCost: 25,
+    shipClass: "Fighter Flight",
+    hull: 5,
+    speed: 12,
+    traits:
+      "Advanced Anti-Fighter 1; Atmospheric; Dodge 3+; Dogfight +0; Fighter; Super Maneuverable",
+    weaponRange: 3,
+    weaponDamage: 1,
+    description:
+      "Vorlon fighter flight; a Patrol-wing purchase deploys as three flights",
+    aliases: [
+      "Vorlon Fighter Flight",
+      "Vorlon Fighter Wing",
+      "Vorlon Fighter",
+      "Vorlon Fighters",
+    ],
+    weapons: [
+      {
+        name: "Discharge Gun",
+        arc: "Turret",
+        range: 3,
+        attackDice: 1,
+        traits: "Beam; Precise",
       },
     ],
   },
@@ -2760,6 +3610,7 @@ async function removeDuplicateCanonicalShipRows(): Promise<void> {
     "Avioki Heavy Cruiser",
     "G'Quan Heavy Cruiser",
     "Shadow Battlecrab",
+    "Tethys-class Cutter",
     "Tinashi Warship",
   ];
 
@@ -2843,6 +3694,14 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE ship_models
+      ADD COLUMN IF NOT EXISTS rules_profile text NOT NULL DEFAULT 'standard'
+    `);
+    await pool.query(`
+      ALTER TABLE ship_models
+      ADD COLUMN IF NOT EXISTS physical_disruption_threshold integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE ship_models
       ADD COLUMN IF NOT EXISTS base_radius_inches real NOT NULL DEFAULT ${CAPITAL_BASE_RADIUS_INCHES}
     `);
     await pool.query(`
@@ -2921,6 +3780,42 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       ALTER TABLE game_units
       ADD COLUMN IF NOT EXISTS fighter_bay_operations_used integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS physical_disruption_threshold integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS permanently_crippled boolean NOT NULL DEFAULT false
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS ancient_status_effects jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS shadow_point_defense_round integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS shadow_maneuver_mode text
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS mind_scream_target_ids_this_round jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS telepathic_targets_attempted_this_round jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS telepathic_disruption_exhausted boolean NOT NULL DEFAULT false
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS split_fire_first_target_by_weapon jsonb NOT NULL DEFAULT '{}'::jsonb
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS game_attack_audit_logs (
@@ -3299,9 +4194,35 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       }
     }
 
+    await pool.query(
+      `
+        UPDATE game_units
+        SET model_filename = 'raider-delta.glb'
+        WHERE lower(name) IN (
+          'delta-v fighter flight',
+          'delta-v fighter wing',
+          'delta-v flight',
+          'delta v fighter flight',
+          'delta v flight',
+          'raider delta fighter',
+          'raider delta fighter flight',
+          'raider delta flight',
+          'zephyr flight'
+        )
+          AND lower(model_filename) IS DISTINCT FROM 'raider-delta.glb'
+      `,
+    );
+
     const tethys = await pool.query<{ id: number }>(
       `
-        WITH updated AS (
+        WITH target AS (
+          SELECT id
+          FROM ship_models
+          WHERE lower(name) IN ('tethys', 'tethys cutter', 'tethys-class cutter', 'tethys-class cutter patrol')
+          ORDER BY id
+          LIMIT 1
+        ),
+        updated AS (
           UPDATE ship_models
           SET
             name = 'Tethys-class Cutter',
@@ -3331,8 +4252,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             weapon_range = 8,
             weapon_damage = 4,
             description = 'Earth Alliance Tethys-class cutter, a small patrol vessel fielded two per Patrol slot'
-          WHERE lower(filename) IN ('tethys.glb', 'tethys.obj')
-            OR lower(name) IN ('tethys', 'tethys cutter', 'tethys-class cutter', 'tethys-class cutter patrol')
+          WHERE id IN (SELECT id FROM target)
           RETURNING id
         ),
         inserted AS (
@@ -3813,7 +4733,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             shield_max = 0,
             shield_regen_rate = 0,
             traits = 'Carrier 4; Command +1; Fleet Carrier; Interceptors 2; Jump Engine; Lumbering; Shuttles 2',
-            small_craft = 'Aurora Starfury Flight (8)',
+            small_craft = 'Nova Starfury Flight (8)',
             base_radius_inches = $1,
             hull_points = 40,
             weapon_range = 8,
@@ -3836,7 +4756,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             'raid', 'Heavy Carrier', 5, 6, 40, 10, 5, 50, 12, 7, 1, 45,
             'Regular', 0, 0, 0,
             'Carrier 4; Command +1; Fleet Carrier; Interceptors 2; Jump Engine; Lumbering; Shuttles 2',
-            'Aurora Starfury Flight (8)', 40,
+            'Nova Starfury Flight (8)', 40,
             $1, 8, 6,
             'Earth Alliance Avenger-class heavy carrier with extensive Starfury launch capacity'
           WHERE NOT EXISTS (SELECT 1 FROM updated)
@@ -4278,6 +5198,89 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     }
 
     await removeDuplicateCanonicalShipRows();
+
+    // Ancient race identity and thresholds are authoritative data, not
+    // side-effects of free-form traits. The Shadow number in parentheses is
+    // Physical Disruption; Vorlons have no normal cripple threshold.
+    await pool.query(`
+      UPDATE ship_models
+      SET
+        rules_profile = CASE
+          WHEN lower(faction) LIKE '%shadow%' THEN 'shadows'
+          WHEN lower(faction) LIKE '%vorlon%' THEN 'vorlons'
+          WHEN lower(faction) LIKE '%kirishiac%' THEN 'ancients'
+          ELSE rules_profile
+        END,
+        damage_threshold = CASE
+          WHEN lower(faction) LIKE '%shadow%' OR lower(faction) LIKE '%vorlon%' THEN 0
+          ELSE damage_threshold
+        END,
+        physical_disruption_threshold = CASE
+          WHEN lower(faction) LIKE '%shadow%'
+            AND lower(coalesce(traits, '')) NOT LIKE '%fighter%'
+          THEN ceil(hull_points / 4.0)::integer
+          ELSE 0
+        END
+      WHERE lower(faction) LIKE '%shadow%'
+         OR lower(faction) LIKE '%vorlon%'
+         OR lower(faction) LIKE '%kirishiac%'
+    `);
+    await pool.query(`
+      UPDATE ship_models
+      SET
+        crew_quality = 'Regular',
+        traits = 'Atmospheric; Redundant Systems; Self Repair:3d6; Superb Manoeuvrability',
+        small_craft = 'Shadow Fighter Flight (6)'
+      WHERE lower(name) = 'shadow battlecrab'
+    `);
+    await pool.query(`
+      UPDATE ship_models
+      SET
+        shield = 5,
+        shield_max = 5,
+        shield_regen_rate = 5
+      WHERE lower(name) = 'shadow scout'
+    `);
+    await pool.query(`
+      UPDATE ship_models
+      SET traits = CASE
+        WHEN lower(coalesce(traits, '')) LIKE '%unique%' THEN traits
+        ELSE concat_ws('; ', traits, 'Unique')
+      END
+      WHERE lower(faction) LIKE '%kirishiac%'
+    `);
+    await pool.query(`
+      UPDATE game_units gu
+      SET
+        damage_threshold = coalesce(sm.damage_threshold, 0),
+        physical_disruption_threshold = coalesce(sm.physical_disruption_threshold, 0),
+        carried_fighters = CASE
+          WHEN sm.rules_profile = 'shadows'
+            AND lower(coalesce(sm.traits, '')) LIKE '%fighter%'
+          THEN '[]'::jsonb
+          WHEN sm.rules_profile = 'shadows'
+            AND lower(coalesce(sm.small_craft, '')) LIKE '%shadow fighter%'
+            AND jsonb_array_length(coalesce(gu.carried_fighters, '[]'::jsonb)) = 0
+          THEN jsonb_build_array(jsonb_build_object(
+            'name', 'Shadow Fighter Flight',
+            'shipModelId', (
+              SELECT sf.id FROM ship_models sf
+              WHERE lower(sf.name) = 'shadow fighter flight'
+              ORDER BY sf.id LIMIT 1
+            ),
+            'total', 6,
+            'available', 6,
+            'launched', 0,
+            'recovered', 0,
+            'destroyed', 0
+          ))
+          ELSE gu.carried_fighters
+        END
+      FROM ships s
+      INNER JOIN ship_models sm ON sm.id = s.ship_model_id
+      WHERE gu.ship_id = s.id
+        AND sm.rules_profile IN ('ancients', 'shadows', 'vorlons')
+    `);
 
     for (const seed of SHIP_AI_PROFILE_SEEDS) {
       await pool.query(

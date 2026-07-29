@@ -7,6 +7,10 @@ export const shipModelsTable = pgTable("ship_models", {
   name: text("name").notNull(),
   filename: text("filename").notNull(),
   faction: text("faction").notNull(),
+  // Immutable rules identity. Race-level rules must never be inferred from
+  // free-form trait text because Shadows, Vorlons, and other Ancients have
+  // materially different initiative, crew, stealth, and action rules.
+  rulesProfile: text("rules_profile").notNull().default("standard"),
   pointCost: integer("point_cost").notNull().default(100),
   priorityLevel: text("priority_level").notNull().default("raid"),
   aiProfile: text("ai_profile").notNull().default("brawler"),
@@ -16,6 +20,11 @@ export const shipModelsTable = pgTable("ship_models", {
   troops: integer("troops"),
   damage: integer("damage"),                     // total damage capacity
   damageThreshold: integer("damage_threshold"),
+  // Shadow Physical Disruption is not a cripple threshold. It is the amount
+  // of damage one Beam weapon attack must inflict to pin the living ship.
+  physicalDisruptionThreshold: integer("physical_disruption_threshold")
+    .notNull()
+    .default(0),
   // B5: ACTA-style "hull" to-hit rating. An attacking die equals-or-exceeds
   // this value to score a hit (beam/mini-beam weapons override to a flat 4+).
   hullRating: integer("hull_rating").notNull().default(4),
