@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: b5acta-public-alpha
+    name: wheeloffire-b5acta
     runtime: node
     plan: starter
     branch: public-alpha
