@@ -123,6 +123,12 @@ const POINT_COST_BY_PRIORITY: Record<string, number> = {
   ancient: 600,
 };
 
+function canonicalFactionName(faction: string): string {
+  return faction.trim().toLowerCase() === "minbari"
+    ? "Minbari Federation"
+    : faction;
+}
+
 const CSV_MODEL_FILENAMES: Record<string, string> = {
   lordship: "kirishiac.glb",
   "kirishiac lordship": "kirishiac.glb",
@@ -3577,8 +3583,9 @@ function readActaShipCsv(): {
     }
 
     if (section === "ships" && first && second) {
+      const faction = canonicalFactionName(first);
       ships.push({
-        faction: first,
+        faction,
         name: second,
         shipClass: cells[2] ?? "",
         hull: intCell(cells[3], 4),
@@ -4134,6 +4141,20 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     );
 
     await seedActaCsvShips();
+    await pool.query(
+      `
+        UPDATE ship_models
+        SET faction = 'Minbari Federation'
+        WHERE lower(faction) = 'minbari'
+      `,
+    );
+    await pool.query(
+      `
+        UPDATE game_units
+        SET faction = 'Minbari Federation'
+        WHERE lower(faction) = 'minbari'
+      `,
+    );
 
     for (const seed of SHIP_PRIORITY_SEEDS) {
       await pool.query(
