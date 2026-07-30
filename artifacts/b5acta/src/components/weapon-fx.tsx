@@ -17,12 +17,12 @@ export type WeaponClass = "beam" | "tracer" | "missile" | "energy-mine";
 
 const FACTION_BEAM_COLOR: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
-  "Minbari": "#22ff66",
-  "Minbari Federation": "#22ff66",
+  "Minbari": "#8bdcff",
+  "Minbari Federation": "#8bdcff",
   "Shadows": "#b85cff",
   "Vorlon Empire": "#35ff67",
 };
-const MINBARI_BEAM_COLOR = "#22ff66";
+const MINBARI_BEAM_COLOR = "#8bdcff";
 const SHADOW_SLICER_COLOR = "#b85cff";
 const DEFAULT_BEAM_COLOR = "#ff2a2a";
 const KIRISHIAC_BEAM_MODEL_FILENAME = "kirishiac1.glb";
@@ -89,7 +89,7 @@ const SHADOW_OMEGA_PHASING_PULSE_TUNING = {
 const WHITE_STAR_PROJECTILE_TUNING = {
   ...CAPITAL_PROJECTILE_TUNING,
   color: MINBARI_BEAM_COLOR,
-  secondaryColor: "#a7ff83",
+  secondaryColor: "#e0f7ff",
 };
 const SHADOW_FIGHTER_PROJECTILE_TUNING = {
   ...FIGHTER_PROJECTILE_TUNING,

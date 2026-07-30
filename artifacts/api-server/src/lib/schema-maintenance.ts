@@ -240,11 +240,11 @@ Narn,G'Quan Cruiser,Heavy Cruiser,Light Pulse Cannon,Port,8,6,,,,,,,,,,,
 Narn,G'Quan Cruiser,Heavy Cruiser,Light Pulse Cannon,Starboard,8,6,,,,,,,,,,,
 Interstellar Alliance,White Star,Advanced Frigate,Improved Neutron Laser,Forward,18,2,Beam; Precise; Triple Damage,,,,,,,,,,
 Interstellar Alliance,White Star,Advanced Frigate,Molecular Pulsar,Forward,10,4,Accurate; Armor Piercing; Double Damage,,,,,,,,,,
-League of Nonaligned Worlds,Avioki,Heavy Cruiser,Particle Beam,Forward,18,8,Beam; Double Damage; Slow Loading,,,,,,,,,,
-League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Forward,12,10,Armor Piercing,,,,,,,,,,
-League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Aft,12,4,Armor Piercing,,,,,,,,,,
-League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Port,12,8,Armor Piercing,,,,,,,,,,
-League of Nonaligned Worlds,Avioki,Heavy Cruiser,Ion Cannon,Starboard,12,8,Armor Piercing,,,,,,,,,,`;
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Graviton Beam,Forward,18,8,Beam; Double Damage; Slow Loading,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Graviton Pulsar,Forward,12,10,Armor Piercing,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Graviton Pulsar,Aft,12,4,Armor Piercing,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Graviton Pulsar,Port,12,8,Armor Piercing,,,,,,,,,,
+League of Nonaligned Worlds,Avioki,Heavy Cruiser,Graviton Pulsar,Starboard,12,8,Armor Piercing,,,,,,,,,,`;
 
 const SAGITTARIUS_WEAPONS = [
   {
@@ -608,35 +608,35 @@ const VORLON_TRANSPORT_WEAPONS = [
 
 const AVIOKI_WEAPONS = [
   {
-    name: "Particle Beam",
+    name: "Graviton Beam",
     arc: "Forward",
     range: 18,
     attackDice: 8,
     traits: "Beam; Double Damage; Slow Loading",
   },
   {
-    name: "Ion Cannon",
+    name: "Graviton Pulsar",
     arc: "Forward",
     range: 12,
     attackDice: 10,
     traits: "Armor Piercing",
   },
   {
-    name: "Ion Cannon",
+    name: "Graviton Pulsar",
     arc: "Aft",
     range: 12,
     attackDice: 4,
     traits: "Armor Piercing",
   },
   {
-    name: "Ion Cannon",
+    name: "Graviton Pulsar",
     arc: "Port",
     range: 12,
     attackDice: 8,
     traits: "Armor Piercing",
   },
   {
-    name: "Ion Cannon",
+    name: "Graviton Pulsar",
     arc: "Starboard",
     range: 12,
     attackDice: 8,
@@ -3526,6 +3526,29 @@ function nullableIntCell(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function inferredCsvWeaponName({
+  shipName,
+  name,
+  range,
+  traits,
+}: {
+  shipName: string;
+  name: string | undefined;
+  range: number;
+  traits: string;
+}): string {
+  const trimmed = (name ?? "").trim();
+  if (trimmed) return trimmed;
+
+  if (shipName.trim().toLowerCase() === "avioki") {
+    return range === 18 && /\bbeam\b/i.test(traits)
+      ? "Graviton Beam"
+      : "Graviton Pulsar";
+  }
+
+  return "Weapon";
+}
+
 function resolveActaShipCsv(): string | null {
   const candidates = [
     path.resolve(
@@ -3608,13 +3631,20 @@ function readActaShipCsv(): {
     }
 
     if (section === "weapons" && second) {
+      const range = intCell(cells[5], 0);
+      const traits = cells[7] ?? "";
       const weapon: CsvWeaponSeed = {
         shipName: second,
-        name: cells[3] || "Weapon",
+        name: inferredCsvWeaponName({
+          shipName: second,
+          name: cells[3],
+          range,
+          traits,
+        }),
         arc: canonicalWeaponArc(cells[4] || "Forward"),
-        range: intCell(cells[5], 0),
+        range,
         attackDice: intCell(cells[6], 0),
-        traits: cells[7] ?? "",
+        traits,
       };
       const key = weapon.shipName.toLowerCase();
       weaponsByShip.set(key, [...(weaponsByShip.get(key) ?? []), weapon]);
