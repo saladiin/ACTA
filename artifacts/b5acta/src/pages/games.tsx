@@ -65,7 +65,7 @@ function TurnBadge({ game, myUserId }: { game: TurnSummaryGame; myUserId: string
 
 export default function GamesList() {
   const { data: games, isLoading } = useListGames();
-  const { user } = useUser();
+  const user = temporaryUsernameAuthEnabled ? null : useUser().user;
   const devUserId = useDevUserId();
   const temporaryUsername = useTemporaryUsername();
   void temporaryUsername;

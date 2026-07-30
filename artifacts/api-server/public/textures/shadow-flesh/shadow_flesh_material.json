@@ -1,0 +1,59 @@
+{
+  "name": "Shadow Flesh Organic Hull",
+  "source": "shadow_flesh_source.png",
+  "maps": {
+    "base": {
+      "file": "shadow_flesh_base_tile.png",
+      "colorSpace": "srgb"
+    },
+    "height": {
+      "file": "shadow_flesh_height.png",
+      "colorSpace": "none"
+    },
+    "normal": {
+      "file": "shadow_flesh_normal.png",
+      "colorSpace": "none",
+      "convention": "OpenGL"
+    },
+    "roughness": {
+      "file": "shadow_flesh_roughness.png",
+      "colorSpace": "none"
+    },
+    "alpha": {
+      "file": "shadow_flesh_alpha.png",
+      "colorSpace": "none"
+    },
+    "emissive": {
+      "file": "shadow_flesh_emissive.png",
+      "colorSpace": "none"
+    },
+    "distortion": {
+      "file": "shadow_flesh_distortion.png",
+      "colorSpace": "none"
+    },
+    "flow": {
+      "file": "shadow_flesh_flow.png",
+      "colorSpace": "none",
+      "packing": "RG signed flow, 0.5 neutral"
+    },
+    "orm": {
+      "file": "shadow_flesh_orm.png",
+      "colorSpace": "none",
+      "packing": "R ambient occlusion, G roughness, B metalness"
+    }
+  },
+  "sampling": {
+    "wrapS": "RepeatWrapping",
+    "wrapT": "RepeatWrapping",
+    "repeat": [2, 2]
+  },
+  "shaderDefaults": {
+    "primaryPan": [0.018, 0.006],
+    "secondaryPan": [-0.009, 0.014],
+    "distortionStrength": 0.018,
+    "normalStrength": 0.6,
+    "emissiveIntensity": 0.25,
+    "pulseSpeed": 0.7
+  },
+  "recommendedComposition": "Static ship material beneath a masked, dual-panning flesh overlay"
+}

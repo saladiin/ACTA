@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { OrbitControls, useGLTF } from "@react-three/drei";
 import { getListShipModelsQueryKey, useListShipModels, type ShipModel } from "@workspace/api-client-react";
 import * as THREE from "three";
@@ -16,10 +16,33 @@ import { APP_BUILD_SHA } from "@/lib/build-version";
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 
 const LARGE_MODEL_BYTES = 20 * 1024 * 1024;
-const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
+const OMEGA_ROTATING_MODEL_FILENAME = "omega3.glb";
+const COMMAND_OMEGA_MODEL_FILENAME = "command-omega3.glb";
+const OMEGA_X_MODEL_FILENAME = "omega-x.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
+const PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME = "psicorp-fighter-carrier.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
+const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
+const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
+const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
+const RAIDER_NOVA_MODEL_FILENAME = "raider-nova.glb";
+const SHADOWCLOAK_MODEL_FILENAME = "shadowcloak.glb";
+const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
+const VORLON_FIGHTER_MODEL_FILENAME = "vorlon-fighter.glb";
+const VORLON_LIGHT_CRUISER_MODEL_FILENAME = "vorlon-light-cruiser.glb";
+const VORLON_TRANSPORT_MODEL_FILENAME = "vorlon-transport.glb";
+const ORGANIC_SHADOW_MODEL_FILENAMES = new Set([
+  "battlecrab.glb",
+  SHADOW_SCOUT_MODEL_FILENAME,
+  "spitfire.glb",
+]);
+const ORGANIC_SHADOW_TUNING = {
+  speed: 2,
+  intensity: 1.19,
+  spread: 1.15,
+  normalStrength: 0.9,
+} as const;
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
 };
@@ -35,8 +58,24 @@ const ROTATING_MODEL_PARTS: Record<
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
     nodeName: "omg_rotator",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
     axis: "z",
     secondsPerRotation: 30,
+    rotationMode: "local-axis",
+  },
+  [COMMAND_OMEGA_MODEL_FILENAME]: {
+    nodeName: "omg_rotator",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
+    axis: "z",
+    secondsPerRotation: 30,
+    rotationMode: "local-axis",
+  },
+  [OMEGA_X_MODEL_FILENAME]: {
+    nodeName: "omg_rotator",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
+    axis: "z",
+    secondsPerRotation: 30,
+    rotationMode: "local-axis",
   },
   [EXPLORER_ROTATING_MODEL_FILENAME]: {
     nodeName: "explorerRotate",
@@ -53,6 +92,13 @@ const ROTATING_MODEL_PARTS: Record<
     // offset from this point, causing the section to orbit instead of spin.
     pivotModelPosition: [-0.9458505291, 2.1391551393, -0.1529859525],
   },
+  [RAIDER_CARRIER_MODEL_FILENAME]: {
+    nodeName: "rotator_raider",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
+    axis: "z",
+    secondsPerRotation: 30,
+    pivotModelPosition: [0.0001, 0.9, -50.65],
+  },
   [ORION_SPACE_STATION_MODEL_FILENAME]: {
     nodeName: "orion_rotate",
     // Preserve the exported bind rotation and spin around the bone's Blender Y axis.
@@ -62,8 +108,13 @@ const ROTATING_MODEL_PARTS: Record<
   },
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
+  OMEGA_ROTATING_MODEL_FILENAME,
+  COMMAND_OMEGA_MODEL_FILENAME,
+  OMEGA_X_MODEL_FILENAME,
   EXPLORER_ROTATING_MODEL_FILENAME,
+  PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME,
   PSI_CORPS_MOTHERSHIP_MODEL_FILENAME,
+  RAIDER_CARRIER_MODEL_FILENAME,
   "black-omega.glb",
   "command-hyperion.glb",
   "aurora.glb",
@@ -83,6 +134,8 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "rongoth.glb",
   "frazi.glb",
   "spitfire.glb",
+  RAIDER_DELTA_MODEL_FILENAME,
+  RAIDER_FREIGHTER_MODEL_FILENAME,
 ]);
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
@@ -97,11 +150,28 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "kirishiac1.glb": "20260725-beam-0100",
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
-  [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  [OMEGA_ROTATING_MODEL_FILENAME]: "20260729-194957",
+  [COMMAND_OMEGA_MODEL_FILENAME]: "20260729-195216",
+  [OMEGA_X_MODEL_FILENAME]: "20260729-202747",
   "orestes.glb": "20260724-191655",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
+  [PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME]: "20260730-fighter-carrier-v2",
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
+  [RAIDER_CARRIER_MODEL_FILENAME]: "20260728-202413",
+  [RAIDER_DELTA_MODEL_FILENAME]: "20260728-212845",
+  [RAIDER_FREIGHTER_MODEL_FILENAME]: "20260730-freighter-v1",
+  [RAIDER_NOVA_MODEL_FILENAME]: "20260728-221344",
   "rongoth.glb": "20260724-193659",
+  [SHADOWCLOAK_MODEL_FILENAME]: "20260730-shadowcloak-v2",
+  [SHADOW_SCOUT_MODEL_FILENAME]: "20260728-135155",
+  [VORLON_FIGHTER_MODEL_FILENAME]: "20260728-vorlon-fighter-v1",
+  [VORLON_LIGHT_CRUISER_MODEL_FILENAME]: "20260728-223454",
+  [VORLON_TRANSPORT_MODEL_FILENAME]: "20260728-vorlon-transport-v1",
+};
+const TEXTURE_ASSET_REVISIONS: Record<string, string> = {
+  "shadow_flesh_base_tile.png": "20260720-organic-v1",
+  "shadow_flesh_normal.png": "20260720-organic-v1",
+  "shadow_flesh_roughness.png": "20260720-organic-v1",
 };
 
 type ModelProbe = {
@@ -128,6 +198,13 @@ function assetUrlFor(filename: string): string {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const revision = MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
   return `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
+function textureUrlFor(filename: string): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision =
+    TEXTURE_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
+  return `${basePath}/api/textures/${filename}?v=${encodeURIComponent(revision)}`;
 }
 
 function isGlb(filename: string): boolean {
@@ -217,19 +294,57 @@ function ModelFallback() {
   );
 }
 
+type OrganicShadowShader = {
+  uniforms: Record<string, { value: number }>;
+};
+
+function configureOrganicShadowTexture(
+  texture: THREE.Texture,
+  colorSpace: THREE.ColorSpace,
+) {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.flipY = false;
+  texture.colorSpace = colorSpace;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+}
+
 function NavalModel({ url, filename }: { url: string; filename: string }) {
   const { scene } = useGLTF(url);
   const filenameKey = filename.toLowerCase();
+  const isOrganicShadowModel = ORGANIC_SHADOW_MODEL_FILENAMES.has(filenameKey);
+  const [baseTexture, normalTexture, roughnessTexture] = useLoader(
+    THREE.TextureLoader,
+    [
+      textureUrlFor("shadow_flesh_base_tile.png"),
+      textureUrlFor("shadow_flesh_normal.png"),
+      textureUrlFor("shadow_flesh_roughness.png"),
+    ],
+  ) as THREE.Texture[];
   const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
   const rotatingPartRef = useRef<THREE.Object3D | null>(null);
   const rotatingPartInitialRotationRef = useRef(0);
   const rotatingPartInitialQuaternionRef = useRef(new THREE.Quaternion());
   const rotatingPartDeltaQuaternionRef = useRef(new THREE.Quaternion());
   const rotatingPartLocalAxisRef = useRef(new THREE.Vector3(0, 1, 0));
+  const elapsedRef = useRef(0);
+  const shaderRefs = useRef<OrganicShadowShader[]>([]);
 
   const { cloned, scale, center } = useMemo(() => {
     rotatingPartRef.current = null;
     rotatingPartInitialRotationRef.current = 0;
+    shaderRefs.current = [];
+    if (isOrganicShadowModel) {
+      configureOrganicShadowTexture(baseTexture, THREE.SRGBColorSpace);
+      configureOrganicShadowTexture(normalTexture, THREE.NoColorSpace);
+      configureOrganicShadowTexture(roughnessTexture, THREE.NoColorSpace);
+      normalTexture.repeat.set(
+        ORGANIC_SHADOW_TUNING.spread,
+        ORGANIC_SHADOW_TUNING.spread,
+      );
+      roughnessTexture.repeat.copy(normalTexture.repeat);
+    }
     const c = rotatingPartConfig ? cloneSkeleton(scene) : scene.clone(true);
     c.traverse((child: any) => {
       const childName = String(child.name ?? "").toLowerCase();
@@ -248,6 +363,56 @@ function NavalModel({ url, filename }: { url: string; filename: string }) {
       child.receiveShadow = true;
       const materials = (Array.isArray(child.material) ? child.material : [child.material]).map(
         (material: THREE.Material | undefined) => {
+          if (isOrganicShadowModel) {
+            const organicMaterial = new THREE.MeshStandardMaterial({
+              color: "#ffffff",
+              map: baseTexture,
+              normalMap: normalTexture,
+              normalScale: new THREE.Vector2(
+                ORGANIC_SHADOW_TUNING.normalStrength,
+                ORGANIC_SHADOW_TUNING.normalStrength,
+              ),
+              roughness: 0.86,
+              roughnessMap: roughnessTexture,
+              metalness: 0,
+              side: THREE.DoubleSide,
+            });
+            organicMaterial.onBeforeCompile = (shader) => {
+              shader.uniforms.uOrganicTime = { value: elapsedRef.current };
+              shader.fragmentShader = shader.fragmentShader.replace(
+                "void main() {",
+                `
+uniform float uOrganicTime;
+
+void main() {
+                `,
+              );
+              shader.fragmentShader = shader.fragmentShader.replace(
+                "#include <map_fragment>",
+                `
+#ifdef USE_MAP
+  vec2 organicUv = vMapUv * ${ORGANIC_SHADOW_TUNING.spread.toFixed(2)};
+  float organicTravel = uOrganicTime
+    * ${ORGANIC_SHADOW_TUNING.speed.toFixed(2)}
+    * ${ORGANIC_SHADOW_TUNING.intensity.toFixed(2)};
+  vec2 organicDrift = vec2(0.018, 0.006) * organicTravel;
+  vec4 sampledDiffuseColor = texture2D(map, organicUv + organicDrift);
+  float organicGray = dot(
+    sampledDiffuseColor.rgb,
+    vec3(0.2126, 0.7152, 0.0722)
+  );
+  organicGray = clamp(organicGray * 1.42 + 0.01, 0.0, 0.72);
+  sampledDiffuseColor.rgb = vec3(organicGray);
+  diffuseColor *= sampledDiffuseColor;
+#endif
+                `,
+              );
+              shaderRefs.current.push(shader as OrganicShadowShader);
+            };
+            organicMaterial.customProgramCacheKey = () =>
+              "naval-shadow-organic-single-drift-v1";
+            return organicMaterial;
+          }
           const clonedMaterial = material?.clone
             ? material.clone()
             : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
@@ -279,9 +444,28 @@ function NavalModel({ url, filename }: { url: string; filename: string }) {
       scale: longest > 0 ? 5.4 / longest : 1,
       center: modelCenter,
     };
-  }, [rotatingPartConfig, scene]);
+  }, [
+    baseTexture,
+    isOrganicShadowModel,
+    normalTexture,
+    rotatingPartConfig,
+    roughnessTexture,
+    scene,
+  ]);
 
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
+    if (isOrganicShadowModel) {
+      elapsedRef.current += delta;
+      for (const shader of shaderRefs.current) {
+        shader.uniforms.uOrganicTime.value = elapsedRef.current;
+      }
+      const travel =
+        elapsedRef.current *
+        ORGANIC_SHADOW_TUNING.speed *
+        ORGANIC_SHADOW_TUNING.intensity;
+      normalTexture.offset.set(travel * 0.018, travel * 0.006);
+      roughnessTexture.offset.copy(normalTexture.offset);
+    }
     if (!rotatingPartConfig || !rotatingPartRef.current) return;
     const cycleSeconds = Math.max(0.1, rotatingPartConfig.secondsPerRotation);
     const progress = (clock.getElapsedTime() % cycleSeconds) / cycleSeconds;

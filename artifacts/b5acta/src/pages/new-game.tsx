@@ -7,6 +7,10 @@ import {
   getListGamesQueryKey,
   getGetLobbyQueryKey,
 } from "@workspace/api-client-react";
+import type {
+  GameInputAsteroidFieldCount,
+  GameInputTerrainCount,
+} from "@workspace/api-client-react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,9 +96,14 @@ export default function NewGame() {
             terrain !== "none" ? terrainPlacement : undefined,
           terrain,
           terrainCount:
-            terrain !== "none" ? terrainCount : undefined,
+            terrain !== "none"
+              ? (terrainCount as GameInputTerrainCount)
+              : undefined,
           asteroidFieldCount:
-            terrain === "asteroid-fields" ? terrainCount : undefined,
+            terrain === "asteroid-fields" &&
+            terrainPlacement === "automatic"
+              ? (terrainCount as GameInputAsteroidFieldCount)
+              : undefined,
           stations,
           crewQualityMode,
         },

@@ -29,10 +29,12 @@ import {
   useUiShipMeshTints,
   useUiShipStatusDisplayMode,
   useUiWeaponArcProjection,
+  useUiWeaponArcProjectionStyle,
   type UiArcColorScheme,
   type UiBoardBackgroundMode,
   type UiControlMode,
   type UiShipStatusDisplayMode,
+  type UiWeaponArcProjectionStyle,
 } from "@/hooks/use-ui-settings";
 
 const CONTROL_MODES: Array<{
@@ -150,6 +152,23 @@ const SHIP_STATUS_DISPLAY_MODES: Array<{
   },
 ];
 
+const WEAPON_ARC_PROJECTION_STYLES: Array<{
+  id: UiWeaponArcProjectionStyle;
+  name: string;
+  summary: string;
+}> = [
+  {
+    id: "filled",
+    name: "Filled",
+    summary: "Show translucent filled arc sectors with boundary outlines.",
+  },
+  {
+    id: "outline",
+    name: "Outline",
+    summary: "Show only arc boundaries without filling the projected area.",
+  },
+];
+
 export default function Settings() {
   const [controlMode, setControlMode] = useUiControlMode();
   const [arcColorScheme, setArcColorScheme] = useUiArcColorScheme();
@@ -167,6 +186,8 @@ export default function Settings() {
     useUiBoardBackgroundMode();
   const [weaponArcProjectionEnabled, setWeaponArcProjectionEnabled] =
     useUiWeaponArcProjection();
+  const [weaponArcProjectionStyle, setWeaponArcProjectionStyle] =
+    useUiWeaponArcProjectionStyle();
   const [isoCameraControlsEnabled, setIsoCameraControlsEnabled] =
     useUiIsoCameraControls();
 
@@ -388,6 +409,39 @@ export default function Settings() {
               data-testid="switch-weapon-arc-projection"
             />
           </div>
+          <RadioGroup
+            value={weaponArcProjectionStyle}
+            onValueChange={(value) =>
+              setWeaponArcProjectionStyle(value as UiWeaponArcProjectionStyle)
+            }
+            className="mt-4 grid gap-3 md:grid-cols-2"
+            data-testid="weapon-arc-projection-style-radio-group"
+          >
+            {WEAPON_ARC_PROJECTION_STYLES.map((style) => (
+              <Label
+                key={style.id}
+                htmlFor={`weapon-arc-projection-style-${style.id}`}
+                className={`block cursor-pointer rounded border p-3 transition-colors ${
+                  weaponArcProjectionStyle === style.id
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border bg-background/55 text-muted-foreground hover:border-primary/50 hover:bg-card"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem
+                    id={`weapon-arc-projection-style-${style.id}`}
+                    value={style.id}
+                  />
+                  <span className="font-mono text-xs font-bold uppercase tracking-widest">
+                    {style.name}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {style.summary}
+                </p>
+              </Label>
+            ))}
+          </RadioGroup>
         </div>
 
         <section className="mt-3 border-t border-border pt-5">

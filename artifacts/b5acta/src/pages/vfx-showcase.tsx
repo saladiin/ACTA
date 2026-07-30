@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
-import { Billboard, OrbitControls, Text, useGLTF } from "@react-three/drei";
+import { Billboard, Line, OrbitControls, Text, useGLTF } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 // @ts-ignore
@@ -159,9 +159,12 @@ type SpecialStation = {
     | "gravity-lens"
     | "damage-glow-core"
     | "dead-hulk-point-sparks"
+    | "battlecrab-damage-particle-spray"
     | "weapon-arc-damage-sample"
+    | "weapon-arc-projection-state-sample"
     | "godot-jump-point-mesh"
     | "gas-cloud-terrain"
+    | "test-cloud-mesh"
     | "cloud-flipbook-damage"
     | "missile-impact-flipbook-test"
     | "standalone-flipbook-preview"
@@ -169,6 +172,7 @@ type SpecialStation = {
     | "mesh-projectile-salvo"
     | "texture-missile-salvo"
     | "kirishiac-beam-test"
+    | "vorlon-dreadnought-beam-test"
     | "textured-exploding-sphere";
   position: Vec2;
   to?: Vec2;
@@ -307,7 +311,7 @@ const KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES = 1.35;
 
 const FACTION_COLORS: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
-  "Minbari Federation": "#22ff66",
+  "Minbari Federation": "#8bdcff",
   "Shadows": "#b85cff",
   "Centauri Republic": "#ffa040",
 };
@@ -384,6 +388,36 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           randomness: 0.42,
           meshSize: 0.4,
           flareSize: 0.1,
+        },
+      },
+    ],
+  },
+  {
+    id: "vorlon-beam-tests",
+    name: "Vorlon Beam",
+    summary: "Vorlon dreadnought convergence-charge and primary beam sequence.",
+    stations: [
+      {
+        kind: "special",
+        id: "vorlon-dreadnought-convergence-beam",
+        label: "Dreadnought Convergence Beam",
+        note: "Four aperture beams charge the main emitter for one second, then remain active while the primary beam fires.",
+        effect: "vorlon-dreadnought-beam-test",
+        position: [0, -6],
+        to: [0, 9],
+        modelFilename: "vorlon-dreadnought.glb",
+        tuning: {
+          color: "#35ff67",
+          secondaryColor: "#d8ffe1",
+          speed: 1,
+          size: 1,
+          fade: 1,
+          intensity: 1.55,
+          spread: 1,
+          count: 4,
+          arc: 0,
+          thickness: 1,
+          beamCoreDiameter: 0.0325,
         },
       },
     ],
@@ -490,43 +524,13 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
     stations: [
       {
         kind: "hull-state",
-        id: "hyperion-adrift-tumble",
-        label: "Adrift Tumble",
-        note: "Powerless hull with slow visual-only roll and pitch drift.",
-        mode: "adrift-tumble",
-        modelFilename: "hyperion.glb",
-        position: [-9, -26],
-        tuning: { color: "#94a3b8", secondaryColor: "#67e8f9", speed: 0.35, intensity: 0.45 },
-      },
-      {
-        kind: "hull-state",
-        id: "hyperion-adrift-askew",
-        label: "Adrift Askew",
-        note: "Static off-axis hull for a quieter no-power state.",
-        mode: "adrift-askew",
-        modelFilename: "hyperion.glb",
-        position: [0, -26],
-        tuning: { color: "#94a3b8", secondaryColor: "#cbd5e1", intensity: 0.38 },
-      },
-      {
-        kind: "hull-state",
         id: "hyperion-exploding-delayed",
         label: "Exploding",
         note: "Delayed explosion warning with red internal pulse.",
         mode: "exploding",
         modelFilename: "hyperion.glb",
-        position: [9, -26],
+        position: [-16, -24],
         tuning: { color: "#ef4444", secondaryColor: "#f97316", speed: 1.25, size: 0.9, intensity: 1.35, count: 18, spread: 0.72 },
-      },
-      {
-        kind: "hull-state",
-        id: "hyperion-destroyed-wreck",
-        label: "Destroyed Wreck",
-        note: "Cold wreck sample using the dead Hyperion mesh and smoke.",
-        mode: "destroyed",
-        modelFilename: "dead-hyperion.glb",
-        position: [18, -26],
-        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.8, intensity: 0.8, count: 30, spread: 0.95 },
       },
       {
         kind: "ambient",
@@ -534,7 +538,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Hull Fire",
         note: "Localized fire used for damaged ships.",
         effect: "fire",
-        position: [-16, -18],
+        position: [-8, -24],
         tuning: { color: "#ff7a18", secondaryColor: "#ffd166", speed: 1.1, size: 0.75, fade: 1, intensity: 0.8, spread: 0.45, count: 16, arc: 0.15, thickness: 0.9 },
       },
       {
@@ -543,9 +547,31 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Cloud Flipbook Damage",
         note: "Converted Cloud01 8x8 WebP flipbook as a damage-emitter candidate.",
         effect: "cloud-flipbook-damage",
-        position: [8, -18],
+        position: [0, -24],
         textureFilename: "cloud01-8x8.webp",
         tuning: CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING,
+      },
+      {
+        kind: "special",
+        id: "battlecrab-shadow-damage-particles",
+        label: "Battlecrab Damage Particles",
+        note: "Battlecrab/Shadow hull-damage spray copied from live play, replacing black sphere meshes with tunable black point particles.",
+        effect: "battlecrab-damage-particle-spray",
+        position: [8, -24],
+        modelFilename: "battlecrab.glb",
+        tuning: {
+          color: "#000000",
+          secondaryColor: "#020617",
+          speed: 0.95,
+          size: 0.32,
+          fade: 1.3,
+          intensity: 0.88,
+          spread: 0.55,
+          count: 96,
+          arc: 5.6,
+          thickness: 1,
+          randomness: 1.1,
+        },
       },
       {
         kind: "special",
@@ -568,75 +594,24 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         },
       },
       {
-        kind: "animated-model",
-        id: "omega2-rotator-bone-test",
-        label: "Omega Rotator Bone",
-        note: "omega2.glb omg_rotator rotates around Blender Y/front-back over 30 seconds.",
-        modelFilename: "omega2.glb",
-        position: [-18, -10],
-        rotatingBoneName: "omg_rotator",
-        rotationAxis: "z",
-        secondsPerRotation: 30,
-        tuning: { color: "#38bdf8", secondaryColor: "#f8fafc", speed: 1, size: 1, intensity: 0.4 },
-      },
-      {
         kind: "special",
-        id: "kirishiac-beam-firing-test",
-        label: "Kirishiac Beam Firing",
-        note: "kirishiac1.glb with the named kirishiac_beam shell active, plus a textured yellow core beam using Orb Texture assets.",
-        effect: "kirishiac-beam-test",
-        modelFilename: "kirishiac1.glb",
-        position: [0, -2],
-        to: [10.5, 10.5],
+        id: "weapon-arc-projection-state-sample",
+        label: "Projected Arc States",
+        note: "Projection-mode matrix for online, degraded, offline, and mixed readiness states in filled and outline styles.",
+        effect: "weapon-arc-projection-state-sample",
+        position: [0, -34],
         tuning: {
-          color: "#facc15",
-          secondaryColor: "#fff7ad",
-          speed: 0.9,
-          size: 0.75,
-          fade: 0.82,
-          intensity: 1.15,
+          color: "#34eb52",
+          secondaryColor: "#ef4444",
+          speed: 1,
+          size: 1,
+          fade: 1,
+          intensity: 1,
           spread: 1,
           count: 1,
-          arc: 0.32,
+          arc: 0,
           thickness: 1,
-          cylinderLength: 1,
-          randomness: 1,
-          ribbonEffect: 1,
-          beamCoreDiameter: 0.07,
-          beamCoreBrightness: 1.15,
-          beamCoreOpacity: 0.82,
-          beamCorePulse: 0.6,
         },
-      },
-      {
-        kind: "hull-state",
-        id: "omega-destroyed-wreck",
-        label: "Destroyed Omega Wreck",
-        note: "Dead Omega mesh with smoke_light and small_glow emitter empties.",
-        mode: "destroyed",
-        modelFilename: "dead-omega.glb",
-        position: [-9, -10],
-        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 30, spread: 0.95 },
-      },
-      {
-        kind: "hull-state",
-        id: "nova-destroyed-wreck",
-        label: "Destroyed Nova Wreck",
-        note: "Dead Nova mesh with smoke_light and small_glow emitter empties.",
-        mode: "destroyed",
-        modelFilename: "dead-nova.glb",
-        position: [0, -10],
-        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.85, intensity: 0.85, count: 34, spread: 0.95 },
-      },
-      {
-        kind: "hull-state",
-        id: "bintak-destroyed-wreck",
-        label: "Destroyed Bintak Wreck",
-        note: "Dead Bintak mesh with small_glow, wreck_smoke, and ember_trail emitter empties.",
-        mode: "destroyed",
-        modelFilename: "dead-bintak.glb",
-        position: [9, -10],
-        tuning: { color: "#64748b", secondaryColor: "#f8fafc", speed: 0.5, size: 0.9, intensity: 0.9, count: 38, spread: 1 },
       },
       {
         kind: "special",
@@ -644,7 +619,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Sparse Ember Drift",
         note: "Point particles: a few hot embers drifting aft from a cold dead Hyperion.",
         effect: "dead-hulk-point-sparks",
-        position: [-18, 4],
+        position: [-18, -12],
         modelFilename: "dead-hyperion.glb",
         tuning: { color: "#fb923c", secondaryColor: "#fef3c7", speed: 0.15, size: 0.72, fade: 1.45, intensity: 1.05, spread: 0.72, count: 55, arc: 0.55, thickness: 0.82, randomness: 0.25 },
       },
@@ -654,7 +629,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Engine Spark Trail",
         note: "Point particles: denser orange trail venting backward from the aft hull.",
         effect: "dead-hulk-point-sparks",
-        position: [-6, 4],
+        position: [-6, -12],
         modelFilename: "dead-hyperion.glb",
         tuning: { color: "#f97316", secondaryColor: "#fde68a", speed: 0.72, size: 0.86, fade: 1.1, intensity: 1.35, spread: 0.55, count: 110, arc: 0.32, thickness: 0.95, randomness: 0.42 },
       },
@@ -664,7 +639,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Electrical Glints",
         note: "Point particles: cooler intermittent blue-white sparks flickering off damaged systems.",
         effect: "dead-hulk-point-sparks",
-        position: [6, 4],
+        position: [6, -12],
         modelFilename: "dead-hyperion.glb",
         tuning: { color: "#67e8f9", secondaryColor: "#f8fafc", speed: 0.58, size: 0.54, fade: 1.8, intensity: 1.5, spread: 0.9, count: 78, arc: 0.82, thickness: 0.68, randomness: 0.86 },
       },
@@ -674,7 +649,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Wide Debris Sparkle",
         note: "Point particles: wider, quieter mixed-color motes trailing from the hulk silhouette.",
         effect: "dead-hulk-point-sparks",
-        position: [18, 4],
+        position: [18, -12],
         modelFilename: "dead-hyperion.glb",
         tuning: { color: "#f59e0b", secondaryColor: "#94a3b8", speed: 0.3, size: 0.46, fade: 2.1, intensity: 0.9, spread: 1.35, count: 135, arc: 1.1, thickness: 0.62, randomness: 0.7 },
       },
@@ -1132,6 +1107,37 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         textureFilename: "cloud01-8x8.webp",
         tuning: { color: "#22d3ee", secondaryColor: "#f97316", speed: 0.36, size: 1.18, fade: 1.65, intensity: 0.78, spread: 2.35, count: 36, arc: 0.82, thickness: 0.62 },
       },
+      {
+        kind: "special",
+        id: "test-cloud-mesh",
+        label: "Test Cloud Mesh",
+        note: "Imported Blender Mesh-to-Volume / volume-displace GLB smoke test.",
+        effect: "test-cloud-mesh",
+        position: [10, -22],
+        modelFilename: "test-cloud.glb",
+        textureFilename: "cloud01-8x8.webp",
+        tuning: { color: "#9be7ff", secondaryColor: "#ffffff", speed: 0.55, size: 1, fade: 0.72, intensity: 0.62, spread: 1, count: 1, arc: 0, thickness: 1 },
+      },
+      {
+        kind: "special",
+        id: "mixed-large-gas-cloud",
+        label: "Mixed Large Gas Cloud",
+        note: "Large cloud bank using Cloud01-04 flipbooks in deterministic-random layered order.",
+        effect: "gas-cloud-terrain",
+        position: [-13, -22],
+        textureFilename: "cloud01-8x8.webp",
+        tuning: { color: "#22d3ee", secondaryColor: "#93c5fd", speed: 0.34, size: 1.55, fade: 1.85, intensity: 0.62, spread: 3.15, count: 64, arc: 1.05, thickness: 0.78 },
+      },
+      {
+        kind: "special",
+        id: "wispy-large-gas-cloud",
+        label: "Wispy Large Gas Cloud",
+        note: "Large cloud bank using WispySmoke01-03b flipbooks in deterministic-random layered order.",
+        effect: "gas-cloud-terrain",
+        position: [-26, -22],
+        textureFilename: "wispy-smoke01-8x8.webp",
+        tuning: { color: "#7dd3fc", secondaryColor: "#c4b5fd", speed: 0.28, size: 1.85, fade: 1.55, intensity: 0.54, spread: 3.35, count: 72, arc: 1.25, thickness: 0.72 },
+      },
     ],
   },
 ];
@@ -1151,6 +1157,12 @@ function stationTypeLabel(station: ShowcaseStation): string {
   if (station.kind === "hull-state") return station.mode;
   if (station.kind === "animated-model") return "bone test";
   if (station.kind === "organic-skin") return "organic skin";
+  if (
+    station.kind === "special" &&
+    station.effect === "vorlon-dreadnought-beam-test"
+  ) {
+    return "charge beam";
+  }
   return station.effect;
 }
 
@@ -1168,7 +1180,11 @@ function isPersistentImpactFlashes(station: ShowcaseStation): boolean {
 }
 
 function isPointSparkTrail(station: ShowcaseStation): boolean {
-  return station.kind === "special" && (station.effect === "dead-hulk-point-sparks" || station.effect === "missile-impact-flipbook-test");
+  return station.kind === "special" && (
+    station.effect === "dead-hulk-point-sparks" ||
+    station.effect === "battlecrab-damage-particle-spray" ||
+    station.effect === "missile-impact-flipbook-test"
+  );
 }
 
 function isTexturedExplodingSphere(station: ShowcaseStation): station is SpecialStation {
@@ -1353,7 +1369,9 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "omega2.glb": "20260720-174853",
   "projectile_mesh.glb": "20260720-154500",
   "spitfire.glb": "20260720-210100",
+  "test-cloud.glb": "20260730-test-cloud-v1",
   "battlecrab.glb": "20260720-214405-organic",
+  "vorlon-dreadnought.glb": "20260727-convergence-beam-v1",
   "_jumppoint.glb": "20260719-192131",
 };
 
@@ -1504,6 +1522,138 @@ function ShowcaseGlbModel({
             />
           ))
         : null}
+    </group>
+  );
+}
+
+function TestCloudTexturedMesh({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const filename = station.modelFilename ?? "test-cloud.glb";
+  const textureFilename = station.textureFilename ?? "cloud01-8x8.webp";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const materialsRef = useRef<THREE.ShaderMaterial[]>([]);
+  const elapsedRef = useRef(0);
+  const columns = 8;
+  const rows = 8;
+  const frameCount = columns * rows;
+
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    const materials: THREE.ShaderMaterial[] = [];
+    sourceTexture.colorSpace = THREE.SRGBColorSpace;
+    sourceTexture.wrapS = THREE.ClampToEdgeWrapping;
+    sourceTexture.wrapT = THREE.ClampToEdgeWrapping;
+    sourceTexture.repeat.set(1 / columns, 1 / rows);
+    sourceTexture.needsUpdate = true;
+
+    c.traverse((child: any) => {
+      if (!child.isMesh || !child.geometry) return;
+      child.geometry.computeBoundingBox();
+      const box = child.geometry.boundingBox as THREE.Box3 | null;
+      const minX = box?.min.x ?? -1;
+      const maxX = box?.max.x ?? 1;
+      const minZ = box?.min.z ?? -1;
+      const maxZ = box?.max.z ?? 1;
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uMap: { value: sourceTexture },
+          uFrameOffset: { value: new THREE.Vector2(0, 0) },
+          uFrameScale: { value: new THREE.Vector2(1 / columns, 1 / rows) },
+          uBoundsMin: { value: new THREE.Vector2(minX, minZ) },
+          uBoundsSize: {
+            value: new THREE.Vector2(
+              Math.max(0.0001, maxX - minX),
+              Math.max(0.0001, maxZ - minZ),
+            ),
+          },
+          uColor: { value: new THREE.Color(tuning.color) },
+          uOpacity: { value: tuning.fade },
+          uIntensity: { value: tuning.intensity },
+        },
+        vertexShader: `
+          varying vec2 vCloudUv;
+          uniform vec2 uBoundsMin;
+          uniform vec2 uBoundsSize;
+          uniform vec2 uFrameOffset;
+          uniform vec2 uFrameScale;
+
+          void main() {
+            vec2 generatedUv = clamp((position.xz - uBoundsMin) / uBoundsSize, 0.0, 1.0);
+            vCloudUv = generatedUv * uFrameScale + uFrameOffset;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec2 vCloudUv;
+          uniform sampler2D uMap;
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          uniform float uIntensity;
+
+          void main() {
+            vec4 texel = texture2D(uMap, vCloudUv);
+            float luminance = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+            float mask = max(texel.a, smoothstep(0.03, 0.78, luminance));
+            float alpha = mask * clamp(uOpacity, 0.0, 1.5);
+            if (alpha < 0.015) discard;
+            vec3 color = mix(uColor * 0.45, texel.rgb * uColor * (1.05 + uIntensity), 0.72);
+            gl_FragColor = vec4(color, alpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.NormalBlending,
+        toneMapped: false,
+      });
+      child.material = material;
+      materials.push(material);
+    });
+
+    materialsRef.current = materials;
+    return c;
+  }, [scene, sourceTexture, tuning.color, tuning.fade, tuning.intensity]);
+
+  useEffect(
+    () => () => {
+      for (const material of materialsRef.current) material.dispose();
+    },
+    [cloned],
+  );
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const elapsed = elapsedRef.current;
+    const frameRate = 12 * clamp(tuning.speed, 0.05, 2.5);
+    const frame = Math.floor(elapsed * frameRate) % frameCount;
+    const column = frame % columns;
+    const row = Math.floor(frame / columns);
+    const offset = new THREE.Vector2(column / columns, 1 - (row + 1) / rows);
+    const color = new THREE.Color(tuning.color);
+    for (const material of materialsRef.current) {
+      material.uniforms.uFrameOffset.value.copy(offset);
+      material.uniforms.uColor.value.copy(color);
+      material.uniforms.uOpacity.value = clamp(tuning.fade, 0.05, 1.35);
+      material.uniforms.uIntensity.value = tuning.intensity;
+    }
+  });
+
+  const scale = useMemo(
+    () => showcaseShipScale(cloned, clamp(tuning.size, 0.2, 2) * 6),
+    [cloned, tuning.size],
+  );
+
+  return (
+    <group position={[station.position[0], SHOWCASE_MESH_ORIGIN_Y, station.position[1]]} scale={[scale, scale, scale]}>
+      <primitive object={cloned} />
     </group>
   );
 }
@@ -2557,16 +2707,39 @@ function GasCloudTerrainEffect({
   paused: boolean;
 }) {
   const textureFilename = station.textureFilename ?? "cloud01-8x8.webp";
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-  const revision =
-    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
-  const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
-  const sourceTexture = useLoader(THREE.TextureLoader, url);
+  const mixedTextureFilenames = [
+    "cloud01-8x8.webp",
+    "cloud02-8x8.webp",
+    "cloud03-8x8.webp",
+    "cloud04-8x8.webp",
+  ];
+  const wispyTextureFilenames = [
+    "wispy-smoke01-8x8.webp",
+    "wispy-smoke02-8x8.webp",
+    "wispy-smoke03-8x8.webp",
+    "wispy-smoke03b-8x8.webp",
+  ];
+  const useMixedCloudTextures = station.id === "mixed-large-gas-cloud";
+  const useWispyCloudTextures = station.id === "wispy-large-gas-cloud";
+  const textureFilenames = useMixedCloudTextures
+    ? mixedTextureFilenames
+    : useWispyCloudTextures
+      ? wispyTextureFilenames
+    : [textureFilename];
+  const sourceTextures = useLoader(
+    THREE.TextureLoader,
+    textureFilenames.map((filename) => showcaseTextureUrl(filename)),
+  );
   const cloudGroupRef = useRef<THREE.Group>(null);
   const elapsedRef = useRef(0);
   const columns = 8;
   const rows = 8;
   const frameCount = columns * rows;
+  const seed = station.id === "mixed-large-gas-cloud"
+    ? 947
+    : station.id === "wispy-large-gas-cloud"
+      ? 1667
+      : 113;
 
   const footprint = useMemo(() => {
     const rawPoints: Vec2[] = [
@@ -2601,57 +2774,76 @@ function GasCloudTerrainEffect({
 
   const instances = useMemo(
     () => {
-      const lowLayer = Array.from({ length: 24 }, (_, i) => {
-        const layerRow = Math.floor(i / 6);
-        const column = i % 6;
-        const progress = column / 5;
-        const rowOffset = layerRow - 1.5;
+      const desiredCount = clamp(Math.round(tuning.count), 12, 96);
+      const lowCount = Math.max(8, Math.round(desiredCount * 0.68));
+      const highCount = Math.max(4, desiredCount - lowCount);
+      const lowColumns = station.id === "mixed-large-gas-cloud" ? 9 : 6;
+      const highColumns = station.id === "mixed-large-gas-cloud" ? 6 : 4;
+      const seededUnit = (index: number) => {
+        const x = Math.sin((seed + index * 91.7) * 12.9898) * 43758.5453;
+        return x - Math.floor(x);
+      };
+      const lowLayer = Array.from({ length: lowCount }, (_, i) => {
+        const layerRow = Math.floor(i / lowColumns);
+        const column = i % lowColumns;
+        const progress = lowColumns <= 1 ? 0.5 : column / (lowColumns - 1);
+        const rowOffset = layerRow - (Math.ceil(lowCount / lowColumns) - 1) / 2;
         const edgeFade = Math.sin(progress * Math.PI);
+        const jitterX = (seededUnit(i + 3) - 0.5) * tuning.spread * 0.34;
+        const jitterZ = (seededUnit(i + 7) - 0.5) * tuning.spread * 0.48;
         return {
           x:
             (progress - 0.5) * tuning.spread * 5.8 +
             rowOffset * tuning.spread * 0.22 +
-            Math.sin(i * 1.73) * tuning.spread * 0.12,
+            Math.sin(i * 1.73) * tuning.spread * 0.12 +
+            jitterX,
           z:
             rowOffset * tuning.spread * 0.72 +
-            Math.cos(i * 1.29) * tuning.spread * 0.18,
-          y: 0.38 + layerRow * 0.11 + edgeFade * 0.28 + tuning.arc,
-          scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08) * tuning.size,
+            Math.cos(i * 1.29) * tuning.spread * 0.18 +
+            jitterZ,
+          y: 0.38 + layerRow * 0.11 + edgeFade * 0.28 + tuning.arc + seededUnit(i + 11) * 0.24,
+          scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08 + seededUnit(i + 13) * 0.18) * tuning.size,
           opacity: (0.085 + edgeFade * 0.045) * tuning.intensity * tuning.fade,
-          phase: i * 6.3,
-          rotation: (rowOffset * 0.24) + Math.sin(i * 0.81) * 0.18,
+          phase: i * 6.3 + seededUnit(i + 17) * frameCount,
+          rotation: (rowOffset * 0.24) + Math.sin(i * 0.81) * 0.18 + (seededUnit(i + 19) - 0.5) * 0.7,
         };
       });
-      const highLayer = Array.from({ length: 12 }, (_, highIndex) => {
-        const row = Math.floor(highIndex / 4);
-        const column = highIndex % 4;
-        const progress = column / 3;
-        const rowOffset = row - 1;
+      const highLayer = Array.from({ length: highCount }, (_, highIndex) => {
+        const row = Math.floor(highIndex / highColumns);
+        const column = highIndex % highColumns;
+        const progress = highColumns <= 1 ? 0.5 : column / (highColumns - 1);
+        const rowOffset = row - (Math.ceil(highCount / highColumns) - 1) / 2;
         const edgeFade = Math.sin(progress * Math.PI);
-        const i = highIndex + 24;
+        const i = highIndex + lowCount;
         return {
           x:
             (progress - 0.5) * tuning.spread * 5.15 +
             rowOffset * tuning.spread * 0.36 +
-            Math.sin(i * 1.41) * tuning.spread * 0.24,
+            Math.sin(i * 1.41) * tuning.spread * 0.24 +
+            (seededUnit(i + 23) - 0.5) * tuning.spread * 0.42,
           z:
             rowOffset * tuning.spread * 0.88 +
-            Math.cos(i * 1.17) * tuning.spread * 0.28,
-          y: 1.45 + row * 0.22 + edgeFade * 0.38 + tuning.arc,
-          scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12) * tuning.size,
+            Math.cos(i * 1.17) * tuning.spread * 0.28 +
+            (seededUnit(i + 29) - 0.5) * tuning.spread * 0.55,
+          y: 1.45 + row * 0.22 + edgeFade * 0.38 + tuning.arc + seededUnit(i + 31) * 0.42,
+          scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12 + seededUnit(i + 37) * 0.18) * tuning.size,
           opacity: (0.045 + edgeFade * 0.026) * tuning.intensity * tuning.fade,
-          phase: i * 6.3,
-          rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24,
+          phase: i * 6.3 + seededUnit(i + 41) * frameCount,
+          rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24 + (seededUnit(i + 43) - 0.5) * 0.85,
         };
       });
       return [...lowLayer, ...highLayer];
     },
-    [tuning.arc, tuning.fade, tuning.intensity, tuning.size, tuning.spread],
+    [frameCount, seed, station.id, tuning.arc, tuning.count, tuning.fade, tuning.intensity, tuning.size, tuning.spread],
   );
 
   const frameTextures = useMemo(
     () =>
-      instances.map(() => {
+      instances.map((_, index) => {
+        const seeded = Math.sin((seed + index * 53.1) * 78.233) * 43758.5453;
+        const randomUnit = seeded - Math.floor(seeded);
+        const textureChoice = Math.floor(randomUnit * sourceTextures.length);
+        const sourceTexture = sourceTextures[textureChoice] ?? sourceTextures[0]!;
         const texture = sourceTexture.clone();
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -2660,7 +2852,7 @@ function GasCloudTerrainEffect({
         texture.needsUpdate = true;
         return texture;
       }),
-    [instances, sourceTexture],
+    [instances, seed, sourceTextures],
   );
 
   useEffect(() => () => {
@@ -3514,6 +3706,196 @@ function DeadHulkPointSparks({
         intensity={0.75 * tuning.intensity}
         distance={5.5 * tuning.spread}
         position={[0, 1.65, -1.15]}
+      />
+    </group>
+  );
+}
+
+type BattlecrabDamageParticleSeed = {
+  yaw: number;
+  distance: number;
+  height: number;
+  rise: number;
+  speed: number;
+  phase: number;
+  wobble: number;
+};
+
+function makeBlackParticleSpriteTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 31);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.42, "rgba(255,255,255,0.92)");
+    gradient.addColorStop(0.72, "rgba(255,255,255,0.28)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function battlecrabDamageParticlePosition(
+  particle: BattlecrabDamageParticleSeed,
+  local: number,
+  spread: number,
+): THREE.Vector3 {
+  const eased = 1 - Math.pow(1 - local, 1.7);
+  const sideWobble =
+    Math.sin(local * Math.PI * 2 + particle.phase * Math.PI * 2) *
+    particle.wobble *
+    Math.sin(local * Math.PI);
+  const yaw = particle.yaw + sideWobble;
+  const radius = particle.distance * eased * (0.94 + spread * 0.08);
+  return new THREE.Vector3(
+    Math.sin(yaw) * radius,
+    0.28 + Math.sin(local * Math.PI) * particle.height + local * particle.rise,
+    Math.cos(yaw) * radius,
+  );
+}
+
+function BattlecrabDamageParticleSpray({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const timeRef = useRef(0);
+  const materialRef = useRef<THREE.PointsMaterial>(null);
+  const haloMaterialRef = useRef<THREE.PointsMaterial>(null);
+  const particleCount = clamp(Math.round(tuning.count), 8, 260);
+  const fanAngle = clamp(tuning.arc, 0.15, Math.PI * 1.92);
+  const spread = clamp(tuning.spread, 0.05, 3);
+  const randomness = clamp(tuning.randomness ?? 1.1, 0, 1.5);
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    return g;
+  }, [particleCount]);
+  const spriteTexture = useMemo(() => makeBlackParticleSpriteTexture(), []);
+  useEffect(() => () => {
+    geometry.dispose();
+  }, [geometry]);
+  useEffect(() => () => {
+    spriteTexture.dispose();
+  }, [spriteTexture]);
+
+  const particles = useMemo<BattlecrabDamageParticleSeed[]>(() =>
+    Array.from({ length: particleCount }, (_, i) => {
+      const slot = particleCount <= 1 ? 0.5 : i / (particleCount - 1);
+      const band = i % 5;
+      const jitter = (seededSparkNoise(i, 12.9898) - 0.5) * randomness * 0.36;
+      return {
+        yaw: (slot - 0.5) * fanAngle + jitter,
+        distance: (5.4 + (i % 9) * 0.36) * spread,
+        height:
+          (0.8 + band * 0.24 + Math.abs(Math.sin(i * 2.31)) * 0.36) *
+          tuning.size *
+          (0.85 + fanAngle * 0.12),
+        rise: (0.15 + (i % 4) * 0.1) * spread,
+        speed: 0.5 + (i % 7) * 0.055,
+        phase: (i * 0.071) % 1,
+        wobble: randomness * (0.015 + (i % 4) * 0.012),
+      };
+    }),
+    [fanAngle, particleCount, randomness, spread, tuning.size],
+  );
+
+  useFrame((_, delta) => {
+    if (!paused) timeRef.current += delta * clamp(tuning.speed, 0.05, 3);
+    const positions = geometry.getAttribute("position").array as Float32Array;
+    for (let i = 0; i < particles.length; i += 1) {
+      const particle = particles[i];
+      if (!particle) continue;
+      const local = (timeRef.current * particle.speed + particle.phase) % 1;
+      const position = battlecrabDamageParticlePosition(particle, local, spread);
+      const idx = i * 3;
+      positions[idx] = position.x;
+      positions[idx + 1] = position.y;
+      positions[idx + 2] = position.z;
+    }
+    geometry.getAttribute("position").needsUpdate = true;
+    if (materialRef.current) {
+      materialRef.current.size = 0.22 * clamp(tuning.size, 0.05, 3) * clamp(tuning.thickness, 0.25, 4);
+      materialRef.current.opacity = clamp(0.88 * tuning.intensity * tuning.fade, 0.08, 0.98);
+      materialRef.current.needsUpdate = true;
+    }
+    if (haloMaterialRef.current) {
+      haloMaterialRef.current.size = 0.38 * clamp(tuning.size, 0.05, 3) * clamp(tuning.thickness, 0.25, 4);
+      haloMaterialRef.current.opacity = clamp(0.42 * tuning.intensity * tuning.fade, 0.04, 0.62);
+      haloMaterialRef.current.needsUpdate = true;
+    }
+  });
+
+  const modelFilename = station.modelFilename ?? "battlecrab.glb";
+  const modelYaw = THREE.MathUtils.degToRad(-18);
+  return (
+    <group position={[station.position[0], 0, station.position[1]]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+        <ringGeometry args={[1.75, 1.95, 80]} />
+        <meshBasicMaterial color="#334155" transparent opacity={0.28} />
+      </mesh>
+      <group position={[0, 1.35, 0]} rotation={[0, modelYaw, 0]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel
+            filename={modelFilename}
+            tint="#cbd5e1"
+            opacity={0.62}
+            emissiveColor="#312e81"
+            emissiveIntensity={0.08}
+            targetInches={4.6}
+          />
+        </Suspense>
+      </group>
+      <points geometry={geometry} position={[0, 1.16, 0]} rotation={[0, modelYaw, 0]} raycast={() => null}>
+        <pointsMaterial
+          ref={haloMaterialRef}
+          map={spriteTexture}
+          color={tuning.secondaryColor}
+          size={0.38 * tuning.size * tuning.thickness}
+          sizeAttenuation
+          transparent
+          opacity={0.38 * tuning.intensity}
+          alphaTest={0.01}
+          blending={THREE.NormalBlending}
+          depthWrite={false}
+          depthTest={false}
+          toneMapped={false}
+        />
+      </points>
+      <points geometry={geometry} position={[0, 1.16, 0]} rotation={[0, modelYaw, 0]} raycast={() => null}>
+        <pointsMaterial
+          ref={materialRef}
+          map={spriteTexture}
+          color="#000000"
+          size={0.22 * tuning.size * tuning.thickness}
+          sizeAttenuation
+          transparent
+          opacity={0.78 * tuning.intensity}
+          alphaTest={0.02}
+          blending={THREE.NormalBlending}
+          depthWrite={false}
+          depthTest={false}
+          toneMapped={false}
+        />
+      </points>
+      <pointLight
+        color="#312e81"
+        intensity={0.5 * tuning.intensity}
+        distance={8 * spread}
+        position={[0, 2.7, -1.2]}
       />
     </group>
   );
@@ -6889,6 +7271,663 @@ function GodotJumpPointMesh({ station, tuning }: { station: SpecialStation; tuni
   );
 }
 
+const VORLON_CHARGE_SECONDS = 1;
+const VORLON_PRIMARY_FIRE_SECONDS = 2.35;
+const VORLON_COOLDOWN_SECONDS = 0.7;
+const VORLON_ACTIVE_END_SECONDS =
+  VORLON_CHARGE_SECONDS + VORLON_PRIMARY_FIRE_SECONDS;
+const VORLON_BEAM_CYCLE_SECONDS =
+  VORLON_ACTIVE_END_SECONDS + VORLON_COOLDOWN_SECONDS;
+const VORLON_SMALL_BEAM_NAMES = [
+  "small beam 1",
+  "small beam 2",
+  "small beam 3",
+  "small beam 4",
+] as const;
+
+function normalizeVorlonEmitterName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function vorlonPhaseAlpha(
+  elapsed: number,
+  startSeconds: number,
+  endSeconds: number,
+): number {
+  if (elapsed < startSeconds || elapsed >= endSeconds) return 0;
+  const fadeIn = THREE.MathUtils.smoothstep(
+    elapsed,
+    startSeconds,
+    startSeconds + 0.1,
+  );
+  const fadeOut =
+    1 -
+    THREE.MathUtils.smoothstep(
+      elapsed,
+      endSeconds - 0.14,
+      endSeconds,
+    );
+  return fadeIn * fadeOut;
+}
+
+function VorlonTimedBeam({
+  from,
+  to,
+  tuning,
+  timelineRef,
+  mode,
+  radius,
+  texture,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  tuning: Tuning;
+  timelineRef: MutableRefObject<number>;
+  mode: "charge" | "primary";
+  radius: number;
+  texture?: THREE.Texture;
+}) {
+  const coreRef = useRef<THREE.MeshBasicMaterial>(null);
+  const shellRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const { mid, quaternion, length } = useMemo(() => {
+    const direction = new THREE.Vector3().subVectors(to, from);
+    const beamLength = direction.length();
+    return {
+      mid: new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5),
+      quaternion: new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        direction.normalize(),
+      ),
+      length: beamLength,
+    };
+  }, [from, to]);
+
+  useFrame(() => {
+    const elapsed = timelineRef.current % VORLON_BEAM_CYCLE_SECONDS;
+    const startSeconds = mode === "primary" ? VORLON_CHARGE_SECONDS : 0;
+    const alpha = vorlonPhaseAlpha(
+      elapsed,
+      startSeconds,
+      VORLON_ACTIVE_END_SECONDS,
+    );
+    const pulse =
+      0.86 +
+      Math.sin(timelineRef.current * (mode === "primary" ? 11.5 : 17.5)) *
+        0.14;
+    const brightness = clamp(tuning.intensity, 0.1, 4);
+    if (texture && mode === "primary") {
+      texture.offset.x = (timelineRef.current * -0.08) % 1;
+      texture.offset.y = (timelineRef.current * -0.42) % 1;
+    }
+    if (coreRef.current) {
+      coreRef.current.color.set(tuning.secondaryColor);
+      coreRef.current.opacity = clamp(alpha * brightness * pulse, 0, 1);
+    }
+    if (shellRef.current) {
+      shellRef.current.color.set(tuning.color);
+      shellRef.current.opacity = clamp(
+        alpha * brightness * pulse * (mode === "primary" ? 0.78 : 0.42),
+        0,
+        0.96,
+      );
+    }
+    if (haloRef.current) {
+      haloRef.current.color.set(tuning.color);
+      haloRef.current.opacity = clamp(
+        alpha * brightness * pulse * (mode === "primary" ? 0.32 : 0.12),
+        0,
+        0.62,
+      );
+    }
+    if (lightRef.current) {
+      lightRef.current.color.set(tuning.color);
+      lightRef.current.intensity =
+        alpha * brightness * (mode === "primary" ? 4.8 : 0.75);
+    }
+  });
+
+  return (
+    <group position={mid.toArray()} quaternion={quaternion}>
+      <mesh raycast={() => null} renderOrder={7}>
+        <cylinderGeometry args={[radius, radius, length, 10, 1]} />
+        <meshBasicMaterial
+          ref={coreRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh raycast={() => null} renderOrder={6}>
+        <cylinderGeometry
+          args={[radius * 2.35, radius * 2.35, length, 14, 1]}
+        />
+        <meshBasicMaterial
+          ref={shellRef}
+          color={tuning.color}
+          alphaMap={texture}
+          alphaTest={texture ? 0.32 : 0}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh raycast={() => null} renderOrder={5}>
+        <cylinderGeometry
+          args={[radius * 4.8, radius * 4.8, length, 18, 1]}
+        />
+        <meshBasicMaterial
+          ref={haloRef}
+          color={tuning.color}
+          alphaMap={texture}
+          alphaTest={texture ? 0.18 : 0}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={mode === "primary" ? 11 : 3.5}
+      />
+    </group>
+  );
+}
+
+function VorlonFeederParticles({
+  from,
+  to,
+  tuning,
+  timelineRef,
+  phaseOffset,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  tuning: Tuning;
+  timelineRef: MutableRefObject<number>;
+  phaseOffset: number;
+}) {
+  const particleCount = 5;
+  const particlesRef = useRef<THREE.InstancedMesh>(null);
+  const materialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const direction = useMemo(() => to.clone().sub(from), [from, to]);
+  const particleTransform = useMemo(() => new THREE.Object3D(), []);
+
+  useFrame(() => {
+    const elapsed = timelineRef.current % VORLON_BEAM_CYCLE_SECONDS;
+    const alpha = vorlonPhaseAlpha(elapsed, 0, VORLON_ACTIVE_END_SECONDS);
+    const particles = particlesRef.current;
+    if (particles) {
+      particles.visible = alpha > 0.01;
+      for (let index = 0; index < particleCount; index += 1) {
+        const progress =
+          (timelineRef.current * 1.35 +
+            phaseOffset +
+            index / particleCount) %
+          1;
+        const sizePulse =
+          0.82 +
+          Math.sin(timelineRef.current * 20 + index * 1.7 + phaseOffset) *
+            0.18;
+        particleTransform.position.set(
+          from.x + direction.x * progress,
+          from.y + direction.y * progress,
+          from.z + direction.z * progress,
+        );
+        particleTransform.scale.setScalar(
+          sizePulse * clamp(tuning.thickness, 0.25, 4),
+        );
+        particleTransform.updateMatrix();
+        particles.setMatrixAt(index, particleTransform.matrix);
+      }
+      particles.instanceMatrix.needsUpdate = true;
+    }
+    if (materialRef.current) {
+      materialRef.current.color.set(tuning.secondaryColor);
+      materialRef.current.opacity = clamp(
+        alpha * tuning.intensity * 1.25,
+        0,
+        1,
+      );
+    }
+  });
+
+  return (
+    <instancedMesh
+      ref={particlesRef}
+      args={[undefined, undefined, particleCount]}
+      frustumCulled={false}
+      raycast={() => null}
+      renderOrder={9}
+    >
+      <sphereGeometry args={[0.045, 8, 6]} />
+      <meshBasicMaterial
+        ref={materialRef}
+        color={tuning.secondaryColor}
+        transparent
+        opacity={0}
+        blending={THREE.AdditiveBlending}
+        depthTest={false}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </instancedMesh>
+  );
+}
+
+function VorlonEmitterRadialParticles({
+  origin,
+  tuning,
+  timelineRef,
+}: {
+  origin: THREE.Vector3;
+  tuning: Tuning;
+  timelineRef: MutableRefObject<number>;
+}) {
+  const particleCount = 48;
+  const materialRef = useRef<THREE.PointsMaterial>(null);
+  const particleFlights = useMemo(
+    () =>
+      Array.from({ length: particleCount }, (_, index) => {
+        const azimuth = seededUnit(index * 4.17 + 0.31) * Math.PI * 2;
+        const vertical = seededUnit(index * 7.93 + 1.27) * 2 - 1;
+        const planar = Math.sqrt(Math.max(0, 1 - vertical * vertical));
+        const direction = new THREE.Vector3(
+          Math.cos(azimuth) * planar,
+          vertical,
+          Math.sin(azimuth) * planar,
+        ).normalize();
+        const tangent = new THREE.Vector3(
+          -direction.z,
+          seededUnit(index * 9.11 + 2.41) - 0.5,
+          direction.x,
+        ).normalize();
+        return {
+          direction,
+          tangent,
+          phase: seededUnit(index * 3.73 + 4.19),
+          lifetime: 0.42 + seededUnit(index * 5.29 + 3.07) * 0.9,
+          distance: 0.28 + seededUnit(index * 6.61 + 5.13) * 0.48,
+          wobble: 0.015 + seededUnit(index * 8.47 + 0.83) * 0.05,
+          frequency: 5 + seededUnit(index * 10.13 + 1.91) * 9,
+        };
+      }),
+    [],
+  );
+  const geometry = useMemo(() => {
+    const particleGeometry = new THREE.BufferGeometry();
+    particleGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    return particleGeometry;
+  }, []);
+
+  useFrame(() => {
+    const elapsed = timelineRef.current % VORLON_BEAM_CYCLE_SECONDS;
+    const alpha = vorlonPhaseAlpha(elapsed, 0, VORLON_ACTIVE_END_SECONDS);
+    const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
+    const scale = clamp(tuning.size, 0.5, 1.6);
+    for (let index = 0; index < particleCount; index += 1) {
+      const flight = particleFlights[index];
+      const age =
+        (timelineRef.current / flight.lifetime + flight.phase) % 1;
+      const distance = age * flight.distance * scale;
+      const jitter =
+        Math.sin(
+          timelineRef.current * flight.frequency +
+            flight.phase * Math.PI * 2,
+        ) *
+        flight.wobble *
+        Math.sin(Math.PI * age) *
+        scale;
+      positions.setXYZ(
+        index,
+        origin.x +
+          flight.direction.x * distance +
+          flight.tangent.x * jitter,
+        origin.y +
+          flight.direction.y * distance +
+          flight.tangent.y * jitter,
+        origin.z +
+          flight.direction.z * distance +
+          flight.tangent.z * jitter,
+      );
+    }
+    positions.needsUpdate = true;
+    if (materialRef.current) {
+      materialRef.current.color.set(tuning.color);
+      materialRef.current.opacity = clamp(
+        alpha * tuning.intensity * 0.95,
+        0,
+        1,
+      );
+    }
+  });
+
+  return (
+    <points
+      geometry={geometry}
+      frustumCulled={false}
+      raycast={() => null}
+      renderOrder={10}
+    >
+      <pointsMaterial
+        ref={materialRef}
+        color={tuning.color}
+        size={1.1}
+        sizeAttenuation={false}
+        transparent
+        opacity={0}
+        blending={THREE.AdditiveBlending}
+        depthTest={false}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </points>
+  );
+}
+
+function VorlonBeamNodeGlow({
+  position,
+  tuning,
+  timelineRef,
+  mode,
+}: {
+  position: THREE.Vector3;
+  tuning: Tuning;
+  timelineRef: MutableRefObject<number>;
+  mode: "source" | "target";
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const coreRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloRef = useRef<THREE.MeshBasicMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useFrame(() => {
+    const elapsed = timelineRef.current % VORLON_BEAM_CYCLE_SECONDS;
+    const alpha = vorlonPhaseAlpha(
+      elapsed,
+      mode === "target" ? VORLON_CHARGE_SECONDS : 0,
+      VORLON_ACTIVE_END_SECONDS,
+    );
+    const firingBoost =
+      elapsed >= VORLON_CHARGE_SECONDS &&
+      elapsed < VORLON_ACTIVE_END_SECONDS
+        ? 1.35
+        : 1;
+    const pulse = 0.88 + Math.sin(timelineRef.current * 14) * 0.12;
+    const brightness = clamp(tuning.intensity, 0.1, 4);
+    if (groupRef.current) {
+      groupRef.current.scale.setScalar(
+        pulse * firingBoost * (mode === "target" ? 1.45 : 1),
+      );
+    }
+    if (coreRef.current) {
+      coreRef.current.color.set(tuning.secondaryColor);
+      coreRef.current.opacity = clamp(alpha * brightness, 0, 1);
+    }
+    if (haloRef.current) {
+      haloRef.current.color.set(tuning.color);
+      haloRef.current.opacity = clamp(alpha * brightness * 0.24, 0, 0.6);
+    }
+    if (lightRef.current) {
+      lightRef.current.color.set(tuning.color);
+      lightRef.current.intensity =
+        alpha * brightness * (mode === "target" ? 4.2 : 3.2);
+    }
+  });
+
+  const radius =
+    (tuning.beamCoreDiameter ?? 0.0325) * (mode === "target" ? 1.1 : 0.3);
+  return (
+    <group ref={groupRef} position={position.toArray()}>
+      <mesh raycast={() => null} renderOrder={8}>
+        <sphereGeometry args={[radius, 20, 14]} />
+        <meshBasicMaterial
+          ref={coreRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh raycast={() => null} renderOrder={7}>
+        <sphereGeometry args={[radius * 2.8, 22, 16]} />
+        <meshBasicMaterial
+          ref={haloRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={mode === "target" ? 9 : 6}
+      />
+    </group>
+  );
+}
+
+function VorlonDreadnoughtBeamShowcase({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const filename = station.modelFilename ?? "vorlon-dreadnought.glb";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const windTextureSource = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl("T_VFX_WindNoise1.png"),
+  );
+  const mainBeamTexture = useMemo(() => {
+    const texture = windTextureSource.clone();
+    configureSphereTexture(texture, THREE.NoColorSpace);
+    texture.repeat.set(1.8, 7);
+    return texture;
+  }, [windTextureSource]);
+  useEffect(() => () => mainBeamTexture.dispose(), [mainBeamTexture]);
+  const timelineRef = useRef(0);
+  const targetPosition = station.to ?? [
+    station.position[0],
+    station.position[1] + 27,
+  ];
+  const heading = useMemo(
+    () =>
+      Math.atan2(
+        targetPosition[0] - station.position[0],
+        targetPosition[1] - station.position[1],
+      ),
+    [station.position, targetPosition],
+  );
+  const shipOrigin = useMemo(
+    () => toVector3(station.position, SHOWCASE_MESH_ORIGIN_Y),
+    [station.position],
+  );
+  const targetOrigin = useMemo(
+    () => toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y),
+    [targetPosition],
+  );
+
+  const { cloned, modelScale, localSmallEmitters, localMainEmitter } =
+    useMemo(() => {
+      const clone = scene.clone(true);
+      clone.traverse((child: any) => {
+        if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        child.raycast = () => null;
+        const materials = Array.isArray(child.material)
+          ? child.material
+          : [child.material];
+        const clonedMaterials = materials.map(
+          (material: THREE.Material | undefined) =>
+            material?.clone
+              ? material.clone()
+              : new THREE.MeshStandardMaterial({ color: "#9ca3af" }),
+        );
+        child.material = Array.isArray(child.material)
+          ? clonedMaterials
+          : clonedMaterials[0];
+      });
+      clone.updateMatrixWorld(true);
+      const scale = showcaseShipScale(clone, 7.8 * tuning.size);
+      const inverseRoot = clone.matrixWorld.clone().invert();
+      const emitterPositions = new Map<string, THREE.Vector3>();
+      clone.traverse(child => {
+        const name = normalizeVorlonEmitterName(String(child.name ?? ""));
+        if (
+          name === "main beam" ||
+          VORLON_SMALL_BEAM_NAMES.includes(
+            name as (typeof VORLON_SMALL_BEAM_NAMES)[number],
+          )
+        ) {
+          emitterPositions.set(
+            name,
+            child
+              .getWorldPosition(new THREE.Vector3())
+              .applyMatrix4(inverseRoot)
+              .multiplyScalar(scale),
+          );
+        }
+      });
+      return {
+        cloned: clone,
+        modelScale: scale,
+        localSmallEmitters: VORLON_SMALL_BEAM_NAMES.map(
+          name =>
+            emitterPositions.get(name) ??
+            new THREE.Vector3(0, 0, 3.72),
+        ),
+        localMainEmitter:
+          emitterPositions.get("main beam") ??
+          new THREE.Vector3(0, 0, 4.25),
+      };
+    }, [scene, tuning.size]);
+
+  const { smallEmitters, mainEmitter } = useMemo(() => {
+    const rotation = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      heading,
+    );
+    const toWorld = (position: THREE.Vector3) =>
+      position.clone().applyQuaternion(rotation).add(shipOrigin);
+    return {
+      smallEmitters: localSmallEmitters.map(toWorld),
+      mainEmitter: toWorld(localMainEmitter),
+    };
+  }, [heading, localMainEmitter, localSmallEmitters, shipOrigin]);
+
+  useFrame((_, delta) => {
+    if (!paused) {
+      timelineRef.current += delta * clamp(tuning.speed, 0.25, 3);
+    }
+  });
+
+  const smallRadius = 0.006 * clamp(tuning.thickness, 0.25, 4);
+  const primaryRadius = clamp(
+    tuning.beamCoreDiameter ?? 0.0325,
+    0.01,
+    0.8,
+  );
+
+  return (
+    <group>
+      <group
+        position={shipOrigin.toArray()}
+        rotation={[0, heading, 0]}
+        scale={[modelScale, modelScale, modelScale]}
+      >
+        <primitive object={cloned} />
+      </group>
+      <group
+        position={targetOrigin.toArray()}
+        rotation={[0, heading + Math.PI, 0]}
+      >
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel
+            filename="hyperion.glb"
+            tint="#dbeafe"
+            emissiveColor={tuning.color}
+            emissiveIntensity={0.04}
+            targetInches={3.2}
+          />
+        </Suspense>
+      </group>
+      {smallEmitters.map((emitter, index) => (
+        <group key={VORLON_SMALL_BEAM_NAMES[index]}>
+          <VorlonTimedBeam
+            from={emitter}
+            to={mainEmitter}
+            tuning={tuning}
+            timelineRef={timelineRef}
+            mode="charge"
+            radius={smallRadius}
+          />
+          <VorlonFeederParticles
+            from={emitter}
+            to={mainEmitter}
+            tuning={tuning}
+            timelineRef={timelineRef}
+            phaseOffset={index * 0.17}
+          />
+        </group>
+      ))}
+      <VorlonTimedBeam
+        from={mainEmitter}
+        to={targetOrigin}
+        tuning={tuning}
+        timelineRef={timelineRef}
+        mode="primary"
+        radius={primaryRadius}
+        texture={mainBeamTexture}
+      />
+      <VorlonBeamNodeGlow
+        position={mainEmitter}
+        tuning={tuning}
+        timelineRef={timelineRef}
+        mode="source"
+      />
+      <VorlonEmitterRadialParticles
+        origin={mainEmitter}
+        tuning={tuning}
+        timelineRef={timelineRef}
+      />
+      <VorlonBeamNodeGlow
+        position={targetOrigin}
+        tuning={tuning}
+        timelineRef={timelineRef}
+        mode="target"
+      />
+    </group>
+  );
+}
+
 function ShowcaseArcDamageSector({
   centerAngle,
   halfAngle,
@@ -7103,6 +8142,222 @@ function WeaponArcDamageSample({
   );
 }
 
+type ProjectionArcStatus = "online" | "degraded" | "offline";
+
+const SHOWCASE_PROJECTION_ARCS: Record<
+  "Forward" | "Aft" | "Port" | "Starboard",
+  { centerAngle: number; halfAngle: number }
+> = {
+  Forward: { centerAngle: Math.PI / 2, halfAngle: Math.PI / 4 },
+  Aft: { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4 },
+  Port: { centerAngle: 0, halfAngle: Math.PI / 4 },
+  Starboard: { centerAngle: Math.PI, halfAngle: Math.PI / 4 },
+};
+
+const PROJECTION_STATE_CASES: Array<{
+  label: string;
+  arcs: Array<{
+    arc: keyof typeof SHOWCASE_PROJECTION_ARCS;
+    status: ProjectionArcStatus;
+  }>;
+}> = [
+  { label: "ON", arcs: [{ arc: "Forward", status: "online" }] },
+  { label: "DMG", arcs: [{ arc: "Forward", status: "degraded" }] },
+  { label: "OFF", arcs: [{ arc: "Forward", status: "offline" }] },
+  {
+    label: "ON+DMG",
+    arcs: [
+      { arc: "Forward", status: "online" },
+      { arc: "Starboard", status: "degraded" },
+    ],
+  },
+  {
+    label: "ON+OFF",
+    arcs: [
+      { arc: "Forward", status: "online" },
+      { arc: "Port", status: "offline" },
+    ],
+  },
+  {
+    label: "DMG+OFF",
+    arcs: [
+      { arc: "Starboard", status: "degraded" },
+      { arc: "Port", status: "offline" },
+    ],
+  },
+  {
+    label: "ALL",
+    arcs: [
+      { arc: "Forward", status: "online" },
+      { arc: "Starboard", status: "degraded" },
+      { arc: "Port", status: "offline" },
+    ],
+  },
+];
+
+function projectionStatusColor(status: ProjectionArcStatus): string {
+  if (status === "offline") return "#737b88";
+  if (status === "degraded") return "#ef4444";
+  return "#34eb52";
+}
+
+function ShowcaseProjectedArc({
+  centerAngle,
+  halfAngle,
+  radius,
+  status,
+  outlineOnly,
+}: {
+  centerAngle: number;
+  halfAngle: number;
+  radius: number;
+  status: ProjectionArcStatus;
+  outlineOnly: boolean;
+}) {
+  const color = projectionStatusColor(status);
+  const geometry = useMemo(() => {
+    const segments = halfAngle < 0.3 ? 16 : 64;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    for (let index = 0; index <= segments; index += 1) {
+      const angle = centerAngle - halfAngle + (2 * halfAngle * index) / segments;
+      shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+    }
+    shape.lineTo(0, 0);
+    return new THREE.ShapeGeometry(shape);
+  }, [centerAngle, halfAngle, radius]);
+
+  const edgePoints = useMemo<[number, number, number][]>(() => {
+    const segments = halfAngle < 0.3 ? 16 : 64;
+    const points: [number, number, number][] = [[0, 0, 0]];
+    for (let index = 0; index <= segments; index += 1) {
+      const angle = centerAngle - halfAngle + (2 * halfAngle * index) / segments;
+      points.push([Math.cos(angle) * radius, 0, Math.sin(angle) * radius]);
+    }
+    points.push([0, 0, 0]);
+    return points;
+  }, [centerAngle, halfAngle, radius]);
+
+  return (
+    <>
+      {!outlineOnly ? (
+        <mesh
+          rotation={[Math.PI / 2, 0, 0]}
+          position={[0, 0.04, 0]}
+          geometry={geometry}
+        >
+          <meshBasicMaterial
+            color={color}
+            transparent
+            opacity={status === "offline" ? 0.055 : 0.1}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ) : null}
+      <Line
+        points={edgePoints}
+        color={color}
+        lineWidth={outlineOnly ? 2.6 : 2}
+        transparent
+        opacity={status === "offline" ? 0.62 : 0.95}
+        position={[0, 0.09, 0]}
+      />
+    </>
+  );
+}
+
+function ProjectionStateCase({
+  label,
+  arcs,
+  outlineOnly,
+  position,
+}: {
+  label: string;
+  arcs: (typeof PROJECTION_STATE_CASES)[number]["arcs"];
+  outlineOnly: boolean;
+  position: [number, number, number];
+}) {
+  const radius = 2.35;
+  return (
+    <group position={position}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
+        <circleGeometry args={[0.42, 36]} />
+        <meshStandardMaterial color="#020617" roughness={0.85} metalness={0.1} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+        <ringGeometry args={[0.42, 0.55, 36]} />
+        <meshBasicMaterial color="#94a3b8" transparent opacity={0.7} />
+      </mesh>
+      {arcs.map(({ arc, status }) => {
+        const arcDef = SHOWCASE_PROJECTION_ARCS[arc];
+        return (
+          <ShowcaseProjectedArc
+            key={`${arc}-${status}`}
+            centerAngle={arcDef.centerAngle}
+            halfAngle={arcDef.halfAngle}
+            radius={radius}
+            status={status}
+            outlineOnly={outlineOnly}
+          />
+        );
+      })}
+      <Billboard position={[0, 1.3, -2.9]} follow>
+        <Text
+          fontSize={0.24}
+          color="#e5e7eb"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.025}
+          outlineColor="#020617"
+        >
+          {label}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+function WeaponArcProjectionStateSample({
+  position,
+}: {
+  position: Vec2;
+}) {
+  return (
+    <group position={[position[0], 0, position[1]]}>
+      {(["FILLED", "OUTLINE"] as const).map((rowLabel, rowIndex) => {
+        const outlineOnly = rowLabel === "OUTLINE";
+        const z = rowIndex === 0 ? -3.2 : 4.2;
+        return (
+          <group key={rowLabel}>
+            <Billboard position={[-23.2, 1.5, z]} follow>
+              <Text
+                fontSize={0.3}
+                color="#cbd5e1"
+                anchorX="center"
+                anchorY="middle"
+                outlineWidth={0.03}
+                outlineColor="#020617"
+              >
+                {rowLabel}
+              </Text>
+            </Billboard>
+            {PROJECTION_STATE_CASES.map((sample, index) => (
+              <ProjectionStateCase
+                key={`${rowLabel}-${sample.label}`}
+                label={sample.label}
+                arcs={sample.arcs}
+                outlineOnly={outlineOnly}
+                position={[-18 + index * 6, 0, z]}
+              />
+            ))}
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 function SpecialFxStation({
   station,
   tuning,
@@ -7156,13 +8411,24 @@ function SpecialFxStation({
       {station.effect === "dead-hulk-point-sparks" ? (
         <DeadHulkPointSparks station={station} tuning={tuning} paused={animationPaused} />
       ) : null}
+      {station.effect === "battlecrab-damage-particle-spray" ? (
+        <BattlecrabDamageParticleSpray station={station} tuning={tuning} paused={animationPaused} />
+      ) : null}
       {station.effect === "weapon-arc-damage-sample" ? (
         <WeaponArcDamageSample position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "weapon-arc-projection-state-sample" ? (
+        <WeaponArcProjectionStateSample position={station.position} />
       ) : null}
       {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
       {station.effect === "gas-cloud-terrain" ? (
         <Suspense fallback={null}>
           <GasCloudTerrainEffect station={station} tuning={tuning} paused={animationPaused} />
+        </Suspense>
+      ) : null}
+      {station.effect === "test-cloud-mesh" ? (
+        <Suspense fallback={null}>
+          <TestCloudTexturedMesh station={station} tuning={tuning} paused={animationPaused} />
         </Suspense>
       ) : null}
       {station.effect === "cloud-flipbook-damage" && station.textureFilename ? (
@@ -7191,6 +8457,15 @@ function SpecialFxStation({
           <KirishiacBeamFiringShowcase station={station} tuning={tuning} paused={animationPaused} />
         </Suspense>
       ) : null}
+      {station.effect === "vorlon-dreadnought-beam-test" ? (
+        <Suspense fallback={null}>
+          <VorlonDreadnoughtBeamShowcase
+            station={station}
+            tuning={tuning}
+            paused={animationPaused}
+          />
+        </Suspense>
+      ) : null}
       {station.effect === "textured-exploding-sphere" ? (
         <Suspense fallback={null}>
           <TexturedExplodingSphereStation station={station} tuning={tuning} />
@@ -7209,10 +8484,20 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
       const canvasAspect = size.width / Math.max(size.height, 1);
       const framingDistance = 43 * Math.max(1, 1.35 / canvasAspect);
       camera.position.set(0, Math.min(framingDistance, 100), 0.1);
+      camera.lookAt(0, 0, 0);
+    } else if (boardId === "vorlon-beam-tests") {
+      const canvasAspect = size.width / Math.max(size.height, 1);
+      const framingScale = Math.max(1, 1.05 / canvasAspect);
+      camera.position.set(
+        15 * framingScale,
+        16 * framingScale,
+        19 * framingScale,
+      );
+      camera.lookAt(0, 1, 1.5);
     } else {
       camera.position.set(0, 39, 48);
+      camera.lookAt(0, 0, 0);
     }
-    camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
   }, [boardId, camera, size.height, size.width]);
 
@@ -7240,7 +8525,10 @@ function ShowcaseScene({
       {board.stations.map(station => {
         const tuning = effectiveTuning(station, overrides);
         const selected = station.id === selectedStationId;
-        const showLabel = board.id !== "damage-states" && board.id !== "orb-texture-tests" && board.id !== "organic-skin-tests";
+        const showLabel =
+          board.id !== "orb-texture-tests" &&
+          board.id !== "organic-skin-tests" &&
+          board.id !== "vorlon-beam-tests";
         if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
@@ -7409,6 +8697,13 @@ function isKirishiacBeamStation(station: ShowcaseStation): boolean {
   return station.kind === "special" && station.effect === "kirishiac-beam-test";
 }
 
+function isVorlonBeamStation(station: ShowcaseStation): boolean {
+  return (
+    station.kind === "special" &&
+    station.effect === "vorlon-dreadnought-beam-test"
+  );
+}
+
 export default function VfxShowcase() {
   const [activeBoardId, setActiveBoardId] = useState(SHOWCASE_BOARDS[0]?.id ?? "");
   const activeBoard = SHOWCASE_BOARDS.find(board => board.id === activeBoardId) ?? SHOWCASE_BOARDS[0];
@@ -7430,6 +8725,7 @@ export default function VfxShowcase() {
   const selectedIsPraxisShockwave = selectedStation?.kind === "special" && selectedStation.effect === "praxis-shockwave";
   const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
   const selectedIsKirishiacBeam = selectedStation ? isKirishiacBeamStation(selectedStation) : false;
+  const selectedIsVorlonBeam = selectedStation ? isVorlonBeamStation(selectedStation) : false;
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -7558,7 +8854,22 @@ export default function VfxShowcase() {
                       ) : null}
                     </div>
                   ) : null}
-                  {selectedIsKirishiacBeam ? (
+                  {selectedIsVorlonBeam ? (
+                    <>
+                      <SliderControl label="Playback Speed" value={selectedTuning.speed} min={0.25} max={2} step={0.05} onChange={speed => updateSelected({ speed })} />
+                      <SliderControl label="Model Size" value={selectedTuning.size} min={0.5} max={1.6} step={0.05} onChange={size => updateSelected({ size })} />
+                      <SliderControl label="Small Beam Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
+                      <SliderControl
+                        label="Primary Beam Diameter"
+                        value={selectedTuning.beamCoreDiameter ?? 0.0325}
+                        min={0.01}
+                        max={0.8}
+                        step={0.0025}
+                        onChange={beamCoreDiameter => updateSelected({ beamCoreDiameter })}
+                      />
+                      <SliderControl label="Brightness" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
+                    </>
+                  ) : selectedIsKirishiacBeam ? (
                     <>
                       <TextureOptionControl value={selectedTuning.count} onChange={count => updateSelected({ count })} />
                       <SliderControl label="Texture Speed" value={selectedTuning.speed} min={0.05} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />

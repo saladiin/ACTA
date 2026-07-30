@@ -45,7 +45,7 @@ const VfxShowcase = localToolingRoutesEnabled
 const LosTest = localToolingRoutesEnabled
   ? lazy(() => import("@/pages/los-test"))
   : null;
-const NavalId = import.meta.env.DEV
+const NavalId = localToolingRoutesEnabled
   ? lazy(() => import("@/pages/naval-id"))
   : null;
 
@@ -57,7 +57,10 @@ const clerkPubKey = localToolingRoutesEnabled
     );
 
 const configuredClerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
-const clerkProxyUrl = clerkPubKey.startsWith("pk_test_") || temporaryUsernameAuthEnabled ? undefined : configuredClerkProxyUrl;
+const clerkProxyUrl =
+  temporaryUsernameAuthEnabled || !clerkPubKey || clerkPubKey.startsWith("pk_test_")
+    ? undefined
+    : configuredClerkProxyUrl;
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function stripBase(path: string): string {
@@ -66,7 +69,7 @@ function stripBase(path: string): string {
     : path;
 }
 
-if (!clerkPubKey) {
+if (!temporaryUsernameAuthEnabled && !clerkPubKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY in .env file");
 }
 
@@ -209,12 +212,76 @@ function ClerkApiAuthToken() {
   return null;
 }
 
+function AppRoutes({ clerkEnabled }: { clerkEnabled: boolean }) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        {clerkEnabled && (
+          <>
+          <ClerkQueryClientCacheInvalidator />
+          <ClerkApiAuthToken />
+          </>
+        )}
+        <TemporaryUsernameHeaders />
+        <Switch>
+          <Route path="/" component={HomeRedirect} />
+          <Route path="/sign-in/*?" component={SignInPage} />
+          <Route path="/sign-up/*?">
+            {temporaryUsernameAuthEnabled ? <Redirect to="/sign-in" /> : <SignUpPage />}
+          </Route>
+          <Route path="/lobby"><ProtectedRoute component={Lobby} /></Route>
+          <Route path="/fleets"><ProtectedRoute component={Fleets} /></Route>
+          <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
+          <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
+          <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
+          {localToolingRoutesEnabled && VfxShowcase && (
+            <Route path="/vfx-showcase">
+              <Suspense fallback={null}>
+                <ProtectedRoute component={VfxShowcase} />
+              </Suspense>
+            </Route>
+          )}
+          {localToolingRoutesEnabled && VfxShowcase && (
+            <Route path="/vfx">
+              <Suspense fallback={null}>
+                <ProtectedRoute component={VfxShowcase} />
+              </Suspense>
+            </Route>
+          )}
+          {localToolingRoutesEnabled && LosTest && (
+            <Route path="/los-test">
+              <Suspense fallback={null}>
+                <ProtectedRoute component={LosTest} />
+              </Suspense>
+            </Route>
+          )}
+          {localToolingRoutesEnabled && NavalId && (
+            <Route path="/naval-id">
+              <Suspense fallback={null}>
+                <ProtectedRoute component={NavalId} />
+              </Suspense>
+            </Route>
+          )}
+          <Route path="/credits"><ProtectedRoute component={Credits} /></Route>
+          <Route path="/faq"><ProtectedRoute component={Faq} /></Route>
+          <Route path="/update-log"><ProtectedRoute component={UpdateLog} /></Route>
+          <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
+          <Route path="/admin"><ProtectedRoute component={AdminPage} /></Route>
+          <Route component={NotFound} />
+        </Switch>
+        <Toaster />
+        <DevModeToggle />
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+}
+
 function ClerkProviderWithRoutes() {
   const [, setLocation] = useLocation();
 
   return (
     <ClerkProvider
-      publishableKey={clerkPubKey}
+      publishableKey={clerkPubKey!}
       proxyUrl={clerkProxyUrl}
       appearance={clerkAppearance}
       localization={clerkLocalization}
@@ -223,59 +290,7 @@ function ClerkProviderWithRoutes() {
       routerPush={(to) => setLocation(stripBase(to))}
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <ClerkQueryClientCacheInvalidator />
-          <TemporaryUsernameHeaders />
-          <ClerkApiAuthToken />
-          <Switch>
-            <Route path="/" component={HomeRedirect} />
-            <Route path="/sign-in/*?" component={SignInPage} />
-            <Route path="/sign-up/*?" component={SignUpPage} />
-            <Route path="/lobby"><ProtectedRoute component={Lobby} /></Route>
-            <Route path="/fleets"><ProtectedRoute component={Fleets} /></Route>
-            <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
-            <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
-            <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
-            {localToolingRoutesEnabled && VfxShowcase && (
-              <Route path="/vfx-showcase">
-                <Suspense fallback={null}>
-                  <ProtectedRoute component={VfxShowcase} />
-                </Suspense>
-              </Route>
-            )}
-            {localToolingRoutesEnabled && VfxShowcase && (
-              <Route path="/vfx">
-                <Suspense fallback={null}>
-                  <ProtectedRoute component={VfxShowcase} />
-                </Suspense>
-              </Route>
-            )}
-            {localToolingRoutesEnabled && LosTest && (
-              <Route path="/los-test">
-                <Suspense fallback={null}>
-                  <ProtectedRoute component={LosTest} />
-                </Suspense>
-              </Route>
-            )}
-            {import.meta.env.DEV && NavalId && (
-              <Route path="/naval-id">
-                <Suspense fallback={null}>
-                  <ProtectedRoute component={NavalId} />
-                </Suspense>
-              </Route>
-            )}
-            <Route path="/credits"><ProtectedRoute component={Credits} /></Route>
-            <Route path="/faq"><ProtectedRoute component={Faq} /></Route>
-            <Route path="/update-log"><ProtectedRoute component={UpdateLog} /></Route>
-            <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
-            <Route path="/admin"><ProtectedRoute component={AdminPage} /></Route>
-            <Route component={NotFound} />
-          </Switch>
-          <Toaster />
-          <DevModeToggle />
-        </TooltipProvider>
-      </QueryClientProvider>
+      <AppRoutes clerkEnabled />
     </ClerkProvider>
   );
 }
@@ -283,7 +298,11 @@ function ClerkProviderWithRoutes() {
 function App() {
   return (
     <WouterRouter base={basePath}>
-      <ClerkProviderWithRoutes />
+      {temporaryUsernameAuthEnabled ? (
+        <AppRoutes clerkEnabled={false} />
+      ) : (
+        <ClerkProviderWithRoutes />
+      )}
     </WouterRouter>
   );
 }

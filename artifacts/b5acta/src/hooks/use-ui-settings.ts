@@ -10,6 +10,7 @@ export type UiControlMode =
 export type UiArcColorScheme = "classic" | "side";
 export type UiBoardBackgroundMode = "skybox" | "black";
 export type UiShipStatusDisplayMode = "bar" | "text";
+export type UiWeaponArcProjectionStyle = "filled" | "outline";
 
 const CONTROL_MODE_STORAGE_KEY = "b5acta.ui.controlMode";
 const ARC_COLOR_SCHEME_STORAGE_KEY = "b5acta.ui.arcColorScheme";
@@ -24,6 +25,8 @@ const ATTACK_PHASE_PULSE_STRENGTH_STORAGE_KEY =
   "b5acta.ui.attackPhasePulseStrength";
 const BOARD_BACKGROUND_MODE_STORAGE_KEY = "b5acta.ui.boardBackgroundMode";
 const WEAPON_ARC_PROJECTION_STORAGE_KEY = "b5acta.ui.weaponArcProjection";
+const WEAPON_ARC_PROJECTION_STYLE_STORAGE_KEY =
+  "b5acta.ui.weaponArcProjectionStyle";
 const ISO_CAMERA_CONTROLS_STORAGE_KEY = "b5acta.ui.isoCameraControls";
 const SETTINGS_CHANGED_EVENT = "b5acta-ui-settings-change";
 
@@ -110,6 +113,14 @@ function readWeaponArcProjectionEnabled(): boolean {
   return (
     window.localStorage.getItem(WEAPON_ARC_PROJECTION_STORAGE_KEY) === "true"
   );
+}
+
+function readWeaponArcProjectionStyle(): UiWeaponArcProjectionStyle {
+  if (typeof window === "undefined") return "filled";
+  return window.localStorage.getItem(WEAPON_ARC_PROJECTION_STYLE_STORAGE_KEY) ===
+    "outline"
+    ? "outline"
+    : "filled";
 }
 
 function readIsoCameraControlsEnabled(): boolean {
@@ -419,6 +430,36 @@ export function useUiWeaponArcProjection(): [
   }, []);
 
   return [enabled, setEnabled];
+}
+
+export function useUiWeaponArcProjectionStyle(): [
+  UiWeaponArcProjectionStyle,
+  (style: UiWeaponArcProjectionStyle) => void,
+] {
+  const [style, setStyleState] = useState<UiWeaponArcProjectionStyle>(() =>
+    readWeaponArcProjectionStyle(),
+  );
+
+  useEffect(() => {
+    const sync = () => setStyleState(readWeaponArcProjectionStyle());
+    window.addEventListener("storage", sync);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, sync);
+    };
+  }, []);
+
+  const setStyle = useCallback((nextStyle: UiWeaponArcProjectionStyle) => {
+    window.localStorage.setItem(
+      WEAPON_ARC_PROJECTION_STYLE_STORAGE_KEY,
+      nextStyle,
+    );
+    setStyleState(nextStyle);
+    window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT));
+  }, []);
+
+  return [style, setStyle];
 }
 
 export function useUiIsoCameraControls(): [

@@ -18,8 +18,21 @@ type AppVersionResponse = {
   buildSha: string;
 };
 
-export function Layout({ children, title, sidebarBottom }: { children: ReactNode; title?: string; sidebarBottom?: ReactNode }) {
+function ClerkDisengageButton({ basePath }: { basePath: string }) {
   const { signOut } = useClerk();
+  return (
+    <Button
+      variant="ghost"
+      className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 uppercase tracking-widest text-xs"
+      onClick={() => signOut({ redirectUrl: basePath || "/" })}
+    >
+      <LogOut className="w-4 h-4" />
+      Disengage
+    </Button>
+  );
+}
+
+export function Layout({ children, title, sidebarBottom }: { children: ReactNode; title?: string; sidebarBottom?: ReactNode }) {
   const [, setLocation] = useLocation();
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const inputProfile = useInputProfile();
@@ -127,7 +140,7 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
                 <Crosshair className="w-4 h-4" />
                 <span className="text-sm font-medium tracking-wide uppercase">Active Ops</span>
               </Link>
-              {import.meta.env.DEV && (
+              {showLocalToolingNav && (
                 <Link onClick={() => mobileChrome && setNavOpen(false)} href="/naval-id" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                   <Ship className="w-4 h-4" />
                   <span className="text-sm font-medium tracking-wide uppercase">Naval ID</span>
@@ -179,21 +192,21 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
           <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70" data-testid="text-app-build">
             Build {APP_BUILD_SHA}
           </div>
-          <Button 
-            variant="ghost" 
-            className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 uppercase tracking-widest text-xs"
-            onClick={() => {
-              if (temporaryUsernameAuthEnabled) {
+          {temporaryUsernameAuthEnabled ? (
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10 uppercase tracking-widest text-xs"
+              onClick={() => {
                 clearTemporaryUsername();
                 setLocation("/sign-in", { replace: true });
-                return;
-              }
-              signOut({ redirectUrl: basePath || "/" });
-            }}
-          >
-            <LogOut className="w-4 h-4" />
-            Disengage
-          </Button>
+              }}
+            >
+              <LogOut className="w-4 h-4" />
+              Disengage
+            </Button>
+          ) : (
+            <ClerkDisengageButton basePath={basePath} />
+          )}
         </div>
       </aside>
 

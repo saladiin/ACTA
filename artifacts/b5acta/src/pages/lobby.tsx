@@ -101,7 +101,7 @@ function ChallengeFeatureBadges({ game }: { game: { hasTerrain?: boolean; hasSta
 export default function Lobby() {
   const { data: lobby, isLoading } = useGetLobby();
   const { data: profile } = useGetMyProfile();
-  const { user } = useUser();
+  const user = temporaryUsernameAuthEnabled ? null : useUser().user;
   const devUserId = useDevUserId();
   const temporaryUsername = useTemporaryUsername();
   void temporaryUsername;

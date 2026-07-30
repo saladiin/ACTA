@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useState,
   useRef,
   Suspense,
@@ -79,6 +79,7 @@ import {
   useUiShipMeshTints,
   useUiShipStatusDisplayMode,
   useUiWeaponArcProjection,
+  useUiWeaponArcProjectionStyle,
   type UiArcColorScheme,
   type UiControlMode,
   type UiShipStatusDisplayMode,
@@ -1750,11 +1751,12 @@ const OMEGA_ROTATING_MODEL_FILENAME = "omega3.glb";
 const COMMAND_OMEGA_MODEL_FILENAME = "command-omega3.glb";
 const OMEGA_X_MODEL_FILENAME = "omega-x.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
+const PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME = "psicorp-fighter-carrier.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
-const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const RAILGUN_HYPERION_MODEL_FILENAME = "railgun-hyperion.glb";
+const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_BINTAK_MODEL_FILENAME = "dead-bintak.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
 const DEAD_OMEGA_MODEL_FILENAME = "dead-omega.glb";
@@ -1762,6 +1764,7 @@ const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
 const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
 const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
 const RAIDER_NOVA_MODEL_FILENAME = "raider-nova.glb";
+const SHADOWCLOAK_MODEL_FILENAME = "shadowcloak.glb";
 const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
 const VORLON_FIGHTER_MODEL_FILENAME = "vorlon-fighter.glb";
 const VORLON_LIGHT_CRUISER_MODEL_FILENAME = "vorlon-light-cruiser.glb";
@@ -1835,8 +1838,8 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "battlecrab.glb": DEAD_BATTLECRAB_MODEL_FILENAME,
   "hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
   [COMMAND_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
-  "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
   [RAILGUN_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
+  "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
   "omega.glb": DEAD_OMEGA_MODEL_FILENAME,
   [OMEGA_ROTATING_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
   [COMMAND_OMEGA_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
@@ -1848,6 +1851,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   COMMAND_OMEGA_MODEL_FILENAME,
   OMEGA_X_MODEL_FILENAME,
   EXPLORER_ROTATING_MODEL_FILENAME,
+  PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME,
   PSI_CORPS_MOTHERSHIP_MODEL_FILENAME,
   COMMAND_HYPERION_MODEL_FILENAME,
   RAIDER_CARRIER_MODEL_FILENAME,
@@ -1874,8 +1878,8 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
   [COMMAND_HYPERION_MODEL_FILENAME]: 1.2,
-  "missile-hyperion.glb": 1.2,
   [RAILGUN_HYPERION_MODEL_FILENAME]: 1.2,
+  "missile-hyperion.glb": 1.2,
   "avenger.glb": 1.2,
   "olympus.glb": 0.5,
   "olympus-gunship.glb": 0.5,
@@ -1886,6 +1890,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   [RAIDER_NOVA_MODEL_FILENAME]: 1.15,
   "orestes.glb": 1.65,
   "tethys.glb": 0.4,
+  [SHADOWCLOAK_MODEL_FILENAME]: 0.4,
   "vorchan.glb": 0.5,
   "covran.glb": 0.5,
   "whitestar.glb": 0.5,
@@ -1928,6 +1933,7 @@ const MODEL_ABSOLUTE_SCALES: Record<string, number> = {
   [OMEGA_ROTATING_MODEL_FILENAME]: 0.00286936,
   [COMMAND_OMEGA_MODEL_FILENAME]: 0.00286936,
   [OMEGA_X_MODEL_FILENAME]: 0.00277311,
+  [PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME]: 0.00565,
   [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: 0.00300057,
   [RAIDER_FREIGHTER_MODEL_FILENAME]: 0.00475,
 };
@@ -2859,13 +2865,15 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "olympus-gunship.glb": "20260727-gunship-v1",
   "orestes.glb": "20260724-191655",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
-  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
+  [PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME]: "20260730-fighter-carrier-v2",
   [RAILGUN_HYPERION_MODEL_FILENAME]: "20260730-railgun-v1",
+  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: "20260721-183649",
   [RAIDER_CARRIER_MODEL_FILENAME]: "20260728-202413",
   [RAIDER_DELTA_MODEL_FILENAME]: "20260728-212845",
   [RAIDER_FREIGHTER_MODEL_FILENAME]: "20260730-freighter-v2",
   [RAIDER_NOVA_MODEL_FILENAME]: "20260728-221344",
   "rongoth.glb": "20260724-193659",
+  [SHADOWCLOAK_MODEL_FILENAME]: "20260730-shadowcloak-v2",
   [SHADOW_SCOUT_MODEL_FILENAME]: "20260728-135155",
   [VORLON_FIGHTER_MODEL_FILENAME]: "20260728-vorlon-fighter-v1",
   [VORLON_LIGHT_CRUISER_MODEL_FILENAME]: "20260728-223454",
@@ -10250,6 +10258,7 @@ export default function GameBoard() {
   const [attackPulseStrength] = useUiAttackPhasePulseStrength();
   const [boardBackgroundMode] = useUiBoardBackgroundMode();
   const [weaponArcProjectionEnabled] = useUiWeaponArcProjection();
+  const [weaponArcProjectionStyle] = useUiWeaponArcProjectionStyle();
   const [isoCameraControlsEnabled] = useUiIsoCameraControls();
   const isTouchInput =
     inputProfile.input === "touch" || inputProfile.input === "hybrid";
@@ -18242,14 +18251,13 @@ export default function GameBoard() {
               const unitIsFighter = isFighterUnit(unit);
               if (unit.isDestroyed && unitIsFighter) return null;
               const weaponsForUnit = getWeaponsForUnit(unit);
-              const unitModel = shipModels.find((model) => model.id === unit.shipModelId);
+              const unitModel = getShipModelForUnit(unit);
               const weaponArcReadiness = buildWeaponArcReadiness(
                 unit,
                 unitModel,
                 weaponsForUnit,
                 game.currentRound ?? 0,
               );
-              const unitModel = getShipModelForUnit(unit);
               const phaseViable =
                 game.status === "active" &&
                 (currentPhase === "movement" || currentPhase === "firing") &&
@@ -18402,6 +18410,9 @@ export default function GameBoard() {
                     scoutSupportEffectsByTargetId.get(unit.id) ?? []
                   }
                   terrainFields={terrainFields}
+                  weaponArcProjectionOutlineOnly={
+                    weaponArcProjectionStyle === "outline"
+                  }
                   dogfightLocked={dogfightingFighterUnitIds.has(unit.id)}
                   launchHighlight={
                     endPhaseLaunchPrompt?.mode === "highlight" &&
@@ -21937,12 +21948,28 @@ export default function GameBoard() {
                             w,
                             useCoordOnNext,
                           );
+                          const critBlockedReason = weaponCriticalDisableReason(
+                            w,
+                            attacker.criticals ?? [],
+                          );
+                          const baseAction = (attacker.specialAction ?? "").replace(
+                            /-failed$/,
+                            "",
+                          );
+                          const oneWeaponLimitBlocked =
+                            !fired &&
+                            firedSet.size > 0 &&
+                            (attacker.oneWeaponThisRound ||
+                              baseAction === "blast-doors" ||
+                              baseAction === "all-stop-pivot");
                           const unavailable =
                             attackerLockedInDogfight ||
                             fired ||
                             slowLoadingCooling ||
                             skeletonBlocked ||
-                            crippledArcBlocked;
+                            crippledArcBlocked ||
+                            oneWeaponLimitBlocked ||
+                            critBlockedReason !== null;
                           const shadowPointDefense =
                             uiShadowPointDefenseWeaponActive(
                               attacker,
@@ -22034,10 +22061,25 @@ export default function GameBoard() {
                                     ▸ Click an enemy ship to fire
                                   </div>
                                 )}
+                                {critBlockedReason && (
+                                  <div className="text-[10px] text-red-200 mt-1 uppercase tracking-wider">
+                                    {critBlockedReason}
+                                  </div>
+                                )}
+                                {fired && (
+                                  <div className="text-[10px] text-red-200 mt-1 uppercase tracking-wider">
+                                    Already fired
+                                  </div>
+                                )}
                                 {slowLoadingCooling && (
                                   <div className="text-[10px] text-red-200 mt-1 uppercase tracking-wider">
                                     Reloading · ready round{" "}
                                     {slowLoadingReadyRound}
+                                  </div>
+                                )}
+                                {oneWeaponLimitBlocked && (
+                                  <div className="text-[10px] text-red-200 mt-1 uppercase tracking-wider">
+                                    One weapon limit already used
                                   </div>
                                 )}
                                 {skeletonBlocked && (
