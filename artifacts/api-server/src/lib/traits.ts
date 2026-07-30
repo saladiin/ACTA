@@ -86,7 +86,14 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     redundantSystems: hasTrait(t, ["Redundant Systems"]),
     stealthPenetration: hasTrait(t, ["Stealth Penetration"]),
     superiorTechnology: hasTrait(t, ["Superior Technology"]),
-    selfRepairDice: numericTrait(t, ["Self Repair", "Self-Repair", "Self Repair:", "Self-repair"]),
+    selfRepairDice: numericTrait(t, [
+      "Self Repair",
+      "Self-Repair",
+      "Self Repair:",
+      "Self-repair",
+      "Self Repairing",
+      "Self-Repairing",
+    ]),
     agile: hasTrait(t, ["Agile"]),
     superManeuverable: hasTrait(t, [
       "Super Maneuverable",

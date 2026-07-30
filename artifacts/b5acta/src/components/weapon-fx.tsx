@@ -17,10 +17,12 @@ export type WeaponClass = "beam" | "tracer" | "missile" | "energy-mine";
 
 const FACTION_BEAM_COLOR: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
+  "Minbari": "#22ff66",
   "Minbari Federation": "#22ff66",
   "Shadows": "#b85cff",
   "Vorlon Empire": "#35ff67",
 };
+const MINBARI_BEAM_COLOR = "#22ff66";
 const SHADOW_SLICER_COLOR = "#b85cff";
 const DEFAULT_BEAM_COLOR = "#ff2a2a";
 const KIRISHIAC_BEAM_MODEL_FILENAME = "kirishiac1.glb";
@@ -77,6 +79,17 @@ const CAPITAL_PROJECTILE_TUNING = {
   arc: 0.35,
   thickness: 1,
   meshSize: 0.15,
+};
+const SHADOW_OMEGA_BEAM_COLOR = "rgba(0, 194, 255, 0.9)";
+const SHADOW_OMEGA_PHASING_PULSE_TUNING = {
+  ...CAPITAL_PROJECTILE_TUNING,
+  color: "rgba(0, 0, 255, 0.9)",
+  secondaryColor: "rgba(0, 194, 255, 0.9)",
+};
+const WHITE_STAR_PROJECTILE_TUNING = {
+  ...CAPITAL_PROJECTILE_TUNING,
+  color: MINBARI_BEAM_COLOR,
+  secondaryColor: "#a7ff83",
 };
 const SHADOW_FIGHTER_PROJECTILE_TUNING = {
   ...FIGHTER_PROJECTILE_TUNING,
@@ -180,6 +193,34 @@ export function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): WeaponC
 export function beamColorFor(faction: string, weapon?: Pick<Weapon, "name">): string {
   if ((weapon?.name ?? "").toLowerCase().includes("molecular slicer")) return SHADOW_SLICER_COLOR;
   return FACTION_BEAM_COLOR[faction] ?? DEFAULT_BEAM_COLOR;
+}
+
+function isShadowOmegaAttacker(
+  attackerName?: string,
+  attackerModelFilename?: string,
+): boolean {
+  const text = `${attackerName ?? ""} ${attackerModelFilename ?? ""}`.toLowerCase();
+  return text.includes("shadow omega") || text.includes("omega-x");
+}
+
+function isShadowOmegaCyanBeamWeapon(weapon: Pick<Weapon, "name">): boolean {
+  const name = (weapon.name ?? "").toLowerCase();
+  return (
+    name.includes("molecular slicer") ||
+    name.includes("light multiphased cutter")
+  );
+}
+
+function isShadowOmegaHeavyPhasingPulseWeapon(weapon: Pick<Weapon, "name">): boolean {
+  return (weapon.name ?? "").toLowerCase().includes("heavy phasing pulse");
+}
+
+function isWhiteStarAttacker(
+  attackerName?: string,
+  attackerModelFilename?: string,
+): boolean {
+  const text = `${attackerName ?? ""} ${attackerModelFilename ?? ""}`.toLowerCase();
+  return text.includes("white star") || text.includes("whitestar");
 }
 
 function isFighterAttacker(attackerName?: string, attackerModelFilename?: string): boolean {
@@ -1677,7 +1718,13 @@ export function WeaponFx({
         </>
       );
     }
-    const color = beamColorFor(attackerFaction, weapon);
+    const color =
+      isShadowOmegaAttacker(attackerName, attackerModelFilename) &&
+      isShadowOmegaCyanBeamWeapon(weapon)
+        ? SHADOW_OMEGA_BEAM_COLOR
+        : isWhiteStarAttacker(attackerName, attackerModelFilename)
+          ? MINBARI_BEAM_COLOR
+        : beamColorFor(attackerFaction, weapon);
     return (
       <>
         <BeamFx from={from} to={to} color={color} />
@@ -1725,11 +1772,22 @@ export function WeaponFx({
     attackerName,
     attackerModelFilename,
   );
-  const projectileTuning = fighterProjectile
-    ? shadowFighterProjectile
-      ? SHADOW_FIGHTER_PROJECTILE_TUNING
-      : FIGHTER_PROJECTILE_TUNING
-    : CAPITAL_PROJECTILE_TUNING;
+  const shadowOmegaPhasingPulse =
+    isShadowOmegaAttacker(attackerName, attackerModelFilename) &&
+    isShadowOmegaHeavyPhasingPulseWeapon(weapon);
+  const whiteStarProjectile = isWhiteStarAttacker(
+    attackerName,
+    attackerModelFilename,
+  );
+  const projectileTuning = shadowOmegaPhasingPulse
+    ? SHADOW_OMEGA_PHASING_PULSE_TUNING
+    : whiteStarProjectile
+      ? WHITE_STAR_PROJECTILE_TUNING
+    : fighterProjectile
+      ? shadowFighterProjectile
+        ? SHADOW_FIGHTER_PROJECTILE_TUNING
+        : FIGHTER_PROJECTILE_TUNING
+      : CAPITAL_PROJECTILE_TUNING;
   const travelMs =
     FIGHTER_PROJECTILE_FLIGHT_MS /
     THREE.MathUtils.clamp(projectileTuning.speed, 0.25, 3);

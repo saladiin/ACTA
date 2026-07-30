@@ -1001,6 +1001,7 @@ export const SpecialActionInputAction = {
   'intensify-defense': 'intensify-defense',
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
+  'cause-confusion': 'cause-confusion',
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',
   regenerate: 'regenerate',
@@ -1009,7 +1010,7 @@ export const SpecialActionInputAction = {
 export interface SpecialActionInput {
   action: SpecialActionInputAction;
   /**
-     * Required for 'concentrate-fire' — the nominated enemy unit id.
+     * Required for targeted Special Actions such as 'concentrate-fire' and 'cause-confusion' — the nominated enemy unit id.
      * @nullable
      */
   targetUnitId?: number | null;

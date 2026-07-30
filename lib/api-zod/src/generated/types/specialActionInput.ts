@@ -10,7 +10,7 @@ import type { SpecialActionInputAction } from './specialActionInputAction';
 export interface SpecialActionInput {
   action: SpecialActionInputAction;
   /**
-     * Required for 'concentrate-fire' — the nominated enemy unit id.
+     * Required for targeted Special Actions such as 'concentrate-fire' and 'cause-confusion' — the nominated enemy unit id.
      * @nullable
      */
   targetUnitId?: number | null;

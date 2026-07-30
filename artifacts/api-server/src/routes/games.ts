@@ -613,6 +613,7 @@ function turnDistanceRequirement(
   if (baseAction === "all-stop-pivot") return 0;
   if (turnsMadeThisActivation === 0) {
     const speed = effectiveBaseSpeed(unit, crits);
+    if (speed <= 0) return Number.POSITIVE_INFINITY;
     return traits.agile ? speed / 4 : speed / 2;
   }
   return traits.agile ? 1 : 2;
@@ -3694,6 +3695,9 @@ type DogfightResolutionLog = {
   gameCompleted: boolean;
   winnerId: string | null;
   shieldAbsorbedLoss: boolean;
+  psychicCrewSurvivalUnitId: number | null;
+  psychicCrewSurvivalRoll: number | null;
+  psychicCrewSurvived: boolean;
 };
 
 async function resolveDogfightBetweenUnits(
@@ -3780,8 +3784,20 @@ async function resolveDogfightBetweenUnits(
     losingUnitId === target.id ? target :
     losingUnitId === attacker.id ? attacker :
     null;
+  const losingTraits =
+    losingUnitId === target.id ? targetTraits :
+    losingUnitId === attacker.id ? attackerTraits :
+    null;
   const shieldAbsorbedLoss = Boolean(losingUnit && losingUnit.shieldsCurrent > 0);
-  const destroyedUnitId = shieldAbsorbedLoss ? null : losingUnitId;
+  const psychicCrewSurvivalRoll =
+    losingUnit && losingTraits && !shieldAbsorbedLoss && losingTraits.psychicCrew > 0
+      ? rollD6()
+      : null;
+  const psychicCrewSurvived =
+    psychicCrewSurvivalRoll !== null && psychicCrewSurvivalRoll >= 4;
+  const destroyedUnitId = shieldAbsorbedLoss || psychicCrewSurvived
+    ? null
+    : losingUnitId;
   const destroyedFighterBeforeRecovery =
     destroyedUnitId === target.id ? target :
     destroyedUnitId === attacker.id ? attacker :
@@ -3869,15 +3885,20 @@ async function resolveDogfightBetweenUnits(
     targetScore,
     destroyedUnitId,
     fighterRecovery,
-    tied: attackerScore === targetScore,
+    tied: attackerScore === targetScore || psychicCrewSurvived,
     gameCompleted,
     winnerId,
     shieldAbsorbedLoss,
+    psychicCrewSurvivalUnitId: psychicCrewSurvivalRoll !== null ? losingUnitId : null,
+    psychicCrewSurvivalRoll,
+    psychicCrewSurvived,
   };
   await tx.update(gamesTable).set({
     aiState: mergeAiState(game.aiState, aiState("acted", "rules.dogfight", {
       message: shieldAbsorbedLoss
         ? "Dogfight loss stripped the Shadow fighter's shield; fighters remain locked."
+        : psychicCrewSurvived
+        ? "Psychic Crew survived dogfight elimination on 4+; fighters remain locked."
         : destroyedUnitId === null
         ? "Dogfight tied; fighters remain locked."
         : `Dogfight destroyed fighter unit ${destroyedUnitId}.`,
@@ -5549,6 +5570,9 @@ type AntiFighterRollLog = {
   total: number;
   targetHull: number;
   destroyed: boolean;
+  psychicCrewDodgeRoll?: number | null;
+  psychicCrewDodgeSuccessful?: boolean;
+  shieldAbsorbed?: boolean;
 };
 
 type AntiFighterAttackLog = {
@@ -5664,6 +5688,47 @@ async function fighterShieldAbsorbsKill(tx: any, targetUnitId: number): Promise<
   return Boolean(shielded);
 }
 
+async function resolveAntiFighterKillAgainstFighter(
+  tx: any,
+  targetEntry: AntiFighterEntry,
+  scoredKill: boolean,
+): Promise<{
+  destroyed: boolean;
+  psychicCrewDodgeRoll: number | null;
+  psychicCrewDodgeSuccessful: boolean;
+  shieldAbsorbed: boolean;
+}> {
+  if (!scoredKill) {
+    return {
+      destroyed: false,
+      psychicCrewDodgeRoll: null,
+      psychicCrewDodgeSuccessful: false,
+      shieldAbsorbed: false,
+    };
+  }
+  let psychicCrewDodgeRoll: number | null = null;
+  let psychicCrewDodgeSuccessful = false;
+  if (targetEntry.footprint.isFighter && targetEntry.traits.psychicCrew > 0) {
+    psychicCrewDodgeRoll = rollD6();
+    psychicCrewDodgeSuccessful = psychicCrewDodgeRoll >= 4;
+    if (psychicCrewDodgeSuccessful) {
+      return {
+        destroyed: false,
+        psychicCrewDodgeRoll,
+        psychicCrewDodgeSuccessful,
+        shieldAbsorbed: false,
+      };
+    }
+  }
+  const shieldAbsorbed = await fighterShieldAbsorbsKill(tx, targetEntry.unit.id);
+  return {
+    destroyed: !shieldAbsorbed,
+    psychicCrewDodgeRoll,
+    psychicCrewDodgeSuccessful,
+    shieldAbsorbed,
+  };
+}
+
 async function resolveFighterAntiFighterDogfightInterrupt(
   tx: any,
   game: typeof gamesTable.$inferSelect,
@@ -5699,10 +5764,11 @@ async function resolveFighterAntiFighterDogfightInterrupt(
     for (let i = 0; i < af.dice; i++) {
       const die = rollD6();
       const total = die + af.bonus;
-      let destroyed = total >= targetHull;
-      if (destroyed && await fighterShieldAbsorbsKill(tx, targetEntry.unit.id)) {
-        destroyed = false;
-      }
+      const kill = await resolveAntiFighterKillAgainstFighter(
+        tx,
+        targetEntry,
+        total >= targetHull,
+      );
       rolls.push({
         attackerId: attackerEntry.unit.id,
         attackerName: attackerEntry.unit.name,
@@ -5712,7 +5778,10 @@ async function resolveFighterAntiFighterDogfightInterrupt(
         bonus: af.bonus,
         total,
         targetHull,
-        destroyed,
+        destroyed: kill.destroyed,
+        psychicCrewDodgeRoll: kill.psychicCrewDodgeRoll,
+        psychicCrewDodgeSuccessful: kill.psychicCrewDodgeSuccessful,
+        shieldAbsorbed: kill.shieldAbsorbed,
       });
     }
     attacks.push({
@@ -6091,10 +6160,11 @@ async function resolveEndOfMovementAntiFighter(
       const die = rollD6();
       const targetHull = targetEntry.model.hullRating ?? targetEntry.model.hull ?? targetEntry.unit.maxHullPoints;
       const total = die + bonus;
-      let destroyed = total >= targetHull;
-      if (destroyed && await fighterShieldAbsorbsKill(tx, targetEntry.unit.id)) {
-        destroyed = false;
-      }
+      const kill = await resolveAntiFighterKillAgainstFighter(
+        tx,
+        targetEntry,
+        total >= targetHull,
+      );
       rolls.push({
         attackerId: attackerEntry.unit.id,
         attackerName: attackerEntry.unit.name,
@@ -6104,9 +6174,12 @@ async function resolveEndOfMovementAntiFighter(
         bonus,
         total,
         targetHull,
-        destroyed,
+        destroyed: kill.destroyed,
+        psychicCrewDodgeRoll: kill.psychicCrewDodgeRoll,
+        psychicCrewDodgeSuccessful: kill.psychicCrewDodgeSuccessful,
+        shieldAbsorbed: kill.shieldAbsorbed,
       });
-      if (destroyed) destroyedByThisAttack.add(targetEntry.unit.id);
+      if (kill.destroyed) destroyedByThisAttack.add(targetEntry.unit.id);
     }
 
     for (const targetId of destroyedByThisAttack) {
@@ -6228,6 +6301,17 @@ async function resolvePlayerAntiFighterAllocations(
   const attacks: AntiFighterAttackLog[] = [];
   const destroyedUnitIds = new Set<number>();
   const fighterRecoveries: DestroyedFighterRecoveryResult[] = [];
+  const targetEntryCache = new Map<number, AntiFighterEntry | null>();
+  const getTargetEntry = async (targetUnitId: number): Promise<AntiFighterEntry | null> => {
+    if (targetEntryCache.has(targetUnitId)) return targetEntryCache.get(targetUnitId) ?? null;
+    const [targetUnit] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, targetUnitId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
+    const entry = targetUnit ? await antiFighterEntryForUnit(tx, targetUnit) : null;
+    targetEntryCache.set(targetUnitId, entry);
+    return entry;
+  };
   for (const attacker of pending.attackers) {
     const assignments = expandedAssignments.get(attacker.attackerUnitId) ?? [];
     if (assignments.length === 0) continue;
@@ -6239,10 +6323,19 @@ async function resolvePlayerAntiFighterAllocations(
       if (!target) continue;
       const die = rollD6();
       const total = die + attacker.bonus;
-      let destroyed = total >= target.hull;
-      if (destroyed && await fighterShieldAbsorbsKill(tx, target.targetUnitId)) {
-        destroyed = false;
-      }
+      const targetEntry = await getTargetEntry(target.targetUnitId);
+      const kill = targetEntry
+        ? await resolveAntiFighterKillAgainstFighter(
+            tx,
+            targetEntry,
+            total >= target.hull,
+          )
+        : {
+            destroyed: total >= target.hull,
+            psychicCrewDodgeRoll: null,
+            psychicCrewDodgeSuccessful: false,
+            shieldAbsorbed: false,
+          };
       rolls.push({
         attackerId: attacker.attackerUnitId,
         attackerName: attacker.attackerName,
@@ -6252,9 +6345,12 @@ async function resolvePlayerAntiFighterAllocations(
         bonus: attacker.bonus,
         total,
         targetHull: target.hull,
-        destroyed,
+        destroyed: kill.destroyed,
+        psychicCrewDodgeRoll: kill.psychicCrewDodgeRoll,
+        psychicCrewDodgeSuccessful: kill.psychicCrewDodgeSuccessful,
+        shieldAbsorbed: kill.shieldAbsorbed,
       });
-      if (destroyed) destroyedByThisAttack.add(target.targetUnitId);
+      if (kill.destroyed) destroyedByThisAttack.add(target.targetUnitId);
     }
     for (const targetId of destroyedByThisAttack) destroyedUnitIds.add(targetId);
     attacks.push({
@@ -8930,6 +9026,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     }
     const requiredStraight = turnDistanceRequirement(unit, moveCrits, moveTraits, unit.turnsMadeThisActivation);
     const movedStraight = unit.distanceSinceLastTurnThisActivation;
+    if (!Number.isFinite(requiredStraight)) {
+      res.status(400).json({ error: "Ship has Speed 0 and cannot turn unless it uses All Stop and Pivot" });
+      return;
+    }
     if (movedStraight + 1e-6 < requiredStraight) {
       const label = unit.turnsMadeThisActivation === 0 ? "before its first turn" : "after its previous turn";
       res.status(400).json({
@@ -10223,9 +10323,20 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
         attackerScore > targetScore ? target.id :
         targetScore > attackerScore ? attacker.id :
         null;
+      const losingTraits =
+        destroyedUnitId === target.id ? targetTraits :
+        destroyedUnitId === attacker.id ? attackerTraits :
+        null;
+      const psychicCrewSurvivalRoll =
+        destroyedUnitId !== null && losingTraits && losingTraits.psychicCrew > 0
+          ? rollD6()
+          : null;
+      const psychicCrewSurvived =
+        psychicCrewSurvivalRoll !== null && psychicCrewSurvivalRoll >= 4;
+      const finalDestroyedUnitId = psychicCrewSurvived ? null : destroyedUnitId;
       const destroyedFighterBeforeRecovery =
-        destroyedUnitId === target.id ? target :
-        destroyedUnitId === attacker.id ? attacker :
+        finalDestroyedUnitId === target.id ? target :
+        finalDestroyedUnitId === attacker.id ? attacker :
         null;
 
       await tx.update(gameUnitsTable)
@@ -10233,7 +10344,7 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
         .where(eq(gameUnitsTable.id, attacker.id));
 
       let fighterRecovery: DestroyedFighterRecoveryResult | null = null;
-      if (destroyedUnitId !== null) {
+      if (finalDestroyedUnitId !== null) {
         await tx.update(gameUnitsTable).set({
           hullPoints: 0,
           crewPoints: 0,
@@ -10242,7 +10353,7 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
           damageState: "destroyed",
           isDestroyed: true,
           hasFiredThisRound: true,
-        }).where(eq(gameUnitsTable.id, destroyedUnitId));
+        }).where(eq(gameUnitsTable.id, finalDestroyedUnitId));
         if (destroyedFighterBeforeRecovery) {
           fighterRecovery = await resolveDestroyedFighterRecovery(tx, game, {
             ...destroyedFighterBeforeRecovery,
@@ -10260,7 +10371,7 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
       const allUnits = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
       const aliveByOwner = new Map<string, number>();
       for (const row of allUnits) {
-        const destroyed = row.id === destroyedUnitId ? true : row.isDestroyed;
+        const destroyed = row.id === finalDestroyedUnitId ? true : row.isDestroyed;
         if (unitCountsForVictory({ ...row, isDestroyed: destroyed })) {
           aliveByOwner.set(row.ownerId, (aliveByOwner.get(row.ownerId) ?? 0) + 1);
         }
@@ -10304,15 +10415,20 @@ router.post("/games/:gameId/units/:unitId/dogfight", requireAuth, async (req, re
         targetSupportBonus,
         targetSupporters,
         targetScore,
-        destroyedUnitId,
+        destroyedUnitId: finalDestroyedUnitId,
         fighterRecovery,
-        tied: destroyedUnitId === null,
+        tied: finalDestroyedUnitId === null,
+        psychicCrewSurvivalUnitId: psychicCrewSurvivalRoll !== null ? destroyedUnitId : null,
+        psychicCrewSurvivalRoll,
+        psychicCrewSurvived,
       };
       await tx.update(gamesTable).set({
         aiState: mergeAiState(game.aiState, aiState("acted", "rules.dogfight", {
-          message: destroyedUnitId === null
+          message: psychicCrewSurvived
+            ? "Psychic Crew survived dogfight elimination on 4+; fighters remain locked."
+            : finalDestroyedUnitId === null
             ? "Dogfight tied; fighters remain locked."
-            : `Dogfight destroyed fighter unit ${destroyedUnitId}.`,
+            : `Dogfight destroyed fighter unit ${finalDestroyedUnitId}.`,
           lastDogfight: log,
         })),
       }).where(eq(gamesTable.id, game.id));
@@ -12519,6 +12635,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "intensify-defense": 8,
     "run-silent": 8,
     "concentrate-fire": 8,
+    "cause-confusion": null,
     "all-hands-on-deck": 9,
     "scramble": 7,
     "regenerate": 9,
@@ -12618,6 +12735,16 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       // Per-action prereqs.
       let storedTarget: number | null = null;
       let nominatedTarget: typeof gameUnitsTable.$inferSelect | null = null;
+      let nominatedTargetAfter: typeof gameUnitsTable.$inferSelect | null = null;
+      let causeConfusionResolution: {
+        targetActionBefore: string;
+        attackerPsychicCrew: number;
+        attackerRoll: number;
+        attackerTotal: number;
+        targetRoll: number;
+        targetCrewQuality: number;
+        targetTotal: number;
+      } | null = null;
       if (action === "concentrate-fire") {
         if (targetUnitId == null) throw Object.assign(new Error("Concentrate All Fire-power requires a target"), { status: 400 });
         const [tgt] = await tx.select().from(gameUnitsTable).where(and(
@@ -12626,6 +12753,34 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
         if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
         if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        storedTarget = targetUnitId;
+        nominatedTarget = tgt;
+      }
+      if (action === "cause-confusion") {
+        if (unitTraits.psychicCrew <= 0) {
+          throw Object.assign(new Error("Cause Confusion requires the Psychic Crew trait"), { status: 400 });
+        }
+        if (targetUnitId == null) throw Object.assign(new Error("Cause Confusion requires a target"), { status: 400 });
+        const [tgt] = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
+        ));
+        if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
+        if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+        if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        const targetModel = await getShipModelForUnit(tx, tgt);
+        if (!targetModel || shipModelIsFighter(targetModel)) {
+          throw Object.assign(new Error("Cause Confusion targets enemy ships, not fighter flights"), { status: 400 });
+        }
+        if (!tgt.specialAction || tgt.specialAction.endsWith("-failed")) {
+          throw Object.assign(new Error("Cause Confusion requires a target with an active Special Action"), { status: 400 });
+        }
+        const distance = edgeDistance(
+          { x: unit.hexQ, z: unit.hexR, baseRadiusInches: rulesBaseRadius(unit) },
+          { x: tgt.hexQ, z: tgt.hexR, baseRadiusInches: rulesBaseRadius(tgt) },
+        );
+        if (distance > 8 + 1e-6) {
+          throw Object.assign(new Error(`Cause Confusion target out of range (${distance.toFixed(1)}\" > 8\")`), { status: 400 });
+        }
         storedTarget = targetUnitId;
         nominatedTarget = tgt;
       }
@@ -12661,7 +12816,31 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       let cqRoll: number | null = null;
       let cqTotal: number | null = null;
       let success = true;
-      if (cqRequired !== null) {
+      if (action === "cause-confusion") {
+        if (!nominatedTarget?.specialAction) {
+          throw Object.assign(new Error("Cause Confusion requires a target with an active Special Action"), { status: 400 });
+        }
+        const attackerRoll = rollD6();
+        const targetRoll = rollD6();
+        const targetCrewQuality = terrainAdjustedCrewQuality(
+          nominatedTarget.crewQuality,
+          { x: nominatedTarget.hexQ, z: nominatedTarget.hexR },
+          game.terrainConfig,
+          "special-action",
+        );
+        const attackerTotal = attackerRoll + unitTraits.psychicCrew;
+        const targetTotal = targetRoll + targetCrewQuality;
+        success = attackerTotal > targetTotal;
+        causeConfusionResolution = {
+          targetActionBefore: nominatedTarget.specialAction,
+          attackerPsychicCrew: unitTraits.psychicCrew,
+          attackerRoll,
+          attackerTotal,
+          targetRoll,
+          targetCrewQuality,
+          targetTotal,
+        };
+      } else if (cqRequired !== null) {
         cqRoll = rollD6();
         const effectiveCrewQuality = terrainAdjustedCrewQuality(
           unit.crewQuality,
@@ -12689,6 +12868,20 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       const nextOneWeapon = success && action === "all-hands-on-deck"
         ? true
         : unit.oneWeaponThisRound;
+      if (success && action === "cause-confusion" && nominatedTarget) {
+        const targetBaseAction = nominatedTarget.specialAction?.replace(/-failed$/, "") ?? "";
+        const [targetAfter] = await tx.update(gameUnitsTable).set({
+          specialAction: null,
+          specialActionTargetId: null,
+          oneWeaponThisRound: targetBaseAction === "all-hands-on-deck"
+            ? false
+            : nominatedTarget.oneWeaponThisRound,
+          allStopReady: targetBaseAction === "all-stop"
+            ? false
+            : nominatedTarget.allStopReady,
+        }).where(eq(gameUnitsTable.id, nominatedTarget.id)).returning();
+        nominatedTargetAfter = targetAfter ?? null;
+      }
       const [updated] = await tx.update(gameUnitsTable).set({
         specialAction: stored,
         specialActionTargetId: success ? storedTarget : null,
@@ -12709,7 +12902,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         cqTotal,
         targetUnitId: storedTarget,
         targetUnit: nominatedTarget,
-        summary: `${unit.name} ${success ? "passed" : "failed"} ${action}${cqRequired !== null && cqTotal !== null ? ` (${cqTotal} vs ${cqRequired})` : ""}.`,
+        summary: action === "cause-confusion" && causeConfusionResolution
+          ? `${unit.name} ${success ? "caused confusion on" : "failed to confuse"} ${nominatedTarget?.name ?? "target"} (${causeConfusionResolution.attackerTotal} vs ${causeConfusionResolution.targetTotal}).`
+          : `${unit.name} ${success ? "passed" : "failed"} ${action}${cqRequired !== null && cqTotal !== null ? ` (${cqTotal} vs ${cqRequired})` : ""}.`,
         payload: {
           rulesPath: "special-action",
           requiresCq: cqRequired !== null,
@@ -12717,6 +12912,14 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
           allStopReadyAfter: nextAllStopReady,
           oneWeaponBefore: unit.oneWeaponThisRound,
           oneWeaponAfter: nextOneWeapon,
+          causeConfusion: causeConfusionResolution
+            ? {
+                ...causeConfusionResolution,
+                targetAfter: nominatedTargetAfter
+                  ? unitAuditState(nominatedTargetAfter)
+                  : null,
+              }
+            : null,
         },
       });
 

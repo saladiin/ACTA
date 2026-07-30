@@ -20,6 +20,8 @@ export const SHIP_AI_PROFILE_SEEDS: Array<{ name: string; aiProfile: ShipAiProfi
   { name: "Oracle Scout Cruiser", aiProfile: "standoff" },
   { name: "Omega Destroyer", aiProfile: "jouster" },
   { name: "Omega Class Destroyer", aiProfile: "jouster" },
+  { name: "Omega Command Destroyer", aiProfile: "jouster" },
+  { name: "Shadow Omega Advanced Destroyer", aiProfile: "jouster" },
   { name: "Nova Dreadnought", aiProfile: "broadside" },
   { name: "Salvaged Nova Dreadnought", aiProfile: "broadside" },
   { name: "Sagittarius", aiProfile: "standoff" },

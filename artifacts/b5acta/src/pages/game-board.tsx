@@ -152,6 +152,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Swords,
   Shield,
   Target,
@@ -340,6 +345,9 @@ function criticalEffectHint(crit: {
   effectKey?: string | null;
 }): string {
   const effects: string[] = [];
+  const ruleText =
+    CRITICAL_RULE_TEXT_BY_KEY[String(crit.effectKey ?? "")] ?? null;
+  if (ruleText) effects.push(ruleText);
   if ((crit.damageApplied ?? 0) > 0)
     effects.push(`-${crit.damageApplied} hull`);
   if ((crit.crewApplied ?? 0) > 0) effects.push(`-${crit.crewApplied} crew`);
@@ -352,6 +360,128 @@ function criticalEffectHint(crit: {
       ? "Cannot be cleared by Damage Control."
       : "Damage Control can clear it after the round it was caused.";
   return `${effects.join(", ")}. ${repair}`;
+}
+
+function titleCaseStatus(value: string | null | undefined): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "None";
+  return text
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function specialActionLabel(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const failed = raw.endsWith("-failed");
+  const base = failed ? raw.replace(/-failed$/, "") : raw;
+  const labels: Record<string, string> = {
+    "all-power-engines": "All Power to Engines",
+    "all-stop": "All Stop",
+    "all-stop-pivot": "All Stop and Pivot",
+    "come-about-extra-turn": "Come About: Extra Turn",
+    "come-about-sharp-turn": "Come About: Sharp Turn",
+    "blast-doors": "Close Blast Doors",
+    "intensify-defense": "Intensify Defensive Fire",
+    "run-silent": "Run Silent",
+    "concentrate-fire": "Concentrate All Fire",
+    "cause-confusion": "Cause Confusion",
+    "all-hands-on-deck": "All Hands on Deck",
+    scramble: "Scramble",
+    regenerate: "Regenerate",
+  };
+  return `${labels[base] ?? titleCaseStatus(base)}${failed ? " (failed)" : ""}`;
+}
+
+function scoutActionLabel(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const failed = raw.endsWith("-failed");
+  const base = failed ? raw.replace(/-failed$/, "") : raw;
+  const labels: Record<string, string> = {
+    "counter-stealth": "Counter-Stealth",
+    coord: "Coordinate Fire",
+  };
+  return `${labels[base] ?? titleCaseStatus(base)}${failed ? " (failed)" : ""}`;
+}
+
+const CRITICAL_RULE_TEXT_BY_KEY: Record<string, string> = {
+  "engines-power-relays": "-1 Speed",
+  "engines-thrusters": "-2 Speed",
+  "engines-fuel": "-4 Speed",
+  "engines-disabled": "Ship moves as though adrift",
+  "reactor-capacitors": "-2 Speed, all weapons -1 AD",
+  "reactor-power-feedback": "Lose 1 random trait",
+  "reactor-gas-leak": "No Special Actions",
+  "reactor-explosion": "No Special Actions, lose 1 random trait",
+  "weapons-targeting": "All weapons -1 AD",
+  "weapons-fluctuations": "Each weapon fires only on 4+",
+  "weapons-offline": "Random arc, 1 weapon may not fire",
+  "weapons-catastrophic": "Random arc, no weapons can fire",
+  "crew-fire": "Crew fire damage",
+  "crew-multi-fires": "Damage Control suffers -1 penalty",
+  "crew-decompression": "-1 Troops, no Special Actions",
+  "crew-hull-breach": "-2 Troops, no Damage Control this turn",
+  "vital-bridge": "No Special Actions",
+  "vital-secondary": "Secondary explosion damage",
+  "vital-engineering": "No Damage Control permitted",
+  "vital-weapons-control": "No firing out of 1 random arc",
+  "vital-implosion": "Lose 1 random trait",
+  "vital-catastrophic": "Lose 2 random traits",
+};
+
+function CriticalEffectTooltip({
+  crit,
+  enabled,
+  children,
+}: {
+  crit: Parameters<typeof criticalEffectHint>[0];
+  enabled: boolean;
+  children: React.ReactElement;
+}) {
+  if (!enabled) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        side="left"
+        align="start"
+        sideOffset={8}
+        className="max-w-[280px] border border-red-400/40 bg-zinc-950 px-3 py-2 font-mono text-[11px] leading-snug text-red-100 shadow-xl"
+      >
+        <div className="text-[10px] uppercase tracking-wider text-red-300/80">
+          {crit.name}
+        </div>
+        <div className="mt-1 text-zinc-200">{criticalEffectHint(crit)}</div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function TraitTooltip({
+  trait,
+  enabled = true,
+  children,
+}: {
+  trait: string;
+  enabled?: boolean;
+  children: React.ReactElement;
+}) {
+  if (!enabled) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        className="max-w-[280px] border border-cyan-400/40 bg-zinc-950 px-3 py-2 font-mono text-[11px] leading-snug text-cyan-100 shadow-xl"
+      >
+        <div className="text-[10px] uppercase tracking-wider text-cyan-300/80">
+          {trait}
+        </div>
+        <div className="mt-1 text-zinc-200">{traitHint(trait)}</div>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 type AiDiagnostics = {
@@ -463,6 +593,9 @@ type AntiFighterUiRoll = {
   total: number;
   targetHull: number;
   destroyed: boolean;
+  psychicCrewDodgeRoll?: number | null;
+  psychicCrewDodgeSuccessful?: boolean;
+  shieldAbsorbed?: boolean;
 };
 
 type AntiFighterUiState = {
@@ -1613,7 +1746,9 @@ function ObjModel({
 // arc-math fallbacks below remain available for any one-off legacy upload, but
 // the canonical fix is to re-export the model with correct orientation.
 const FLIP_MODELS: Set<string> = new Set();
-const OMEGA_ROTATING_MODEL_FILENAME = "omega2.glb";
+const OMEGA_ROTATING_MODEL_FILENAME = "omega3.glb";
+const COMMAND_OMEGA_MODEL_FILENAME = "command-omega3.glb";
+const OMEGA_X_MODEL_FILENAME = "omega-x.glb";
 const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
@@ -1645,8 +1780,24 @@ const ROTATING_MODEL_PARTS: Record<
 > = {
   [OMEGA_ROTATING_MODEL_FILENAME]: {
     nodeName: "omg_rotator",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
     axis: "z",
     secondsPerRotation: 30,
+    rotationMode: "local-axis",
+  },
+  [COMMAND_OMEGA_MODEL_FILENAME]: {
+    nodeName: "omg_rotator",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
+    axis: "z",
+    secondsPerRotation: 30,
+    rotationMode: "local-axis",
+  },
+  [OMEGA_X_MODEL_FILENAME]: {
+    nodeName: "omg_rotator",
+    // Blender Y is exported as this bone's local Z in glTF/Three.js.
+    axis: "z",
+    secondsPerRotation: 30,
+    rotationMode: "local-axis",
   },
   [EXPLORER_ROTATING_MODEL_FILENAME]: {
     nodeName: "explorerRotate",
@@ -1685,9 +1836,14 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
   "omega.glb": DEAD_OMEGA_MODEL_FILENAME,
   [OMEGA_ROTATING_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
+  [COMMAND_OMEGA_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
+  [OMEGA_X_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
   "bintak.glb": DEAD_BINTAK_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
+  OMEGA_ROTATING_MODEL_FILENAME,
+  COMMAND_OMEGA_MODEL_FILENAME,
+  OMEGA_X_MODEL_FILENAME,
   EXPLORER_ROTATING_MODEL_FILENAME,
   PSI_CORPS_MOTHERSHIP_MODEL_FILENAME,
   COMMAND_HYPERION_MODEL_FILENAME,
@@ -1720,7 +1876,6 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "artemis.glb": 0.5,
   [EXPLORER_ROTATING_MODEL_FILENAME]: 2,
   "omega.glb": 1.5,
-  [OMEGA_ROTATING_MODEL_FILENAME]: 1.5,
   "nova.glb": 1.15,
   [RAIDER_NOVA_MODEL_FILENAME]: 1.15,
   "orestes.glb": 1.65,
@@ -1764,6 +1919,10 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
 const MODEL_ABSOLUTE_SCALES: Record<string, number> = {
   "kirishiac.glb": 0.078,
   "kirishiac1.glb": 0.078,
+  [OMEGA_ROTATING_MODEL_FILENAME]: 0.00286936,
+  [COMMAND_OMEGA_MODEL_FILENAME]: 0.00286936,
+  [OMEGA_X_MODEL_FILENAME]: 0.00277311,
+  [PSI_CORPS_MOTHERSHIP_MODEL_FILENAME]: 0.00300057,
 };
 const MODEL_VISUAL_Y_OFFSETS: Record<string, number> = {
   [ORION_SPACE_STATION_MODEL_FILENAME]: 2,
@@ -1896,7 +2055,11 @@ function visualModelFilenameForUnit(unit: {
   const modelFilenameKey = unit.modelFilename.toLowerCase();
   if (
     unit.damageState === "adrift" &&
-    (modelFilenameKey === "omega.glb" || modelFilenameKey === OMEGA_ROTATING_MODEL_FILENAME)
+    (
+      modelFilenameKey === "omega.glb" ||
+      modelFilenameKey === OMEGA_ROTATING_MODEL_FILENAME ||
+      modelFilenameKey === COMMAND_OMEGA_MODEL_FILENAME
+    )
   ) {
     return "omega.glb";
   }
@@ -1953,6 +2116,10 @@ const ORGANIC_SHADOW_MODEL_FILENAMES = new Set([
   SHADOW_SCOUT_MODEL_FILENAME,
   "spitfire.glb",
 ]);
+const SELECTIVE_ORGANIC_SHADOW_MATERIAL_MODELS = new Set([
+  OMEGA_X_MODEL_FILENAME,
+]);
+const SHADOW_FLESH_MATERIAL_NAME = "shadow flesh";
 const ORGANIC_BATTLECRAB_TUNING = {
   speed: 2,
   intensity: 1.19,
@@ -2228,23 +2395,108 @@ function GlbModel({
   const filenameKey = filename.toLowerCase();
   const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
   const kirishiacLayeredRotation = isKirishiacModelFilename(filenameKey);
+  const useSelectiveOrganicShadowMaterial =
+    SELECTIVE_ORGANIC_SHADOW_MATERIAL_MODELS.has(filenameKey);
+  const [organicBaseTexture, organicNormalTexture, organicRoughnessTexture] =
+    useLoader(THREE.TextureLoader, [
+      boardTextureUrl("shadow_flesh_base_tile.png"),
+      boardTextureUrl("shadow_flesh_normal.png"),
+      boardTextureUrl("shadow_flesh_roughness.png"),
+    ]) as THREE.Texture[];
   const rotatingPartRef = useRef<THREE.Object3D | null>(null);
   const kirishiacRotatingLayerRef = useRef<THREE.Object3D | null>(null);
   const rotatingPartInitialRotationRef = useRef(0);
   const rotatingPartInitialQuaternionRef = useRef(new THREE.Quaternion());
   const rotatingPartDeltaQuaternionRef = useRef(new THREE.Quaternion());
   const rotatingPartLocalAxisRef = useRef(new THREE.Vector3(0, 1, 0));
-  const { cloned, anchors } = useMemo(() => {
+  const selectiveOrganicElapsedRef = useRef(0);
+  const selectiveOrganicShaderRefs = useRef<OrganicBattlecrabShader[]>([]);
+  const { cloned, anchors, selectiveOrganicMaterials } = useMemo(() => {
     rotatingPartRef.current = null;
     kirishiacRotatingLayerRef.current = null;
     rotatingPartInitialRotationRef.current = 0;
+    selectiveOrganicShaderRefs.current = [];
     const anchorNodes: THREE.Object3D[] = [];
+    const organicMaterials: THREE.MeshStandardMaterial[] = [];
+    if (useSelectiveOrganicShadowMaterial) {
+      configureOrganicBattlecrabTexture(organicBaseTexture, THREE.SRGBColorSpace);
+      configureOrganicBattlecrabTexture(organicNormalTexture, THREE.NoColorSpace);
+      configureOrganicBattlecrabTexture(organicRoughnessTexture, THREE.NoColorSpace);
+      organicNormalTexture.repeat.set(
+        ORGANIC_BATTLECRAB_TUNING.spread,
+        ORGANIC_BATTLECRAB_TUNING.spread,
+      );
+      organicRoughnessTexture.repeat.copy(organicNormalTexture.repeat);
+    }
+    const createSelectiveOrganicShadowMaterial = () => {
+      const material = new THREE.MeshStandardMaterial({
+        color: "#ffffff",
+        map: organicBaseTexture,
+        normalMap: organicNormalTexture,
+        normalScale: new THREE.Vector2(
+          ORGANIC_BATTLECRAB_TUNING.normalStrength,
+          ORGANIC_BATTLECRAB_TUNING.normalStrength,
+        ),
+        roughness: 0.86,
+        roughnessMap: organicRoughnessTexture,
+        metalness: 0,
+        side: THREE.DoubleSide,
+        transparent: opacity < 1,
+        opacity,
+      });
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uOrganicTime = {
+          value: selectiveOrganicElapsedRef.current,
+        };
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "void main() {",
+          `
+uniform float uOrganicTime;
+
+void main() {
+          `,
+        );
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <map_fragment>",
+          `
+#ifdef USE_MAP
+  vec2 organicUv = vMapUv * ${ORGANIC_BATTLECRAB_TUNING.spread.toFixed(2)};
+  float organicTravel = uOrganicTime
+    * ${ORGANIC_BATTLECRAB_TUNING.speed.toFixed(2)}
+    * ${ORGANIC_BATTLECRAB_TUNING.intensity.toFixed(2)};
+  vec2 organicDrift = vec2(0.018, 0.006) * organicTravel;
+  vec4 sampledDiffuseColor = texture2D(map, organicUv + organicDrift);
+  float organicGray = dot(
+    sampledDiffuseColor.rgb,
+    vec3(0.2126, 0.7152, 0.0722)
+  );
+  organicGray = clamp(organicGray * 1.42 + 0.01, 0.0, 0.72);
+  sampledDiffuseColor.rgb = vec3(organicGray);
+  diffuseColor *= sampledDiffuseColor;
+#endif
+          `,
+        );
+        selectiveOrganicShaderRefs.current.push(
+          shader as OrganicBattlecrabShader,
+        );
+      };
+      material.customProgramCacheKey = () =>
+        "live-selective-shadow-organic-single-drift-v1";
+      organicMaterials.push(material);
+      return material;
+    };
     const cloneShipMaterial = (
       material: THREE.Material | undefined,
       maskMode?: "static" | "rotating",
       rotatorJointIndex?: number,
     ) => {
       const materialName = String(material?.name ?? "").toLowerCase();
+      if (
+        useSelectiveOrganicShadowMaterial &&
+        materialName.includes(SHADOW_FLESH_MATERIAL_NAME)
+      ) {
+        return createSelectiveOrganicShadowMaterial();
+      }
       const isKirishiacSpikeMaterial =
         kirishiacLayeredRotation && materialName.includes("kirishiac flame");
       const clonedMaterial = material?.clone
@@ -2409,7 +2661,11 @@ function GlbModel({
         position: [position.x, position.y, position.z] as [number, number, number],
       };
     });
-    return { cloned: c, anchors: anchorPoints };
+    return {
+      cloned: c,
+      anchors: anchorPoints,
+      selectiveOrganicMaterials: organicMaterials,
+    };
   }, [
     scene,
     tint,
@@ -2418,11 +2674,34 @@ function GlbModel({
     ghostHighlight,
     rotatingPartConfig,
     kirishiacLayeredRotation,
+    useSelectiveOrganicShadowMaterial,
+    organicBaseTexture,
+    organicNormalTexture,
+    organicRoughnessTexture,
+    opacity,
   ]);
   useEffect(() => {
     applyObjectMaterialOpacity(cloned, opacity);
   }, [cloned, opacity]);
+  useEffect(
+    () => () =>
+      selectiveOrganicMaterials.forEach((material) => material.dispose()),
+    [selectiveOrganicMaterials],
+  );
   useFrame(({ clock }) => {
+    if (useSelectiveOrganicShadowMaterial) {
+      selectiveOrganicElapsedRef.current = clock.getElapsedTime();
+      for (const shader of selectiveOrganicShaderRefs.current) {
+        shader.uniforms.uOrganicTime.value =
+          selectiveOrganicElapsedRef.current;
+      }
+      const travel =
+        selectiveOrganicElapsedRef.current *
+        ORGANIC_BATTLECRAB_TUNING.speed *
+        ORGANIC_BATTLECRAB_TUNING.intensity;
+      organicNormalTexture.offset.set(travel * 0.018, travel * 0.006);
+      organicRoughnessTexture.offset.copy(organicNormalTexture.offset);
+    }
     if (kirishiacRotatingLayerRef.current) {
       const progress = (clock.getElapsedTime() % 30) / 30;
       kirishiacRotatingLayerRef.current.rotation.z = progress * Math.PI * 2;
@@ -2555,7 +2834,9 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "kirishiac.glb": "20260725-004107",
   "kirishiac1.glb": "20260725-beam-0100",
   "missile-hyperion.glb": "20260719-005010",
-  [OMEGA_ROTATING_MODEL_FILENAME]: "20260720-174853",
+  [OMEGA_ROTATING_MODEL_FILENAME]: "20260729-194957",
+  [COMMAND_OMEGA_MODEL_FILENAME]: "20260729-195216",
+  [OMEGA_X_MODEL_FILENAME]: "20260729-202747",
   "olympus-gunship.glb": "20260727-gunship-v1",
   "orestes.glb": "20260724-191655",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
@@ -4548,6 +4829,7 @@ function GameUnit3D({
   isSelected,
   onClick,
   onCameraFocus,
+  onHoverChange,
   myUserId,
   weapons,
   dragOffset,
@@ -4591,6 +4873,7 @@ function GameUnit3D({
   isSelected: boolean;
   onClick: () => void;
   onCameraFocus: () => void;
+  onHoverChange?: (unitId: number | null) => void;
   myUserId: string;
   weapons: Pick<Weapon, "arc" | "range">[];
   dragOffset?: { x: number; z: number } | null;
@@ -4812,6 +5095,8 @@ function GameUnit3D({
     <group
       position={[bx, 0, bz]}
       onClick={onClick}
+      onPointerMove={() => onHoverChange?.(unit.id)}
+      onPointerOut={() => onHoverChange?.(null)}
       onDoubleClick={(e) => {
         e.stopPropagation();
         onCameraFocus();
@@ -6876,6 +7161,15 @@ function effectiveUiAttackDice(weapon: Weapon): number {
   return Math.max(1, weapon.attackDice - weakPenalty);
 }
 
+function uiAllWeaponsAdModifier(unit: {
+  criticals?: Array<{ effectKey?: string | null }>;
+}): number {
+  return (unit.criticals ?? []).reduce((sum, crit) => {
+    const key = String(crit.effectKey ?? "");
+    return sum + (key === "reactor-capacitors" || key === "weapons-targeting" ? -1 : 0);
+  }, 0);
+}
+
 function weaponFingerprint(weapon: Weapon) {
   return {
     weaponName: weapon.name ?? "",
@@ -7030,11 +7324,14 @@ const CRIT_SPEED_REDUCE_BY_KEY: Record<string, number> = {
 };
 
 function criticalSpeedReduction(unit: {
-  criticals?: Array<{ effectKey: string }>;
+  criticals?: Array<{ effectKey?: string | null }>;
 }): number {
   let reduce = 0;
   for (const crit of unit.criticals ?? []) {
-    reduce = Math.max(reduce, CRIT_SPEED_REDUCE_BY_KEY[crit.effectKey] ?? 0);
+    reduce = Math.max(
+      reduce,
+      CRIT_SPEED_REDUCE_BY_KEY[String(crit.effectKey ?? "")] ?? 0,
+    );
   }
   return reduce;
 }
@@ -7042,12 +7339,73 @@ function criticalSpeedReduction(unit: {
 function effectiveUiSpeed(unit: {
   speed: number;
   isCrippled?: boolean;
-  criticals?: Array<{ effectKey: string }>;
+  criticals?: Array<{ effectKey?: string | null }>;
 }): number {
   const crippledSpeed = unit.isCrippled
     ? Math.floor(unit.speed / 2)
     : unit.speed;
   return Math.max(0, crippledSpeed - criticalSpeedReduction(unit));
+}
+
+function uiSpeedBreakdown(unit: {
+  speed: number;
+  isCrippled?: boolean;
+  criticals?: Array<{
+    effectKey?: string | null;
+    name?: string | null;
+  }>;
+}): {
+  printedSpeed: number;
+  postCrippleSpeed: number;
+  criticalReduction: number;
+  effectiveSpeed: number;
+  reasons: string[];
+  shortReasons: string[];
+  summary: string;
+} {
+  const printedSpeed = unit.speed;
+  const postCrippleSpeed = unit.isCrippled
+    ? Math.floor(printedSpeed / 2)
+    : printedSpeed;
+  const criticalReduction = criticalSpeedReduction(unit);
+  const effectiveSpeed = Math.max(0, postCrippleSpeed - criticalReduction);
+  const reasons: string[] = [];
+  const shortReasons: string[] = [];
+  if (unit.isCrippled) {
+    reasons.push(`crippled halves Speed ${printedSpeed} to ${postCrippleSpeed}`);
+    shortReasons.push("crippled");
+  }
+  if (criticalReduction > 0) {
+    const speedCritNames = (unit.criticals ?? [])
+      .filter(
+        (crit) =>
+          (CRIT_SPEED_REDUCE_BY_KEY[String(crit.effectKey ?? "")] ?? 0) ===
+          criticalReduction,
+      )
+      .map((crit) => crit.name || "engine critical")
+      .filter(Boolean);
+    const critLabel =
+      speedCritNames.length > 0
+        ? speedCritNames.join(", ")
+        : "active speed critical";
+    reasons.push(
+      `${critLabel} applies the highest active speed-critical penalty, -${criticalReduction} Speed`,
+    );
+    shortReasons.push(`${critLabel} -${criticalReduction} Speed`);
+  }
+  const summary =
+    reasons.length > 0
+      ? `Effective Speed ${effectiveSpeed}: ${reasons.join("; ")}.`
+      : `Effective Speed ${effectiveSpeed}.`;
+  return {
+    printedSpeed,
+    postCrippleSpeed,
+    criticalReduction,
+    effectiveSpeed,
+    reasons,
+    shortReasons,
+    summary,
+  };
 }
 
 function effectiveUiTurns(unit: {
@@ -7094,7 +7452,7 @@ function uiMovementTraitsForModel(
 }
 
 function parseUiSelfRepairDice(raw: string | null | undefined): number {
-  const match = (raw ?? "").match(/\bself[-\s]?repair\b\s*:?\s*(\d+)/i);
+  const match = (raw ?? "").match(/\bself[-\s]?repair(?:ing)?\b\s*:?\s*(\d+)/i);
   return match ? Math.max(0, Number(match[1]) || 0) : 0;
 }
 
@@ -7110,7 +7468,10 @@ function turnDistanceNeeded(
   traits: { agile: boolean; superManeuverable: boolean },
 ): number {
   if (traits.superManeuverable) return 0;
-  if (turnsMade === 0) return traits.agile ? speed / 4 : speed / 2;
+  if (turnsMade === 0) {
+    if (speed <= 0) return Number.POSITIVE_INFINITY;
+    return traits.agile ? speed / 4 : speed / 2;
+  }
   return traits.agile ? 1 : 2;
 }
 
@@ -7123,6 +7484,254 @@ function snapMovementDistance(distance: number): number {
 
 function formatInches(value: number): string {
   return value.toFixed(value % 1 === 0 ? 0 : 1);
+}
+
+function ShipStatusInspectorDialog({
+  open,
+  onOpenChange,
+  unit,
+  model,
+  weapons,
+  myUserId,
+  currentRound,
+  isFighter,
+  dogfightLocked,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  unit: GameUnit | null;
+  model?: ShipModel;
+  weapons: Weapon[];
+  myUserId: string;
+  currentRound: number;
+  isFighter: boolean;
+  dogfightLocked: boolean;
+}) {
+  if (!unit) {
+    return <Dialog open={false} onOpenChange={onOpenChange} />;
+  }
+
+  const traitList = splitTraitList(model?.traits ?? "");
+  const crits = unit.criticals ?? [];
+  const adModifier = uiAllWeaponsAdModifier(unit);
+  const speedInfo = uiSpeedBreakdown(
+    isFighter ? { ...unit, isCrippled: false } : unit,
+  );
+  const activeEffects = [
+    unit.isDestroyed ? "Destroyed" : null,
+    unit.isCrippled && !isFighter ? "Crippled" : null,
+    unit.isSkeletonCrew ? "Skeleton Crew" : null,
+    unit.damageState && unit.damageState !== "normal"
+      ? titleCaseStatus(unit.damageState)
+      : null,
+    dogfightLocked ? "Dogfight locked" : null,
+    specialActionLabel(unit.specialAction),
+    unit.oneWeaponThisRound ? "One weapon this round" : null,
+    unit.allStopReady ? "All Stop ready" : null,
+    scoutActionLabel(unit.scoutAction),
+    unit.scoutActionTargetId ? `Scout target #${unit.scoutActionTargetId}` : null,
+    unit.scoutCoordConsumed ? "Scout coord spent" : null,
+    unit.shadowPointDefenseRound === currentRound
+      ? "Shadow point defence"
+      : null,
+    unit.shadowManeuverMode
+      ? `Shadow ${titleCaseStatus(unit.shadowManeuverMode)}`
+      : null,
+    unit.telepathicDisruptionExhausted ? "Telepathic disruption spent" : null,
+    (unit.mindScreamTargetIdsThisRound?.length ?? 0) > 0
+      ? `Mind scream targets ${unit.mindScreamTargetIdsThisRound!.length}`
+      : null,
+    unit.launchedFromUnitId ? `Launched from #${unit.launchedFromUnitId}` : null,
+    adModifier !== 0 ? `All weapons ${adModifier} AD` : null,
+  ].filter(Boolean) as string[];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-h-[86vh] border-cyan-500/45 bg-black/95 p-0 font-mono text-cyan-50 sm:max-w-3xl"
+        data-testid="dialog-unit-status-inspector"
+      >
+        <DialogHeader className="border-b border-cyan-500/25 px-4 py-3 pr-10 text-left">
+          <DialogTitle className="text-sm uppercase tracking-[0.2em] text-cyan-100">
+            {unit.name}
+          </DialogTitle>
+          <DialogDescription className="text-[11px] text-cyan-100/65">
+            {unit.ownerId === myUserId ? "Friendly" : "Enemy"} - {unit.faction} -{" "}
+            {model?.priorityLevel ? priorityLabel(model.priorityLevel) : "Unknown priority"}
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="max-h-[70vh]">
+          <div className="space-y-3 px-4 py-3">
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <div className="rounded border border-cyan-500/25 bg-cyan-500/5 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-widest text-cyan-200/60">
+                  Hull
+                </div>
+                <div className="text-sm font-bold">
+                  {unit.hullPoints}/{unit.maxHullPoints}
+                </div>
+              </div>
+              <div className="rounded border border-cyan-500/25 bg-cyan-500/5 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-widest text-cyan-200/60">
+                  Crew
+                </div>
+                <div className="text-sm font-bold">
+                  {unit.maxCrewPoints > 0
+                    ? `${unit.crewPoints}/${unit.maxCrewPoints}`
+                    : "None"}
+                </div>
+              </div>
+              <div className="rounded border border-cyan-500/25 bg-cyan-500/5 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-widest text-cyan-200/60">
+                  Speed
+                </div>
+                <div className="text-sm font-bold">
+                  {speedInfo.effectiveSpeed}/{unit.speed}
+                </div>
+              </div>
+              <div className="rounded border border-cyan-500/25 bg-cyan-500/5 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-widest text-cyan-200/60">
+                  Turn
+                </div>
+                <div className="text-sm font-bold">
+                  {unit.turns}/{unit.turnAngle}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-[1fr_1.35fr]">
+              <section>
+                <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-cyan-200/70">
+                  Current Effects
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {activeEffects.length > 0 ? (
+                    activeEffects.map((effect) => (
+                      <span
+                        key={effect}
+                        className="rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-100"
+                      >
+                        {effect}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-slate-400">None</span>
+                  )}
+                </div>
+              </section>
+              <section>
+                <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-cyan-200/70">
+                  Traits
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {traitList.length > 0 ? (
+                    traitList.map((trait) => (
+                      <TraitTooltip key={trait} trait={trait}>
+                        <span className="cursor-help rounded border border-cyan-400/25 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] text-cyan-100">
+                          {trait}
+                        </span>
+                      </TraitTooltip>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-slate-400">None</span>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <section>
+              <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-cyan-200/70">
+                Weapons
+              </div>
+              <div className="space-y-1">
+                {weapons.length > 0 ? (
+                  weapons.map((weapon) => {
+                    const pointDefense = uiShadowPointDefenseWeaponActive(
+                      unit,
+                      model,
+                      weapon,
+                      currentRound,
+                    );
+                    const baseAd = effectiveUiAttackDice(weapon);
+                    const displayAd = Math.max(1, baseAd + adModifier);
+                    const displayRange = pointDefense
+                      ? weapon.range / 2
+                      : weapon.range;
+                    const displayArc = pointDefense ? "Turret" : weapon.arc;
+                    const weaponTraits = pointDefense
+                      ? ["Accurate", "Mini-Beam"]
+                      : splitTraitList(weapon.traits);
+                    return (
+                      <div
+                        key={weapon.id}
+                        className="rounded border border-slate-600/60 bg-slate-950/80 px-2 py-1.5 text-[11px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-cyan-50">
+                            {weapon.name || weapon.arc}
+                          </span>
+                          <span className="shrink-0 text-cyan-200/80">
+                            {displayAd}AD
+                            {displayAd !== baseAd ? ` (${baseAd})` : ""} - r
+                            {displayRange}" - {displayArc}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap gap-1 text-[10px] text-slate-300">
+                          {weaponTraits.length > 0 ? (
+                            weaponTraits.map((trait) => (
+                              <TraitTooltip key={`${weapon.id}-${trait}`} trait={trait}>
+                                <span className="cursor-help rounded border border-slate-500/40 px-1 text-slate-200">
+                                  {trait}
+                                </span>
+                              </TraitTooltip>
+                            ))
+                          ) : (
+                            <span>No weapon traits</span>
+                          )}
+                          {pointDefense ? " - Shadow point defence active" : ""}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-[11px] text-slate-400">No weapons listed</div>
+                )}
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-cyan-200/70">
+                Criticals
+              </div>
+              <div className="space-y-1">
+                {crits.length > 0 ? (
+                  crits.map((crit) => (
+                    <div
+                      key={crit.id}
+                      className="rounded border border-red-400/35 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-100"
+                      title={criticalEffectHint(crit)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold uppercase">{crit.name}</span>
+                        <span className="text-[10px] text-red-100/65">
+                          {crit.repairable ? "repairable" : "permanent"}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-red-100/75">
+                        {criticalEffectHint(crit)}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-[11px] text-slate-400">No critical effects</div>
+                )}
+              </div>
+            </section>
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function snapBoardCoord(value: number): number {
@@ -9273,6 +9882,8 @@ export default function GameBoard() {
   const game = gameData?.game;
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
+  const [hoveredUnitId, setHoveredUnitId] = useState<number | null>(null);
+  const [inspectedUnitId, setInspectedUnitId] = useState<number | null>(null);
   const terrainConfig = useMemo(
     () => normalizeTerrainConfig(game?.terrainConfig),
     [game?.terrainConfig],
@@ -9603,8 +10214,9 @@ export default function GameBoard() {
   ] = useState<{ x: number; y: number } | null>(null);
   const [fighterLaunchConfirmPopover, setFighterLaunchConfirmPopover] =
     useState<{ x: number; y: number } | null>(null);
-  // For "Concentrate All Fire-power" we need a target picker before sending.
-  const [concentratePicking, setConcentratePicking] = useState(false);
+  // Targeted Special Actions need a board target picker before sending.
+  const [specialActionTargetPicking, setSpecialActionTargetPicking] =
+    useState<"concentrate-fire" | "cause-confusion" | null>(null);
 
   // Staging / fleet yards
   const threeRef = useRef<{
@@ -11843,6 +12455,54 @@ export default function GameBoard() {
     ? getShipModelForUnit(selectedUnitData)
     : undefined;
   const selectedShipTraitList = splitTraitList(selectedShipModel?.traits);
+  const inspectedUnitData =
+    inspectedUnitId === null
+      ? null
+      : units.find((unit) => unit.id === inspectedUnitId) ?? null;
+  const inspectedShipModel = inspectedUnitData
+    ? getShipModelForUnit(inspectedUnitData)
+    : undefined;
+  const inspectedUnitWeapons = inspectedUnitData
+    ? getWeaponsForUnit(inspectedUnitData)
+    : [];
+  const inspectedUnitIsFighter = inspectedUnitData
+    ? isFighterUnit(inspectedUnitData)
+    : false;
+  const inspectedUnitDogfightLocked =
+    !!inspectedUnitData &&
+    dogfightingFighterUnitIds.has(inspectedUnitData.id);
+  const handleUnitHoverChange = useCallback((unitId: number | null) => {
+    setHoveredUnitId((current) => (current === unitId ? current : unitId));
+  }, []);
+  useEffect(() => {
+    if (hoveredUnitId !== null && !units.some((unit) => unit.id === hoveredUnitId)) {
+      setHoveredUnitId(null);
+    }
+    if (inspectedUnitId !== null && !units.some((unit) => unit.id === inspectedUnitId)) {
+      setInspectedUnitId(null);
+    }
+  }, [hoveredUnitId, inspectedUnitId, units]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "u" && event.key !== "U") return;
+      if (hoveredUnitId === null) return;
+      event.preventDefault();
+      setInspectedUnitId(hoveredUnitId);
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [hoveredUnitId]);
   // The selected ship is only "controllable" if it's the one the server
   // currently has activated for THIS player.
   const isSelectedUnitActive =
@@ -12266,6 +12926,13 @@ export default function GameBoard() {
       const neededStraight = isAllStopPivot
         ? 0
         : turnDistanceNeeded(baseSpeed, led.turns, movementTraits);
+      if (!Number.isFinite(neededStraight)) {
+        setActivationFeedback(
+          "Turn rejected: effective Speed is 0. Use All Stop and Pivot if eligible.",
+        );
+        setMovePlan(null);
+        return;
+      }
       if (led.distSinceLastTurn + 1e-6 < neededStraight) {
         setMovePlan(null);
         return;
@@ -12517,7 +13184,8 @@ export default function GameBoard() {
       );
       const turnDistanceGate = turnGateExempt
         ? true
-        : led.distSinceLastTurn + 1e-6 >= neededStraight;
+        : Number.isFinite(neededStraight) &&
+          led.distSinceLastTurn + 1e-6 >= neededStraight;
       const canTurn =
         !turnsForbidden && led.turns < maxTurns && turnDistanceGate;
       // Effective speed cap per action.
@@ -12536,7 +13204,14 @@ export default function GameBoard() {
         e.preventDefault();
         // Allow refining an in-progress turn plan even if `canTurn` is false,
         // since the plan hasn't been committed yet.
-        if (!canTurn && (!movePlan || movePlan.kind !== "turn")) return;
+        if (!canTurn && (!movePlan || movePlan.kind !== "turn")) {
+          if (!turnGateExempt && !Number.isFinite(neededStraight)) {
+            setActivationFeedback(
+              "Effective Speed is 0; ordinary turns require movement or All Stop and Pivot.",
+            );
+          }
+          return;
+        }
         // Match tablet controls: Q/left = negative, E/right = positive.
         const step = e.key === "q" || e.key === "Q" ? -5 : 5;
         // All Stop and Pivot doubles the per-turn cap (any direction).
@@ -12728,13 +13403,15 @@ export default function GameBoard() {
       movementTraits.superManeuverable ||
       u.damageState === "adrift" ||
       u.damageState === "exploding-end-of-next";
-    const neededStraight = turnDistanceNeeded(
-      baseSpeed,
-      led.turns,
-      movementTraits,
-    );
-    const turnDistanceGate =
-      turnGateExempt || led.distSinceLastTurn + 1e-6 >= neededStraight;
+      const neededStraight = turnDistanceNeeded(
+        baseSpeed,
+        led.turns,
+        movementTraits,
+      );
+      const turnDistanceGate =
+        turnGateExempt ||
+        (Number.isFinite(neededStraight) &&
+          led.distSinceLastTurn + 1e-6 >= neededStraight);
     const turnsForbidden = isAllPower || isRunSilent || isAllStop;
     const canTurn =
       !turnsForbidden &&
@@ -12758,6 +13435,15 @@ export default function GameBoard() {
     getLedger,
     shipModels,
   ]);
+  const selectedMovementSpeedBreakdown = useMemo(() => {
+    if (!selectedUnitData) return null;
+    const model = getShipModelForUnit(selectedUnitData);
+    return uiSpeedBreakdown(
+      shipModelHasFighterTrait(model)
+        ? { ...selectedUnitData, isCrippled: false }
+        : selectedUnitData,
+    );
+  }, [getShipModelForUnit, selectedUnitData]);
   useEffect(() => {
     if (!movePlan) return;
     if (
@@ -13679,6 +14365,50 @@ export default function GameBoard() {
       uiUnitPinnedForRound(unit, units, game?.currentRound ?? 0),
     [game?.currentRound, units],
   );
+  const selectedMovementBlockedNotice = useMemo(() => {
+    if (
+      !selectedUnitData ||
+      currentPhase !== "movement" ||
+      selectedUnitData.ownerId !== myUserId ||
+      selectedUnitData.isDestroyed
+    ) {
+      return null;
+    }
+    if (unitPinnedInCurrentRound(selectedUnitData)) {
+      return "Movement unavailable: ship is pinned this round.";
+    }
+    if (
+      selectedUnitData.damageState === "adrift" ||
+      selectedUnitData.damageState === "exploding-end-of-next"
+    ) {
+      return "Movement unavailable: ship is drifting under critical damage.";
+    }
+    if (
+      selectedUnitIsFighter &&
+      dogfightingFighterUnitIds.has(selectedUnitData.id)
+    ) {
+      return "Movement unavailable: fighter is locked in a dogfight.";
+    }
+    if (
+      !selectedUnitIsFighter &&
+      selectedMovementSpeedBreakdown &&
+      selectedMovementSpeedBreakdown.effectiveSpeed <= 0
+    ) {
+      const causes = selectedMovementSpeedBreakdown.shortReasons.length
+        ? selectedMovementSpeedBreakdown.shortReasons.join("; ")
+        : "no movement allowance";
+      return `Ship speed is zero: ${causes}.`;
+    }
+    return null;
+  }, [
+    currentPhase,
+    dogfightingFighterUnitIds,
+    myUserId,
+    selectedMovementSpeedBreakdown,
+    selectedUnitData,
+    selectedUnitIsFighter,
+    unitPinnedInCurrentRound,
+  ]);
   const unitEligibleForCurrentPhase = useCallback(
     (u: BoardUnit): boolean => {
       if (u.isDestroyed) return false;
@@ -13937,7 +14667,9 @@ export default function GameBoard() {
     // best-effort floor. Use the merged movement ledger rather than only the
     // unit row field so a rejected follow-up turn cannot leave the end button
     // stuck behind stale movement data.
-    const required = Math.max(1, effectiveUiSpeed(activeUnitData) / 2);
+    const activeEffectiveSpeed = effectiveUiSpeed(activeUnitData);
+    const required =
+      activeEffectiveSpeed > 0 ? Math.max(1, activeEffectiveSpeed / 2) : 0;
     const moved = getLedger(activeUnitData.id).distance;
     return { blocked: moved < required, required, moved };
   }, [
@@ -14007,6 +14739,12 @@ export default function GameBoard() {
         : 0;
     const previewStraight =
       selectedMovementUi.distanceSinceLastTurn + forwardPreview;
+    if (
+      !selectedMovementUi.turnGateExempt &&
+      !Number.isFinite(selectedMovementUi.neededStraight)
+    ) {
+      return "Effective Speed is 0; ordinary turns require movement or All Stop and Pivot.";
+    }
     if (
       forwardPreview > 0 &&
       !selectedMovementUi.turnGateExempt &&
@@ -14236,7 +14974,7 @@ export default function GameBoard() {
   // committed action on the unit row; these are purely transient affordances.
   useEffect(() => {
     setSpecialActionFeedback(null);
-    setConcentratePicking(false);
+    setSpecialActionTargetPicking(null);
   }, [activeUnitId]);
 
   // ── Adrift auto-drift ───────────────────────────────────────────────────────
@@ -14371,24 +15109,25 @@ export default function GameBoard() {
       return;
     }
 
-    // ── MOVEMENT-PHASE: Concentrate All Fire-power target picker ──
+    // ── MOVEMENT-PHASE: targeted Special Action picker ──
     // Clicking an enemy ship while picking a target submits the action.
     if (
       game?.status === "active" &&
       isMyActivation &&
       currentPhase === "movement" &&
-      concentratePicking &&
+      specialActionTargetPicking &&
       hasActiveUnit &&
       unit.ownerId !== myUserId
     ) {
       const attackerUnitId = activeUnitId!;
       const targetId = unit.id;
-      setConcentratePicking(false);
+      const action = specialActionTargetPicking;
+      setSpecialActionTargetPicking(null);
       chooseSpecialAction.mutate(
         {
           gameId,
           unitId: attackerUnitId,
-          data: { action: "concentrate-fire", targetUnitId: targetId },
+          data: { action, targetUnitId: targetId },
         },
         {
           onSuccess: (res) => {
@@ -14404,7 +15143,7 @@ export default function GameBoard() {
           },
           onError: (err: any) => {
             setSpecialActionFeedback({
-              action: "concentrate-fire",
+              action,
               success: false,
               cqRoll: null,
               cqTotal: null,
@@ -16641,6 +17380,8 @@ export default function GameBoard() {
                           >
                             {destroyed
                               ? "destroyed"
+                              : rolls.some((roll) => roll.psychicCrewDodgeSuccessful)
+                                ? "psychic dodge"
                               : `Hull ${first.targetHull}`}
                           </span>
                         </div>
@@ -16649,9 +17390,15 @@ export default function GameBoard() {
                             <span
                               key={`${roll.targetId}-${idx}`}
                               className={`flex h-7 min-w-7 items-center justify-center rounded border px-1 text-xs font-bold ${roll.destroyed ? "border-red-400 bg-red-500/20 text-red-100" : "border-emerald-400/40 bg-black text-emerald-200"}`}
-                              title={`${roll.die}${roll.bonus ? ` + ${roll.bonus}` : ""} = ${roll.total}`}
+                              title={`${roll.die}${roll.bonus ? ` + ${roll.bonus}` : ""} = ${roll.total}${
+                                roll.psychicCrewDodgeRoll != null
+                                  ? `; Psychic Crew dodge ${roll.psychicCrewDodgeRoll} (${roll.psychicCrewDodgeSuccessful ? "saved" : "failed"})`
+                                  : ""
+                              }${roll.shieldAbsorbed ? "; shield absorbed kill" : ""}`}
                             >
-                              {roll.total}
+                              {roll.psychicCrewDodgeSuccessful
+                                ? `${roll.total}/P`
+                                : roll.total}
                             </span>
                           ))}
                         </div>
@@ -17198,6 +17945,7 @@ export default function GameBoard() {
                   isSelected={selectedUnit === unit.id}
                   onClick={() => handleUnitClick(unit.id)}
                   onCameraFocus={() => handleUnitFocus(unit.id)}
+                  onHoverChange={handleUnitHoverChange}
                   myUserId={myUserId}
                   weapons={weaponsForUnit}
                   dragOffset={
@@ -17256,7 +18004,9 @@ export default function GameBoard() {
                   ? 0
                   : selectedMovementUi?.neededStraight;
                 const turnRequirementLabel =
-                  turnRequired && turnRequired > 0
+                  turnRequired &&
+                  Number.isFinite(turnRequired) &&
+                  turnRequired > 0
                     ? `turn ${turnRequired.toFixed(turnRequired % 1 === 0 ? 0 : 1)}"`
                     : undefined;
                 const committedBefore = getLedger(selectedUnitData.id).distance;
@@ -19075,13 +19825,14 @@ export default function GameBoard() {
                     data-testid="selected-unit-traits"
                   >
                     {selectedShipTraitList.map((trait) => (
-                      <span
+                      <TraitTooltip
                         key={`${selectedUnitData.id}-${trait}`}
-                        className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[9px] text-cyan-200"
-                        title={traitHint(trait)}
+                        trait={trait}
                       >
-                        {trait}
-                      </span>
+                        <span className="cursor-help rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[9px] text-cyan-200">
+                          {trait}
+                        </span>
+                      </TraitTooltip>
                     ))}
                   </div>
                 )}
@@ -19149,6 +19900,14 @@ export default function GameBoard() {
                 <p className="text-xs text-muted-foreground">
                   Hex: {selectedUnitData.hexQ},{selectedUnitData.hexR}
                 </p>
+                {selectedMovementBlockedNotice && (
+                  <div
+                    className="mt-2 rounded border border-amber-500/45 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-amber-200"
+                    data-testid="selected-movement-blocked-reason"
+                  >
+                    {selectedMovementBlockedNotice}
+                  </div>
+                )}
                 {selectedUnitData.ownerId === myUserId &&
                   !selectedUnitData.isDestroyed && (
                     <div className="mt-3 space-y-2">
@@ -19741,6 +20500,7 @@ export default function GameBoard() {
                         !/\bmini[-\s]?beam\b/i.test(weapon.traits ?? ""),
                     );
                     const isLumbering = /\blumbering\b/i.test(traitsForSA);
+                    const psychicCrewForSA = parseUiPsychicCrew(traitsForSA);
                     const SPECIAL_ACTIONS: {
                       id:
                         | "all-power-engines"
@@ -19752,6 +20512,7 @@ export default function GameBoard() {
                         | "intensify-defense"
                         | "run-silent"
                         | "concentrate-fire"
+                        | "cause-confusion"
                         | "all-hands-on-deck"
                         | "scramble"
                         | "regenerate";
@@ -19820,6 +20581,15 @@ export default function GameBoard() {
                         label: "Concentrate All Fire!",
                         cq: 8,
                         hint: "Re-roll missed AD vs picked target",
+                      },
+                      {
+                        id: "cause-confusion",
+                        label: "Cause Confusion",
+                        cq: null,
+                        hint: "Opposed Psychic Crew vs CQ; clears target Special Action",
+                        hidden:
+                          psychicCrewForSA <= 0 ||
+                          isFighterUnit(selectedUnitData),
                       },
                       {
                         id: "all-hands-on-deck",
@@ -20120,9 +20890,16 @@ export default function GameBoard() {
                               && (!profileActionIds || profileActionIds.has(a.id))
                             ).map(
                               (a) => {
-                                const needsTarget = a.id === "concentrate-fire";
+                                const needsTarget =
+                                  a.id === "concentrate-fire" ||
+                                  a.id === "cause-confusion";
+                                const targetAction = needsTarget
+                                  ? a.id === "cause-confusion"
+                                    ? "cause-confusion"
+                                    : "concentrate-fire"
+                                  : null;
                                 const picking =
-                                  needsTarget && concentratePicking;
+                                  specialActionTargetPicking === a.id;
                                 const enemyAlive = units.some(
                                   (x) =>
                                     x.ownerId !== myUserId && !x.isDestroyed,
@@ -20160,7 +20937,11 @@ export default function GameBoard() {
                                     disabled={disabled}
                                     onClick={() => {
                                       if (needsTarget) {
-                                        setConcentratePicking((p) => !p);
+                                        setSpecialActionTargetPicking((p) =>
+                                          p === targetAction
+                                            ? null
+                                            : targetAction,
+                                        );
                                         return;
                                       }
                                       chooseSpecialAction.mutate(
@@ -20214,12 +20995,18 @@ export default function GameBoard() {
                                         {a.label}
                                       </span>
                                       <span className="text-[9px] opacity-70">
-                                        {a.cq === null ? "AUTO" : `CQ ${a.cq}+`}
+                                        {a.id === "cause-confusion"
+                                          ? "OPPOSED"
+                                          : a.cq === null
+                                            ? "AUTO"
+                                            : `CQ ${a.cq}+`}
                                       </span>
                                     </div>
                                     <div className="text-[9px] opacity-70">
                                       {picking
-                                        ? "▸ Click an enemy ship to nominate"
+                                        ? a.id === "cause-confusion"
+                                          ? "▸ Click an enemy ship with an active Special Action"
+                                          : "▸ Click an enemy ship to nominate"
                                         : needsAllStopPrereq
                                           ? "Requires All Stop last round"
                                           : conflictsWithShadowSweep
@@ -20296,6 +21083,16 @@ export default function GameBoard() {
                       if (exempt) return null;
                       const isFirstTurn = led.turns === 0;
                       const need = turnDistanceNeeded(effectiveUiSpeed(selectedUnitData), led.turns, movementTraits);
+                      if (!Number.isFinite(need)) {
+                        return (
+                          <div
+                            className="text-[10px] uppercase tracking-wider mt-0.5 text-red-400/80"
+                            data-testid="turn-eligibility-hud"
+                          >
+                            ✗ 1st turn: effective Speed 0 requires All Stop and Pivot
+                          </div>
+                        );
+                      }
                       const have = led.distSinceLastTurn;
                       const met = have + 1e-6 >= need;
                       return (
@@ -20776,13 +21573,14 @@ export default function GameBoard() {
                                       {weaponTraitList.length > 0 && (
                                         <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
                                           {weaponTraitList.map((trait) => (
-                                            <span
+                                            <TraitTooltip
                                               key={`${w.id}-${trait}`}
-                                              className="rounded border border-current/20 px-1"
-                                              title={traitHint(trait)}
+                                              trait={trait}
                                             >
-                                              {trait}
-                                            </span>
+                                              <span className="cursor-help rounded border border-current/20 px-1">
+                                                {trait}
+                                              </span>
+                                            </TraitTooltip>
                                           ))}
                                         </span>
                                       )}
@@ -21093,20 +21891,19 @@ export default function GameBoard() {
                       !myPassedEnd;
                     const dcFormula = `1d6+CQ${cq}${allHandsBonus > 0 ? `+${allHandsBonus}` : ""}≥9`;
                     return (
-                      <div
+                      <CriticalEffectTooltip
                         key={c.id}
-                        className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200"
+                        crit={c}
+                        enabled={pcHoverHintsEnabled}
+                      >
+                      <div
+                        className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[11px] text-red-200 focus:outline-none focus:ring-1 focus:ring-red-300/60 data-[hint=true]:cursor-help"
+                        data-hint={pcHoverHintsEnabled ? "true" : "false"}
                         data-testid={`crit-row-${c.id}`}
+                        tabIndex={pcHoverHintsEnabled ? 0 : undefined}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span
-                            className="font-bold uppercase"
-                            title={
-                              pcHoverHintsEnabled
-                                ? criticalEffectHint(c)
-                                : undefined
-                            }
-                          >
+                          <span className="font-bold uppercase">
                             {c.name}
                           </span>
                           <span className="text-[9px] opacity-70">
@@ -21123,15 +21920,12 @@ export default function GameBoard() {
                                 {c.lostTraits!.map((trait, index) => (
                                   <React.Fragment key={`${c.id}-lost-${trait}`}>
                                     {index > 0 ? ", " : ""}
-                                    <span
-                                      title={
-                                        pcHoverHintsEnabled
-                                          ? traitHint(trait)
-                                          : undefined
-                                      }
+                                    <TraitTooltip
+                                      trait={trait}
+                                      enabled={pcHoverHintsEnabled}
                                     >
-                                      {trait}
-                                    </span>
+                                      <span className="cursor-help">{trait}</span>
+                                    </TraitTooltip>
                                   </React.Fragment>
                                 ))}
                               </>
@@ -21208,6 +22002,7 @@ export default function GameBoard() {
                                     : `Damage Control (${dcFormula})`}
                         </button>
                       </div>
+                      </CriticalEffectTooltip>
                     );
                   })}
                 </div>
@@ -21872,6 +22667,20 @@ export default function GameBoard() {
           </div>
         </div>
       )}
+
+      <ShipStatusInspectorDialog
+        open={inspectedUnitData !== null}
+        onOpenChange={(open) => {
+          if (!open) setInspectedUnitId(null);
+        }}
+        unit={inspectedUnitData}
+        model={inspectedShipModel}
+        weapons={inspectedUnitWeapons}
+        myUserId={myUserId}
+        currentRound={currentRoundNumber}
+        isFighter={inspectedUnitIsFighter}
+        dogfightLocked={inspectedUnitDogfightLocked}
+      />
 
       {diceModal && (
         <DiceRollModal
@@ -23536,14 +24345,20 @@ function DiceRollModal({
                 const isCurrent = i === cur;
                 const rolling = isCurrent && critRolling;
                 return (
-                  <div
+                  <CriticalEffectTooltip
                     key={c.id}
-                    className={`rounded px-2 py-1.5 text-[10px] font-mono ${
+                    crit={c}
+                    enabled={pcHoverHintsEnabled && !rolling}
+                  >
+                  <div
+                    className={`rounded px-2 py-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-red-300/60 data-[hint=true]:cursor-help ${
                       isCurrent
                         ? "border-2 border-red-400 bg-red-500/20 text-red-100 shadow-[0_0_8px_rgba(248,113,113,0.5)]"
                         : "border border-red-500/40 bg-red-500/10 text-red-200"
                     }`}
+                    data-hint={pcHoverHintsEnabled && !rolling ? "true" : "false"}
                     data-testid={`crit-${c.effectKey}`}
+                    tabIndex={pcHoverHintsEnabled && !rolling ? 0 : undefined}
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-[9px] uppercase text-muted-foreground">
@@ -23563,14 +24378,7 @@ function DiceRollModal({
                     </div>
                     {!rolling && (
                       <>
-                        <div
-                          className="font-bold uppercase"
-                          title={
-                            pcHoverHintsEnabled
-                              ? criticalEffectHint(c)
-                              : undefined
-                          }
-                        >
+                        <div className="font-bold uppercase">
                           {c.name}
                         </div>
                         {(c.randomArc || c.lostTraits.length > 0) && (
@@ -23584,15 +24392,12 @@ function DiceRollModal({
                                     key={`${c.id}-modal-lost-${trait}`}
                                   >
                                     {index > 0 ? ", " : ""}
-                                    <span
-                                      title={
-                                        pcHoverHintsEnabled
-                                          ? traitHint(trait)
-                                          : undefined
-                                      }
+                                    <TraitTooltip
+                                      trait={trait}
+                                      enabled={pcHoverHintsEnabled}
                                     >
-                                      {trait}
-                                    </span>
+                                      <span className="cursor-help">{trait}</span>
+                                    </TraitTooltip>
                                   </React.Fragment>
                                 ))}
                               </>
@@ -23602,6 +24407,7 @@ function DiceRollModal({
                       </>
                     )}
                   </div>
+                  </CriticalEffectTooltip>
                 );
               })}
             </div>
