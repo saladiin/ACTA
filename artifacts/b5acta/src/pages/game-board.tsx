@@ -1860,6 +1860,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "whitestar.glb",
   "avenger.glb",
   "tloth.glb",
+  "olympus-gunship.glb",
   "orestes.glb",
   "rongoth.glb",
   "frazi.glb",
