@@ -23,6 +23,7 @@ const EXPLORER_ROTATING_MODEL_FILENAME = "explorer.glb";
 const PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME = "psicorp-fighter-carrier.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
+const CORPORATE_FREIGHTER_MODEL_FILENAME = "corporate-freighter.glb";
 const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
 const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
 const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
@@ -134,6 +135,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "rongoth.glb",
   "frazi.glb",
   "spitfire.glb",
+  CORPORATE_FREIGHTER_MODEL_FILENAME,
   RAIDER_DELTA_MODEL_FILENAME,
   RAIDER_FREIGHTER_MODEL_FILENAME,
 ]);
@@ -141,6 +143,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "avioki.glb": "20260719-154941",
   "black-omega.glb": "20260721-192023",
   "bintak.glb": "20260724-221703",
+  [CORPORATE_FREIGHTER_MODEL_FILENAME]: "20260730-corporate-freighter-v1",
   "command-hyperion.glb": "20260719-211631",
   "dead-hyperion.glb": "20260718-163044",
   "dead-nova.glb": "20260718-233153",

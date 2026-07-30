@@ -82,6 +82,7 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Modified Freighter", priority: "patrol" },
   { name: "Raider Modified Freighter", priority: "patrol" },
   { name: "Raiders Modified Freighter", priority: "patrol" },
+  { name: "Corporate Freighter", priority: "patrol" },
   { name: "Fighter Carrier", priority: "skirmish" },
   { name: "Psi Corps Fighter Carrier", priority: "skirmish" },
   { name: "Psi-Corps Fighter Carrier", priority: "skirmish" },
@@ -158,6 +159,7 @@ const CSV_MODEL_FILENAMES: Record<string, string> = {
   "modified freighter": "raider-freighter.glb",
   "raider modified freighter": "raider-freighter.glb",
   "raiders modified freighter": "raider-freighter.glb",
+  "corporate freighter": "corporate-freighter.glb",
   "fighter carrier": "psicorp-fighter-carrier.glb",
   "psi corps fighter carrier": "psicorp-fighter-carrier.glb",
   "psi-corps fighter carrier": "psicorp-fighter-carrier.glb",
@@ -1305,6 +1307,16 @@ const RAIDER_MODIFIED_FREIGHTER_WEAPONS = [
     range: 8,
     attackDice: 2,
     traits: "Armor Piercing",
+  },
+];
+
+const CORPORATE_FREIGHTER_WEAPONS = [
+  {
+    name: "Particle Beam",
+    arc: "Turret",
+    range: 8,
+    attackDice: 4,
+    traits: "Weak",
   },
 ];
 
@@ -2615,6 +2627,38 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     description:
       "Raiders Patrol-level Modified Freighter with light armor, upgraded plasma weapons, and one Delta-V flight",
     weapons: RAIDER_MODIFIED_FREIGHTER_WEAPONS,
+  },
+  {
+    name: "Corporate Freighter",
+    aliases: [
+      "Corporate Freighter",
+      "Civilian Corporate Freighter",
+      "Freighter",
+    ],
+    filename: "corporate-freighter.glb",
+    faction: "Civilian",
+    pointCost: 25,
+    priorityLevel: "patrol",
+    shipClass: "Freighter",
+    hull: 4,
+    troops: 1,
+    damage: 12,
+    damageThreshold: 3,
+    hullRating: 4,
+    crew: 12,
+    crewThreshold: 3,
+    speed: 4,
+    turns: 1,
+    turnAngle: 45,
+    baseRadiusInches: 0.75,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 1; Lumbering",
+    smallCraft: null,
+    weaponRange: 8,
+    weaponDamage: 4,
+    description:
+      "Civilian 1 CFP Corporate Freighter with cargo pods and a weak turret particle beam",
+    weapons: CORPORATE_FREIGHTER_WEAPONS,
   },
   {
     name: "Olympus Corvette",
