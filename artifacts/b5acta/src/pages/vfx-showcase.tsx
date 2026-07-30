@@ -159,6 +159,7 @@ type SpecialStation = {
     | "gravity-lens"
     | "damage-glow-core"
     | "dead-hulk-point-sparks"
+    | "weapon-arc-damage-sample"
     | "godot-jump-point-mesh"
     | "gas-cloud-terrain"
     | "cloud-flipbook-damage"
@@ -545,6 +546,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [8, -18],
         textureFilename: "cloud01-8x8.webp",
         tuning: CLOUD_FLIPBOOK_DAMAGE_SMOKE_TUNING,
+      },
+      {
+        kind: "special",
+        id: "weapon-arc-damage-sample",
+        label: "Arc Offline / Degraded",
+        note: "Preview-only tactical overlay: port is fully offline, starboard is degraded with one weapon down.",
+        effect: "weapon-arc-damage-sample",
+        position: [18, -24],
+        tuning: {
+          color: "#737b88",
+          secondaryColor: "#f59e0b",
+          speed: 1,
+          size: 1,
+          fade: 1,
+          intensity: 1,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "animated-model",
@@ -1342,6 +1363,13 @@ const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "t_noise_hu85k.png": "20260720-121500",
   "t_vfx_windnoise1.png": "20260720-121500",
   "cloud01-8x8.webp": "20260719-032240",
+  "cloud02-8x8.webp": "20260725-cloud02-tga",
+  "cloud03-8x8.webp": "20260725-cloud03-tga",
+  "cloud04-8x8.webp": "20260725-cloud04-tga",
+  "wispy-smoke01-8x8.webp": "20260730-wispy01-tga",
+  "wispy-smoke02-8x8.webp": "20260730-wispy02-tga",
+  "wispy-smoke03-8x8.webp": "20260730-wispy03-tga",
+  "wispy-smoke03b-8x8.webp": "20260730-wispy03b-tga",
   "codex-sci-fi-explosion-5x5.webp": "20260719-122000",
   "codex-sci-fi-explosion-5x5-1280.webp": "20260719-122000",
   "explosion00-5x5-keyed.webp": "20260719-113000",
@@ -1355,6 +1383,8 @@ const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "shadow_flesh_flow.png": "20260720-organic-v1",
   "shadow_flesh_normal.png": "20260720-organic-v1",
   "shadow_flesh_roughness.png": "20260720-organic-v1",
+  "weapon-damage-arc.png": "20260730-weapon-arc-damage-v1",
+  "weapon-offline-arc.png": "20260730-weapon-arc-offline-v1",
 };
 
 function showcaseModelUrl(filename: string): string {
@@ -6859,6 +6889,220 @@ function GodotJumpPointMesh({ station, tuning }: { station: SpecialStation; tuni
   );
 }
 
+function ShowcaseArcDamageSector({
+  centerAngle,
+  halfAngle,
+  radius,
+  color,
+  opacity,
+  materialRef,
+}: {
+  centerAngle: number;
+  halfAngle: number;
+  radius: number;
+  color: string;
+  opacity: number;
+  materialRef?: MutableRefObject<THREE.MeshBasicMaterial | null>;
+}) {
+  const geometry = useMemo(() => {
+    const segments = halfAngle < 0.3 ? 10 : 32;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    for (let index = 0; index <= segments; index += 1) {
+      const angle = centerAngle - halfAngle + (2 * halfAngle * index) / segments;
+      shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+    }
+    shape.lineTo(0, 0);
+    return new THREE.ShapeGeometry(shape);
+  }, [centerAngle, halfAngle, radius]);
+
+  return (
+    <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.04, 0]} geometry={geometry}>
+      <meshBasicMaterial
+        ref={materialRef}
+        color={color}
+        transparent
+        opacity={opacity}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+        blending={materialRef ? THREE.AdditiveBlending : THREE.NormalBlending}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+}
+
+function ShowcaseWeaponArcStatusPlate({
+  centerAngle,
+  radius,
+  textureFilename,
+}: {
+  centerAngle: number;
+  radius: number;
+  textureFilename: string;
+}) {
+  const texture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  ) as THREE.Texture;
+
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  const geometry = useMemo(() => {
+    const outward = new THREE.Vector2(
+      Math.cos(centerAngle),
+      Math.sin(centerAngle),
+    );
+    const tangent = new THREE.Vector2(-outward.y, outward.x);
+    const centerDistance = radius * 0.48;
+    const width = radius * 0.76;
+    const height = radius * 0.76;
+    const center = outward.clone().multiplyScalar(centerDistance);
+    const halfTangent = tangent.multiplyScalar(width / 2);
+    const halfOutward = outward.multiplyScalar(height / 2);
+    const vertices = new Float32Array([
+      center.x - halfTangent.x - halfOutward.x,
+      0.09,
+      center.y - halfTangent.y - halfOutward.y,
+      center.x + halfTangent.x - halfOutward.x,
+      0.09,
+      center.y + halfTangent.y - halfOutward.y,
+      center.x + halfTangent.x + halfOutward.x,
+      0.09,
+      center.y + halfTangent.y + halfOutward.y,
+      center.x - halfTangent.x + halfOutward.x,
+      0.09,
+      center.y - halfTangent.y + halfOutward.y,
+    ]);
+    const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    geo.setIndex([0, 1, 2, 0, 2, 3]);
+    geo.computeVertexNormals();
+    return geo;
+  }, [centerAngle, radius]);
+
+  const material = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: texture },
+        opacity: { value: 0.94 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D map;
+        uniform float opacity;
+        varying vec2 vUv;
+        void main() {
+          vec4 sampleColor = texture2D(map, vUv);
+          float luma = dot(sampleColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          float keyedAlpha = smoothstep(0.018, 0.11, luma) * sampleColor.a;
+          if (keyedAlpha < 0.015) discard;
+          gl_FragColor = vec4(sampleColor.rgb, keyedAlpha * opacity);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+  }, [texture]);
+
+  useEffect(() => () => material.dispose(), [material]);
+
+  return <mesh geometry={geometry} material={material} renderOrder={20} />;
+}
+
+function WeaponArcDamageSample({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
+  const pulse = useRef(0);
+  const degradedRef = useRef<THREE.MeshBasicMaterial>(null);
+  useFrame((_, delta) => {
+    pulse.current += delta * Math.max(0.2, tuning.speed);
+    if (degradedRef.current) {
+      degradedRef.current.opacity = 0.12 + (Math.sin(pulse.current * 4) + 1) * 0.12;
+    }
+  });
+  const radius = 3.15 * tuning.size;
+  const forwardColor = "#34eb52";
+  const aftColor = "#0f9f4a";
+  const offlineColor = tuning.color || "#737b88";
+  const degradedColor = "#ef4444";
+
+  return (
+    <group position={[position[0], 0, position[1]]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <circleGeometry args={[0.92, 48]} />
+        <meshStandardMaterial color="#020617" roughness={0.8} metalness={0.1} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}>
+        <ringGeometry args={[0.92, 1.08, 48]} />
+        <meshBasicMaterial color="#94a3b8" transparent opacity={0.72} />
+      </mesh>
+      <ShowcaseArcDamageSector centerAngle={Math.PI / 2} halfAngle={Math.PI / 4} radius={radius} color={forwardColor} opacity={0.34} />
+      <ShowcaseArcDamageSector centerAngle={-Math.PI / 2} halfAngle={Math.PI / 4} radius={radius} color={aftColor} opacity={0.25} />
+      <ShowcaseArcDamageSector centerAngle={0} halfAngle={Math.PI / 4} radius={radius} color={offlineColor} opacity={0.2} />
+      <ShowcaseWeaponArcStatusPlate
+        centerAngle={0}
+        radius={radius}
+        textureFilename="weapon-offline-arc.png"
+      />
+      <ShowcaseArcDamageSector
+        centerAngle={Math.PI}
+        halfAngle={Math.PI / 4}
+        radius={radius}
+        color={degradedColor}
+        opacity={0.18}
+        materialRef={degradedRef}
+      />
+      <ShowcaseWeaponArcStatusPlate
+        centerAngle={Math.PI}
+        radius={radius}
+        textureFilename="weapon-damage-arc.png"
+      />
+      <Billboard position={[0, 1.8, radius * 0.72]} follow>
+        <Text fontSize={0.34} color={forwardColor} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+          FWD
+        </Text>
+      </Billboard>
+      <Billboard position={[radius * 0.72, 1.8, 0]} follow>
+        <Text fontSize={0.3} color="#cbd5e1" anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+          PORT OFF
+        </Text>
+      </Billboard>
+      <Billboard position={[-radius * 0.72, 1.8, 0]} follow>
+        <Text fontSize={0.3} color="#fecaca" anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+          STBD 1/3
+        </Text>
+      </Billboard>
+      <Billboard position={[0, 1.8, -radius * 0.72]} follow>
+        <Text fontSize={0.3} color={aftColor} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+          AFT
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
 function SpecialFxStation({
   station,
   tuning,
@@ -6911,6 +7155,9 @@ function SpecialFxStation({
       {station.effect === "damage-glow-core" ? <DamageGlowCore position={station.position} tuning={tuning} /> : null}
       {station.effect === "dead-hulk-point-sparks" ? (
         <DeadHulkPointSparks station={station} tuning={tuning} paused={animationPaused} />
+      ) : null}
+      {station.effect === "weapon-arc-damage-sample" ? (
+        <WeaponArcDamageSample position={station.position} tuning={tuning} />
       ) : null}
       {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
       {station.effect === "gas-cloud-terrain" ? (
