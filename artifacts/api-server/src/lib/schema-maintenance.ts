@@ -52,6 +52,10 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Covran-class Scout", priority: "skirmish" },
   { name: "Altarian Destroyer", priority: "raid" },
   { name: "Altarian-class Destroyer", priority: "raid" },
+  { name: "Balvarin Carrier", priority: "raid" },
+  { name: "Balvarin-class Carrier", priority: "raid" },
+  { name: "Sulust-class Escort Destroyer", priority: "raid" },
+  { name: "Sulust Escort Destroyer", priority: "raid" },
   { name: "Vorchan Warship", priority: "skirmish" },
   { name: "Vorchan-class Warship", priority: "skirmish" },
   { name: "Avenger Heavy Carrier", priority: "raid" },
@@ -164,6 +168,10 @@ const CSV_MODEL_FILENAMES: Record<string, string> = {
   "g'tal-class command cruiser": "gquan.glb",
   "bin'tak-class dreadnought": "bintak.glb",
   "rongoth-class destroyer": "rongoth.glb",
+  "balvarin carrier": "balvarin.glb",
+  "balvarin-class carrier": "balvarin.glb",
+  "sulust-class escort destroyer": "sulust.glb",
+  "sulust escort destroyer": "sulust.glb",
   "white star": "whitestar.glb",
   avioki: "avioki.glb",
 };
@@ -1368,6 +1376,54 @@ const ALTARIAN_WEAPONS = [
     arc: "Starboard",
     range: 12,
     attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
+];
+
+const BALVARIN_WEAPONS = [
+  {
+    name: "Matter Cannon",
+    arc: "Forward",
+    range: 15,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 6,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
+];
+
+const SULUST_WEAPONS = [
+  {
+    name: "Battle Laser",
+    arc: "Forward",
+    range: 24,
+    attackDice: 4,
+    traits: "Beam; Precise",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
     traits: "Double Damage; Twin-Linked",
   },
 ];
@@ -5144,6 +5200,142 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     const altarianId = altarian.rows[0]?.id;
     if (altarianId) {
       await syncWeaponsForShipModel(altarianId, ALTARIAN_WEAPONS);
+    }
+
+    const balvarin = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'Balvarin-class Carrier',
+            filename = 'balvarin.glb',
+            faction = 'Centauri Republic',
+            point_cost = 200,
+            priority_level = 'raid',
+            ship_class = 'Carrier',
+            hull = 5,
+            troops = 2,
+            damage = 44,
+            damage_threshold = 10,
+            hull_rating = 5,
+            crew = 55,
+            crew_threshold = 12,
+            speed = 5,
+            turns = 1,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Anti-Fighter 2; Carrier 2; Command +1; Fleet Carrier; Interceptors 1; Jump Engine; Lumbering',
+            small_craft = 'Sentri Flight (8)',
+            base_radius_inches = $1,
+            hull_points = 44,
+            weapon_range = 15,
+            weapon_damage = 4,
+            description = 'Centauri Republic Balvarin-class carrier with extensive Sentri launch capacity'
+          WHERE lower(filename) = 'balvarin.glb'
+            OR lower(name) IN ('balvarin', 'balvarin carrier', 'balvarin-class carrier')
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'Balvarin-class Carrier', 'balvarin.glb', 'Centauri Republic', 200,
+            'raid', 'Carrier', 5, 2, 44, 10, 5, 55, 12, 5, 1, 45,
+            'Regular', 0, 0, 0,
+            'Anti-Fighter 2; Carrier 2; Command +1; Fleet Carrier; Interceptors 1; Jump Engine; Lumbering',
+            'Sentri Flight (8)', 44,
+            $1, 15, 4,
+            'Centauri Republic Balvarin-class carrier with extensive Sentri launch capacity'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+
+    const balvarinId = balvarin.rows[0]?.id;
+    if (balvarinId) {
+      await syncWeaponsForShipModel(balvarinId, BALVARIN_WEAPONS);
+    }
+
+    const sulust = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'Sulust-class Escort Destroyer',
+            filename = 'sulust.glb',
+            faction = 'Centauri Republic',
+            point_cost = 200,
+            priority_level = 'raid',
+            ship_class = 'Escort Destroyer',
+            hull = 5,
+            troops = 3,
+            damage = 35,
+            damage_threshold = 6,
+            hull_rating = 5,
+            crew = 38,
+            crew_threshold = 7,
+            speed = 10,
+            turns = 1,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Anti-Fighter 2; Interceptors 2',
+            small_craft = NULL,
+            base_radius_inches = $1,
+            hull_points = 35,
+            weapon_range = 24,
+            weapon_damage = 4,
+            description = 'Centauri Republic Sulust-class escort destroyer built to break defensive screens'
+          WHERE lower(filename) = 'sulust.glb'
+            OR lower(name) IN ('sulust', 'sulust destroyer', 'sulust escort destroyer', 'sulust-class escort destroyer')
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'Sulust-class Escort Destroyer', 'sulust.glb', 'Centauri Republic', 200,
+            'raid', 'Escort Destroyer', 5, 3, 35, 6, 5, 38, 7, 10, 1, 45,
+            'Regular', 0, 0, 0,
+            'Anti-Fighter 2; Interceptors 2',
+            NULL, 35,
+            $1, 24, 4,
+            'Centauri Republic Sulust-class escort destroyer built to break defensive screens'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+
+    const sulustId = sulust.rows[0]?.id;
+    if (sulustId) {
+      await syncWeaponsForShipModel(sulustId, SULUST_WEAPONS);
     }
 
     const corvan = await pool.query<{ id: number }>(
