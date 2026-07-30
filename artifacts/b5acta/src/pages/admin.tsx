@@ -40,6 +40,17 @@ type AdminGamesResponse = {
 type AdminAccount = {
   id: string;
   username: string | null;
+  playerHandle: string | null;
+  playerAvatarUrl: string | null;
+  playerStats: {
+    wins: number;
+    losses: number;
+    gamesPlayed: number;
+  } | null;
+  playerCreatedAt: string | null;
+  playerUpdatedAt: string | null;
+  hasClerkAccount: boolean;
+  hasPlayerProfile: boolean;
   name: string | null;
   primaryEmail: string | null;
   primaryEmailVerificationStatus: string | null;
@@ -59,6 +70,7 @@ type AdminAccount = {
 type AdminUsersResponse = {
   totalCount: number;
   limit: number;
+  localPlayerCount: number;
   users: AdminAccount[];
 };
 
@@ -485,7 +497,7 @@ function AdminContent({
           </div>
           {users && (
             <div className="font-mono text-[11px] text-muted-foreground">
-              showing {users.users.length} of {users.totalCount}
+              showing {users.users.length} accounts | {users.localPlayerCount} player handles
             </div>
           )}
         </div>
@@ -510,13 +522,19 @@ function AdminContent({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-semibold">
-                        {user.primaryEmail ?? user.username ?? user.id}
+                        {user.playerHandle ?? user.username ?? user.primaryEmail ?? user.id}
                       </span>
                       <FlagBadge
                         active={user.gameAllowed}
                         label={user.gameAllowed ? "allowed" : "not allowed"}
                       />
                       <FlagBadge active={user.adminAllowed} label="admin" />
+                      {!user.hasPlayerProfile && (
+                        <FlagBadge active={false} label="no handle" />
+                      )}
+                      {!user.hasClerkAccount && (
+                        <FlagBadge active={false} label="no clerk" />
+                      )}
                       {user.banned && (
                         <FlagBadge active={false} label="banned" />
                       )}
@@ -525,9 +543,45 @@ function AdminContent({
                       )}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono text-muted-foreground">
-                      <span>{user.id}</span>
-                      {user.username && <span>@{user.username}</span>}
+                      <span>
+                        User:{" "}
+                        <span className="text-foreground">{user.id}</span>
+                      </span>
+                      {user.primaryEmail && (
+                        <span>
+                          Email:{" "}
+                          <span className="text-foreground">
+                            {user.primaryEmail}
+                          </span>
+                        </span>
+                      )}
+                      {user.username && <span>Clerk @{user.username}</span>}
                       {user.name && <span>{user.name}</span>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono text-muted-foreground">
+                      <span>
+                        Handle:{" "}
+                        <span className="text-foreground">
+                          {user.playerHandle ?? "none"}
+                        </span>
+                      </span>
+                      {user.playerStats && (
+                        <span>
+                          Record:{" "}
+                          <span className="text-foreground">
+                            {user.playerStats.wins}-{user.playerStats.losses} |{" "}
+                            {user.playerStats.gamesPlayed} games
+                          </span>
+                        </span>
+                      )}
+                      {user.playerUpdatedAt && (
+                        <span>
+                          Handle updated:{" "}
+                          <span className="text-foreground">
+                            {formatDateTime(user.playerUpdatedAt)}
+                          </span>
+                        </span>
+                      )}
                     </div>
                     <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
                       <span>

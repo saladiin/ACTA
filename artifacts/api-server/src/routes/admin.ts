@@ -12,6 +12,7 @@ import {
   gameSpecialActionAuditLogsTable,
   bugReportsTable,
   gameChatMessagesTable,
+  playersTable,
 } from "@workspace/db";
 import { getUserId, isAdminUser, requireAdmin, requireAuth } from "../lib/auth";
 
@@ -60,6 +61,10 @@ function emailVerificationStatus(email: {
   verification: { status?: string | null } | null;
 }): string | null {
   return email.verification?.status ?? null;
+}
+
+function dbTimestampToIso(value: Date | null | undefined): string | null {
+  return value ? value.toISOString() : null;
 }
 
 function clampArchiveDays(value: unknown): number {
@@ -154,45 +159,113 @@ router.get("/admin/users", requireAdmin, async (_req, res): Promise<void> => {
   const adminUsers = parseIdentityList(
     process.env.B5_ADMIN_USERS ?? process.env.B5_ADMIN_EMAILS ?? "",
   );
-  const result = await clerkClient.users.getUserList({
-    limit: ADMIN_USER_LIST_LIMIT,
-    offset: 0,
-    orderBy: "-created_at",
+  const [result, playerRows] = await Promise.all([
+    clerkClient.users.getUserList({
+      limit: ADMIN_USER_LIST_LIMIT,
+      offset: 0,
+      orderBy: "-created_at",
+    }),
+    db
+      .select({
+        clerkUserId: playersTable.clerkUserId,
+        username: playersTable.username,
+        avatarUrl: playersTable.avatarUrl,
+        wins: playersTable.wins,
+        losses: playersTable.losses,
+        gamesPlayed: playersTable.gamesPlayed,
+        createdAt: playersTable.createdAt,
+        updatedAt: playersTable.updatedAt,
+      })
+      .from(playersTable)
+      .orderBy(asc(playersTable.username)),
+  ]);
+  const playersByUserId = new Map(
+    playerRows.map((player) => [player.clerkUserId, player]),
+  );
+  const clerkUserIds = new Set(result.data.map((user) => user.id));
+  const clerkAccounts = result.data.map((user) => {
+    const player = playersByUserId.get(user.id) ?? null;
+    const identities = userIdentityValues(user);
+    const primaryEmail =
+      user.emailAddresses.find(
+        (email) => email.id === user.primaryEmailAddressId,
+      ) ??
+      user.emailAddresses[0] ??
+      null;
+
+    return {
+      id: user.id,
+      username: user.username,
+      playerHandle: player?.username ?? null,
+      playerAvatarUrl: player?.avatarUrl ?? null,
+      playerStats: player
+        ? {
+            wins: player.wins,
+            losses: player.losses,
+            gamesPlayed: player.gamesPlayed,
+          }
+        : null,
+      playerCreatedAt: dbTimestampToIso(player?.createdAt),
+      playerUpdatedAt: dbTimestampToIso(player?.updatedAt),
+      hasClerkAccount: true,
+      hasPlayerProfile: Boolean(player),
+      name: [user.firstName, user.lastName].filter(Boolean).join(" ") || null,
+      primaryEmail: primaryEmail?.emailAddress ?? null,
+      primaryEmailVerificationStatus: primaryEmail
+        ? emailVerificationStatus(primaryEmail)
+        : null,
+      emails: user.emailAddresses.map((email) => ({
+        emailAddress: email.emailAddress,
+        verificationStatus: emailVerificationStatus(email),
+      })),
+      createdAt: clerkTimestampToIso(user.createdAt),
+      lastSignInAt: clerkTimestampToIso(user.lastSignInAt),
+      lastActiveAt: clerkTimestampToIso(user.lastActiveAt),
+      banned: user.banned,
+      locked: user.locked,
+      gameAllowed: matchesIdentityList(identities, allowedUsers, true),
+      adminAllowed: matchesIdentityList(identities, adminUsers, false),
+    };
   });
+  const localOnlyAccounts = playerRows
+    .filter((player) => !clerkUserIds.has(player.clerkUserId))
+    .map((player) => {
+      const identities = [player.clerkUserId, player.username].map((value) =>
+        value.toLowerCase(),
+      );
+      return {
+        id: player.clerkUserId,
+        username: null,
+        playerHandle: player.username,
+        playerAvatarUrl: player.avatarUrl,
+        playerStats: {
+          wins: player.wins,
+          losses: player.losses,
+          gamesPlayed: player.gamesPlayed,
+        },
+        playerCreatedAt: dbTimestampToIso(player.createdAt),
+        playerUpdatedAt: dbTimestampToIso(player.updatedAt),
+        hasClerkAccount: false,
+        hasPlayerProfile: true,
+        name: null,
+        primaryEmail: null,
+        primaryEmailVerificationStatus: null,
+        emails: [],
+        createdAt: null,
+        lastSignInAt: null,
+        lastActiveAt: null,
+        banned: false,
+        locked: false,
+        gameAllowed: matchesIdentityList(identities, allowedUsers, true),
+        adminAllowed: matchesIdentityList(identities, adminUsers, false),
+      };
+    });
 
   res.json({
     totalCount: result.totalCount,
     limit: ADMIN_USER_LIST_LIMIT,
-    users: result.data.map((user) => {
-      const identities = userIdentityValues(user);
-      const primaryEmail =
-        user.emailAddresses.find(
-          (email) => email.id === user.primaryEmailAddressId,
-        ) ??
-        user.emailAddresses[0] ??
-        null;
-
-      return {
-        id: user.id,
-        username: user.username,
-        name: [user.firstName, user.lastName].filter(Boolean).join(" ") || null,
-        primaryEmail: primaryEmail?.emailAddress ?? null,
-        primaryEmailVerificationStatus: primaryEmail
-          ? emailVerificationStatus(primaryEmail)
-          : null,
-        emails: user.emailAddresses.map((email) => ({
-          emailAddress: email.emailAddress,
-          verificationStatus: emailVerificationStatus(email),
-        })),
-        createdAt: clerkTimestampToIso(user.createdAt),
-        lastSignInAt: clerkTimestampToIso(user.lastSignInAt),
-        lastActiveAt: clerkTimestampToIso(user.lastActiveAt),
-        banned: user.banned,
-        locked: user.locked,
-        gameAllowed: matchesIdentityList(identities, allowedUsers, true),
-        adminAllowed: matchesIdentityList(identities, adminUsers, false),
-      };
-    }),
+    localPlayerCount: playerRows.length,
+    users: [...clerkAccounts, ...localOnlyAccounts],
   });
 });
 
