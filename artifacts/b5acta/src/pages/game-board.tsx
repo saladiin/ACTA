@@ -2155,6 +2155,8 @@ const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "T_FirePanningCyl45.png": "20260722-hard-plasma",
   "T_Noise1_nk.png": "20260722-hard-plasma",
   "T_Noise_HU85k.png": "20260722-hard-plasma",
+  "weapon-damage-arc.png": "20260730-weapon-arc-damage-v1",
+  "weapon-offline-arc.png": "20260730-weapon-arc-offline-v1",
 };
 const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
   color: "#f8fafc",
@@ -4910,6 +4912,7 @@ function GameUnit3D({
   phaseViable,
   firingArc,
   projectedWeaponArcs = [],
+  weaponArcReadiness = {},
   targetingPreview = null,
   launchHighlight = false,
   damageControlHighlight = false,
@@ -4922,6 +4925,7 @@ function GameUnit3D({
   isFighter = false,
   scoutSupportEffects = [],
   terrainFields = [],
+  weaponArcProjectionOutlineOnly = false,
 }: {
   unit: {
     id: number;
@@ -4960,11 +4964,13 @@ function GameUnit3D({
   isFighter?: boolean;
   scoutSupportEffects?: ScoutSupportVisualEffect[];
   terrainFields?: TerrainObject[];
+  weaponArcProjectionOutlineOnly?: boolean;
   // When set, draws a translucent "weapon coverage" sector at full range for
   // the currently-selected firing weapon so the player can see eligible
   // targets. Only rendered for the active firing ship.
   firingArc?: { arc: string; range: number } | null;
   projectedWeaponArcs?: Array<{ arc: string; range: number }>;
+  weaponArcReadiness?: WeaponArcReadinessMap;
   targetingPreview?: TargetingPreviewState | null;
   launchHighlight?: boolean;
   damageControlHighlight?: boolean;
@@ -5297,6 +5303,7 @@ function GameUnit3D({
             muted={visuallyDestroyed}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            arcReadiness={weaponArcReadiness}
           />
         </group>
       )}
@@ -5309,6 +5316,8 @@ function GameUnit3D({
             flip={FLIP_MODELS.has(unit.modelFilename)}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            outlineOnly={weaponArcProjectionOutlineOnly}
+            readiness={weaponArcReadiness[canonicalWeaponArc(firingArc.arc)]}
           />
         </group>
       )}
@@ -5319,6 +5328,7 @@ function GameUnit3D({
             flip={FLIP_MODELS.has(unit.modelFilename)}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            arcReadiness={weaponArcReadiness}
           />
         </group>
       )}
@@ -5404,6 +5414,7 @@ function GameUnit3D({
                 muted={visuallyDestroyed}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
+                arcReadiness={weaponArcReadiness}
               />
             </group>
           )}
@@ -5415,6 +5426,8 @@ function GameUnit3D({
                 flip={FLIP_MODELS.has(unit.modelFilename)}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
+                outlineOnly={weaponArcProjectionOutlineOnly}
+                readiness={weaponArcReadiness[canonicalWeaponArc(firingArc.arc)]}
               />
             </group>
           )}
@@ -5425,6 +5438,7 @@ function GameUnit3D({
                 flip={FLIP_MODELS.has(unit.modelFilename)}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
+                arcReadiness={weaponArcReadiness}
               />
             </group>
           )}
@@ -6114,6 +6128,17 @@ const BASE_ORIENTATION_ARCS = [
 
 type TargetingPreviewState = "eligible" | "ineligible";
 
+type WeaponArcReadinessState = "online" | "degraded" | "offline";
+
+type WeaponArcReadiness = {
+  status: WeaponArcReadinessState;
+  total: number;
+  down: number;
+  reasons: string[];
+};
+
+type WeaponArcReadinessMap = Record<string, WeaponArcReadiness>;
+
 const SIDE_ARC_COLORS: Record<"friendly" | "enemy", Record<string, string>> = {
   friendly: {
     Forward: "#34eb52",
@@ -6144,6 +6169,109 @@ function arcDisplayColor(
   if (scheme === "side" && side)
     return SIDE_ARC_COLORS[side][canonicalArc] ?? ARC_DEFS[canonicalArc]?.color ?? "#ffffff";
   return ARC_DEFS[canonicalArc]?.color ?? "#ffffff";
+}
+
+function weaponCriticalDisableReason(
+  weapon: Pick<Weapon, "id" | "arc" | "name">,
+  crits: NonNullable<GameUnit["criticals"]>,
+): string | null {
+  for (const crit of crits) {
+    const critName = crit.name || "critical";
+    if (
+      crit.effectKey === "weapons-offline" &&
+      crit.randomWeaponId === weapon.id
+    ) {
+      return `${weapon.name || "weapon"} offline: ${critName}`;
+    }
+    if (
+      (crit.effectKey === "weapons-catastrophic" ||
+        crit.effectKey === "vital-weapons-control") &&
+      crit.randomArc &&
+      canonicalWeaponArc(crit.randomArc) === canonicalWeaponArc(weapon.arc)
+    ) {
+      return `${canonicalWeaponArc(weapon.arc)} arc offline: ${critName}`;
+    }
+  }
+  return null;
+}
+
+function buildWeaponArcReadiness(
+  unit: GameUnit,
+  model: ShipModel | undefined,
+  weapons: Weapon[],
+  currentRound: number,
+): WeaponArcReadinessMap {
+  const byArc = new Map<
+    string,
+    { total: number; down: number; reasons: Set<string> }
+  >();
+  const firedSet = new Set(unit.firedWeaponIds ?? []);
+  const firedArcs = new Set(
+    weapons
+      .filter((weapon) => firedSet.has(weapon.id))
+      .map((weapon) => canonicalWeaponArc(weapon.arc)),
+  );
+  const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
+  const oneWeaponLimitActive =
+    unit.oneWeaponThisRound ||
+    baseAction === "blast-doors" ||
+    baseAction === "all-stop-pivot";
+  const skeletonLimitActive =
+    Boolean(unit.isSkeletonCrew) &&
+    !/\bflight\s+computer\b/i.test(model?.traits ?? "");
+  const crits = unit.criticals ?? [];
+
+  for (const weapon of weapons) {
+    const arc = canonicalWeaponArc(weapon.arc);
+    if (!ARC_DEFS[arc]) continue;
+    const entry = byArc.get(arc) ?? {
+      total: 0,
+      down: 0,
+      reasons: new Set<string>(),
+    };
+    entry.total += 1;
+    const reasons: string[] = [];
+    const critReason = weaponCriticalDisableReason(weapon, crits);
+    if (critReason) reasons.push(critReason);
+    if (firedSet.has(weapon.id)) reasons.push("already fired");
+    const readyRound = Number(
+      unit.slowLoadingWeaponCooldowns?.[String(weapon.id)] ?? 0,
+    );
+    if (
+      /\bslow[-\s]?loading\b/i.test(weapon.traits ?? "") &&
+      currentRound < readyRound
+    ) {
+      reasons.push(`slow-loading until round ${readyRound}`);
+    }
+    if (!firedSet.has(weapon.id) && firedSet.size > 0) {
+      if (skeletonLimitActive) reasons.push("skeleton crew one weapon");
+      if (oneWeaponLimitActive) reasons.push("one weapon limit");
+      if (unit.isCrippled && firedArcs.has(arc)) {
+        reasons.push("crippled arc already fired");
+      }
+    }
+    if (reasons.length > 0) {
+      entry.down += 1;
+      reasons.forEach((reason) => entry.reasons.add(reason));
+    }
+    byArc.set(arc, entry);
+  }
+
+  const output: WeaponArcReadinessMap = {};
+  for (const [arc, entry] of byArc.entries()) {
+    output[arc] = {
+      total: entry.total,
+      down: entry.down,
+      status:
+        entry.down <= 0
+          ? "online"
+          : entry.down >= entry.total
+            ? "offline"
+            : "degraded",
+      reasons: [...entry.reasons],
+    };
+  }
+  return output;
 }
 
 function angleDeltaRadians(a: number, b: number): number {
@@ -6244,6 +6372,155 @@ function ArcSector({
   );
 }
 
+function PulsingArcSector({
+  centerAngle,
+  halfAngle,
+  radius,
+  color = "#ef4444",
+  baseOpacity = 0.18,
+  planeY = 0.019,
+}: {
+  centerAngle: number;
+  halfAngle: number;
+  radius: number;
+  color?: string;
+  baseOpacity?: number;
+  planeY?: number;
+}) {
+  const materialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const geo = useMemo(() => {
+    const segments = halfAngle < 0.3 ? 8 : 36;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    for (let i = 0; i <= segments; i++) {
+      const a = centerAngle - halfAngle + (2 * halfAngle * i) / segments;
+      shape.lineTo(Math.cos(a) * radius, Math.sin(a) * radius);
+    }
+    shape.lineTo(0, 0);
+    return new THREE.ShapeGeometry(shape);
+  }, [centerAngle, halfAngle, radius]);
+
+  useFrame(({ clock }) => {
+    if (!materialRef.current) return;
+    const pulse = (Math.sin(clock.getElapsedTime() * 3.4) + 1) / 2;
+    materialRef.current.opacity = baseOpacity + pulse * 0.18;
+  });
+
+  return (
+    <mesh
+      rotation={[Math.PI / 2, 0, 0]}
+      position={[0, planeY, 0]}
+      geometry={geo}
+    >
+      <meshBasicMaterial
+        ref={materialRef}
+        color={color}
+        transparent
+        opacity={baseOpacity}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+}
+
+function WeaponArcStatusPlate({
+  centerAngle,
+  radius,
+  textureFilename,
+}: {
+  centerAngle: number;
+  radius: number;
+  textureFilename: string;
+}) {
+  const texture = useLoader(
+    THREE.TextureLoader,
+    boardTextureUrl(textureFilename),
+  ) as THREE.Texture;
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  const geometry = useMemo(() => {
+    const outward = new THREE.Vector2(
+      Math.cos(centerAngle),
+      Math.sin(centerAngle),
+    );
+    const tangent = new THREE.Vector2(-outward.y, outward.x);
+    const centerDistance = radius * 0.48;
+    const width = radius * 0.76;
+    const height = radius * 0.76;
+    const center = outward.clone().multiplyScalar(centerDistance);
+    const halfTangent = tangent.multiplyScalar(width / 2);
+    const halfOutward = outward.multiplyScalar(height / 2);
+    const vertices = new Float32Array([
+      center.x - halfTangent.x - halfOutward.x,
+      0.036,
+      center.y - halfTangent.y - halfOutward.y,
+      center.x + halfTangent.x - halfOutward.x,
+      0.036,
+      center.y + halfTangent.y - halfOutward.y,
+      center.x + halfTangent.x + halfOutward.x,
+      0.036,
+      center.y + halfTangent.y + halfOutward.y,
+      center.x - halfTangent.x + halfOutward.x,
+      0.036,
+      center.y - halfTangent.y + halfOutward.y,
+    ]);
+    const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+    const indices = [0, 1, 2, 0, 2, 3];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  }, [centerAngle, radius]);
+
+  const material = useMemo(() => {
+    const shader = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: texture },
+        opacity: { value: 0.94 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D map;
+        uniform float opacity;
+        varying vec2 vUv;
+        void main() {
+          vec4 sampleColor = texture2D(map, vUv);
+          float luma = dot(sampleColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          float keyedAlpha = smoothstep(0.018, 0.11, luma) * sampleColor.a;
+          if (keyedAlpha < 0.015) discard;
+          gl_FragColor = vec4(sampleColor.rgb, keyedAlpha * opacity);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    return shader;
+  }, [texture]);
+  useEffect(() => () => material.dispose(), [material]);
+
+  return <mesh geometry={geometry} material={material} renderOrder={12} />;
+}
+
 // Long-range coverage arc for the FIRING PHASE — drawn at the weapon's actual
 // range (in world inches) so the player can see where its eligible targets lie.
 // Uses the same ARC_DEFS angles as the base arcs so the visual and server's
@@ -6307,6 +6584,8 @@ function RangeArcOverlay({
   arcColorScheme = "classic",
   arcSide = null,
   colorOverride,
+  outlineOnly = false,
+  readiness,
 }: {
   arc: string;
   range: number;
@@ -6314,11 +6593,19 @@ function RangeArcOverlay({
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
   colorOverride?: string;
+  outlineOnly?: boolean;
+  readiness?: WeaponArcReadiness;
 }) {
   const canonicalArc = canonicalWeaponArc(arc);
   const def = ARC_DEFS[canonicalArc];
-  const color =
+  const baseColor =
     colorOverride ?? arcDisplayColor(canonicalArc, arcColorScheme, arcSide);
+  const color =
+    readiness?.status === "offline"
+      ? "#737b88"
+      : readiness?.status === "degraded"
+        ? "#ef4444"
+        : baseColor;
   const geo = useMemo(() => {
     if (!def) return null;
     const segments = def.halfAngle < 0.3 ? 16 : 64;
@@ -6354,27 +6641,28 @@ function RangeArcOverlay({
   if (!def || !geo || !edgePoints) return null;
   return (
     <>
-      {/* Translucent fill */}
-      <mesh
-        rotation={[Math.PI / 2, 0, 0]}
-        position={[0, 0.018, 0]}
-        geometry={geo}
-      >
-        <meshBasicMaterial
-          color={color}
-          transparent
-          opacity={0.1}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      {!outlineOnly && (
+        <mesh
+          rotation={[Math.PI / 2, 0, 0]}
+          position={[0, 0.018, 0]}
+          geometry={geo}
+        >
+          <meshBasicMaterial
+            color={color}
+            transparent
+            opacity={readiness?.status === "offline" ? 0.055 : 0.1}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
       {/* Outline along the arc + radial edges so the boundary reads clearly */}
       <Line
         points={edgePoints}
         color={color}
-        lineWidth={2}
+        lineWidth={outlineOnly ? 2.6 : 2}
         transparent
-        opacity={0.95}
+        opacity={readiness?.status === "offline" ? 0.62 : 0.95}
         position={[0, 0.05, 0]}
       />
     </>
@@ -6392,11 +6680,15 @@ function WeaponRangeProjectionDisplay({
   flip,
   arcColorScheme = "classic",
   arcSide = null,
+  outlineOnly = false,
+  arcReadiness = {},
 }: {
   arcs: Array<{ arc: string; range: number }>;
   flip: boolean;
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
+  outlineOnly?: boolean;
+  arcReadiness?: WeaponArcReadinessMap;
 }) {
   const maxByArc = useMemo(() => {
     const grouped = new Map<string, number>();
@@ -6418,6 +6710,8 @@ function WeaponRangeProjectionDisplay({
           flip={flip}
           arcColorScheme={arcColorScheme}
           arcSide={arcSide}
+          outlineOnly={outlineOnly}
+          readiness={arcReadiness[item.arc]}
         />
       ))}
     </>
@@ -6446,6 +6740,7 @@ function WeaponArcDisplay({
   muted = false,
   arcColorScheme = "classic",
   arcSide = null,
+  arcReadiness = {},
 }: {
   weapons: Pick<Weapon, "arc">[];
   flip?: boolean;
@@ -6453,6 +6748,7 @@ function WeaponArcDisplay({
   muted?: boolean;
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
+  arcReadiness?: WeaponArcReadinessMap;
 }) {
   const uniqueArcs = useMemo(
     () => [...new Set(weapons.map((w) => canonicalWeaponArc(w.arc)))],
@@ -6466,16 +6762,53 @@ function WeaponArcDisplay({
         if (!def) return null;
         const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
         const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+        const readiness = arcReadiness[arc];
+        const offline = readiness?.status === "offline";
+        const degraded = readiness?.status === "degraded";
+        const sectorColor = muted || offline ? "#737b88" : color;
         return (
-          <ArcSector
-            key={arc}
-            centerAngle={centerAngle}
-            halfAngle={def.halfAngle}
-            radius={arcDisplayRadius(arc, baseRadius)}
-            color={weaponArcColor ?? color}
-            opacity={muted ? 0.26 : def.opacity}
-            planeY={0.014}
-          />
+          <React.Fragment key={arc}>
+            <ArcSector
+              centerAngle={centerAngle}
+              halfAngle={def.halfAngle}
+              radius={arcDisplayRadius(arc, baseRadius)}
+              color={weaponArcColor ?? sectorColor}
+              opacity={
+                muted
+                  ? 0.26
+                  : offline
+                    ? Math.min(0.22, def.opacity * 0.5)
+                    : degraded
+                      ? def.opacity * 0.72
+                      : def.opacity
+              }
+              planeY={0.014}
+            />
+            {offline && !muted && (
+              <WeaponArcStatusPlate
+                centerAngle={centerAngle}
+                radius={arcDisplayRadius(arc, baseRadius)}
+                textureFilename="weapon-offline-arc.png"
+              />
+            )}
+            {degraded && !muted && (
+              <>
+                <PulsingArcSector
+                  centerAngle={centerAngle}
+                  halfAngle={def.halfAngle}
+                  radius={arcDisplayRadius(arc, baseRadius)}
+                  color="#ef4444"
+                  baseOpacity={0.12}
+                  planeY={0.018}
+                />
+                <WeaponArcStatusPlate
+                  centerAngle={centerAngle}
+                  radius={arcDisplayRadius(arc, baseRadius)}
+                  textureFilename="weapon-damage-arc.png"
+                />
+              </>
+            )}
+          </React.Fragment>
         );
       })}
       {uniqueArcs.map((arc) => {
@@ -6483,38 +6816,64 @@ function WeaponArcDisplay({
         const def = ARC_DEFS[arc];
         if (!lbl || !def) return null;
         const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+        const readiness = arcReadiness[arc];
+        const offline = readiness?.status === "offline";
+        const degraded = readiness?.status === "degraded";
         const scaledPos = arcLabelPosition(arc, baseRadius, lbl.pos);
         const pos: [number, number, number] = flip
           ? [-scaledPos[0], scaledPos[1], -scaledPos[2]]
           : scaledPos;
+        const labelText = offline
+          ? `${lbl.label} OFF`
+          : degraded && readiness
+            ? `${lbl.label} ${readiness.down}/${readiness.total}`
+            : lbl.label;
         return (
           <CameraFacingText
             key={`lbl-${arc}`}
             position={pos}
-            fontSize={0.17}
-            color={muted ? "#a7afbc" : color}
+            fontSize={offline ? 0.12 : 0.17}
+            color={
+              muted || offline
+                ? "#a7afbc"
+                : degraded
+                  ? "#fecaca"
+                  : color
+            }
             anchorX="center"
             anchorY="middle"
             outlineWidth={0.04}
             outlineColor="black"
           >
-            {lbl.label}
+            {labelText}
           </CameraFacingText>
         );
       })}
       {/* Turret: inner circle on the base + centred label */}
       {uniqueArcs.includes("Turret") && (
-        <>
+        (() => {
+          const turretReadiness = arcReadiness.Turret;
+          const turretOffline = turretReadiness?.status === "offline";
+          const turretDegraded = turretReadiness?.status === "degraded";
+          const turretColor =
+            muted || turretOffline
+              ? "#8a93a1"
+              : turretDegraded
+                ? "#f59e0b"
+                : arcDisplayColor("Turret", arcColorScheme, arcSide);
+          const turretLabel = turretOffline
+            ? "TUR OFF"
+            : turretDegraded && turretReadiness
+              ? `TUR ${turretReadiness.down}/${turretReadiness.total}`
+              : "TUR";
+          return (
+        <React.Fragment>
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.026, 0]}>
             <ringGeometry args={[0.46, 0.54, 48]} />
             <meshBasicMaterial
-              color={
-                muted
-                  ? "#8a93a1"
-                  : arcDisplayColor("Turret", arcColorScheme, arcSide)
-              }
+              color={turretColor}
               transparent
-              opacity={muted ? 0.34 : 0.75}
+              opacity={muted ? 0.34 : turretOffline ? 0.34 : 0.75}
               depthWrite={false}
               side={THREE.DoubleSide}
             />
@@ -6522,33 +6881,27 @@ function WeaponArcDisplay({
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
             <circleGeometry args={[0.46, 48]} />
             <meshBasicMaterial
-              color={
-                muted
-                  ? "#8a93a1"
-                  : arcDisplayColor("Turret", arcColorScheme, arcSide)
-              }
+              color={turretColor}
               transparent
-              opacity={muted ? 0.1 : 0.18}
+              opacity={muted ? 0.1 : turretOffline ? 0.08 : 0.18}
               depthWrite={false}
               side={THREE.DoubleSide}
             />
           </mesh>
           <CameraFacingText
             position={[0, 0.09, 0]}
-            fontSize={0.17}
-            color={
-              muted
-                ? "#a7afbc"
-                : arcDisplayColor("Turret", arcColorScheme, arcSide)
-            }
+            fontSize={turretOffline ? 0.12 : 0.17}
+            color={muted || turretOffline ? "#a7afbc" : turretColor}
             anchorX="center"
             anchorY="middle"
             outlineWidth={0.03}
             outlineColor="black"
           >
-            TUR
+            {turretLabel}
           </CameraFacingText>
-        </>
+        </React.Fragment>
+          );
+        })()
       )}
     </>
   );
@@ -17889,6 +18242,13 @@ export default function GameBoard() {
               const unitIsFighter = isFighterUnit(unit);
               if (unit.isDestroyed && unitIsFighter) return null;
               const weaponsForUnit = getWeaponsForUnit(unit);
+              const unitModel = shipModels.find((model) => model.id === unit.shipModelId);
+              const weaponArcReadiness = buildWeaponArcReadiness(
+                unit,
+                unitModel,
+                weaponsForUnit,
+                game.currentRound ?? 0,
+              );
               const unitModel = getShipModelForUnit(unit);
               const phaseViable =
                 game.status === "active" &&
@@ -18030,6 +18390,7 @@ export default function GameBoard() {
                   phaseViable={phaseViable}
                   firingArc={firingArc}
                   projectedWeaponArcs={projectedWeaponArcs}
+                  weaponArcReadiness={weaponArcReadiness}
                   targetingPreview={targetingPreview}
                   arcColorScheme={uiArcColorScheme}
                   healthBarFacesCamera={uiControlMode === "mode-f"}
