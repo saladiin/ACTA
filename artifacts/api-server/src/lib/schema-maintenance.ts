@@ -46,6 +46,8 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Omega Command Destroyer", priority: "battle" },
   { name: "Shadow Omega Advanced Destroyer", priority: "war" },
   { name: "Primus Battle Cruiser", priority: "battle" },
+  { name: "Centurion-class Attack Cruiser", priority: "raid" },
+  { name: "Centurion Attack Cruiser", priority: "raid" },
   { name: "Corvan Scout", priority: "skirmish" },
   { name: "Corvan-class Scout", priority: "skirmish" },
   { name: "Covran Scout", priority: "skirmish" },
@@ -190,6 +192,9 @@ const CSV_MODEL_FILENAMES: Record<string, string> = {
   "rongoth-class destroyer": "rongoth.glb",
   "balvarin carrier": "balvarin.glb",
   "balvarin-class carrier": "balvarin.glb",
+  "centurion-class attack cruiser": "centurion.glb",
+  "centurion attack cruiser": "centurion.glb",
+  centurion: "centurion.glb",
   "sulust-class escort destroyer": "sulust.glb",
   "sulust escort destroyer": "sulust.glb",
   "white star": "whitestar.glb",
@@ -1478,6 +1483,44 @@ const ALTARIAN_WEAPONS = [
     arc: "Starboard",
     range: 12,
     attackDice: 4,
+    traits: "Double Damage; Twin-Linked",
+  },
+];
+
+const CENTURION_WEAPONS = [
+  {
+    name: "Plasma Accelerator",
+    arc: "Forward",
+    range: 12,
+    attackDice: 4,
+    traits: "Double Damage; Super Armor Piercing",
+  },
+  {
+    name: "Matter Cannon",
+    arc: "Forward",
+    range: 15,
+    attackDice: 4,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 6,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Ion Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 6,
     traits: "Double Damage; Twin-Linked",
   },
 ];
@@ -5435,6 +5478,74 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     const altarianId = altarian.rows[0]?.id;
     if (altarianId) {
       await syncWeaponsForShipModel(altarianId, ALTARIAN_WEAPONS);
+    }
+
+    const centurion = await pool.query<{ id: number }>(
+      `
+        WITH updated AS (
+          UPDATE ship_models
+          SET
+            name = 'Centurion-class Attack Cruiser',
+            filename = 'centurion.glb',
+            faction = 'Centauri Republic',
+            point_cost = 200,
+            priority_level = 'raid',
+            ship_class = 'Attack Cruiser',
+            hull = 5,
+            troops = 4,
+            damage = 35,
+            damage_threshold = 8,
+            hull_rating = 5,
+            crew = 38,
+            crew_threshold = 8,
+            speed = 10,
+            turns = 2,
+            turn_angle = 45,
+            crew_quality = 'Regular',
+            shield = 0,
+            shield_max = 0,
+            shield_regen_rate = 0,
+            traits = 'Anti-Fighter 1; Jump Engine',
+            small_craft = NULL,
+            base_radius_inches = $1,
+            hull_points = 35,
+            weapon_range = 15,
+            weapon_damage = 8,
+            description = 'Centauri Republic Centurion-class attack cruiser built for swift close-range strikes'
+          WHERE lower(filename) = 'centurion.glb'
+            OR lower(name) IN ('centurion', 'centurion attack cruiser', 'centurion-class attack cruiser')
+          RETURNING id
+        ),
+        inserted AS (
+          INSERT INTO ship_models (
+            name, filename, faction, point_cost, priority_level, ship_class,
+            hull, troops, damage, damage_threshold, hull_rating, crew,
+            crew_threshold, speed, turns, turn_angle, crew_quality, shield,
+            shield_max, shield_regen_rate, traits, small_craft, hull_points,
+            base_radius_inches, weapon_range, weapon_damage, description
+          )
+          SELECT
+            'Centurion-class Attack Cruiser', 'centurion.glb', 'Centauri Republic', 200,
+            'raid', 'Attack Cruiser', 5, 4, 35, 8, 5, 38, 8, 10, 2, 45,
+            'Regular', 0, 0, 0,
+            'Anti-Fighter 1; Jump Engine',
+            NULL, 35,
+            $1, 15, 8,
+            'Centauri Republic Centurion-class attack cruiser built for swift close-range strikes'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+        )
+        SELECT id FROM updated
+        UNION ALL
+        SELECT id FROM inserted
+        LIMIT 1
+      `,
+      [CAPITAL_BASE_RADIUS_INCHES],
+    );
+
+    const centurionId = centurion.rows[0]?.id;
+    if (centurionId) {
+      await syncWeaponsForShipModel(centurionId, CENTURION_WEAPONS);
     }
 
     const balvarin = await pool.query<{ id: number }>(

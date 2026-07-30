@@ -1755,6 +1755,7 @@ const PSI_CORPS_FIGHTER_CARRIER_MODEL_FILENAME = "psicorp-fighter-carrier.glb";
 const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const CORPORATE_FREIGHTER_MODEL_FILENAME = "corporate-freighter.glb";
+const CENTURION_MODEL_FILENAME = "centurion.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const RAILGUN_HYPERION_MODEL_FILENAME = "railgun-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
@@ -1864,6 +1865,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "flyer.glb",
   "battlecrab.glb",
   DEAD_BATTLECRAB_MODEL_FILENAME,
+  CENTURION_MODEL_FILENAME,
   "primus.glb",
   "whitestar.glb",
   "avenger.glb",
@@ -2854,6 +2856,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "black-omega.glb": "20260721-192023",
   "bintak.glb": "20260724-221703",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
+  [CENTURION_MODEL_FILENAME]: "20260730-centurion-v1",
   [CORPORATE_FREIGHTER_MODEL_FILENAME]: "20260730-corporate-freighter-v1",
   [COMMAND_HYPERION_MODEL_FILENAME]: "20260719-211631",
   [DEAD_BINTAK_MODEL_FILENAME]: "20260724-223851",
