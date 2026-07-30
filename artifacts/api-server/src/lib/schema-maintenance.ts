@@ -2230,7 +2230,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Rail Cruiser",
     aliases: ["Hyperion Rail Cruiser", "Hyperion-class Rail Cruiser"],
-    filename: "hyperion.glb",
+    filename: "railgun-hyperion.glb",
     faction: "Earth Alliance",
     pointCost: 150,
     priorityLevel: "skirmish",
@@ -4329,6 +4329,15 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         UPDATE game_units
         SET model_filename = 'command-hyperion.glb'
         WHERE lower(name) IN ('hyperion command cruiser', 'hyperion-class command cruiser')
+          AND lower(model_filename) = 'hyperion.glb'
+      `,
+    );
+
+    await pool.query(
+      `
+        UPDATE game_units
+        SET model_filename = 'railgun-hyperion.glb'
+        WHERE lower(name) IN ('hyperion rail cruiser', 'hyperion-class rail cruiser')
           AND lower(model_filename) = 'hyperion.glb'
       `,
     );
