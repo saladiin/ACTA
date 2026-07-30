@@ -3,6 +3,7 @@ import type { BoardPoint, LineOfSightObstacle } from "./line-of-sight";
 
 export type TerrainKind = "asteroid-field" | "gas-cloud";
 export type ManualTerrainVariant = "asteroid-light" | "asteroid-medium";
+export type TerrainVisualVariant = "ionized-cloud" | "dust-cloud";
 
 export type TerrainObject = {
   id: string;
@@ -17,6 +18,7 @@ export type TerrainObject = {
   footprintScaleX?: number;
   footprintScaleZ?: number;
   shapeSeed?: number;
+  visualVariant?: TerrainVisualVariant;
 };
 
 export type TerrainConfig = {
@@ -142,6 +144,14 @@ function asteroidFieldVariantFromD6(): (typeof ASTEROID_FIELD_VARIANTS)[number] 
   return ASTEROID_FIELD_VARIANTS[index] ?? ASTEROID_FIELD_VARIANTS[0];
 }
 
+function randomGasCloudVisualVariant(): TerrainVisualVariant {
+  return Math.random() < 0.5 ? "ionized-cloud" : "dust-cloud";
+}
+
+function normalizeTerrainVisualVariant(value: unknown): TerrainVisualVariant | undefined {
+  return value === "dust-cloud" || value === "ionized-cloud" ? value : undefined;
+}
+
 function terrainSeededUnit(seed: number, index: number): number {
   const value = Math.sin(seed * 12.9898 + index * 78.233) * 43758.5453;
   return value - Math.floor(value);
@@ -240,6 +250,7 @@ function automaticTerrainObject(
     footprintScaleX: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
     footprintScaleZ: Number(randomBetween(kind === "gas-cloud" ? 0.88 : 0.92, kind === "gas-cloud" ? 1.18 : 1.12).toFixed(3)),
     shapeSeed: Math.floor(randomBetween(1, 1_000_000)),
+    visualVariant: kind === "gas-cloud" ? randomGasCloudVisualVariant() : undefined,
   };
 }
 
@@ -407,7 +418,7 @@ export function terrainObjectForPlacement(
   ordinal: number,
   x: number,
   z: number,
-  options: { variant?: ManualTerrainVariant; rotationDeg?: number } = {},
+  options: { variant?: ManualTerrainVariant; rotationDeg?: number; visualVariant?: TerrainVisualVariant } = {},
 ): TerrainObject {
   const variant = options.variant === "asteroid-medium" ? "asteroid-medium" : "asteroid-light";
   const asteroidMedium = kind === "asteroid-field" && variant === "asteroid-medium";
@@ -417,6 +428,10 @@ export function terrainObjectForPlacement(
       ? ASTEROID_FIELD_MEDIUM_RADIUS_INCHES
       : ASTEROID_FIELD_RADIUS_INCHES;
   const shapeSeed = ordinal * 1009 + (kind === "gas-cloud" ? 317 : asteroidMedium ? 509 : 113);
+  const gasVisualVariant = kind === "gas-cloud"
+    ? normalizeTerrainVisualVariant(options.visualVariant)
+      ?? (terrainSeededUnit(shapeSeed, 47) < 0.5 ? "ionized-cloud" : "dust-cloud")
+    : undefined;
   const rotationDeg = Number.isFinite(Number(options.rotationDeg))
     ? (((Number(options.rotationDeg) % 360) + 360) % 360)
     : Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
@@ -447,6 +462,7 @@ export function terrainObjectForPlacement(
       terrainSeededUnit(shapeSeed, 43) * (kind === "gas-cloud" ? 0.3 : 0.2)
     ).toFixed(3)),
     shapeSeed,
+    visualVariant: gasVisualVariant,
   };
 }
 
@@ -465,6 +481,9 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
           const modelFilename = typeof item.modelFilename === "string" && item.modelFilename ? item.modelFilename : ASTEROID_FIELD_MODEL;
           const fallbackSeed = index + 1;
           const shapeSeed = Number.isFinite(Number(item.shapeSeed)) ? Math.max(0, Math.trunc(Number(item.shapeSeed))) : fallbackSeed;
+          const visualVariant = kind === "gas-cloud"
+            ? normalizeTerrainVisualVariant(item.visualVariant) ?? "ionized-cloud"
+            : undefined;
           const fallbackRotationDeg = Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
           const defaultRadius = kind === "gas-cloud"
             ? GAS_CLOUD_RADIUS_INCHES
@@ -488,6 +507,7 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
             footprintScaleX: Number.isFinite(Number(item.footprintScaleX)) ? clamp(Number(item.footprintScaleX), 0.65, 1.45) : kind === "gas-cloud" ? 1 : 0.94 + terrainSeededUnit(shapeSeed, 41) * 0.18,
             footprintScaleZ: Number.isFinite(Number(item.footprintScaleZ)) ? clamp(Number(item.footprintScaleZ), 0.65, 1.45) : kind === "gas-cloud" ? 1 : 0.94 + terrainSeededUnit(shapeSeed, 43) * 0.18,
             shapeSeed,
+            visualVariant,
           };
         })
         .filter((item): item is TerrainObject => item !== null)

@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useState,
   useRef,
   Suspense,
@@ -2113,6 +2113,12 @@ const BOARD_GAS_CLOUD_TEXTURE_FILENAMES = [
   "cloud03-8x8.webp",
   "cloud04-8x8.webp",
 ] as const;
+const BOARD_DUST_CLOUD_TEXTURE_FILENAMES = [
+  "wispy-smoke01-8x8.webp",
+  "wispy-smoke02-8x8.webp",
+  "wispy-smoke03-8x8.webp",
+  "wispy-smoke03b-8x8.webp",
+] as const;
 const BOARD_PRAXIS_TEXTURE_FILENAME = "praxis.png";
 const ORGANIC_BATTLECRAB_MODEL_FILENAME = "battlecrab.glb";
 const ORGANIC_SHADOW_MODEL_FILENAMES = new Set([
@@ -2135,6 +2141,10 @@ const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "cloud02-8x8.webp": "20260725-cloud02-tga",
   "cloud03-8x8.webp": "20260725-cloud03-tga",
   "cloud04-8x8.webp": "20260725-cloud04-tga",
+  "wispy-smoke01-8x8.webp": "20260730-wispy01-tga",
+  "wispy-smoke02-8x8.webp": "20260730-wispy02-tga",
+  "wispy-smoke03-8x8.webp": "20260730-wispy03-tga",
+  "wispy-smoke03b-8x8.webp": "20260730-wispy03b-tga",
   [BOARD_PRAXIS_TEXTURE_FILENAME]: "20260720-120000",
   "shadow_flesh_base_tile.png": "20260720-organic-v1",
   "shadow_flesh_normal.png": "20260720-organic-v1",
@@ -3793,6 +3803,9 @@ function TerrainAsteroidField({ field }: { field: TerrainObject }) {
 }
 
 function TerrainGasCloud({ field }: { field: TerrainObject }) {
+  const dustCloud = field.visualVariant === "dust-cloud";
+  const accentColor = dustCloud ? "#f7f7f7" : "#22d3ee";
+  const labelColor = dustCloud ? "#e5e7eb" : "#67e8f9";
   const outlineGeometry = useMemo(() => {
     const polygon = terrainObjectPolygon(field) ?? [];
     const points = [...polygon, polygon[0]].filter(Boolean).map(
@@ -3809,7 +3822,7 @@ function TerrainGasCloud({ field }: { field: TerrainObject }) {
     <group position={[field.x, 0.035, field.z]} renderOrder={2}>
       <lineLoop raycast={() => null}>
         <primitive object={outlineGeometry} attach="geometry" />
-        <lineBasicMaterial color="#22d3ee" transparent opacity={0.82} depthWrite={false} />
+        <lineBasicMaterial color={accentColor} transparent opacity={0.82} depthWrite={false} />
       </lineLoop>
       <group rotation={[0, rotation, 0]}>
         <TerrainGasCloudHaze field={field} />
@@ -3817,7 +3830,7 @@ function TerrainGasCloud({ field }: { field: TerrainObject }) {
       <Billboard position={[0, 1.75, 0]}>
         <Text
           fontSize={0.24}
-          color="#67e8f9"
+          color={labelColor}
           anchorX="center"
           anchorY="middle"
           outlineColor="#020617"
@@ -3831,24 +3844,44 @@ function TerrainGasCloud({ field }: { field: TerrainObject }) {
 }
 
 function TerrainGasCloudHaze({ field }: { field: TerrainObject }) {
+  const dustCloud = field.visualVariant === "dust-cloud";
+  const textureFilenames = dustCloud
+    ? BOARD_DUST_CLOUD_TEXTURE_FILENAMES
+    : BOARD_GAS_CLOUD_TEXTURE_FILENAMES;
   const sourceTextures = useLoader(
     THREE.TextureLoader,
-    BOARD_GAS_CLOUD_TEXTURE_FILENAMES.map((filename) => boardTextureUrl(filename)),
+    textureFilenames.map((filename) => boardTextureUrl(filename)),
   );
   const cloudGroupRef = useRef<THREE.Group>(null);
   const elapsedRef = useRef(0);
   const columns = 8;
   const rows = 8;
   const frameCount = columns * rows;
-  const vfxTuning = {
-    color: "#22d3ee",
-    speed: 0.36,
-    size: 2.2,
-    fade: 2.05,
-    intensity: 0.4,
-    spread: 1.9,
-    arc: 0.82,
-  } as const;
+  const vfxTuning = dustCloud
+    ? {
+        color: "#f7f7f7",
+        secondaryColor: "#8f8f8f",
+        speed: 0.5,
+        size: 1.85,
+        fade: 1.55,
+        intensity: 0.54,
+        spread: 3.35,
+        count: 72,
+        arc: 1.25,
+        thickness: 0.72,
+      }
+    : {
+        color: "#22d3ee",
+        secondaryColor: "#22d3ee",
+        speed: 0.36,
+        size: 2.2,
+        fade: 2.05,
+        intensity: 0.4,
+        spread: 1.9,
+        count: 36,
+        arc: 0.82,
+        thickness: 0.62,
+      };
   const vfxFootprintRadius = 3.25 * vfxTuning.spread;
   const uniformScale = field.radiusInches / vfxFootprintRadius;
   const visualSpread = vfxTuning.spread * uniformScale;
@@ -3857,59 +3890,89 @@ function TerrainGasCloudHaze({ field }: { field: TerrainObject }) {
   const intensity = vfxTuning.intensity;
   const fade = vfxTuning.fade;
   const arc = vfxTuning.arc * uniformScale;
-  const textureSeed = field.shapeSeed ?? 1;
+  const textureSeed = dustCloud ? 1667 : field.shapeSeed ?? 1;
 
   const instances = useMemo(() => {
-    const lowLayer = Array.from({ length: 24 }, (_, i) => {
-      const layerRow = Math.floor(i / 6);
-      const column = i % 6;
-      const progress = column / 5;
-      const rowOffset = layerRow - 1.5;
+    const desiredCount = dustCloud ? 72 : 36;
+    const lowCount = dustCloud ? Math.round(desiredCount * 0.68) : 24;
+    const highCount = dustCloud ? desiredCount - lowCount : 12;
+    const lowColumns = 6;
+    const highColumns = 4;
+    const seededUnit = (index: number) => {
+      const seed = dustCloud ? 1667 : field.shapeSeed ?? 1;
+      const value = Math.sin((seed + index * 91.7) * 12.9898) * 43758.5453;
+      return value - Math.floor(value);
+    };
+    const lowLayer = Array.from({ length: lowCount }, (_, i) => {
+      const layerRow = Math.floor(i / lowColumns);
+      const column = i % lowColumns;
+      const progress = lowColumns <= 1 ? 0.5 : column / (lowColumns - 1);
+      const rowOffset = dustCloud
+        ? layerRow - (Math.ceil(lowCount / lowColumns) - 1) / 2
+        : layerRow - 1.5;
       const edgeFade = Math.sin(progress * Math.PI);
+      const jitterX = dustCloud ? (seededUnit(i + 3) - 0.5) * visualSpread * 0.34 : 0;
+      const jitterZ = dustCloud ? (seededUnit(i + 7) - 0.5) * visualSpread * 0.48 : 0;
       return {
         x:
           (progress - 0.5) * visualSpread * 5.8 +
           rowOffset * visualSpread * 0.22 +
-          Math.sin(i * 1.73) * visualSpread * 0.12,
+          Math.sin(i * 1.73) * visualSpread * 0.12 +
+          jitterX,
         z:
           rowOffset * visualSpread * 0.72 +
-          Math.cos(i * 1.29) * visualSpread * 0.18,
-        y: (0.38 + layerRow * 0.11 + edgeFade * 0.28) * uniformScale + arc,
-        scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08) * visualSize,
+          Math.cos(i * 1.29) * visualSpread * 0.18 +
+          jitterZ,
+        y: (0.38 + layerRow * 0.11 + edgeFade * 0.28) * uniformScale + arc +
+          (dustCloud ? seededUnit(i + 11) * 0.24 * uniformScale : 0),
+        scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08 + (dustCloud ? seededUnit(i + 13) * 0.18 : 0)) * visualSize,
         opacity: (0.085 + edgeFade * 0.045) * intensity * fade,
-        phase: i * 6.3,
-        rotation: rowOffset * 0.24 + Math.sin(i * 0.81) * 0.18,
+        phase: i * 6.3 + (dustCloud ? seededUnit(i + 17) * frameCount : 0),
+        rotation: rowOffset * 0.24 + Math.sin(i * 0.81) * 0.18 +
+          (dustCloud ? (seededUnit(i + 19) - 0.5) * 0.7 : 0),
       };
     });
-    const highLayer = Array.from({ length: 12 }, (_, highIndex) => {
-      const row = Math.floor(highIndex / 4);
-      const column = highIndex % 4;
-      const progress = column / 3;
-      const rowOffset = row - 1;
+    const highLayer = Array.from({ length: highCount }, (_, highIndex) => {
+      const row = Math.floor(highIndex / highColumns);
+      const column = highIndex % highColumns;
+      const progress = highColumns <= 1 ? 0.5 : column / (highColumns - 1);
+      const rowOffset = dustCloud
+        ? row - (Math.ceil(highCount / highColumns) - 1) / 2
+        : row - 1;
       const edgeFade = Math.sin(progress * Math.PI);
-      const i = highIndex + 24;
+      const i = highIndex + lowCount;
       return {
         x:
           (progress - 0.5) * visualSpread * 5.15 +
           rowOffset * visualSpread * 0.36 +
-          Math.sin(i * 1.41) * visualSpread * 0.24,
+          Math.sin(i * 1.41) * visualSpread * 0.24 +
+          (dustCloud ? (seededUnit(i + 23) - 0.5) * visualSpread * 0.42 : 0),
         z:
           rowOffset * visualSpread * 0.88 +
-          Math.cos(i * 1.17) * visualSpread * 0.28,
-        y: (1.45 + row * 0.22 + edgeFade * 0.38) * uniformScale + arc,
-        scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12) * visualSize,
+          Math.cos(i * 1.17) * visualSpread * 0.28 +
+          (dustCloud ? (seededUnit(i + 29) - 0.5) * visualSpread * 0.55 : 0),
+        y: (1.45 + row * 0.22 + edgeFade * 0.38) * uniformScale + arc +
+          (dustCloud ? seededUnit(i + 31) * 0.42 * uniformScale : 0),
+        scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12 + (dustCloud ? seededUnit(i + 37) * 0.18 : 0)) * visualSize,
         opacity: (0.045 + edgeFade * 0.026) * intensity * fade,
-        phase: i * 6.3,
-        rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24,
+        phase: i * 6.3 + (dustCloud ? seededUnit(i + 41) * frameCount : 0),
+        rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24 +
+          (dustCloud ? (seededUnit(i + 43) - 0.5) * 0.85 : 0),
       };
     });
     return [...lowLayer, ...highLayer];
-  }, [arc, uniformScale, visualSize, visualSpread]);
+  }, [arc, dustCloud, field.shapeSeed, frameCount, intensity, fade, uniformScale, visualSize, visualSpread]);
 
   const frameTextures = useMemo(
     () =>
       instances.map((_, index) => {
-        const textureChoice = Math.floor(terrainVisualSeededUnit(textureSeed, index + 101) * sourceTextures.length);
+        const textureChoice = dustCloud
+          ? Math.floor(
+              (Math.sin((textureSeed + index * 53.1) * 78.233) * 43758.5453
+                - Math.floor(Math.sin((textureSeed + index * 53.1) * 78.233) * 43758.5453)) *
+                sourceTextures.length,
+            )
+          : Math.floor(terrainVisualSeededUnit(textureSeed, index + 101) * sourceTextures.length);
         const sourceTexture = sourceTextures[textureChoice] ?? sourceTextures[0]!;
         const texture = sourceTexture.clone();
         texture.colorSpace = THREE.SRGBColorSpace;
@@ -3919,7 +3982,7 @@ function TerrainGasCloudHaze({ field }: { field: TerrainObject }) {
         texture.needsUpdate = true;
         return texture;
       }),
-    [instances, sourceTextures, textureSeed],
+    [dustCloud, instances, sourceTextures, textureSeed],
   );
 
   useEffect(() => () => {
@@ -3988,7 +4051,7 @@ function TerrainGasCloudHaze({ field }: { field: TerrainObject }) {
         ))}
       </group>
       <pointLight
-        color={vfxTuning.color}
+        color={vfxTuning.secondaryColor}
         intensity={0.95 * intensity}
         distance={7 * visualSpread}
         position={[0, 1.1 * uniformScale, 0]}

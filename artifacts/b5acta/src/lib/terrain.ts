@@ -2,6 +2,7 @@ import type { LineOfSightObstacle } from "./line-of-sight";
 
 export type TerrainKind = "asteroid-field" | "gas-cloud";
 export type ManualTerrainVariant = "asteroid-light" | "asteroid-medium";
+export type TerrainVisualVariant = "ionized-cloud" | "dust-cloud";
 
 export type TerrainObject = {
   id: string;
@@ -16,6 +17,7 @@ export type TerrainObject = {
   footprintScaleX?: number;
   footprintScaleZ?: number;
   shapeSeed?: number;
+  visualVariant?: TerrainVisualVariant;
 };
 
 export type TerrainConfig = {
@@ -89,6 +91,10 @@ function terrainSeededUnit(seed: number, index: number): number {
   return value - Math.floor(value);
 }
 
+function normalizeTerrainVisualVariant(value: unknown): TerrainVisualVariant | undefined {
+  return value === "dust-cloud" || value === "ionized-cloud" ? value : undefined;
+}
+
 export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 1, objects: [] };
   const rawObjects = (raw as { objects?: unknown }).objects;
@@ -104,6 +110,9 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
           const modelFilename = typeof item.modelFilename === "string" && item.modelFilename ? item.modelFilename : ASTEROID_FIELD_MODEL;
           const fallbackSeed = index + 1;
           const shapeSeed = Number.isFinite(Number(item.shapeSeed)) ? Math.max(0, Math.trunc(Number(item.shapeSeed))) : fallbackSeed;
+          const visualVariant = kind === "gas-cloud"
+            ? normalizeTerrainVisualVariant(item.visualVariant) ?? "ionized-cloud"
+            : undefined;
           const fallbackRotationDeg = Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
           const defaultRadius = kind === "gas-cloud"
             ? GAS_CLOUD_RADIUS_INCHES
@@ -127,6 +136,7 @@ export function normalizeTerrainConfig(raw: unknown): TerrainConfig {
             footprintScaleX: Number.isFinite(Number(item.footprintScaleX)) ? clamp(Number(item.footprintScaleX), 0.65, 1.45) : kind === "gas-cloud" ? 1 : 0.94 + terrainSeededUnit(shapeSeed, 41) * 0.18,
             footprintScaleZ: Number.isFinite(Number(item.footprintScaleZ)) ? clamp(Number(item.footprintScaleZ), 0.65, 1.45) : kind === "gas-cloud" ? 1 : 0.94 + terrainSeededUnit(shapeSeed, 43) * 0.18,
             shapeSeed,
+            visualVariant,
           };
         })
         .filter((item): item is TerrainObject => item !== null)
@@ -243,7 +253,7 @@ export function terrainObjectForPlacementPreview(
   ordinal: number,
   x: number,
   z: number,
-  options: { variant?: ManualTerrainVariant; rotationDeg?: number } = {},
+  options: { variant?: ManualTerrainVariant; rotationDeg?: number; visualVariant?: TerrainVisualVariant } = {},
 ): TerrainObject {
   const variant = options.variant === "asteroid-medium" ? "asteroid-medium" : "asteroid-light";
   const asteroidMedium = kind === "asteroid-field" && variant === "asteroid-medium";
@@ -251,6 +261,10 @@ export function terrainObjectForPlacementPreview(
   const rotationDeg = Number.isFinite(Number(options.rotationDeg))
     ? (((Number(options.rotationDeg) % 360) + 360) % 360)
     : Math.floor(terrainSeededUnit(shapeSeed, 37) * 360);
+  const visualVariant = kind === "gas-cloud"
+    ? normalizeTerrainVisualVariant(options.visualVariant)
+      ?? (terrainSeededUnit(shapeSeed, 47) < 0.5 ? "ionized-cloud" : "dust-cloud")
+    : undefined;
   return {
     id: kind === "gas-cloud" ? `gas-cloud-${ordinal}` : `asteroid-field-${ordinal}`,
     kind,
@@ -282,5 +296,6 @@ export function terrainObjectForPlacementPreview(
       terrainSeededUnit(shapeSeed, 43) * (kind === "gas-cloud" ? 0.3 : 0.2)
     ).toFixed(3)),
     shapeSeed,
+    visualVariant,
   };
 }
