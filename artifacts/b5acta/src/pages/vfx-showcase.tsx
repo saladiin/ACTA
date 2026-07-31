@@ -674,8 +674,8 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
       {
         kind: "special",
         id: "shield-token-hover",
-        label: "Shield Token",
-        note: "Live Maneuver to Shield Them marker above the shielding ship. No board text is added.",
+        label: "",
+        note: "",
         effect: "shield-token-hover",
         position: [0, 0],
         modelFilename: "shield-token.glb",
@@ -8811,7 +8811,8 @@ function ShowcaseScene({
         const showLabel =
           board.id !== "orb-texture-tests" &&
           board.id !== "organic-skin-tests" &&
-          board.id !== "vorlon-beam-tests";
+          board.id !== "vorlon-beam-tests" &&
+          !isShieldTokenStation(station);
         if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
         if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
         if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
