@@ -1866,7 +1866,6 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "flyer.glb",
   "battlecrab.glb",
   DEAD_BATTLECRAB_MODEL_FILENAME,
-  CENTURION_MODEL_FILENAME,
   "primus.glb",
   "whitestar.glb",
   "avenger.glb",
