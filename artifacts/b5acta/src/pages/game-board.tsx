@@ -23434,7 +23434,6 @@ export default function GameBoard() {
       {terrainHazardModal && (
         <TerrainHazardDiceModal
           modal={terrainHazardModal}
-          setModal={setTerrainHazardModal}
           onClose={() => {
             qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
             setTerrainHazardModal(null);
@@ -23516,21 +23515,16 @@ function DiceFace({
 
 function TerrainHazardDiceModal({
   modal,
-  setModal,
   onClose,
 }: {
   modal: TerrainHazardModalState;
-  setModal: React.Dispatch<
-    React.SetStateAction<TerrainHazardModalState | null>
-  >;
   onClose: () => void;
 }) {
-  const { unitName, hazards, phase, confirmingClose } = modal;
+  const { unitName, hazards, phase } = modal;
   const rolling = phase === "rolling";
-  const requestClose = () =>
-    setModal((m) => (m ? { ...m, confirmingClose: true } : null));
-  const cancelClose = () =>
-    setModal((m) => (m ? { ...m, confirmingClose: false } : null));
+  const requestClose = () => {
+    if (!rolling) onClose();
+  };
   const failedCount = hazards.filter((hazard) => !hazard.passed).length;
   const totalDamage = hazards.reduce((sum, hazard) => sum + hazard.damage, 0);
   const totalCrew = hazards.reduce((sum, hazard) => sum + hazard.crewLost, 0);
@@ -23713,39 +23707,9 @@ function TerrainHazardDiceModal({
             className="font-mono uppercase tracking-widest"
             data-testid="button-close-terrain-hazard-modal"
           >
-            {rolling ? "Rolling..." : "Continue"}
+            {rolling ? "Rolling..." : "Close"}
           </Button>
         </div>
-
-        {confirmingClose && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/75 p-4">
-            <div className="w-full max-w-sm rounded border border-orange-400/50 bg-slate-950 p-4 text-center shadow-2xl">
-              <div className="font-mono text-sm font-bold text-orange-100">
-                Close terrain dice?
-              </div>
-              <p className="mt-2 font-mono text-xs text-slate-300">
-                The result is already recorded in the battle log.
-              </p>
-              <div className="mt-4 flex justify-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="font-mono"
-                  onClick={cancelClose}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  className="font-mono"
-                  onClick={onClose}
-                >
-                  Close
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
