@@ -6212,28 +6212,14 @@ function weaponCriticalDisableReason(
 
 function buildWeaponArcReadiness(
   unit: GameUnit,
-  model: ShipModel | undefined,
+  _model: ShipModel | undefined,
   weapons: Weapon[],
-  currentRound: number,
+  _currentRound: number,
 ): WeaponArcReadinessMap {
   const byArc = new Map<
     string,
     { total: number; down: number; reasons: Set<string> }
   >();
-  const firedSet = new Set(unit.firedWeaponIds ?? []);
-  const firedArcs = new Set(
-    weapons
-      .filter((weapon) => firedSet.has(weapon.id))
-      .map((weapon) => canonicalWeaponArc(weapon.arc)),
-  );
-  const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
-  const oneWeaponLimitActive =
-    unit.oneWeaponThisRound ||
-    baseAction === "blast-doors" ||
-    baseAction === "all-stop-pivot";
-  const skeletonLimitActive =
-    Boolean(unit.isSkeletonCrew) &&
-    !/\bflight\s+computer\b/i.test(model?.traits ?? "");
   const crits = unit.criticals ?? [];
 
   for (const weapon of weapons) {
@@ -6248,23 +6234,6 @@ function buildWeaponArcReadiness(
     const reasons: string[] = [];
     const critReason = weaponCriticalDisableReason(weapon, crits);
     if (critReason) reasons.push(critReason);
-    if (firedSet.has(weapon.id)) reasons.push("already fired");
-    const readyRound = Number(
-      unit.slowLoadingWeaponCooldowns?.[String(weapon.id)] ?? 0,
-    );
-    if (
-      /\bslow[-\s]?loading\b/i.test(weapon.traits ?? "") &&
-      currentRound < readyRound
-    ) {
-      reasons.push(`slow-loading until round ${readyRound}`);
-    }
-    if (!firedSet.has(weapon.id) && firedSet.size > 0) {
-      if (skeletonLimitActive) reasons.push("skeleton crew one weapon");
-      if (oneWeaponLimitActive) reasons.push("one weapon limit");
-      if (unit.isCrippled && firedArcs.has(arc)) {
-        reasons.push("crippled arc already fired");
-      }
-    }
     if (reasons.length > 0) {
       entry.down += 1;
       reasons.forEach((reason) => entry.reasons.add(reason));
