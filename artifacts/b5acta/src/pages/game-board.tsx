@@ -4560,6 +4560,62 @@ function LiveExplodingOriginPlume() {
   );
 }
 
+const EXPLOSION_IMPACT_RADIUS_INCHES = 4;
+
+function ExplodingImpactAreaDisc() {
+  const fillMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const edgeMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 3.6) + 1) / 2;
+    if (fillMaterialRef.current) {
+      fillMaterialRef.current.opacity = 0.075 + pulse * 0.075;
+    }
+    if (edgeMaterialRef.current) {
+      edgeMaterialRef.current.opacity = 0.48 + pulse * 0.38;
+    }
+  });
+
+  return (
+    <group>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.004, 0]}
+        renderOrder={2}
+        raycast={() => null}
+      >
+        <circleGeometry args={[EXPLOSION_IMPACT_RADIUS_INCHES, 72]} />
+        <meshBasicMaterial
+          ref={fillMaterialRef}
+          color="#f97316"
+          transparent
+          opacity={0.1}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.006, 0]}
+        renderOrder={3}
+        raycast={() => null}
+      >
+        <ringGeometry args={[3.88, EXPLOSION_IMPACT_RADIUS_INCHES, 72]} />
+        <meshBasicMaterial
+          ref={edgeMaterialRef}
+          color="#fb923c"
+          transparent
+          opacity={0.67}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 function configureExplodingOrbTexture(
   texture: THREE.Texture,
   colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace,
@@ -5187,7 +5243,9 @@ function GameUnit3D({
   const usesAnimatedAdriftVisual =
     usesAdriftVisual && !usesOmegaAdriftWreckVisual;
   const usesExplodingVisual =
-    unit.damageState === "exploding-end-of-next" && !isFighter;
+    unit.damageState === "exploding-end-of-next" &&
+    !unit.isDestroyed &&
+    !isFighter;
   const showGenericDamageSparks =
     !usesAnimatedAdriftVisual &&
     !usesExplodingVisual &&
@@ -5288,6 +5346,7 @@ function GameUnit3D({
         onCameraFocus();
       }}
     >
+      {!hasPreview && usesExplodingVisual && <ExplodingImpactAreaDisc />}
       {!hasPreview && (
         <group rotation={[0, headingRad, 0]}>
           <BaseOrientationDisplay
