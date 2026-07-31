@@ -1343,8 +1343,8 @@ export const ChooseSpecialActionParams = zod.object({
 })
 
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'cause-confusion', 'all-hands-on-deck', 'scramble', 'regenerate']),
-  "targetUnitId": zod.number().nullish().describe('Required for targeted Special Actions such as \'concentrate-fire\' and \'cause-confusion\' — the nominated enemy unit id.')
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'cause-confusion', 'all-hands-on-deck', 'scramble', 'regenerate']),
+  "targetUnitId": zod.number().nullish().describe('Required for targeted Special Actions such as \'concentrate-fire\', \'track-that-target\', and \'cause-confusion\' — the nominated enemy unit id.')
 })
 
 export const chooseSpecialActionResponseUnitCarriedFightersItemTotalMin = 0;
@@ -2931,5 +2931,3 @@ export const UpdateMyProfileResponse = zod.object({
   "gamesPlayed": zod.number(),
   "avatarUrl": zod.string().nullish()
 })
-
-

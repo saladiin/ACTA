@@ -39,9 +39,12 @@ test("Ancient profile constants remain distinct by race", () => {
 
 test("race Special Action whitelists reject standard-only actions", () => {
   assert.equal(specialActionAllowedForProfile("shadows", "run-silent"), true);
+  assert.equal(specialActionAllowedForProfile("shadows", "track-that-target"), true);
   assert.equal(specialActionAllowedForProfile("shadows", "blast-doors"), false);
   assert.equal(specialActionAllowedForProfile("vorlons", "regenerate"), true);
+  assert.equal(specialActionAllowedForProfile("vorlons", "track-that-target"), true);
   assert.equal(specialActionAllowedForProfile("ancients", "regenerate"), false);
+  assert.equal(specialActionAllowedForProfile("ancients", "track-that-target"), true);
 });
 
 test("Shadow Mind Scream and telepathic bonuses follow vessel type", () => {

@@ -14,11 +14,13 @@ export const ANCIENT_SPECIAL_ACTIONS = new Set([
   "come-about-sharp-turn",
   "initiate-jump-point",
   "run-silent",
+  "track-that-target",
 ]);
 
 export const SHADOW_SPECIAL_ACTIONS = new Set([
   "initiate-jump-point",
   "run-silent",
+  "track-that-target",
 ]);
 
 export const VORLON_SPECIAL_ACTIONS = new Set([
@@ -30,6 +32,7 @@ export const VORLON_SPECIAL_ACTIONS = new Set([
   "initiate-jump-point",
   "regenerate",
   "run-silent",
+  "track-that-target",
 ]);
 
 export function normalizeRulesProfile(value: unknown): RulesProfile {

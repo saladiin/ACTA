@@ -385,6 +385,7 @@ function specialActionLabel(raw: string | null | undefined): string | null {
     "intensify-defense": "Intensify Defensive Fire",
     "run-silent": "Run Silent",
     "concentrate-fire": "Concentrate All Fire",
+    "track-that-target": "Track That Target",
     "cause-confusion": "Cause Confusion",
     "all-hands-on-deck": "All Hands on Deck",
     scramble: "Scramble",
@@ -6320,6 +6321,27 @@ function isTargetInWeaponArc(
   return Math.abs(angleDeltaRadians(bearing, arc.centerAngle)) <= arc.halfAngle + 1e-6;
 }
 
+function trackThatTargetRelaxedArc(weaponArc: string): "Forward" | "Aft" | null {
+  const arc = canonicalWeaponArc(weaponArc);
+  if (arc === "Boresight Forward") return "Forward";
+  if (arc === "Boresight Aft") return "Aft";
+  return null;
+}
+
+function isTargetInEffectiveWeaponArc(
+  attacker: GameUnit,
+  target: GameUnit,
+  weapon: Pick<Weapon, "arc">,
+): boolean {
+  if (isTargetInWeaponArc(attacker, target, weapon.arc)) return true;
+  const relaxedArc =
+    attacker.specialAction === "track-that-target" &&
+    attacker.specialActionTargetId === target.id
+      ? trackThatTargetRelaxedArc(weapon.arc)
+      : null;
+  return relaxedArc ? isTargetInWeaponArc(attacker, target, relaxedArc) : false;
+}
+
 function weaponRangeDistanceForPreview(
   attacker: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
   target: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
@@ -10716,7 +10738,7 @@ export default function GameBoard() {
     useState<{ x: number; y: number } | null>(null);
   // Targeted Special Actions need a board target picker before sending.
   const [specialActionTargetPicking, setSpecialActionTargetPicking] =
-    useState<"concentrate-fire" | "cause-confusion" | null>(null);
+    useState<"concentrate-fire" | "track-that-target" | "cause-confusion" | null>(null);
 
   // Staging / fleet yards
   const threeRef = useRef<{
@@ -15622,6 +15644,10 @@ export default function GameBoard() {
       const attackerUnitId = activeUnitId!;
       const targetId = unit.id;
       const action = specialActionTargetPicking;
+      if (action === "track-that-target" && isFighterUnit(unit)) {
+        setActivationFeedback("Track That Target nominates an enemy ship, not a fighter flight.");
+        return;
+      }
       setSpecialActionTargetPicking(null);
       chooseSpecialAction.mutate(
         {
@@ -18392,10 +18418,10 @@ export default function GameBoard() {
                   unitIsFighter,
                 );
                 const inRange = distance <= activeTargetingPreview.weapon.range + 1e-6;
-                const inArc = isTargetInWeaponArc(
+                const inArc = isTargetInEffectiveWeaponArc(
                   activeTargetingPreview.attacker,
                   unit,
-                  activeTargetingPreview.weapon.arc,
+                  activeTargetingPreview.weapon,
                 );
                 const losBlocked = Boolean(
                   weaponLineOfSightBlockForPreview(
@@ -21011,6 +21037,9 @@ export default function GameBoard() {
                     );
                     const isLumbering = /\blumbering\b/i.test(traitsForSA);
                     const psychicCrewForSA = parseUiPsychicCrew(traitsForSA);
+                    const hasBoresightWeaponForSA = (modelForSA?.weapons ?? []).some(
+                      (weapon) => trackThatTargetRelaxedArc(weapon.arc) !== null,
+                    );
                     const SPECIAL_ACTIONS: {
                       id:
                         | "all-power-engines"
@@ -21022,6 +21051,7 @@ export default function GameBoard() {
                         | "intensify-defense"
                         | "run-silent"
                         | "concentrate-fire"
+                        | "track-that-target"
                         | "cause-confusion"
                         | "all-hands-on-deck"
                         | "scramble"
@@ -21093,6 +21123,13 @@ export default function GameBoard() {
                         hint: "Re-roll missed AD vs picked target",
                       },
                       {
+                        id: "track-that-target",
+                        label: "Track That Target!",
+                        cq: 9,
+                        hint: "Picked target may be hit by Boresight in F/A arc",
+                        hidden: !hasBoresightWeaponForSA,
+                      },
+                      {
                         id: "cause-confusion",
                         label: "Cause Confusion",
                         cq: null,
@@ -21123,7 +21160,7 @@ export default function GameBoard() {
                     ];
                     const profileActionIds =
                       rulesProfile === "shadows"
-                        ? new Set(["run-silent"])
+                        ? new Set(["run-silent", "track-that-target"])
                         : rulesProfile === "vorlons"
                           ? new Set([
                               "all-stop",
@@ -21132,6 +21169,7 @@ export default function GameBoard() {
                               "come-about-sharp-turn",
                               "run-silent",
                               "regenerate",
+                              "track-that-target",
                             ])
                           : rulesProfile === "ancients"
                             ? new Set([
@@ -21140,6 +21178,7 @@ export default function GameBoard() {
                                 "come-about-extra-turn",
                                 "come-about-sharp-turn",
                                 "run-silent",
+                                "track-that-target",
                               ])
                             : null;
                     const rawAction = selectedUnitData.specialAction ?? null;
@@ -21400,14 +21439,19 @@ export default function GameBoard() {
                               && (!profileActionIds || profileActionIds.has(a.id))
                             ).map(
                               (a) => {
-                                const needsTarget =
-                                  a.id === "concentrate-fire" ||
-                                  a.id === "cause-confusion";
-                                const targetAction = needsTarget
-                                  ? a.id === "cause-confusion"
-                                    ? "cause-confusion"
-                                    : "concentrate-fire"
-                                  : null;
+                                const targetAction:
+                                  | "concentrate-fire"
+                                  | "track-that-target"
+                                  | "cause-confusion"
+                                  | null =
+                                  a.id === "concentrate-fire"
+                                    ? "concentrate-fire"
+                                    : a.id === "track-that-target"
+                                      ? "track-that-target"
+                                      : a.id === "cause-confusion"
+                                        ? "cause-confusion"
+                                        : null;
+                                const needsTarget = targetAction !== null;
                                 const picking =
                                   specialActionTargetPicking === a.id;
                                 const enemyAlive = units.some(

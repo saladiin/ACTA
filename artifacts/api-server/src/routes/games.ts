@@ -752,6 +752,13 @@ function isInArc(
   return Math.abs(angleDelta(bearing, arc.center)) <= arc.half + 1e-6;
 }
 
+function trackThatTargetRelaxedArc(weaponArc: string): "Forward" | "Aft" | null {
+  const arc = canonicalWeaponArc(weaponArc);
+  if (arc === "Boresight Forward") return "Forward";
+  if (arc === "Boresight Aft") return "Aft";
+  return null;
+}
+
 async function lineOfSightObstaclesForGame(
   tx: any,
   gameId: number,
@@ -11497,7 +11504,24 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
 
       // Arc check.
       const flipped = FLIP_MODELS.has(attacker.modelFilename);
-      if (!isInArc({ x: aPos.x, z: aPos.z, headingDeg: attacker.heading, flipped }, tPos, weaponProfile.arc)) {
+      const trackThatTargetArc =
+        attacker.specialAction === "track-that-target" &&
+        attacker.specialActionTargetId === targetUnitId
+          ? trackThatTargetRelaxedArc(weaponProfile.arc)
+          : null;
+      const inPrintedWeaponArc = isInArc(
+        { x: aPos.x, z: aPos.z, headingDeg: attacker.heading, flipped },
+        tPos,
+        weaponProfile.arc,
+      );
+      const inTrackedArc = trackThatTargetArc
+        ? isInArc(
+            { x: aPos.x, z: aPos.z, headingDeg: attacker.heading, flipped },
+            tPos,
+            trackThatTargetArc,
+          )
+        : false;
+      if (!inPrintedWeaponArc && !inTrackedArc) {
         throw Object.assign(new Error(`Target not in ${weaponProfile.arc} arc`), { status: 400 });
       }
       const losBlock = weaponLineOfSightBlock(
@@ -12635,6 +12659,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "intensify-defense": 8,
     "run-silent": 8,
     "concentrate-fire": 8,
+    "track-that-target": 9,
     "cause-confusion": null,
     "all-hands-on-deck": 9,
     "scramble": 7,
@@ -12753,6 +12778,28 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
         if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
         if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        storedTarget = targetUnitId;
+        nominatedTarget = tgt;
+      }
+      if (action === "track-that-target") {
+        if (targetUnitId == null) throw Object.assign(new Error("Track That Target requires a target"), { status: 400 });
+        const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
+        if (!ship) throw Object.assign(new Error("Ship record missing"), { status: 500 });
+        const shipWeapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, ship.shipModelId));
+        const hasBoresightWeapon = shipWeapons.some((w) => trackThatTargetRelaxedArc(w.arc) !== null);
+        if (!hasBoresightWeapon) {
+          throw Object.assign(new Error("Track That Target requires a Boresight Forward or Boresight Aft weapon system"), { status: 400 });
+        }
+        const [tgt] = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
+        ));
+        if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
+        if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+        if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        const targetModel = await getShipModelForUnit(tx, tgt);
+        if (!targetModel || shipModelIsFighter(targetModel)) {
+          throw Object.assign(new Error("Track That Target nominates an enemy ship, not a fighter flight"), { status: 400 });
+        }
         storedTarget = targetUnitId;
         nominatedTarget = tgt;
       }
