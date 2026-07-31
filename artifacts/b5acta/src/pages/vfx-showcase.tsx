@@ -596,10 +596,10 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
       {
         kind: "special",
         id: "weapon-arc-projection-state-sample",
-        label: "Projected Arc States",
-        note: "Projection-mode matrix for online, degraded, offline, and mixed readiness states in filled and outline styles.",
+        label: "Hyperion Arc Projection",
+        note: "Heavy Hyperion-style projection view with online, damaged, and offline weapon arc status messages shown inside projected arcs.",
         effect: "weapon-arc-projection-state-sample",
-        position: [0, -34],
+        position: [0, -35],
         tuning: {
           color: "#34eb52",
           secondaryColor: "#ef4444",
@@ -8145,60 +8145,37 @@ function WeaponArcDamageSample({
 type ProjectionArcStatus = "online" | "degraded" | "offline";
 
 const SHOWCASE_PROJECTION_ARCS: Record<
-  "Forward" | "Aft" | "Port" | "Starboard",
-  { centerAngle: number; halfAngle: number }
+  | "Forward"
+  | "Aft"
+  | "Port"
+  | "Starboard"
+  | "Boresight Forward"
+  | "Boresight Aft",
+  { centerAngle: number; halfAngle: number; color: string }
 > = {
-  Forward: { centerAngle: Math.PI / 2, halfAngle: Math.PI / 4 },
-  Aft: { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4 },
-  Port: { centerAngle: 0, halfAngle: Math.PI / 4 },
-  Starboard: { centerAngle: Math.PI, halfAngle: Math.PI / 4 },
+  Forward: { centerAngle: Math.PI / 2, halfAngle: Math.PI / 4, color: "#34eb52" },
+  Aft: { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4, color: "#0f9f4a" },
+  Port: { centerAngle: 0, halfAngle: Math.PI / 4, color: "#00d46a" },
+  Starboard: { centerAngle: Math.PI, halfAngle: Math.PI / 4, color: "#00f090" },
+  "Boresight Forward": {
+    centerAngle: Math.PI / 2,
+    halfAngle: Math.PI / 24,
+    color: "#b7ff7a",
+  },
+  "Boresight Aft": {
+    centerAngle: -Math.PI / 2,
+    halfAngle: Math.PI / 24,
+    color: "#70e000",
+  },
 };
 
-const PROJECTION_STATE_CASES: Array<{
-  label: string;
-  arcs: Array<{
-    arc: keyof typeof SHOWCASE_PROJECTION_ARCS;
-    status: ProjectionArcStatus;
-  }>;
-}> = [
-  { label: "ON", arcs: [{ arc: "Forward", status: "online" }] },
-  { label: "DMG", arcs: [{ arc: "Forward", status: "degraded" }] },
-  { label: "OFF", arcs: [{ arc: "Forward", status: "offline" }] },
-  {
-    label: "ON+DMG",
-    arcs: [
-      { arc: "Forward", status: "online" },
-      { arc: "Starboard", status: "degraded" },
-    ],
-  },
-  {
-    label: "ON+OFF",
-    arcs: [
-      { arc: "Forward", status: "online" },
-      { arc: "Port", status: "offline" },
-    ],
-  },
-  {
-    label: "DMG+OFF",
-    arcs: [
-      { arc: "Starboard", status: "degraded" },
-      { arc: "Port", status: "offline" },
-    ],
-  },
-  {
-    label: "ALL",
-    arcs: [
-      { arc: "Forward", status: "online" },
-      { arc: "Starboard", status: "degraded" },
-      { arc: "Port", status: "offline" },
-    ],
-  },
-];
-
-function projectionStatusColor(status: ProjectionArcStatus): string {
+function projectionStatusColor(
+  status: ProjectionArcStatus,
+  baseColor: string,
+): string {
   if (status === "offline") return "#737b88";
   if (status === "degraded") return "#ef4444";
-  return "#34eb52";
+  return baseColor;
 }
 
 function ShowcaseProjectedArc({
@@ -8207,14 +8184,16 @@ function ShowcaseProjectedArc({
   radius,
   status,
   outlineOnly,
+  color: baseColor,
 }: {
   centerAngle: number;
   halfAngle: number;
   radius: number;
   status: ProjectionArcStatus;
   outlineOnly: boolean;
+  color: string;
 }) {
-  const color = projectionStatusColor(status);
+  const color = projectionStatusColor(status, baseColor);
   const geometry = useMemo(() => {
     const segments = halfAngle < 0.3 ? 16 : 64;
     const shape = new THREE.Shape();
@@ -8267,55 +8246,102 @@ function ShowcaseProjectedArc({
   );
 }
 
-function ProjectionStateCase({
-  label,
-  arcs,
-  outlineOnly,
-  position,
+function ShowcaseProjectionStatusPlate({
+  centerAngle,
+  distance,
+  size,
+  textureFilename,
 }: {
-  label: string;
-  arcs: (typeof PROJECTION_STATE_CASES)[number]["arcs"];
-  outlineOnly: boolean;
-  position: [number, number, number];
+  centerAngle: number;
+  distance: number;
+  size: number;
+  textureFilename: string;
 }) {
-  const radius = 2.35;
-  return (
-    <group position={position}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
-        <circleGeometry args={[0.42, 36]} />
-        <meshStandardMaterial color="#020617" roughness={0.85} metalness={0.1} />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-        <ringGeometry args={[0.42, 0.55, 36]} />
-        <meshBasicMaterial color="#94a3b8" transparent opacity={0.7} />
-      </mesh>
-      {arcs.map(({ arc, status }) => {
-        const arcDef = SHOWCASE_PROJECTION_ARCS[arc];
-        return (
-          <ShowcaseProjectedArc
-            key={`${arc}-${status}`}
-            centerAngle={arcDef.centerAngle}
-            halfAngle={arcDef.halfAngle}
-            radius={radius}
-            status={status}
-            outlineOnly={outlineOnly}
-          />
-        );
-      })}
-      <Billboard position={[0, 1.3, -2.9]} follow>
-        <Text
-          fontSize={0.24}
-          color="#e5e7eb"
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.025}
-          outlineColor="#020617"
-        >
-          {label}
-        </Text>
-      </Billboard>
-    </group>
+  const texture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  ) as THREE.Texture;
+
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  const geometry = useMemo(() => {
+    const outward = new THREE.Vector2(
+      Math.cos(centerAngle),
+      Math.sin(centerAngle),
+    );
+    const tangent = new THREE.Vector2(-outward.y, outward.x);
+    const center = outward.clone().multiplyScalar(distance);
+    const halfTangent = tangent.multiplyScalar(size / 2);
+    const halfOutward = outward.multiplyScalar(size / 2);
+    const vertices = new Float32Array([
+      center.x - halfTangent.x - halfOutward.x,
+      0.13,
+      center.y - halfTangent.y - halfOutward.y,
+      center.x + halfTangent.x - halfOutward.x,
+      0.13,
+      center.y + halfTangent.y - halfOutward.y,
+      center.x + halfTangent.x + halfOutward.x,
+      0.13,
+      center.y + halfTangent.y + halfOutward.y,
+      center.x - halfTangent.x + halfOutward.x,
+      0.13,
+      center.y - halfTangent.y + halfOutward.y,
+    ]);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+    geo.setAttribute(
+      "uv",
+      new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), 2),
+    );
+    geo.setIndex([0, 1, 2, 0, 2, 3]);
+    geo.computeVertexNormals();
+    return geo;
+  }, [centerAngle, distance, size]);
+
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: texture },
+          opacity: { value: 0.94 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D map;
+          uniform float opacity;
+          varying vec2 vUv;
+          void main() {
+            vec4 sampleColor = texture2D(map, vUv);
+            float luma = dot(sampleColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float keyedAlpha = smoothstep(0.018, 0.11, luma) * sampleColor.a;
+            if (keyedAlpha < 0.015) discard;
+            gl_FragColor = vec4(sampleColor.rgb, keyedAlpha * opacity);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    [texture],
   );
+
+  useEffect(() => () => material.dispose(), [material]);
+
+  return <mesh geometry={geometry} material={material} renderOrder={28} />;
 }
 
 function WeaponArcProjectionStateSample({
@@ -8323,37 +8349,124 @@ function WeaponArcProjectionStateSample({
 }: {
   position: Vec2;
 }) {
+  const radius = 9.5;
+  const projectionArcs: Array<{
+    arc: keyof typeof SHOWCASE_PROJECTION_ARCS;
+    status: ProjectionArcStatus;
+    plate?: "damage" | "offline";
+    radius?: number;
+    plateDistance?: number;
+    plateSize?: number;
+  }> = [
+    { arc: "Forward", status: "online" },
+    {
+      arc: "Boresight Forward",
+      status: "degraded",
+      plate: "damage",
+      radius: 11.2,
+      plateDistance: 8.55,
+      plateSize: 1.35,
+    },
+    { arc: "Aft", status: "online" },
+    {
+      arc: "Boresight Aft",
+      status: "offline",
+      plate: "offline",
+      radius: 11.2,
+      plateDistance: 8.55,
+      plateSize: 1.35,
+    },
+    { arc: "Starboard", status: "degraded", plate: "damage" },
+    { arc: "Port", status: "offline", plate: "offline" },
+  ];
+
   return (
     <group position={[position[0], 0, position[1]]}>
-      {(["FILLED", "OUTLINE"] as const).map((rowLabel, rowIndex) => {
-        const outlineOnly = rowLabel === "OUTLINE";
-        const z = rowIndex === 0 ? -3.2 : 4.2;
-        return (
-          <group key={rowLabel}>
-            <Billboard position={[-23.2, 1.5, z]} follow>
-              <Text
-                fontSize={0.3}
-                color="#cbd5e1"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.03}
-                outlineColor="#020617"
-              >
-                {rowLabel}
-              </Text>
-            </Billboard>
-            {PROJECTION_STATE_CASES.map((sample, index) => (
-              <ProjectionStateCase
-                key={`${rowLabel}-${sample.label}`}
-                label={sample.label}
-                arcs={sample.arcs}
-                outlineOnly={outlineOnly}
-                position={[-18 + index * 6, 0, z]}
-              />
-            ))}
+      <group rotation={[0, 0, 0]}>
+        {projectionArcs.map(({ arc, status, radius: arcRadius }) => {
+          const arcDef = SHOWCASE_PROJECTION_ARCS[arc];
+          return (
+            <ShowcaseProjectedArc
+              key={arc}
+              centerAngle={arcDef.centerAngle}
+              halfAngle={arcDef.halfAngle}
+              radius={arcRadius ?? radius}
+              status={status}
+              color={arcDef.color}
+              outlineOnly={false}
+            />
+          );
+        })}
+        {projectionArcs.map(({ arc, plate, plateDistance, plateSize }) => {
+          if (!plate) return null;
+          const arcDef = SHOWCASE_PROJECTION_ARCS[arc];
+          return (
+            <ShowcaseProjectionStatusPlate
+              key={`${arc}-${plate}`}
+              centerAngle={arcDef.centerAngle}
+              distance={plateDistance ?? radius * 0.6}
+              size={plateSize ?? 2.45}
+              textureFilename={
+                plate === "damage"
+                  ? "weapon-damage-arc.png"
+                  : "weapon-offline-arc.png"
+              }
+            />
+          );
+        })}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
+          <circleGeometry args={[1.08, 48]} />
+          <meshStandardMaterial color="#020617" roughness={0.82} metalness={0.1} />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.055, 0]}>
+          <ringGeometry args={[1.08, 1.22, 64]} />
+          <meshBasicMaterial color="#94a3b8" transparent opacity={0.72} />
+        </mesh>
+        <Suspense fallback={null}>
+          <group position={[0, 2, 0]}>
+            <ShowcaseGlbModel
+              filename="hyperion.glb"
+              tint="#dbeafe"
+              emissiveColor="#38bdf8"
+              emissiveIntensity={0.04}
+              targetInches={3.6}
+            />
           </group>
-        );
-      })}
+        </Suspense>
+        {([
+          ["FWD ONLINE", 0, 1.4, radius * 0.82, "#86efac"],
+          ["BS-F DAMAGED", 0, 1.72, radius * 1.05, "#fecaca"],
+          ["PORT OFFLINE", radius * 0.82, 1.4, 0, "#bfdbfe"],
+          ["STARBOARD DAMAGED", -radius * 0.82, 1.4, 0, "#fecaca"],
+          ["AFT ONLINE", 0, 1.4, -radius * 0.82, "#86efac"],
+          ["BS-A OFFLINE", 0, 1.72, -radius * 1.05, "#bfdbfe"],
+        ] as const).map(([label, x, y, z, color]) => (
+          <Billboard key={label} position={[x, y, z]} follow>
+            <Text
+              fontSize={0.28}
+              color={color}
+              anchorX="center"
+              anchorY="middle"
+              outlineWidth={0.03}
+              outlineColor="#020617"
+            >
+              {label}
+            </Text>
+          </Billboard>
+        ))}
+        <Billboard position={[0, 3.2, -2.1]} follow>
+          <Text
+            fontSize={0.34}
+            color="#e5e7eb"
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.035}
+            outlineColor="#020617"
+          >
+            HEAVY HYPERION CRUISER - ARC PROJECTION ON
+          </Text>
+        </Billboard>
+      </group>
     </group>
   );
 }
