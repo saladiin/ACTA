@@ -6445,10 +6445,18 @@ function WeaponArcStatusPlate({
   centerAngle,
   radius,
   textureFilename,
+  distance,
+  size,
+  planeY = 0.036,
+  renderOrder = 12,
 }: {
   centerAngle: number;
   radius: number;
   textureFilename: string;
+  distance?: number;
+  size?: number;
+  planeY?: number;
+  renderOrder?: number;
 }) {
   const texture = useLoader(
     THREE.TextureLoader,
@@ -6468,24 +6476,24 @@ function WeaponArcStatusPlate({
       Math.sin(centerAngle),
     );
     const tangent = new THREE.Vector2(-outward.y, outward.x);
-    const centerDistance = radius * 0.48;
-    const width = radius * 0.76;
-    const height = radius * 0.76;
+    const centerDistance = distance ?? radius * 0.48;
+    const width = size ?? radius * 0.76;
+    const height = size ?? radius * 0.76;
     const center = outward.clone().multiplyScalar(centerDistance);
     const halfTangent = tangent.multiplyScalar(width / 2);
     const halfOutward = outward.multiplyScalar(height / 2);
     const vertices = new Float32Array([
       center.x - halfTangent.x - halfOutward.x,
-      0.036,
+      planeY,
       center.y - halfTangent.y - halfOutward.y,
       center.x + halfTangent.x - halfOutward.x,
-      0.036,
+      planeY,
       center.y + halfTangent.y - halfOutward.y,
       center.x + halfTangent.x + halfOutward.x,
-      0.036,
+      planeY,
       center.y + halfTangent.y + halfOutward.y,
       center.x - halfTangent.x + halfOutward.x,
-      0.036,
+      planeY,
       center.y - halfTangent.y + halfOutward.y,
     ]);
     const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
@@ -6496,7 +6504,7 @@ function WeaponArcStatusPlate({
     geo.setIndex(indices);
     geo.computeVertexNormals();
     return geo;
-  }, [centerAngle, radius]);
+  }, [centerAngle, distance, planeY, radius, size]);
 
   const material = useMemo(() => {
     const shader = new THREE.ShaderMaterial({
@@ -6533,7 +6541,33 @@ function WeaponArcStatusPlate({
   }, [texture]);
   useEffect(() => () => material.dispose(), [material]);
 
-  return <mesh geometry={geometry} material={material} renderOrder={12} />;
+  return <mesh geometry={geometry} material={material} renderOrder={renderOrder} />;
+}
+
+function projectedArcStatusPlatePlacement(
+  range: number,
+  halfAngle: number,
+  boresight: boolean,
+): { distance: number; size: number } {
+  const maxDistance = Math.max(0.8, range - 0.35);
+  const minDistance = Math.min(maxDistance, boresight ? 2.6 : 2);
+  const distance = THREE.MathUtils.clamp(
+    range * (boresight ? 0.72 : 0.58),
+    minDistance,
+    maxDistance,
+  );
+  const angularLimit = Math.max(
+    boresight ? 0.42 : 0.85,
+    distance * Math.sin(halfAngle) * (boresight ? 1.15 : 1.35),
+  );
+  const rangeLimit = Math.max(0.42, (range - distance) * 1.65);
+  const preferred = boresight ? 1.35 : 2.65;
+  const size = THREE.MathUtils.clamp(
+    Math.min(preferred, angularLimit, rangeLimit),
+    boresight ? 0.42 : 0.75,
+    preferred,
+  );
+  return { distance, size };
 }
 
 // Long-range coverage arc for the FIRING PHASE — drawn at the weapon's actual
@@ -6654,6 +6688,20 @@ function RangeArcOverlay({
   }, [def, range, flip]);
 
   if (!def || !geo || !edgePoints) return null;
+  const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
+  const statusTextureFilename =
+    readiness?.status === "offline"
+      ? "weapon-offline-arc.png"
+      : readiness?.status === "degraded"
+        ? "weapon-damage-arc.png"
+        : null;
+  const statusPlate = statusTextureFilename
+    ? projectedArcStatusPlatePlacement(
+        range,
+        def.halfAngle,
+        canonicalArc.startsWith("Boresight"),
+      )
+    : null;
   return (
     <>
       {!outlineOnly && (
@@ -6680,6 +6728,17 @@ function RangeArcOverlay({
         opacity={readiness?.status === "offline" ? 0.62 : 0.95}
         position={[0, 0.05, 0]}
       />
+      {statusTextureFilename && statusPlate ? (
+        <WeaponArcStatusPlate
+          centerAngle={centerAngle}
+          radius={range}
+          textureFilename={statusTextureFilename}
+          distance={statusPlate.distance}
+          size={statusPlate.size}
+          planeY={0.068}
+          renderOrder={18}
+        />
+      ) : null}
     </>
   );
 }
