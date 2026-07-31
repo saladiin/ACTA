@@ -374,7 +374,8 @@ function titleCaseStatus(value: string | null | undefined): string {
 function specialActionLabel(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const failed = raw.endsWith("-failed");
-  const base = failed ? raw.replace(/-failed$/, "") : raw;
+  const spent = raw.endsWith("-spent");
+  const base = raw.replace(/-failed$/, "").replace(/-spent$/, "");
   const labels: Record<string, string> = {
     "all-power-engines": "All Power to Engines",
     "all-stop": "All Stop",
@@ -391,7 +392,11 @@ function specialActionLabel(raw: string | null | undefined): string | null {
     scramble: "Scramble",
     regenerate: "Regenerate",
   };
-  return `${labels[base] ?? titleCaseStatus(base)}${failed ? " (failed)" : ""}`;
+  return `${labels[base] ?? titleCaseStatus(base)}${failed ? " (failed)" : ""}${spent ? " (bonus spent)" : ""}`;
+}
+
+function comeAboutSharpBonusAvailable(raw: string | null | undefined): boolean {
+  return raw === "come-about-sharp-turn";
 }
 
 function scoutActionLabel(raw: string | null | undefined): string | null {
@@ -13427,8 +13432,8 @@ export default function GameBoard() {
         setMovePlan(null);
         return;
       }
-      const isComeAboutSharp = u.specialAction === "come-about-sharp-turn";
-      const sharpBonus = isComeAboutSharp && led.turns === 0 ? 45 : 0;
+      const isComeAboutSharp = comeAboutSharpBonusAvailable(u.specialAction);
+      const sharpBonus = isComeAboutSharp ? 45 : 0;
       const angleCap = isAllStopPivot
         ? baseTurnAngle * 2
         : baseTurnAngle + sharpBonus;
@@ -13652,7 +13657,7 @@ export default function GameBoard() {
       const isAllPower = baseAction === "all-power-engines";
       const isRunSilent = baseAction === "run-silent";
       const isComeAboutExtra = u.specialAction === "come-about-extra-turn"; // success-only
-      const isComeAboutSharp = u.specialAction === "come-about-sharp-turn"; // success-only
+      const isComeAboutSharp = comeAboutSharpBonusAvailable(u.specialAction); // success-only and unspent
       // Come About (extra-turn variant): +1 extra turn this activation.
       const maxTurns = baseTurns + (isComeAboutExtra ? 1 : 0);
       // No turns allowed under All Power to Engines, Run Silent, or All Stop.
@@ -13711,7 +13716,7 @@ export default function GameBoard() {
         // Most ships have turns=1 so this is the only turn anyway; the
         // gate matters only for ships with turns≥2 that already used
         // their bonus on the first turn.
-        const sharpBonus = isComeAboutSharp && led.turns === 0 ? 45 : 0;
+        const sharpBonus = isComeAboutSharp ? 45 : 0;
         const cap = isAllStopPivot ? max * 2 : max + sharpBonus;
         if (isFighterUnit(u)) {
           const headingDelta = visualTurnDeltaToHeadingDelta(
@@ -13874,7 +13879,7 @@ export default function GameBoard() {
     const isAllStop = baseAction === "all-stop";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
-    const isComeAboutSharp = u.specialAction === "come-about-sharp-turn";
+    const isComeAboutSharp = comeAboutSharpBonusAvailable(u.specialAction);
     const movementModel = getShipModelForUnit(u);
     const movementTraits = uiMovementTraitsForModel(movementModel, u);
     const led = getLedger(u.id);
@@ -13884,7 +13889,7 @@ export default function GameBoard() {
     const baseTurnAngle = movementTraits.superManeuverable
       ? 360
       : effectiveUiTurnAngle(u);
-    const sharpBonus = isComeAboutSharp && led.turns === 0 ? 45 : 0;
+    const sharpBonus = isComeAboutSharp ? 45 : 0;
     const angleCap = isAllStopPivot
       ? baseTurnAngle * 2
       : baseTurnAngle + sharpBonus;

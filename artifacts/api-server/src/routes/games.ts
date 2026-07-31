@@ -593,6 +593,12 @@ function effectiveTurnProfile(unit: {
   };
 }
 
+function comeAboutSharpBaseTurnCap(unit: { specialAction: string | null }, turnProfile: { turnAngle: number }): number {
+  return unit.specialAction === "come-about-sharp-turn"
+    ? Math.max(0, turnProfile.turnAngle - 45)
+    : turnProfile.turnAngle;
+}
+
 function turnDistanceRequirement(
   unit: {
     speed: number;
@@ -8993,6 +8999,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   const requestedStepInches = isMovingFighter ? Math.hypot(requestedStepDq, requestedStepDr) : snapHalfInch(Math.hypot(requestedStepDq, requestedStepDr));
   const headingDelta = headingDeltaDegrees(unit.heading, finalHeading);
   const isTurn = headingDelta > 0;
+  let spendsComeAboutSharpBonus = false;
   if (requestedStepInches <= 0 && !isTurn) {
     res.status(400).json({ error: "Move did not change position" });
     return;
@@ -9025,12 +9032,15 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       res.status(400).json({ error: `Ship may make at most ${turnProfile.maxTurns} turn${turnProfile.maxTurns === 1 ? "" : "s"} this activation` });
       return;
     }
-    const sharpTurnAlreadySpent = unit.specialAction === "come-about-sharp-turn" && unit.turnsMadeThisActivation > 0;
-    const turnAngleCap = sharpTurnAlreadySpent ? Math.max(0, turnProfile.turnAngle - 45) : turnProfile.turnAngle;
+    const turnAngleCap = turnProfile.turnAngle;
     if (headingDelta > turnAngleCap + 1e-6) {
       res.status(400).json({ error: `Ship may turn at most ${turnAngleCap} degrees at once` });
       return;
     }
+    const baseTurnCap = comeAboutSharpBaseTurnCap(unit, turnProfile);
+    spendsComeAboutSharpBonus =
+      unit.specialAction === "come-about-sharp-turn" &&
+      headingDelta > baseTurnCap + 1e-6;
     const requiredStraight = turnDistanceRequirement(unit, moveCrits, moveTraits, unit.turnsMadeThisActivation);
     const movedStraight = unit.distanceSinceLastTurnThisActivation;
     if (!Number.isFinite(requiredStraight)) {
@@ -9186,6 +9196,9 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       inchesMovedThisActivation: unit.inchesMovedThisActivation + actualStepInches,
       turnsMadeThisActivation: unit.turnsMadeThisActivation + (isTurn ? 1 : 0),
       distanceSinceLastTurnThisActivation: nextDistanceSinceLastTurn,
+      ...(spendsComeAboutSharpBonus
+        ? { specialAction: "come-about-sharp-turn-spent" }
+        : {}),
       // Movement consumes the All Stop latch (only ships that held station
       // last round get to pivot this round).
       allStopReady: false,
