@@ -80,6 +80,32 @@ const CAPITAL_PROJECTILE_TUNING = {
   thickness: 1,
   meshSize: 0.15,
 };
+const RAILGUN_PROJECTILE_TUNING = {
+  color: "#dbeafe",
+  secondaryColor: "#60a5fa",
+  speed: 1,
+  size: 1,
+  fade: 0.82,
+  intensity: 1.45,
+  spread: 1,
+  count: 1,
+  arc: 0,
+  thickness: 1,
+  meshSize: 0.15,
+};
+const RAILGUN_IMPACT_TUNING = {
+  color: "#fb923c",
+  secondaryColor: "#fef3c7",
+  speed: 1.5,
+  size: 0.0625,
+  fade: 1,
+  intensity: 1.5,
+  spread: 0.72,
+  count: 70,
+  arc: 0.35,
+  thickness: 0.82,
+  randomness: 0.25,
+};
 const SHADOW_OMEGA_BEAM_COLOR = "rgba(0, 194, 255, 0.9)";
 const SHADOW_OMEGA_PHASING_PULSE_TUNING = {
   ...CAPITAL_PROJECTILE_TUNING,
@@ -213,6 +239,11 @@ function isShadowOmegaCyanBeamWeapon(weapon: Pick<Weapon, "name">): boolean {
 
 function isShadowOmegaHeavyPhasingPulseWeapon(weapon: Pick<Weapon, "name">): boolean {
   return (weapon.name ?? "").toLowerCase().includes("heavy phasing pulse");
+}
+
+function isRailWeapon(weapon: Pick<Weapon, "name" | "traits">): boolean {
+  const text = `${weapon.name ?? ""} ${weapon.traits ?? ""}`.toLowerCase();
+  return /\brail[- ]?(gun|cannon|weapon)?\b/.test(text);
 }
 
 function isWhiteStarAttacker(
@@ -1089,6 +1120,275 @@ function MeshFighterProjectileSalvoFx({
   );
 }
 
+const RAILGUN_FLIGHT_MS = 250;
+const RAILGUN_TRAIL_FADE_MS = 550;
+const RAILGUN_OVERPENETRATION_INCHES = 4;
+
+function RailgunProjectileFx({
+  from,
+  to,
+  startRef,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  startRef: React.MutableRefObject<number>;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const trailRef = useRef<THREE.Mesh>(null);
+  const trailMaterialRef = useRef<THREE.ShaderMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const forward = useMemo(() => new THREE.Vector3(0, 0, -1), []);
+  const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
+  const { scene } = useGLTF(assetUrl("models", FIGHTER_PROJECTILE_MODEL_FILENAME));
+
+  const { cloned, scale } = useMemo(() => {
+    const material = new THREE.MeshBasicMaterial({
+      color: RAILGUN_PROJECTILE_TUNING.color,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.material = material;
+    });
+    return {
+      cloned: c,
+      scale: modelScaleForTargetSize(c, RAILGUN_PROJECTILE_TUNING.meshSize),
+    };
+  }, [scene]);
+
+  const path = useMemo(() => {
+    const direction = new THREE.Vector3().subVectors(to, from).normalize();
+    const through = to.clone().add(direction.clone().multiplyScalar(RAILGUN_OVERPENETRATION_INCHES));
+    const distance = from.distanceTo(through);
+    const targetDistance = from.distanceTo(to);
+    const targetT = distance > 0 ? THREE.MathUtils.clamp(targetDistance / distance, 0, 1) : 1;
+    const midpoint = new THREE.Vector3().addVectors(from, through).multiplyScalar(0.5);
+    const projectileQuaternion = new THREE.Quaternion().setFromUnitVectors(forward, direction);
+    const trailQuaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+    return { through, distance, targetT, midpoint, projectileQuaternion, trailQuaternion };
+  }, [forward, from, to, up]);
+
+  useFrame(() => {
+    const group = groupRef.current;
+    const trail = trailRef.current;
+    const trailMaterial = trailMaterialRef.current;
+    const light = lightRef.current;
+    if (!group || !trail || !trailMaterial || !light) return;
+
+    const elapsed = performance.now() - startRef.current;
+    const inFlight = elapsed <= RAILGUN_FLIGHT_MS;
+    const t = THREE.MathUtils.clamp(elapsed / RAILGUN_FLIGHT_MS, 0, 1);
+    const current = from.clone().lerp(path.through, t);
+
+    group.visible = inFlight;
+    group.position.copy(current);
+    group.quaternion.copy(path.projectileQuaternion);
+
+    const activeTrailLength = inFlight ? Math.max(0.02, path.distance * t) : path.distance;
+    const activeTrailMidpoint = inFlight ? from.clone().lerp(current, 0.5) : path.midpoint;
+    const fadeElapsed = Math.max(0, elapsed - RAILGUN_FLIGHT_MS);
+    const fadeOut = inFlight ? 1 : THREE.MathUtils.clamp(1 - fadeElapsed / RAILGUN_TRAIL_FADE_MS, 0, 1);
+    const trailOpacity = fadeOut * RAILGUN_PROJECTILE_TUNING.fade;
+
+    trail.visible = trailOpacity > 0.01;
+    trail.position.copy(activeTrailMidpoint);
+    trail.quaternion.copy(path.trailQuaternion);
+    trail.scale.set(1, activeTrailLength, 1);
+    trailMaterial.uniforms.uColor.value.set(RAILGUN_PROJECTILE_TUNING.secondaryColor);
+    trailMaterial.uniforms.uOpacity.value = trailOpacity;
+    trailMaterial.uniforms.uIntensity.value = RAILGUN_PROJECTILE_TUNING.intensity;
+
+    light.visible = inFlight;
+    light.position.copy(current);
+    light.color.set(RAILGUN_PROJECTILE_TUNING.color);
+    light.intensity = inFlight ? 2.8 * RAILGUN_PROJECTILE_TUNING.intensity : 0;
+  });
+
+  return (
+    <>
+      <group ref={groupRef} visible={false}>
+        <primitive object={cloned} scale={[scale, scale, scale]} />
+      </group>
+      <mesh ref={trailRef} visible={false} raycast={() => null}>
+        <cylinderGeometry args={[0.05, 0.05, 1, 20, 1, true]} />
+        <shaderMaterial
+          ref={trailMaterialRef}
+          uniforms={{
+            uColor: { value: new THREE.Color(RAILGUN_PROJECTILE_TUNING.secondaryColor) },
+            uOpacity: { value: 0 },
+            uIntensity: { value: RAILGUN_PROJECTILE_TUNING.intensity },
+          }}
+          vertexShader={`
+            varying float vAlong;
+            void main() {
+              vAlong = position.y + 0.5;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `}
+          fragmentShader={`
+            uniform vec3 uColor;
+            uniform float uOpacity;
+            uniform float uIntensity;
+            varying float vAlong;
+            void main() {
+              float farFade = 1.0 - smoothstep(0.68, 1.0, vAlong);
+              float nearFade = smoothstep(0.0, 0.14, vAlong);
+              float core = farFade * nearFade;
+              gl_FragColor = vec4(uColor * uIntensity, uOpacity * core);
+            }
+          `}
+          transparent
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color={RAILGUN_PROJECTILE_TUNING.color} intensity={0} distance={4.5} />
+    </>
+  );
+}
+
+function RailgunImpactSparksFx({
+  position,
+  direction,
+  delayMs,
+}: {
+  position: THREE.Vector3;
+  direction: THREE.Vector3;
+  delayMs: number;
+}) {
+  const startRef = useRef<number>(performance.now());
+  const particleCount = Math.max(8, Math.min(RAILGUN_IMPACT_TUNING.count, 160));
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
+    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
+    return g;
+  }, [particleCount]);
+  const axes = useMemo(() => {
+    const forwardAxis = direction.clone().normalize();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const sideAxis = new THREE.Vector3().crossVectors(forwardAxis, worldUp).normalize();
+    if (sideAxis.lengthSq() < 0.01) sideAxis.set(1, 0, 0);
+    const upAxis = new THREE.Vector3().crossVectors(sideAxis, forwardAxis).normalize();
+    return { forwardAxis, sideAxis, upAxis };
+  }, [direction]);
+  const seeds = useMemo(() => {
+    const randomness = THREE.MathUtils.clamp(RAILGUN_IMPACT_TUNING.randomness, 0, 1);
+    return Array.from({ length: particleCount }, (_, index) => {
+      const a = seededSparkNoise(index, 2.17);
+      const b = seededSparkNoise(index, 6.31);
+      const c = seededSparkNoise(index, 10.89);
+      const d = seededSparkNoise(index, 14.27);
+      return {
+        side: (a - 0.5) * (0.7 + RAILGUN_IMPACT_TUNING.spread * 0.65),
+        lift: (b - 0.38) * (0.46 + RAILGUN_IMPACT_TUNING.arc),
+        punch: 0.45 + c * (1.35 + randomness),
+        speed: 1 + d * 1.4,
+        delay: a * 25,
+        colorMix: b,
+      };
+    });
+  }, [particleCount]);
+  const primary = useMemo(() => new THREE.Color(RAILGUN_IMPACT_TUNING.color), []);
+  const secondary = useMemo(() => new THREE.Color(RAILGUN_IMPACT_TUNING.secondaryColor), []);
+  const workingColorRef = useRef(new THREE.Color());
+  const sparkSize = Math.max(0.01, 0.055 * RAILGUN_IMPACT_TUNING.size * RAILGUN_IMPACT_TUNING.thickness);
+
+  useFrame(() => {
+    const ageMs = performance.now() - startRef.current - delayMs;
+    const active = ageMs >= 0 && ageMs <= 620;
+    const positions = geometry.getAttribute("position").array as Float32Array;
+    const colors = geometry.getAttribute("color").array as Float32Array;
+    for (let i = 0; i < seeds.length; i += 1) {
+      const seed = seeds[i];
+      const idx = i * 3;
+      if (!active || ageMs < seed.delay) {
+        positions[idx] = 0;
+        positions[idx + 1] = 0;
+        positions[idx + 2] = 0;
+        colors[idx] = 0;
+        colors[idx + 1] = 0;
+        colors[idx + 2] = 0;
+        continue;
+      }
+      const t = THREE.MathUtils.clamp((ageMs - seed.delay) * 0.001 * RAILGUN_IMPACT_TUNING.speed, 0, 1);
+      const fade =
+        THREE.MathUtils.clamp(1 - t, 0, 1) *
+        THREE.MathUtils.clamp(t / 0.08, 0, 1) *
+        RAILGUN_IMPACT_TUNING.fade;
+      const burst = RAILGUN_IMPACT_TUNING.spread * seed.speed * (1 - Math.pow(1 - t, 2));
+      const point = axes.forwardAxis.clone().multiplyScalar(seed.punch * burst)
+        .add(axes.sideAxis.clone().multiplyScalar(seed.side * burst))
+        .add(axes.upAxis.clone().multiplyScalar(seed.lift * burst));
+      positions[idx] = point.x;
+      positions[idx + 1] = point.y;
+      positions[idx + 2] = point.z;
+      const color = workingColorRef.current.copy(primary).lerp(secondary, seed.colorMix * 0.86);
+      color.multiplyScalar(fade * RAILGUN_IMPACT_TUNING.intensity);
+      colors[idx] = color.r;
+      colors[idx + 1] = color.g;
+      colors[idx + 2] = color.b;
+    }
+    geometry.getAttribute("position").needsUpdate = true;
+    geometry.getAttribute("color").needsUpdate = true;
+  });
+
+  return (
+    <points geometry={geometry} position={position.toArray()} raycast={() => null}>
+      <pointsMaterial
+        size={sparkSize}
+        sizeAttenuation
+        transparent
+        opacity={0.92}
+        vertexColors
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </points>
+  );
+}
+
+function RailgunWeaponFx({
+  from,
+  to,
+  hits,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  hits: number;
+}) {
+  const startRef = useRef<number>(performance.now());
+  const direction = useMemo(() => new THREE.Vector3().subVectors(to, from).normalize(), [from, to]);
+  const targetDistance = from.distanceTo(to);
+  const totalDistance = targetDistance + RAILGUN_OVERPENETRATION_INCHES;
+  const targetDelayMs = totalDistance > 0 ? RAILGUN_FLIGHT_MS * THREE.MathUtils.clamp(targetDistance / totalDistance, 0, 1) : RAILGUN_FLIGHT_MS;
+  return (
+    <>
+      <Suspense fallback={null}>
+        <RailgunProjectileFx from={from} to={to} startRef={startRef} />
+      </Suspense>
+      {Array.from({ length: hits }).map((_, i) => (
+        <RailgunImpactSparksFx
+          key={i}
+          position={to}
+          direction={direction}
+          delayMs={targetDelayMs + i * 45}
+        />
+      ))}
+    </>
+  );
+}
+
 function MissileEngineGlow() {
   const coreRef = useRef<THREE.MeshBasicMaterial>(null);
   const haloRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -1763,6 +2063,10 @@ export function WeaponFx({
 
   if (kind === "energy-mine") {
     return <EnergyMineFx from={from} to={to} />;
+  }
+
+  if (isRailWeapon(weapon)) {
+    return <RailgunWeaponFx from={from} to={to} hits={hits} />;
   }
 
   // Default non-beam, non-missile projectiles (cannons / mass drivers / ion / pulse).

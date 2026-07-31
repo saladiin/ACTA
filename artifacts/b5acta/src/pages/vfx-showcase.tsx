@@ -173,6 +173,7 @@ type SpecialStation = {
     | "standalone-flipbook-preview"
     | "mesh-missile-salvo"
     | "mesh-projectile-salvo"
+    | "railgun-projectile-test"
     | "texture-missile-salvo"
     | "kirishiac-beam-test"
     | "vorlon-dreadnought-beam-test"
@@ -371,6 +372,29 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           spread: 1,
           count: 6,
           arc: 0.35,
+          thickness: 1,
+          meshSize: 0.15,
+        },
+      },
+      {
+        kind: "special",
+        id: "railgun-projectile-test",
+        label: "Hyperion Railgun",
+        note: "Blue-white mesh slug crosses in 0.25 seconds and leaves a thin ghost cylinder along the shot line.",
+        effect: "railgun-projectile-test",
+        position: [-16, -12],
+        to: [6, -12],
+        modelFilename: "projectile_mesh.glb",
+        tuning: {
+          color: "#dbeafe",
+          secondaryColor: "#60a5fa",
+          speed: 1,
+          size: 1,
+          fade: 0.82,
+          intensity: 1.45,
+          spread: 1,
+          count: 1,
+          arc: 0,
           thickness: 1,
           meshSize: 0.15,
         },
@@ -5533,6 +5557,314 @@ function MeshProjectileSalvo({
   );
 }
 
+const RAILGUN_FLIGHT_SECONDS = 0.25;
+const RAILGUN_TRAIL_FADE_SECONDS = 0.55;
+const RAILGUN_OVERPENETRATION_INCHES = 4;
+const RAILGUN_IMPACT_TUNING: Tuning = {
+  color: "#fb923c",
+  secondaryColor: "#fef3c7",
+  speed: 1.5,
+  size: 0.0625,
+  fade: 1,
+  intensity: 1.5,
+  spread: 0.72,
+  count: 70,
+  arc: 0.35,
+  thickness: 0.82,
+  randomness: 0.25,
+};
+
+function RailgunProjectileShot({
+  station,
+  from,
+  to,
+  through,
+  tuning,
+  paused,
+  impactCycleTime,
+}: {
+  station: SpecialStation;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  through: THREE.Vector3;
+  tuning: Tuning;
+  paused: boolean;
+  impactCycleTime: MutableRefObject<number>;
+}) {
+  const projectileRef = useRef<THREE.Group>(null);
+  const trailRef = useRef<THREE.Mesh>(null);
+  const trailMaterialRef = useRef<THREE.ShaderMaterial>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const elapsedRef = useRef(0);
+  const forward = useMemo(() => new THREE.Vector3(0, 0, -1), []);
+  const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
+  const filename = station.modelFilename ?? "projectile_mesh.glb";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+
+  const { cloned, scale } = useMemo(() => {
+    const material = new THREE.MeshBasicMaterial({
+      color: tuning.color,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.material = material;
+    });
+    return { cloned: c, scale: showcaseShipScale(c, tuning.meshSize ?? 0.15) };
+  }, [scene, tuning.color, tuning.meshSize]);
+
+  const path = useMemo(() => {
+    const direction = new THREE.Vector3().subVectors(through, from).normalize();
+    const distance = from.distanceTo(through);
+    const targetDistance = from.distanceTo(to);
+    const targetT = distance > 0 ? clamp(targetDistance / distance, 0, 1) : 1;
+    const midpoint = new THREE.Vector3().addVectors(from, through).multiplyScalar(0.5);
+    const projectileQuaternion = new THREE.Quaternion().setFromUnitVectors(forward, direction);
+    const trailQuaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
+    return { direction, distance, midpoint, projectileQuaternion, trailQuaternion, targetT };
+  }, [forward, from, through, to, up]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const projectile = projectileRef.current;
+    const trail = trailRef.current;
+    const trailMaterial = trailMaterialRef.current;
+    const light = lightRef.current;
+    if (!projectile || !trail || !trailMaterial || !light) return;
+
+    const cycle = RAILGUN_FLIGHT_SECONDS + RAILGUN_TRAIL_FADE_SECONDS + 0.8;
+    const elapsed = elapsedRef.current % cycle;
+    const inFlight = elapsed <= RAILGUN_FLIGHT_SECONDS;
+    const t = clamp(elapsed / RAILGUN_FLIGHT_SECONDS, 0, 1);
+    const current = from.clone().lerp(through, t);
+    impactCycleTime.current = RAILGUN_FLIGHT_SECONDS * path.targetT;
+
+    projectile.visible = inFlight;
+    projectile.position.copy(current);
+    projectile.quaternion.copy(path.projectileQuaternion);
+
+    const activeTrailLength = inFlight ? Math.max(0.02, path.distance * t) : path.distance;
+    const activeTrailMidpoint = inFlight
+      ? from.clone().lerp(current, 0.5)
+      : path.midpoint;
+    const fadeElapsed = Math.max(0, elapsed - RAILGUN_FLIGHT_SECONDS);
+    const fadeOut = inFlight ? 1 : clamp(1 - fadeElapsed / RAILGUN_TRAIL_FADE_SECONDS, 0, 1);
+    const trailOpacity = fadeOut * tuning.fade;
+
+    trail.visible = trailOpacity > 0.01;
+    trail.position.copy(activeTrailMidpoint);
+    trail.quaternion.copy(path.trailQuaternion);
+    trail.scale.set(1, activeTrailLength, 1);
+    trailMaterial.uniforms.uColor.value.set(tuning.secondaryColor);
+    trailMaterial.uniforms.uOpacity.value = trailOpacity;
+    trailMaterial.uniforms.uIntensity.value = tuning.intensity;
+
+    light.visible = inFlight;
+    light.position.copy(current);
+    light.intensity = inFlight ? 2.8 * tuning.intensity : 0;
+    light.color.set(tuning.color);
+  });
+
+  return (
+    <>
+      <group ref={projectileRef} visible={false}>
+        <primitive object={cloned} scale={[scale, scale, scale]} />
+      </group>
+      <mesh ref={trailRef} visible={false} raycast={() => null}>
+        <cylinderGeometry args={[0.05, 0.05, 1, 20, 1, true]} />
+        <shaderMaterial
+          ref={trailMaterialRef}
+          uniforms={{
+            uColor: { value: new THREE.Color(tuning.secondaryColor) },
+            uOpacity: { value: 0 },
+            uIntensity: { value: tuning.intensity },
+          }}
+          vertexShader={`
+            varying float vAlong;
+            void main() {
+              vAlong = position.y + 0.5;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `}
+          fragmentShader={`
+            uniform vec3 uColor;
+            uniform float uOpacity;
+            uniform float uIntensity;
+            varying float vAlong;
+            void main() {
+              float farFade = 1.0 - smoothstep(0.68, 1.0, vAlong);
+              float nearFade = smoothstep(0.0, 0.14, vAlong);
+              float core = farFade * nearFade;
+              gl_FragColor = vec4(uColor * uIntensity, uOpacity * core);
+            }
+          `}
+          transparent
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={4.5} />
+    </>
+  );
+}
+
+function RailgunImpactSparks({
+  position,
+  direction,
+  paused,
+  triggerTimeRef,
+}: {
+  position: THREE.Vector3;
+  direction: THREE.Vector3;
+  paused: boolean;
+  triggerTimeRef: MutableRefObject<number>;
+}) {
+  const timeRef = useRef(0);
+  const particleCount = clamp(Math.round(RAILGUN_IMPACT_TUNING.count), 8, 160);
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
+    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
+    return g;
+  }, [particleCount]);
+  const axes = useMemo(() => {
+    const forwardAxis = direction.clone().normalize();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const sideAxis = new THREE.Vector3().crossVectors(forwardAxis, worldUp).normalize();
+    if (sideAxis.lengthSq() < 0.01) sideAxis.set(1, 0, 0);
+    const upAxis = new THREE.Vector3().crossVectors(sideAxis, forwardAxis).normalize();
+    return { forwardAxis, sideAxis, upAxis };
+  }, [direction]);
+  const seeds = useMemo(() => {
+    const randomness = clamp(RAILGUN_IMPACT_TUNING.randomness ?? 0.25, 0, 1);
+    return Array.from({ length: particleCount }, (_, index) => {
+      const a = seededSparkNoise(index, 2.17);
+      const b = seededSparkNoise(index, 6.31);
+      const c = seededSparkNoise(index, 10.89);
+      const d = seededSparkNoise(index, 14.27);
+      const side = (a - 0.5) * (0.7 + RAILGUN_IMPACT_TUNING.spread * 0.65);
+      const lift = (b - 0.38) * (0.46 + RAILGUN_IMPACT_TUNING.arc);
+      const punch = 0.45 + c * (1.35 + randomness);
+      return {
+        side,
+        lift,
+        punch,
+        speed: 1 + d * 1.4,
+        delay: a * 0.025,
+        colorMix: b,
+      };
+    });
+  }, [particleCount]);
+  const primary = useMemo(() => new THREE.Color(RAILGUN_IMPACT_TUNING.color), []);
+  const secondary = useMemo(() => new THREE.Color(RAILGUN_IMPACT_TUNING.secondaryColor), []);
+  const workingColorRef = useRef(new THREE.Color());
+  const sparkSize = Math.max(0.01, 0.055 * RAILGUN_IMPACT_TUNING.size * RAILGUN_IMPACT_TUNING.thickness);
+
+  useFrame((_, delta) => {
+    if (!paused) timeRef.current += delta;
+    const cycle = RAILGUN_FLIGHT_SECONDS + RAILGUN_TRAIL_FADE_SECONDS + 0.8;
+    const localTime = timeRef.current % cycle;
+    const triggerTime = triggerTimeRef.current;
+    const age = localTime - triggerTime;
+    const active = age >= 0 && age <= 0.62;
+    const positions = geometry.getAttribute("position").array as Float32Array;
+    const colors = geometry.getAttribute("color").array as Float32Array;
+    for (let i = 0; i < seeds.length; i += 1) {
+      const seed = seeds[i];
+      const idx = i * 3;
+      if (!active || age < seed.delay) {
+        positions[idx] = 0;
+        positions[idx + 1] = 0;
+        positions[idx + 2] = 0;
+        colors[idx] = 0;
+        colors[idx + 1] = 0;
+        colors[idx + 2] = 0;
+        continue;
+      }
+      const t = clamp((age - seed.delay) * RAILGUN_IMPACT_TUNING.speed, 0, 1);
+      const fade = clamp(1 - t, 0, 1) * clamp(t / 0.08, 0, 1) * RAILGUN_IMPACT_TUNING.fade;
+      const burst = RAILGUN_IMPACT_TUNING.spread * seed.speed * (1 - Math.pow(1 - t, 2));
+      const point = axes.forwardAxis.clone().multiplyScalar(seed.punch * burst)
+        .add(axes.sideAxis.clone().multiplyScalar(seed.side * burst))
+        .add(axes.upAxis.clone().multiplyScalar(seed.lift * burst));
+      positions[idx] = point.x;
+      positions[idx + 1] = point.y;
+      positions[idx + 2] = point.z;
+      const color = workingColorRef.current.copy(primary).lerp(secondary, seed.colorMix * 0.86);
+      color.multiplyScalar(fade * RAILGUN_IMPACT_TUNING.intensity);
+      colors[idx] = color.r;
+      colors[idx + 1] = color.g;
+      colors[idx + 2] = color.b;
+    }
+    geometry.getAttribute("position").needsUpdate = true;
+    geometry.getAttribute("color").needsUpdate = true;
+  });
+
+  return (
+    <points geometry={geometry} position={position.toArray()} raycast={() => null}>
+      <pointsMaterial
+        size={sparkSize}
+        sizeAttenuation
+        transparent
+        opacity={0.92}
+        vertexColors
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </points>
+  );
+}
+
+function RailgunProjectileTest({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const targetPosition = station.to ?? [station.position[0] + 20, station.position[1]];
+  const from = useMemo(() => toVector3(station.position, SHOWCASE_MESH_ORIGIN_Y), [station.position]);
+  const to = useMemo(() => toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y), [targetPosition]);
+  const impactCycleTimeRef = useRef(RAILGUN_FLIGHT_SECONDS);
+  const through = useMemo(() => {
+    const direction = new THREE.Vector3().subVectors(to, from).normalize();
+    return to.clone().add(direction.multiplyScalar(RAILGUN_OVERPENETRATION_INCHES));
+  }, [from, to]);
+  const shotDirection = useMemo(() => new THREE.Vector3().subVectors(through, from).normalize(), [from, through]);
+  const heading = useMemo(() => Math.atan2(targetPosition[0] - station.position[0], targetPosition[1] - station.position[1]), [station.position, targetPosition]);
+
+  return (
+    <group>
+      <EndpointMarker position={station.position} color={tuning.color} />
+      <EndpointMarker position={targetPosition} color={tuning.secondaryColor} />
+      <group position={from.toArray()} rotation={[0, heading, 0]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel filename="hyperion.glb" tint="#cbd5e1" emissiveColor={tuning.color} emissiveIntensity={0.05} targetInches={3.2} />
+        </Suspense>
+      </group>
+      <group position={to.toArray()} rotation={[0, heading + Math.PI, 0]}>
+        <Suspense fallback={null}>
+          <ShowcaseGlbModel filename="hyperion.glb" tint="#dbeafe" emissiveColor={tuning.secondaryColor} emissiveIntensity={0.04} targetInches={3.2} />
+        </Suspense>
+      </group>
+      <RailgunProjectileShot station={station} from={from} to={to} through={through} tuning={tuning} paused={paused} impactCycleTime={impactCycleTimeRef} />
+      <RailgunImpactSparks position={to} direction={shotDirection} paused={paused} triggerTimeRef={impactCycleTimeRef} />
+    </group>
+  );
+}
+
 function StandaloneFlipbookPreview({
   position,
   textureFilename,
@@ -8721,6 +9053,7 @@ function SpecialFxStation({
       {station.effect === "missile-impact-flipbook-test" ? <MissileImpactFlipbookTest station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "mesh-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "mesh-projectile-salvo" ? <MeshProjectileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
+      {station.effect === "railgun-projectile-test" ? <RailgunProjectileTest station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "kirishiac-beam-test" ? (
         <Suspense fallback={null}>
