@@ -669,13 +669,13 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
   {
     id: "special-action-tokens",
     name: "Special Actions",
-    summary: "Floating token previews for successful special-action states.",
+    summary: "Live-style floating token previews for special-action states.",
     stations: [
       {
         kind: "special",
         id: "shield-token-hover",
         label: "Shield Token",
-        note: "Passed Maneuver to Shield Them marker floating above a Hyperion.",
+        note: "Live Maneuver to Shield Them marker above the shielding ship. No board text is added.",
         effect: "shield-token-hover",
         position: [0, 0],
         modelFilename: "shield-token.glb",
