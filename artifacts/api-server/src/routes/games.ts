@@ -2040,6 +2040,129 @@ function edgeDistance(
   return Math.max(0, centerDistance(a, b) - rulesBaseRadius(a) - rulesBaseRadius(b));
 }
 
+type ManeuverToShieldResolution = {
+  originalTargetUnitId: number;
+  originalTargetName: string;
+  shieldUnitId: number;
+  shieldUnitName: string;
+  lineDistance: number;
+  protectedDistance: number;
+  attackerRoll: number;
+  attackerCrewQuality: number;
+  attackerTotal: number;
+  shieldRoll: number;
+  shieldCrewQuality: number;
+  shieldTotal: number;
+  success: boolean;
+};
+
+async function resolveManeuverToShieldInterposition(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  attacker: typeof gameUnitsTable.$inferSelect,
+  originalTarget: typeof gameUnitsTable.$inferSelect,
+  originalTargetModel: typeof shipModelsTable.$inferSelect,
+  aPos: BoardPoint,
+  tPos: BoardPoint,
+): Promise<{
+  target: typeof gameUnitsTable.$inferSelect | null;
+  targetModel: typeof shipModelsTable.$inferSelect | null;
+  targetPosition: BoardPoint | null;
+  resolution: ManeuverToShieldResolution | null;
+}> {
+  if (shipModelIsFighter(originalTargetModel)) {
+    return { target: null, targetModel: null, targetPosition: null, resolution: null };
+  }
+  const shieldRows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.ownerId, originalTarget.ownerId),
+    eq(gameUnitsTable.specialAction, "maneuver-to-shield"),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const candidates: Array<{
+    unit: typeof gameUnitsTable.$inferSelect;
+    model: typeof shipModelsTable.$inferSelect;
+    position: BoardPoint;
+    lineDistance: number;
+    protectedDistance: number;
+  }> = [];
+
+  for (const shield of shieldRows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (shield.id === originalTarget.id || shield.id === attacker.id) continue;
+    if (shield.hullPoints <= 0) continue;
+    if (shield.maxCrewPoints > 0 && shield.crewPoints <= 0) continue;
+    const shieldModel = await getShipModelForUnit(tx, shield);
+    if (!shieldModel || shipModelIsFighter(shieldModel)) continue;
+    const critRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, shield.id));
+    const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    const damageState = effectiveDamageState(shield.damageState, critRows);
+    if (damageState === "adrift" || damageState === "exploding-end-of-next" || crits.noSA) continue;
+
+    const sPos = hexToWorld(shield.hexQ, shield.hexR);
+    const protectedDistance = centerDistance(sPos, tPos);
+    if (protectedDistance > 5 + 1e-6) continue;
+    const lineDistance = pointToSegmentDistance(sPos, aPos, tPos);
+    if (lineDistance > 1 + 1e-6) continue;
+    candidates.push({ unit: shield, model: shieldModel, position: sPos, lineDistance, protectedDistance });
+  }
+
+  candidates.sort((a, b) =>
+    a.lineDistance - b.lineDistance ||
+    a.protectedDistance - b.protectedDistance ||
+    a.unit.id - b.unit.id,
+  );
+  const shield = candidates[0] ?? null;
+  if (!shield) {
+    return { target: null, targetModel: null, targetPosition: null, resolution: null };
+  }
+
+  const attackerRoll = rollD6();
+  const shieldRoll = rollD6();
+  const attackerCrewQuality = terrainAdjustedCrewQuality(
+    attacker.crewQuality,
+    aPos,
+    game.terrainConfig,
+    "special-action",
+  );
+  const shieldCrewQuality = terrainAdjustedCrewQuality(
+    shield.unit.crewQuality,
+    shield.position,
+    game.terrainConfig,
+    "special-action",
+  );
+  const attackerTotal = attackerRoll + attackerCrewQuality;
+  const shieldTotal = shieldRoll + shieldCrewQuality;
+  const success = shieldTotal > attackerTotal;
+  const resolution: ManeuverToShieldResolution = {
+    originalTargetUnitId: originalTarget.id,
+    originalTargetName: originalTarget.name,
+    shieldUnitId: shield.unit.id,
+    shieldUnitName: shield.unit.name,
+    lineDistance: Number(shield.lineDistance.toFixed(3)),
+    protectedDistance: Number(shield.protectedDistance.toFixed(3)),
+    attackerRoll,
+    attackerCrewQuality,
+    attackerTotal,
+    shieldRoll,
+    shieldCrewQuality,
+    shieldTotal,
+    success,
+  };
+
+  return {
+    target: success ? shield.unit : null,
+    targetModel: success ? shield.model : null,
+    targetPosition: success ? shield.position : null,
+    resolution,
+  };
+}
+
 function weaponThreatValue(weapon: Pick<typeof weaponsTable.$inferSelect, "attackDice" | "traits">): number {
   const traits = parseWeaponTraits(weapon.traits);
   const { mult } = damageMultiplier(traits);
@@ -4904,7 +5027,7 @@ async function resolveBasicAiWeaponFire(
   game: typeof gamesTable.$inferSelect,
   attacker: typeof gameUnitsTable.$inferSelect,
   weapon: typeof weaponsTable.$inferSelect,
-  target: typeof gameUnitsTable.$inferSelect,
+  requestedTarget: typeof gameUnitsTable.$inferSelect,
 ): Promise<{
   target: typeof gameUnitsTable.$inferSelect;
   hits: number;
@@ -4919,6 +5042,8 @@ async function resolveBasicAiWeaponFire(
 }> {
   // Zero-hull and crewless wrecks can remain isDestroyed=false while an
   // adrift/exploding result is pending. They are no longer legal targets.
+  let target = requestedTarget;
+  const originalTargetUnitId = requestedTarget.id;
   if (!unitCountsForVictory(target)) {
     throw new Error("AI target is no longer combat effective");
   }
@@ -4928,7 +5053,7 @@ async function resolveBasicAiWeaponFire(
   if (!attackerModel) throw new Error("AI attacker ship model missing");
   const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
   if (!targetShip) throw new Error("AI target ship record missing");
-  const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
+  let [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
   if (!targetModel) throw new Error("AI target ship model missing");
   if (shipModelIsFighter(targetModel) && await fighterIsLockedInDogfight(tx, game.id, target)) {
     throw new Error("AI target fighter is locked in a dogfight and cannot be attacked by normal weapons");
@@ -4942,15 +5067,6 @@ async function resolveBasicAiWeaponFire(
     randomWeaponId: r.randomWeaponId,
     lostTraits: r.lostTraits ?? [],
   })));
-  const targetCritRows = await tx.select().from(unitCriticalEffectsTable)
-    .where(eq(unitCriticalEffectsTable.gameUnitId, target.id));
-  const targetCrits = deriveCritEffects((targetCritRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
-    effectKey: r.effectKey,
-    randomArc: r.randomArc,
-    randomWeaponId: r.randomWeaponId,
-    lostTraits: r.lostTraits ?? [],
-  })));
-
   const weaponProfile = effectiveWeaponProfile(
     game,
     attacker,
@@ -4961,12 +5077,9 @@ async function resolveBasicAiWeaponFire(
   const attackerTraits = parseShipTraits(
     filterLostTraits(attackerModel.traits, attackerCrits.lostTraitNames),
   );
-  const targetTraits = parseShipTraits(filterLostTraits(targetModel.traits, targetCrits.lostTraitNames));
-  const targetEffectiveDamageState = effectiveDamageState(target.damageState, targetCritRows);
-  const targetCrippled = isCrippledUnit(target);
   const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
-  const tPos = hexToWorld(target.hexQ, target.hexR);
-  const distance = fighterWeaponRangeDistance({
+  let tPos = hexToWorld(target.hexQ, target.hexR);
+  let distance = fighterWeaponRangeDistance({
     id: attacker.id,
     ownerId: attacker.ownerId,
     x: aPos.x,
@@ -5013,6 +5126,47 @@ async function resolveBasicAiWeaponFire(
     }
   }
 
+  const shieldInterposition = await resolveManeuverToShieldInterposition(
+    tx,
+    game,
+    attacker,
+    requestedTarget,
+    targetModel,
+    aPos,
+    tPos,
+  );
+  const maneuverToShield = shieldInterposition.resolution;
+  if (shieldInterposition.target && shieldInterposition.targetModel && shieldInterposition.targetPosition) {
+    target = shieldInterposition.target;
+    targetModel = shieldInterposition.targetModel;
+    tPos = shieldInterposition.targetPosition;
+    distance = fighterWeaponRangeDistance({
+      id: attacker.id,
+      ownerId: attacker.ownerId,
+      x: aPos.x,
+      z: aPos.z,
+      baseRadiusInches: rulesBaseRadius(attacker),
+      isFighter: shipModelIsFighter(attackerModel),
+    }, {
+      x: tPos.x,
+      z: tPos.z,
+      baseRadiusInches: rulesBaseRadius(target),
+      isFighter: shipModelIsFighter(targetModel),
+    });
+  }
+
+  const targetCritRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, target.id));
+  const targetCrits = deriveCritEffects((targetCritRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+    effectKey: r.effectKey,
+    randomArc: r.randomArc,
+    randomWeaponId: r.randomWeaponId,
+    lostTraits: r.lostTraits ?? [],
+  })));
+  const targetTraits = parseShipTraits(filterLostTraits(targetModel.traits, targetCrits.lostTraitNames));
+  const targetEffectiveDamageState = effectiveDamageState(target.damageState, targetCritRows);
+  const targetCrippled = isCrippledUnit(target);
+
   const rawAction = attacker.specialAction ?? "";
   const baseAction = rawAction.replace(/-failed$/, "");
   const weaponAd = effectiveAttackDice(weapon.attackDice, wt);
@@ -5038,7 +5192,14 @@ async function resolveBasicAiWeaponFire(
     || (attackerStealthMode === "normal" && attackerTraits.superiorTechnology)
     ? 1
     : 0;
-  if (terrainAdjustedStealth > 0 && !wt.energyMine && attackerStealthMode !== "ignore") {
+  const stealthAndDodgeSuppressedByShield =
+    maneuverToShield?.success === true && target.id !== originalTargetUnitId;
+  if (
+    terrainAdjustedStealth > 0 &&
+    !wt.energyMine &&
+    attackerStealthMode !== "ignore" &&
+    !stealthAndDodgeSuppressedByShield
+  ) {
     stealthCheckTarget = stealthFloor(terrainAdjustedStealth, distance);
     stealthCheckRoll = rollD6();
     stealthCheckPassed =
@@ -5119,7 +5280,13 @@ async function resolveBasicAiWeaponFire(
     && (target.maxCrewPoints === 0 || target.crewPoints > 0);
   const dodgeRolls: number[] = [];
   let dodgesSuccessful = 0;
-  if (targetTraits.dodge > 0 && !wt.accurate && !wt.energyMine && targetCanManeuver) {
+  if (
+    !stealthAndDodgeSuppressedByShield &&
+    targetTraits.dodge > 0 &&
+    !wt.accurate &&
+    !wt.energyMine &&
+    targetCanManeuver
+  ) {
     for (let i = 0; i < remainingHits; i++) {
       const d = rollD6();
       dodgeRolls.push(d);
@@ -5432,6 +5599,9 @@ async function resolveBasicAiWeaponFire(
     summary: `AI ${attacker.name} fired ${weapon.name} at ${target.name}: ${hits} hit(s), ${finalDamage} damage, ${finalCrewLost} crew.`,
     payload: {
       rulesPath: "ai-basic",
+      originalTargetUnitId,
+      resolvedTargetUnitId: target.id,
+      maneuverToShield,
       attackerModel: {
         id: attackerModel.id,
         name: attackerModel.name,
@@ -6656,8 +6826,8 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
     resolvedAttacks.push({
       weaponId: plan.weapon.id,
       weaponName: plan.weapon.name,
-      targetUnitId: plan.target.id,
-      targetName: plan.target.name,
+      targetUnitId: result.target.id,
+      targetName: result.target.name,
       hits: result.hits,
       hullDamage: result.finalDamage,
       crewDamage: result.finalCrewLost,
@@ -6666,7 +6836,7 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
       targetDamageState: result.target.damageState,
     });
 
-    const message = `AI fired ${plan.weapon.name} at ${plan.target.name}: ${result.hits} hit(s), ${result.finalDamage} damage, ${result.finalCrewLost} crew.`;
+    const message = `AI fired ${plan.weapon.name} at ${result.target.name}: ${result.hits} hit(s), ${result.finalDamage} damage, ${result.finalCrewLost} crew.`;
     const decision = aiDecision(
       result.gameCompleted ? "firing.fire-weapon-game-over" : "firing.fire-weapon",
       "firing",
@@ -6683,6 +6853,10 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
           breakdown: plan.breakdown,
         },
         result: {
+          originalTargetId: plan.target.id,
+          originalTargetName: plan.target.name,
+          resolvedTargetId: result.target.id,
+          resolvedTargetName: result.target.name,
           hits: result.hits,
           remainingHits: result.remainingHits,
           damage: result.finalDamage,
@@ -11416,12 +11590,14 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         throw Object.assign(new Error("Concentrate All Fire-power locks you to the nominated target"), { status: 400 });
       }
 
-      const [target] = await tx.select().from(gameUnitsTable).where(and(
+      const [initialTarget] = await tx.select().from(gameUnitsTable).where(and(
         eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
       ));
-      if (!target) throw Object.assign(new Error("Target not found"), { status: 404 });
-      if (target.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
-      if (target.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+      if (!initialTarget) throw Object.assign(new Error("Target not found"), { status: 404 });
+      if (initialTarget.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+      if (initialTarget.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+      let target = initialTarget;
+      let resolvedTargetUnitId = targetUnitId;
 
 
       // ── Attacker's live critical-hit effects ─────────────────────────────
@@ -11453,7 +11629,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }
 
       const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
-      const tPos = hexToWorld(target.hexQ, target.hexR);
+      let tPos = hexToWorld(target.hexQ, target.hexR);
       const [targetShipForRange] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
       if (!targetShipForRange) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
       const [targetModelForRange] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShipForRange.shipModelId));
@@ -11498,7 +11674,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
 
       // Range check (world units = inches; the OpenAPI spec stores weapon.range
       // in inches and the board is laid out at 1 unit = 1 inch).
-      const dist = fighterWeaponRangeDistance({
+      let dist = fighterWeaponRangeDistance({
         id: attacker.id,
         ownerId: attacker.ownerId,
         x: aPos.x,
@@ -11549,10 +11725,45 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         );
       }
 
+      const shieldInterposition = await resolveManeuverToShieldInterposition(
+        tx,
+        game,
+        attacker,
+        initialTarget,
+        targetModelForRange,
+        aPos,
+        tPos,
+      );
+      const maneuverToShield = shieldInterposition.resolution;
+      let targetModelOverride = shieldInterposition.targetModel;
+      if (shieldInterposition.target && shieldInterposition.targetPosition) {
+        target = shieldInterposition.target;
+        resolvedTargetUnitId = target.id;
+        tPos = shieldInterposition.targetPosition;
+        dist = fighterWeaponRangeDistance({
+          id: attacker.id,
+          ownerId: attacker.ownerId,
+          x: aPos.x,
+          z: aPos.z,
+          baseRadiusInches: rulesBaseRadius(attacker),
+          isFighter: shipModelIsFighter(attackerModel),
+        }, {
+          x: tPos.x,
+          z: tPos.z,
+          baseRadiusInches: rulesBaseRadius(target),
+          isFighter: targetModelOverride ? shipModelIsFighter(targetModelOverride) : false,
+        });
+      }
+
       // Resolve attacker/target ship classes (needed for traits + hit threshold).
-      const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
-      if (!targetShip) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
-      const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
+      const [targetShip] = targetModelOverride
+        ? [null]
+        : await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
+      if (!targetModelOverride && !targetShip) throw Object.assign(new Error("Target ship record missing"), { status: 500 });
+      const [loadedTargetModel] = targetModelOverride
+        ? [targetModelOverride]
+        : await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip!.shipModelId));
+      const targetModel = loadedTargetModel;
       if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
 
       // ── Target's live critical-hit effects ───────────────────────────────
@@ -11759,7 +11970,14 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         targetModel,
         attackerModel,
       );
-      if (effectiveStealth > 0 && !wt.energyMine && !stealthIgnoredByPenetration) {
+      const stealthAndDodgeSuppressedByShield =
+        maneuverToShield?.success === true && resolvedTargetUnitId !== targetUnitId;
+      if (
+        effectiveStealth > 0 &&
+        !wt.energyMine &&
+        !stealthIgnoredByPenetration &&
+        !stealthAndDodgeSuppressedByShield
+      ) {
         stealthCheckTarget = stealthFloor(effectiveStealth, dist);
         stealthCheckRoll = rollD6();
         stealthCheckPassed =
@@ -11926,7 +12144,12 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         && targetEffectiveDamageState !== "exploding-end-of-next"
         && target.hullPoints > 0
         && (target.maxCrewPoints === 0 || target.crewPoints > 0);
-      const dodgeActive = targetTraits.dodge > 0 && !wt.accurate && !wt.energyMine && targetCanManeuver;
+      const dodgeActive =
+        !stealthAndDodgeSuppressedByShield &&
+        targetTraits.dodge > 0 &&
+        !wt.accurate &&
+        !wt.energyMine &&
+        targetCanManeuver;
       if (dodgeActive) {
         for (let i = 0; i < remainingHits; i++) {
           const d = rollD6();
@@ -12504,6 +12727,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
             traits: targetModel.traits,
           },
           distance: Number(dist.toFixed(3)),
+          originalTargetUnitId: targetUnitId,
+          resolvedTargetUnitId,
+          maneuverToShield,
           specialAction: attacker.specialAction,
           targetSpecialAction: target.specialAction,
           weaponTraits: weapon.traits,
@@ -12576,7 +12802,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
 
       return {
         weaponId,
-        targetUnitId,
+        targetUnitId: resolvedTargetUnitId,
+        originalTargetUnitId: targetUnitId,
+        maneuverToShield,
         hitThreshold,
         stealthCheckTarget,
         stealthCheckRoll,
@@ -12673,6 +12901,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "run-silent": 8,
     "concentrate-fire": 8,
     "track-that-target": 9,
+    "maneuver-to-shield": null,
     "cause-confusion": null,
     "all-hands-on-deck": 9,
     "scramble": 7,
@@ -12964,7 +13193,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         targetUnit: nominatedTarget,
         summary: action === "cause-confusion" && causeConfusionResolution
           ? `${unit.name} ${success ? "caused confusion on" : "failed to confuse"} ${nominatedTarget?.name ?? "target"} (${causeConfusionResolution.attackerTotal} vs ${causeConfusionResolution.targetTotal}).`
-          : `${unit.name} ${success ? "passed" : "failed"} ${action}${cqRequired !== null && cqTotal !== null ? ` (${cqTotal} vs ${cqRequired})` : ""}.`,
+          : action === "maneuver-to-shield"
+            ? `${unit.name} prepared to shield nearby friendly ships.`
+            : `${unit.name} ${success ? "passed" : "failed"} ${action}${cqRequired !== null && cqTotal !== null ? ` (${cqTotal} vs ${cqRequired})` : ""}.`,
         payload: {
           rulesPath: "special-action",
           requiresCq: cqRequired !== null,

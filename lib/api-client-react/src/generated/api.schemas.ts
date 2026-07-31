@@ -1002,6 +1002,7 @@ export const SpecialActionInputAction = {
   'run-silent': 'run-silent',
   'concentrate-fire': 'concentrate-fire',
   'track-that-target': 'track-that-target',
+  'maneuver-to-shield': 'maneuver-to-shield',
   'cause-confusion': 'cause-confusion',
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',

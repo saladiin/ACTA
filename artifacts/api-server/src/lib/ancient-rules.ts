@@ -13,12 +13,14 @@ export const ANCIENT_SPECIAL_ACTIONS = new Set([
   "come-about-extra-turn",
   "come-about-sharp-turn",
   "initiate-jump-point",
+  "maneuver-to-shield",
   "run-silent",
   "track-that-target",
 ]);
 
 export const SHADOW_SPECIAL_ACTIONS = new Set([
   "initiate-jump-point",
+  "maneuver-to-shield",
   "run-silent",
   "track-that-target",
 ]);
@@ -30,6 +32,7 @@ export const VORLON_SPECIAL_ACTIONS = new Set([
   "come-about-extra-turn",
   "come-about-sharp-turn",
   "initiate-jump-point",
+  "maneuver-to-shield",
   "regenerate",
   "run-silent",
   "track-that-target",

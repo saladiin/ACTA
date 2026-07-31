@@ -64,6 +64,8 @@ type Tuning = {
   beamCoreBrightness?: number;
   beamCoreOpacity?: number;
   beamCorePulse?: number;
+  diffuseTextureIndex?: number;
+  alphaTextureIndex?: number;
 };
 
 function impactFadeEnvelope(t: number): number {
@@ -162,6 +164,7 @@ type SpecialStation = {
     | "battlecrab-damage-particle-spray"
     | "weapon-arc-damage-sample"
     | "weapon-arc-projection-state-sample"
+    | "shield-token-hover"
     | "godot-jump-point-mesh"
     | "gas-cloud-terrain"
     | "test-cloud-mesh"
@@ -302,6 +305,14 @@ const KIRISHIAC_BEAM_TEXTURE_OPTIONS = [
   { label: "Wind Noise", filename: "T_VFX_WindNoise1.png" },
   { label: "Hard Noise", filename: "T_Noise_HU85k.png" },
   { label: "Soft Noise", filename: "T_Noise1_nk.png" },
+] as const;
+
+const SHIELD_TOKEN_TEXTURE_OPTIONS = [
+  { label: "Fire Panning", filename: "T_FirePanningCyl45.png" },
+  { label: "Wind Noise", filename: "T_VFX_WindNoise1.png" },
+  { label: "Hard Noise", filename: "T_Noise_HU85k.png" },
+  { label: "Soft Noise", filename: "T_Noise1_nk.png" },
+  { label: "Praxis Ring", filename: "praxis.png" },
 ] as const;
 const KIRISHIAC_ATTACK_TURN_IN_SECONDS = 1;
 const KIRISHIAC_ATTACK_FIRE_SECONDS = 3;
@@ -652,6 +663,38 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [18, -12],
         modelFilename: "dead-hyperion.glb",
         tuning: { color: "#f59e0b", secondaryColor: "#94a3b8", speed: 0.3, size: 0.46, fade: 2.1, intensity: 0.9, spread: 1.35, count: 135, arc: 1.1, thickness: 0.62, randomness: 0.7 },
+      },
+    ],
+  },
+  {
+    id: "special-action-tokens",
+    name: "Special Actions",
+    summary: "Floating token previews for successful special-action states.",
+    stations: [
+      {
+        kind: "special",
+        id: "shield-token-hover",
+        label: "Shield Token",
+        note: "Passed Maneuver to Shield Them marker floating above a Hyperion.",
+        effect: "shield-token-hover",
+        position: [0, 0],
+        modelFilename: "shield-token.glb",
+        textureFilename: "T_FirePanningCyl45.png",
+        alphaTextureFilename: "T_Noise_HU85k.png",
+        tuning: {
+          color: "#60a5fa",
+          secondaryColor: "#dbeafe",
+          speed: 0.45,
+          size: 1,
+          fade: 0.78,
+          intensity: 1.25,
+          spread: 1,
+          count: 1,
+          arc: 2,
+          thickness: 1,
+          diffuseTextureIndex: 1,
+          alphaTextureIndex: 3,
+        },
       },
     ],
   },
@@ -1195,6 +1238,15 @@ function isTexturedSphereSampleOne(station: ShowcaseStation): boolean {
   return isTexturedExplodingSphere(station) && station.testNumber === 1;
 }
 
+function isShieldTokenStation(station: ShowcaseStation): boolean {
+  return station.kind === "special" && station.effect === "shield-token-hover";
+}
+
+function selectedShieldTokenTexture(value: number | undefined): typeof SHIELD_TOKEN_TEXTURE_OPTIONS[number] {
+  const index = clamp(Math.round(value ?? 1) - 1, 0, SHIELD_TOKEN_TEXTURE_OPTIONS.length - 1);
+  return SHIELD_TOKEN_TEXTURE_OPTIONS[index] ?? SHIELD_TOKEN_TEXTURE_OPTIONS[0];
+}
+
 function baseTuningFor(station: ShowcaseStation): Tuning {
   const stationColor = station.kind === "organic-skin"
     ? "#151515"
@@ -1368,6 +1420,7 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "missile1.glb": "20260719-013547",
   "omega2.glb": "20260720-174853",
   "projectile_mesh.glb": "20260720-154500",
+  "shield-token.glb": "20260731-vfx-range",
   "spitfire.glb": "20260720-210100",
   "test-cloud.glb": "20260730-test-cloud-v1",
   "battlecrab.glb": "20260720-214405-organic",
@@ -1522,6 +1575,105 @@ function ShowcaseGlbModel({
             />
           ))
         : null}
+    </group>
+  );
+}
+
+function ShieldTokenHoverShowcase({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const tokenRef = useRef<THREE.Group>(null);
+  const elapsedRef = useRef(0);
+  const filename = station.modelFilename ?? "shield-token.glb";
+  const diffuseOption = selectedShieldTokenTexture(tuning.diffuseTextureIndex);
+  const alphaOption = selectedShieldTokenTexture(tuning.alphaTextureIndex);
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const [diffuseTexture, alphaTexture] = useLoader(
+    THREE.TextureLoader,
+    [
+      showcaseTextureUrl(diffuseOption.filename),
+      showcaseTextureUrl(alphaOption.filename),
+    ],
+  ) as THREE.Texture[];
+
+  useEffect(() => {
+    for (const texture of [diffuseTexture, alphaTexture]) {
+      texture.colorSpace = texture === diffuseTexture ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = 8;
+      texture.needsUpdate = true;
+    }
+  }, [alphaTexture, diffuseTexture]);
+
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    const primary = new THREE.Color(tuning.color);
+    const accent = new THREE.Color(tuning.secondaryColor);
+    const opacity = clamp(tuning.fade, 0, 1);
+
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.material = new THREE.MeshStandardMaterial({
+        color: primary,
+        map: diffuseTexture,
+        alphaMap: alphaTexture,
+        transparent: true,
+        opacity,
+        alphaTest: 0.03,
+        emissive: accent,
+        emissiveIntensity: 0.45 * tuning.intensity,
+        roughness: 0.42,
+        metalness: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: opacity >= 0.98,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+    });
+
+    return c;
+  }, [alphaTexture, diffuseTexture, scene, tuning.color, tuning.fade, tuning.intensity, tuning.secondaryColor]);
+
+  useEffect(() => {
+    return () => {
+      cloned.traverse((child: any) => {
+        if (!child.isMesh) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) material?.dispose?.();
+      });
+    };
+  }, [cloned]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    if (!tokenRef.current) return;
+    tokenRef.current.rotation.y = elapsedRef.current * tuning.speed * 1.15;
+    tokenRef.current.rotation.x = THREE.MathUtils.degToRad(tuning.rotationX ?? 0);
+    tokenRef.current.rotation.z = THREE.MathUtils.degToRad(tuning.rotationZ ?? 0);
+  });
+
+  const tokenScale = useMemo(
+    () => showcaseShipScale(cloned, clamp(tuning.size, 0.2, 2.5)),
+    [cloned, tuning.size],
+  );
+  const lift = SHOWCASE_MESH_ORIGIN_Y + Math.max(0, tuning.arc);
+
+  return (
+    <group position={[station.position[0], 0, station.position[1]]}>
+      <group position={[0, SHOWCASE_MESH_ORIGIN_Y, 0]} rotation={[0, Math.PI, 0]}>
+        <ShowcaseGlbModel filename="hyperion.glb" tint="#9fb8c9" opacity={0.92} targetInches={2.4} />
+      </group>
+      <group ref={tokenRef} position={[0, lift, 0]} scale={[tokenScale, tokenScale, tokenScale]} raycast={() => null}>
+        <primitive object={cloned} />
+      </group>
+      <pointLight color={tuning.color} intensity={2.2 * tuning.intensity} distance={5.5} position={[0, lift, 0]} />
     </group>
   );
 }
@@ -8533,6 +8685,11 @@ function SpecialFxStation({
       {station.effect === "weapon-arc-projection-state-sample" ? (
         <WeaponArcProjectionStateSample position={station.position} />
       ) : null}
+      {station.effect === "shield-token-hover" ? (
+        <Suspense fallback={null}>
+          <ShieldTokenHoverShowcase station={station} tuning={tuning} paused={animationPaused} />
+        </Suspense>
+      ) : null}
       {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
       {station.effect === "gas-cloud-terrain" ? (
         <Suspense fallback={null}>
@@ -8607,6 +8764,15 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
         19 * framingScale,
       );
       camera.lookAt(0, 1, 1.5);
+    } else if (boardId === "special-action-tokens") {
+      const canvasAspect = size.width / Math.max(size.height, 1);
+      const framingScale = Math.max(1, 0.95 / canvasAspect);
+      camera.position.set(
+        5.8 * framingScale,
+        7.4 * framingScale,
+        8.8 * framingScale,
+      );
+      camera.lookAt(0, 2.1, 0);
     } else {
       camera.position.set(0, 39, 48);
       camera.lookAt(0, 0, 0);
@@ -8628,6 +8794,10 @@ function ShowcaseScene({
   selectedStationId: string;
   animationPaused: boolean;
 }) {
+  const orbitTarget = board.id === "special-action-tokens"
+    ? ([0, 2.1, 0] as [number, number, number])
+    : ([0, 0, 0] as [number, number, number]);
+
   return (
     <>
       <color attach="background" args={["#03060a"]} />
@@ -8649,7 +8819,7 @@ function ShowcaseScene({
         if (station.kind === "organic-skin") return <OrganicSkinFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
         return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} animationPaused={animationPaused} showLabel={showLabel} />;
       })}
-      <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={14} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={[0, 0, 0]} />
+      <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={4} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={orbitTarget} />
       <EffectComposer>
         <Bloom intensity={1.35} luminanceThreshold={0.08} luminanceSmoothing={0.24} />
       </EffectComposer>
@@ -8719,6 +8889,39 @@ function TextureOptionControl({
         {KIRISHIAC_BEAM_TEXTURE_OPTIONS.map((option, index) => (
           <button
             key={option.filename}
+            type="button"
+            className={`h-9 rounded border px-2 font-mono text-[10px] font-bold uppercase tracking-widest transition-colors ${
+              selectedIndex === index
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:border-primary/50"
+            }`}
+            onClick={() => onChange(index + 1)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ShieldTokenTextureControl({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number | undefined;
+  onChange: (value: number) => void;
+}) {
+  const selectedIndex = clamp(Math.round(value ?? 1) - 1, 0, SHIELD_TOKEN_TEXTURE_OPTIONS.length - 1);
+  return (
+    <div className="grid gap-2">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+      <div className="grid grid-cols-2 gap-2">
+        {SHIELD_TOKEN_TEXTURE_OPTIONS.map((option, index) => (
+          <button
+            key={`${label}-${option.filename}`}
             type="button"
             className={`h-9 rounded border px-2 font-mono text-[10px] font-bold uppercase tracking-widest transition-colors ${
               selectedIndex === index
@@ -8839,6 +9042,7 @@ export default function VfxShowcase() {
   const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
   const selectedIsKirishiacBeam = selectedStation ? isKirishiacBeamStation(selectedStation) : false;
   const selectedIsVorlonBeam = selectedStation ? isVorlonBeamStation(selectedStation) : false;
+  const selectedIsShieldToken = selectedStation ? isShieldTokenStation(selectedStation) : false;
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -9055,6 +9259,18 @@ export default function VfxShowcase() {
                       <SliderControl label="Rotation X" value={selectedTuning.rotationX ?? -90} min={-180} max={180} step={1} onChange={rotationX => updateSelected({ rotationX })} />
                       <SliderControl label="Rotation Y" value={selectedTuning.rotationY ?? 0} min={-180} max={180} step={1} onChange={rotationY => updateSelected({ rotationY })} />
                       <SliderControl label="Rotation Z" value={selectedTuning.rotationZ ?? 0} min={-180} max={180} step={1} onChange={rotationZ => updateSelected({ rotationZ })} />
+                    </>
+                  ) : selectedIsShieldToken ? (
+                    <>
+                      <ShieldTokenTextureControl label="Diffuse Texture" value={selectedTuning.diffuseTextureIndex} onChange={diffuseTextureIndex => updateSelected({ diffuseTextureIndex })} />
+                      <ShieldTokenTextureControl label="Alpha Texture" value={selectedTuning.alphaTextureIndex} onChange={alphaTextureIndex => updateSelected({ alphaTextureIndex })} />
+                      <SliderControl label="Rotation Speed" value={selectedTuning.speed} min={0} max={2.5} step={0.05} onChange={speed => updateSelected({ speed })} />
+                      <SliderControl label="Token Size" value={selectedTuning.size} min={0.2} max={2.5} step={0.05} onChange={size => updateSelected({ size })} />
+                      <SliderControl label="Height Above Ship" value={selectedTuning.arc} min={0.25} max={5} step={0.05} onChange={arc => updateSelected({ arc })} />
+                      <SliderControl label="Alpha / Opacity" value={selectedTuning.fade} min={0} max={1} step={0.02} onChange={fade => updateSelected({ fade })} />
+                      <SliderControl label="Diffuse Strength" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
+                      <SliderControl label="Tilt X" value={selectedTuning.rotationX ?? 0} min={-90} max={90} step={1} onChange={rotationX => updateSelected({ rotationX })} />
+                      <SliderControl label="Tilt Z" value={selectedTuning.rotationZ ?? 0} min={-90} max={90} step={1} onChange={rotationZ => updateSelected({ rotationZ })} />
                     </>
                   ) : (
                     <>

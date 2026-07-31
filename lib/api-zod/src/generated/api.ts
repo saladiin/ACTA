@@ -1343,7 +1343,7 @@ export const ChooseSpecialActionParams = zod.object({
 })
 
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'cause-confusion', 'all-hands-on-deck', 'scramble', 'regenerate']),
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'maneuver-to-shield', 'cause-confusion', 'all-hands-on-deck', 'scramble', 'regenerate']),
   "targetUnitId": zod.number().nullish().describe('Required for targeted Special Actions such as \'concentrate-fire\', \'track-that-target\', and \'cause-confusion\' — the nominated enemy unit id.')
 })
 

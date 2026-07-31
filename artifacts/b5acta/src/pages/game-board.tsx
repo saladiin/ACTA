@@ -387,6 +387,7 @@ function specialActionLabel(raw: string | null | undefined): string | null {
     "run-silent": "Run Silent",
     "concentrate-fire": "Concentrate All Fire",
     "track-that-target": "Track That Target",
+    "maneuver-to-shield": "Maneuver to Shield Them",
     "cause-confusion": "Cause Confusion",
     "all-hands-on-deck": "All Hands on Deck",
     scramble: "Scramble",
@@ -2139,6 +2140,7 @@ const BOARD_DUST_CLOUD_TEXTURE_FILENAMES = [
   "wispy-smoke03b-8x8.webp",
 ] as const;
 const BOARD_PRAXIS_TEXTURE_FILENAME = "praxis.png";
+const SHIELD_TOKEN_MODEL_FILENAME = "shield-token.glb";
 const ORGANIC_BATTLECRAB_MODEL_FILENAME = "battlecrab.glb";
 const ORGANIC_SHADOW_MODEL_FILENAMES = new Set([
   ORGANIC_BATTLECRAB_MODEL_FILENAME,
@@ -2887,6 +2889,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "rongoth.glb": "20260724-193659",
   [SHADOWCLOAK_MODEL_FILENAME]: "20260730-shadowcloak-v2",
   [SHADOW_SCOUT_MODEL_FILENAME]: "20260728-135155",
+  [SHIELD_TOKEN_MODEL_FILENAME]: "20260731-vfx-range",
   [VORLON_FIGHTER_MODEL_FILENAME]: "20260728-vorlon-fighter-v1",
   [VORLON_LIGHT_CRUISER_MODEL_FILENAME]: "20260728-223454",
   [VORLON_TRANSPORT_MODEL_FILENAME]: "20260728-vorlon-transport-v1",
@@ -3034,6 +3037,86 @@ function CameraFacingGroup({
   return (
     <group ref={ref} {...props}>
       {children}
+    </group>
+  );
+}
+
+function objectScaleToTargetInches(object: THREE.Object3D, targetInches: number): number {
+  const box = new THREE.Box3().setFromObject(object);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const largest = Math.max(size.x, size.y, size.z, 0.001);
+  return targetInches / largest;
+}
+
+function LiveShieldTokenMarker() {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const assetRevision =
+    MODEL_ASSET_REVISIONS[SHIELD_TOKEN_MODEL_FILENAME] ?? APP_BUILD_SHA;
+  const modelUrl = `${basePath}/api/models/${SHIELD_TOKEN_MODEL_FILENAME}?v=${encodeURIComponent(assetRevision)}`;
+  const { scene } = useGLTF(modelUrl);
+  const [diffuseTexture, alphaTexture] = useLoader(THREE.TextureLoader, [
+    boardTextureUrl("T_FirePanningCyl45.png"),
+    boardTextureUrl("T_Noise_HU85k.png"),
+  ]) as THREE.Texture[];
+  const tokenRef = useRef<THREE.Group>(null);
+
+  useEffect(() => {
+    diffuseTexture.colorSpace = THREE.SRGBColorSpace;
+    alphaTexture.colorSpace = THREE.NoColorSpace;
+    for (const texture of [diffuseTexture, alphaTexture]) {
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = 8;
+      texture.needsUpdate = true;
+    }
+  }, [alphaTexture, diffuseTexture]);
+
+  const cloned = useMemo(() => {
+    const object = scene.clone(true);
+    object.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color("#60a5fa"),
+        map: diffuseTexture,
+        alphaMap: alphaTexture,
+        transparent: true,
+        opacity: 0.78,
+        alphaTest: 0.03,
+        emissive: new THREE.Color("#dbeafe"),
+        emissiveIntensity: 0.56,
+        roughness: 0.42,
+        metalness: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      });
+    });
+    return object;
+  }, [alphaTexture, diffuseTexture, scene]);
+
+  useEffect(() => {
+    return () => {
+      cloned.traverse((child: any) => {
+        if (!child.isMesh) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) material?.dispose?.();
+      });
+    };
+  }, [cloned]);
+
+  useFrame(({ clock }) => {
+    if (!tokenRef.current) return;
+    tokenRef.current.rotation.y = clock.getElapsedTime() * 0.45 * 1.15;
+  });
+
+  const tokenScale = useMemo(() => objectScaleToTargetInches(cloned, 1), [cloned]);
+
+  return (
+    <group ref={tokenRef} position={[0, 4, 0]} scale={[tokenScale, tokenScale, tokenScale]} raycast={() => null}>
+      <primitive object={cloned} />
+      <pointLight color="#60a5fa" intensity={2.75} distance={5.5} />
     </group>
   );
 }
@@ -4965,6 +5048,7 @@ function GameUnit3D({
     turnAngle: number;
     damageState?: string | null;
     baseRadiusInches?: number | null;
+    specialAction?: string | null;
   };
   isSelected: boolean;
   onClick: () => void;
@@ -5115,6 +5199,10 @@ function GameUnit3D({
     !usesExplodingVisual &&
     !usesAnimatedAdriftVisual &&
     (visuallyDestroyed || fireLevel >= 0.7);
+  const showShieldToken =
+    unit.specialAction === "maneuver-to-shield" &&
+    !hasPreview &&
+    !visuallyDestroyed;
 
   useFrame(({ clock }) => {
     const elapsedSeconds = clock.getElapsedTime();
@@ -5299,6 +5387,11 @@ function GameUnit3D({
       )}
       {!hasPreview && !visuallyDestroyed && (
         <ScoutSupportShockwaves effects={scoutSupportEffects} />
+      )}
+      {showShieldToken && (
+        <Suspense fallback={null}>
+          <LiveShieldTokenMarker />
+        </Suspense>
       )}
       {/* Selection pulse ring */}
       {isSelected && !hasPreview && (
@@ -21025,6 +21118,7 @@ export default function GameBoard() {
                         | "run-silent"
                         | "concentrate-fire"
                         | "track-that-target"
+                        | "maneuver-to-shield"
                         | "cause-confusion"
                         | "all-hands-on-deck"
                         | "scramble"
@@ -21103,6 +21197,12 @@ export default function GameBoard() {
                         hidden: !hasBoresightWeaponForSA,
                       },
                       {
+                        id: "maneuver-to-shield",
+                        label: "Maneuver to Shield Them!",
+                        cq: null,
+                        hint: "May redirect shots crossing within 1\" at a friendly within 5\"",
+                      },
+                      {
                         id: "cause-confusion",
                         label: "Cause Confusion",
                         cq: null,
@@ -21133,7 +21233,7 @@ export default function GameBoard() {
                     ];
                     const profileActionIds =
                       rulesProfile === "shadows"
-                        ? new Set(["run-silent", "track-that-target"])
+                        ? new Set(["run-silent", "track-that-target", "maneuver-to-shield"])
                         : rulesProfile === "vorlons"
                           ? new Set([
                               "all-stop",
@@ -21143,6 +21243,7 @@ export default function GameBoard() {
                               "run-silent",
                               "regenerate",
                               "track-that-target",
+                              "maneuver-to-shield",
                             ])
                           : rulesProfile === "ancients"
                             ? new Set([
@@ -21152,6 +21253,7 @@ export default function GameBoard() {
                                 "come-about-sharp-turn",
                                 "run-silent",
                                 "track-that-target",
+                                "maneuver-to-shield",
                               ])
                             : null;
                     const rawAction = selectedUnitData.specialAction ?? null;
@@ -21523,6 +21625,7 @@ export default function GameBoard() {
                                       </span>
                                       <span className="text-[9px] opacity-70">
                                         {a.id === "cause-confusion"
+                                          || a.id === "maneuver-to-shield"
                                           ? "OPPOSED"
                                           : a.cq === null
                                             ? "AUTO"
