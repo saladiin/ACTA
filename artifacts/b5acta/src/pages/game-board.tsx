@@ -1887,7 +1887,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
-  "hermes.glb": 0.7,
+  "hermes.glb": 0.5,
   [COMMAND_HYPERION_MODEL_FILENAME]: 1.2,
   [RAILGUN_HYPERION_MODEL_FILENAME]: 1.2,
   "missile-hyperion.glb": 1.2,
