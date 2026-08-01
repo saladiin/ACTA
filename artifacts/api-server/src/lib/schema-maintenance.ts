@@ -4310,7 +4310,7 @@ const FIGHTER_FLIGHTS = [
   },
   {
     name: "Nova Starfury Flight",
-    filename: "aurora.glb",
+    filename: "nova-starfury.glb",
     faction: "Earth Alliance",
     pointCost: 25,
     shipClass: "Fighter Flight",
@@ -4319,8 +4319,7 @@ const FIGHTER_FLIGHTS = [
     traits: "Dodge 2+; Dogfight +1; Fighter; Super Maneuverable",
     weaponRange: 2,
     weaponDamage: 2,
-    description:
-      "Earth Alliance Early Years Nova Starfury fighter flight using the Aurora mesh as a temporary EA fighter placeholder",
+    description: "Earth Alliance Early Years Nova Starfury fighter flight",
     aliases: ["Nova Starfury Flight", "Nova Starfury Wing", "Nova Flight"],
     weapons: [
       {

@@ -1773,6 +1773,7 @@ const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
 const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
 const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
 const RAIDER_NOVA_MODEL_FILENAME = "raider-nova.glb";
+const NOVA_STARFURY_MODEL_FILENAME = "nova-starfury.glb";
 const SHADOWCLOAK_MODEL_FILENAME = "shadowcloak.glb";
 const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
 const VORLON_FIGHTER_MODEL_FILENAME = "vorlon-fighter.glb";
@@ -1866,6 +1867,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   RAIDER_CARRIER_MODEL_FILENAME,
   "black-omega.glb",
   "aurora.glb",
+  NOVA_STARFURY_MODEL_FILENAME,
   "thunderbolt.glb",
   "tiger.glb",
   "nial.glb",
@@ -1927,6 +1929,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
   [DEAD_OMEGA_MODEL_FILENAME]: 1.5,
   "aurora.glb": 0.165,
+  [NOVA_STARFURY_MODEL_FILENAME]: 0.165,
   "black-omega.glb": 0.165,
   "thunderbolt.glb": 0.165,
   "tiger.glb": 0.165,
@@ -1960,6 +1963,7 @@ const MODEL_CENTER_ON_HORIZONTAL_BOUNDS = new Set([
 ]);
 const FIGHTER_SQUADRON_MODELS = new Set([
   "aurora.glb",
+  NOVA_STARFURY_MODEL_FILENAME,
   "black-omega.glb",
   "thunderbolt.glb",
   "tiger.glb",
@@ -1973,6 +1977,11 @@ const FIGHTER_SQUADRON_MODELS = new Set([
 ]);
 const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   aurora: "aurora.glb",
+  "nova starfury": NOVA_STARFURY_MODEL_FILENAME,
+  "nova-starfury": NOVA_STARFURY_MODEL_FILENAME,
+  "nova star fury": NOVA_STARFURY_MODEL_FILENAME,
+  "nova flight": NOVA_STARFURY_MODEL_FILENAME,
+  "nova wing": NOVA_STARFURY_MODEL_FILENAME,
   "black omega": "black-omega.glb",
   "black-omega": "black-omega.glb",
   blackomega: "black-omega.glb",
@@ -1997,7 +2006,7 @@ const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   "vorlon fighter wing": VORLON_FIGHTER_MODEL_FILENAME,
 };
 const FIGHTER_IDENTITY_PATTERN =
-  /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire|delta[-\s]?v|raider[-\s]?delta|zephyr|vorlon\s+fighter)\b/i;
+  /\b(?:aurora|nova[-\s]+star\s?fury|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire|delta[-\s]?v|raider[-\s]?delta|zephyr|vorlon\s+fighter)\b/i;
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -2875,6 +2884,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "kirishiac.glb": "20260725-004107",
   "kirishiac1.glb": "20260725-beam-0100",
   "missile-hyperion.glb": "20260719-005010",
+  [NOVA_STARFURY_MODEL_FILENAME]: "20260731-223339",
   "nova.glb": "20260731-212414",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260729-194957",
   [COMMAND_OMEGA_MODEL_FILENAME]: "20260729-195216",
@@ -3183,6 +3193,11 @@ const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
   "aurora starfury": 4,
   "aurora starfury flight": 4,
   "aurora starfury wing": 4,
+  "nova starfury": 5,
+  "nova starfury flight": 5,
+  "nova starfury wing": 5,
+  "nova flight": 5,
+  "nova wing": 5,
   "delta-v": 8,
   "delta-v fighter": 8,
   "delta-v fighter flight": 8,
@@ -3238,6 +3253,7 @@ const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
 
 const MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME: Record<string, number> = {
   "aurora.glb": 4,
+  [NOVA_STARFURY_MODEL_FILENAME]: 5,
   "thunderbolt.glb": 4,
   "tiger.glb": 6,
   "black-omega.glb": 2,
@@ -3288,6 +3304,11 @@ type StagedFighterInventoryItem = {
 const UI_SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "aurora starfury": "Aurora Starfury Flight",
   "aurora starfury flight": "Aurora Starfury Flight",
+  "nova starfury": "Nova Starfury Flight",
+  "nova starfury flight": "Nova Starfury Flight",
+  "nova starfury wing": "Nova Starfury Flight",
+  "nova flight": "Nova Starfury Flight",
+  "nova wing": "Nova Starfury Flight",
   "delta-v": "Delta-V Fighter Flight",
   "delta-v fighter": "Delta-V Fighter Flight",
   "delta-v fighter flight": "Delta-V Fighter Flight",

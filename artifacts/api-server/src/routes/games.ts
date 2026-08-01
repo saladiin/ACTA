@@ -1478,13 +1478,18 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter
     || /\bfighter\b/i.test(model.shipClass ?? "")
     || /fighter flight/i.test(model.name ?? "")
-    || /\b(?:aurora|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer|spitfire|shadow\s+fighter|delta[-\s]?v|raider[-\s]?delta|zephyr)\b/i.test(identity);
+    || /\b(?:aurora|nova[-\s]+star\s?fury|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer|spitfire|shadow\s+fighter|delta[-\s]?v|raider[-\s]?delta|zephyr)\b/i.test(identity);
 }
 
 const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
   "aurora starfury": 4,
   "aurora starfury flight": 4,
   "aurora starfury wing": 4,
+  "nova starfury": 5,
+  "nova starfury flight": 5,
+  "nova starfury wing": 5,
+  "nova flight": 5,
+  "nova wing": 5,
   "delta v": 8,
   "delta v fighter": 8,
   "delta v fighter flight": 8,
@@ -1534,6 +1539,7 @@ const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
 
 const MULTI_UNIT_PURCHASE_COUNTS_BY_FILENAME: Record<string, number> = {
   "aurora.glb": 4,
+  "nova-starfury.glb": 5,
   "raider-delta.glb": 8,
   "thunderbolt.glb": 4,
   "tiger.glb": 6,
@@ -1589,6 +1595,11 @@ type FighterInventoryModel = Pick<typeof shipModelsTable.$inferSelect, "id" | "n
 const SMALL_CRAFT_CANONICAL_NAMES: Record<string, string> = {
   "aurora starfury": "Aurora Starfury Flight",
   "aurora starfury flight": "Aurora Starfury Flight",
+  "nova starfury": "Nova Starfury Flight",
+  "nova starfury flight": "Nova Starfury Flight",
+  "nova starfury wing": "Nova Starfury Flight",
+  "nova flight": "Nova Starfury Flight",
+  "nova wing": "Nova Starfury Flight",
   "delta-v": "Delta-V Fighter Flight",
   "delta-v fighter": "Delta-V Fighter Flight",
   "delta-v fighter flight": "Delta-V Fighter Flight",

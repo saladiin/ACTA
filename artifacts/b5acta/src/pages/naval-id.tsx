@@ -29,6 +29,7 @@ const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
 const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
 const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
 const RAIDER_NOVA_MODEL_FILENAME = "raider-nova.glb";
+const NOVA_STARFURY_MODEL_FILENAME = "nova-starfury.glb";
 const SHADOWCLOAK_MODEL_FILENAME = "shadowcloak.glb";
 const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
 const VORLON_FIGHTER_MODEL_FILENAME = "vorlon-fighter.glb";
@@ -120,6 +121,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "black-omega.glb",
   "command-hyperion.glb",
   "aurora.glb",
+  NOVA_STARFURY_MODEL_FILENAME,
   "thunderbolt.glb",
   "tiger.glb",
   "nial.glb",
@@ -157,6 +159,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "kirishiac1.glb": "20260725-beam-0100",
   "missile-hyperion.glb": "20260719-005010",
   "missile1.glb": "20260719-013547",
+  [NOVA_STARFURY_MODEL_FILENAME]: "20260731-223339",
   "nova.glb": "20260731-212414",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260729-194957",
   [COMMAND_OMEGA_MODEL_FILENAME]: "20260729-195216",
