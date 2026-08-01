@@ -42,8 +42,11 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Thentus-class Frigate", priority: "skirmish" },
   { name: "Thentus Frigate", priority: "skirmish" },
   { name: "Omega Destroyer", priority: "battle" },
+  { name: "Omega Destroyer (Crusade Era)", priority: "battle" },
   { name: "Omega Class Destroyer", priority: "battle" },
-  { name: "Omega Command Destroyer", priority: "battle" },
+  { name: "Omega Command Destroyer", priority: "war" },
+  { name: "Omega Command Destroyer (Crusade Era)", priority: "war" },
+  { name: "Omega Pulse Destroyer", priority: "battle" },
   { name: "Shadow Omega Advanced Destroyer", priority: "war" },
   { name: "Primus Battle Cruiser", priority: "battle" },
   { name: "Centurion-class Attack Cruiser", priority: "raid" },
@@ -61,20 +64,35 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Vorchan Warship", priority: "skirmish" },
   { name: "Vorchan-class Warship", priority: "skirmish" },
   { name: "Avenger Heavy Carrier", priority: "raid" },
+  { name: "Avenger Heavy Carrier (Third Age)", priority: "raid" },
   { name: "Avenger-class Heavy Carrier", priority: "raid" },
   { name: "Hyperion Cruiser", priority: "raid" },
   { name: "Hyperion Heavy Cruiser", priority: "raid" },
+  { name: "Hyperion Heavy Cruiser (Third Age)", priority: "raid" },
+  { name: "Hyperion Heavy Cruiser (Crusade Era)", priority: "raid" },
   { name: "Hyperion Assault Cruiser", priority: "skirmish" },
+  { name: "Hyperion Assault Cruiser (Third Age)", priority: "skirmish" },
+  { name: "Hyperion Assault Cruiser (Crusade Era)", priority: "skirmish" },
   { name: "Hyperion Command Cruiser", priority: "raid" },
   { name: "Hyperion Missile Cruiser", priority: "raid" },
   { name: "Hyperion Pulse Cruiser", priority: "raid" },
   { name: "Hyperion Rail Cruiser", priority: "skirmish" },
   { name: "Artemis-class Heavy Frigate", priority: "skirmish" },
+  { name: "Artemis-class Heavy Frigate (Third Age)", priority: "skirmish" },
   { name: "Artemis-class Escort Frigate", priority: "skirmish" },
+  { name: "Explorer Survey Ship (Third Age)", priority: "raid" },
+  { name: "Explorer Survey Ship (Crusade Era)", priority: "raid" },
+  { name: "Hermes Transport", priority: "patrol" },
+  { name: "Hermes Transport (Third Age)", priority: "patrol" },
+  { name: "Hermes Transport (Crusade Era)", priority: "patrol" },
   { name: "Orestes Battleship", priority: "battle" },
   { name: "Orestes-class Battleship", priority: "battle" },
+  { name: "Orion Space Station", priority: "raid" },
+  { name: "Orion Space Station (Early Years)", priority: "raid" },
+  { name: "Orion Space Station (Crusade Era)", priority: "raid" },
   { name: "Orion Starbase, Alpha Version (Variant)", priority: "battle" },
   { name: "Nova Dreadnought", priority: "raid" },
+  { name: "Nova Dreadnought (Third Age)", priority: "raid" },
   { name: "Nova-class Dreadnought", priority: "raid" },
   { name: "Salvaged Nova Dreadnought", priority: "battle" },
   { name: "Raiders Nova Dreadnought", priority: "battle" },
@@ -98,11 +116,13 @@ const SHIP_PRIORITY_SEEDS: Array<{ name: string; priority: string }> = [
   { name: "Tethys-class Missile Boat", priority: "patrol" },
   { name: "Tethys Missile Boat", priority: "patrol" },
   { name: "Olympus Corvette", priority: "skirmish" },
+  { name: "Olympus Corvette (Third Age)", priority: "skirmish" },
   { name: "Olympus-class Corvette", priority: "skirmish" },
   { name: "Olympus-class Gunship", priority: "skirmish" },
   { name: "Olympus Gunship", priority: "skirmish" },
   { name: "Oracle Cruiser", priority: "skirmish" },
   { name: "Oracle Scout Cruiser", priority: "skirmish" },
+  { name: "Oracle Scout Cruiser (Third Age)", priority: "skirmish" },
   { name: "Sagittarius", priority: "skirmish" },
   { name: "Sagittarius Missile Cruiser", priority: "skirmish" },
   { name: "Nova Starfury Flight", priority: "patrol" },
@@ -126,6 +146,7 @@ const SHIP_PRIORITY_BY_NAME = new Map(
 // from the playable roster until their dedicated rules are implemented.
 const DORMANT_CSV_SHIP_NAMES = new Set([
   "orion starbase, alpha version (variant)",
+  "oracle cruiser",
 ]);
 
 const POINT_COST_BY_PRIORITY: Record<string, number> = {
@@ -170,6 +191,7 @@ const CSV_MODEL_FILENAMES: Record<string, string> = {
   "shadowcloak-class escort": "shadowcloak.glb",
   shadowcloak: "shadowcloak.glb",
   "hyperion cruiser": "hyperion.glb",
+  "hermes transport": "hermes.glb",
   "orestes-class battleship": "orestes.glb",
   "orestes battleship": "orestes.glb",
   "sharlin war cruiser": "sharlin.glb",
@@ -541,6 +563,348 @@ const EXPLORER_EARLY_WEAPONS = [
     range: 5,
     attackDice: 6,
     traits: "Armor Piercing",
+  },
+];
+
+const EXPLORER_PULSE_WEAPONS = [
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 6,
+    traits: "Double Damage; Twin-Linked",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Forward",
+    range: 10,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Aft",
+    range: 10,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Port",
+    range: 10,
+    attackDice: 6,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Starboard",
+    range: 10,
+    attackDice: 6,
+    traits: "",
+  },
+];
+
+const HERMES_EARLY_WEAPONS = [
+  {
+    name: "Missile Rack",
+    arc: "Forward",
+    range: 20,
+    attackDice: 2,
+    traits: "Precise; Slow-Loading; Super AP",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing",
+  },
+];
+
+const HERMES_PULSE_WEAPONS = [
+  {
+    name: "Missile Rack",
+    arc: "Forward",
+    range: 20,
+    attackDice: 2,
+    traits: "Precise; Slow-Loading; Super AP",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Forward",
+    range: 10,
+    attackDice: 6,
+    traits: "",
+  },
+];
+
+const HYPERION_PULSE_SECONDARY_WEAPONS = [
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Forward",
+    range: 18,
+    attackDice: 4,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Aft",
+    range: 18,
+    attackDice: 2,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Forward",
+    range: 10,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Aft",
+    range: 10,
+    attackDice: 2,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Port",
+    range: 10,
+    attackDice: 8,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Starboard",
+    range: 10,
+    attackDice: 8,
+    traits: "",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "Armor Piercing; Twin-Linked",
+  },
+];
+
+const HYPERION_ASSAULT_PULSE_WEAPONS = [
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Forward",
+    range: 10,
+    attackDice: 4,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Aft",
+    range: 10,
+    attackDice: 2,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Port",
+    range: 10,
+    attackDice: 8,
+    traits: "",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Starboard",
+    range: 10,
+    attackDice: 8,
+    traits: "",
+  },
+  {
+    name: "Plasma Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing; Twin-Linked",
+  },
+];
+
+const NOVA_DREADNOUGHT_PULSE_WEAPONS = [
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 14,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 14,
+    traits: "Twin-Linked",
+  },
+];
+
+const OMEGA_DESTROYER_WEAPONS = [
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Forward",
+    range: 30,
+    attackDice: 6,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Aft",
+    range: 30,
+    attackDice: 4,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 8,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Light Laser Cannon",
+    arc: "Port",
+    range: 15,
+    attackDice: 4,
+    traits: "Mini-Beam; Slow-Loading",
+  },
+  {
+    name: "Light Laser Cannon",
+    arc: "Starboard",
+    range: 15,
+    attackDice: 4,
+    traits: "Mini-Beam; Slow-Loading",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Aft",
+    range: 10,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Port",
+    range: 10,
+    attackDice: 8,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Starboard",
+    range: 10,
+    attackDice: 8,
+    traits: "Twin-Linked",
+  },
+];
+
+const OMEGA_COMMAND_DESTROYER_WEAPONS = [
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Forward",
+    range: 30,
+    attackDice: 8,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Heavy Laser Cannon",
+    arc: "Boresight Aft",
+    range: 30,
+    attackDice: 6,
+    traits: "Beam; Double Damage",
+  },
+  {
+    name: "Light Laser Cannon",
+    arc: "Port",
+    range: 15,
+    attackDice: 6,
+    traits: "Mini-Beam; Slow-Loading",
+  },
+  {
+    name: "Light Laser Cannon",
+    arc: "Starboard",
+    range: 15,
+    attackDice: 6,
+    traits: "Mini-Beam; Slow-Loading",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 12,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 6,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 16,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 16,
+    traits: "Twin-Linked",
+  },
+];
+
+const OMEGA_PULSE_DESTROYER_WEAPONS = [
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 12,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Aft",
+    range: 12,
+    attackDice: 6,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Port",
+    range: 12,
+    attackDice: 20,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Heavy Pulse Cannon",
+    arc: "Starboard",
+    range: 12,
+    attackDice: 20,
+    traits: "Twin-Linked",
   },
 ];
 
@@ -1920,17 +2284,33 @@ async function syncWeaponsForShipModel(
   return synced;
 }
 
+const ORION_SPACE_STATION_WEAPONS: WeaponMaintenanceSeed[] = [
+  {
+    name: "Medium Pulse Cannon",
+    arc: "Turret",
+    range: 15,
+    attackDice: 5,
+    traits: "Twin-Linked",
+  },
+  {
+    name: "Missile Rack",
+    arc: "Turret",
+    range: 45,
+    attackDice: 5,
+    traits: "Precise; Slow-Loading; Super AP",
+  },
+];
+
 const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
-    name: "Orion Space Station",
+    name: "Orion Space Station (Early Years)",
     aliases: [
-      "Orion Space Station",
-      "Orion-class Space Station",
-      "Orion Starbase",
-      "Orion Starbase, Alpha Version (Variant)",
+      "Orion Space Station (Early Years)",
+      "Orion-class Space Station (Early Years)",
+      "Orion Starbase (Early Years)",
     ],
     filename: "orion-space-station.glb",
-    faction: "Earth Alliance",
+    faction: "Earth Alliance - Early Years",
     pointCost: 200,
     priorityLevel: "raid",
     shipClass: "Border Station",
@@ -1954,22 +2334,76 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     weaponDamage: 5,
     description:
       "Earth Alliance Orion-class Raid-level Border Station from Powers & Principalities",
-    weapons: [
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Turret",
-        range: 15,
-        attackDice: 5,
-        traits: "Twin-Linked",
-      },
-      {
-        name: "Missile Rack",
-        arc: "Turret",
-        range: 45,
-        attackDice: 5,
-        traits: "Precise; Slow-Loading; Super AP",
-      },
+    weapons: ORION_SPACE_STATION_WEAPONS,
+  },
+  {
+    name: "Orion Space Station",
+    aliases: [
+      "Orion Space Station",
+      "Orion-class Space Station",
+      "Orion Starbase",
+      "Orion Starbase, Alpha Version (Variant)",
     ],
+    filename: "orion-space-station.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Border Station",
+    hull: 4,
+    troops: 15,
+    damage: 75,
+    // The current model has one cripple threshold. The station's separate
+    // Heavily Damaged threshold (40) is tracked in the implementation plan.
+    damageThreshold: 20,
+    hullRating: 4,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 0,
+    turns: 0,
+    turnAngle: 0,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 4; Immobile; Interceptors 5; Space Station",
+    smallCraft: null,
+    baseRadiusInches: ORION_SPACE_STATION_BASE_RADIUS_INCHES,
+    weaponRange: 45,
+    weaponDamage: 5,
+    description:
+      "Earth Alliance Orion-class Raid-level Border Station from Powers & Principalities",
+    weapons: ORION_SPACE_STATION_WEAPONS,
+  },
+  {
+    name: "Orion Space Station (Crusade Era)",
+    aliases: [
+      "Orion Space Station (Crusade Era)",
+      "Orion-class Space Station (Crusade Era)",
+      "Orion Starbase (Crusade Era)",
+    ],
+    filename: "orion-space-station.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Border Station",
+    hull: 4,
+    troops: 15,
+    damage: 75,
+    // The current model has one cripple threshold. The station's separate
+    // Heavily Damaged threshold (40) is tracked in the implementation plan.
+    damageThreshold: 20,
+    hullRating: 4,
+    crew: 0,
+    crewThreshold: 0,
+    speed: 0,
+    turns: 0,
+    turnAngle: 0,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 4; Immobile; Interceptors 5; Space Station",
+    smallCraft: null,
+    baseRadiusInches: ORION_SPACE_STATION_BASE_RADIUS_INCHES,
+    weaponRange: 45,
+    weaponDamage: 5,
+    description:
+      "Earth Alliance Orion-class Raid-level Border Station from Powers & Principalities",
+    weapons: ORION_SPACE_STATION_WEAPONS,
   },
   {
     name: "Shadow Scout",
@@ -2193,18 +2627,13 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     ],
   },
   {
-    name: "Omega Command Destroyer",
-    aliases: [
-      "Omega Command Destroyer",
-      "Omega-class Command Destroyer",
-      "Command Omega",
-      "Command Omega Destroyer",
-    ],
-    filename: "command-omega3.glb",
-    faction: "Earth Alliance",
+    name: "Omega Destroyer",
+    aliases: ["Omega Destroyer", "Omega-class Destroyer", "Omega Class Destroyer"],
+    filename: "omega3.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
     pointCost: 225,
     priorityLevel: "battle",
-    shipClass: "Command Destroyer",
+    shipClass: "Destroyer",
     hull: 6,
     troops: 4,
     damage: 48,
@@ -2216,70 +2645,46 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     turns: 1,
     turnAngle: 45,
     crewQuality: "Regular",
-    traits: "Anti-Fighter 6; Command +2; Interceptors 3; Jump Engine; Lumbering",
+    traits: "Anti-Fighter 6; Interceptors 3; Jump Engine; Lumbering",
     smallCraft: "Aurora Starfury Flight (4)",
     weaponRange: 30,
-    weaponDamage: 6,
+    weaponDamage: 8,
+    description:
+      "Earth Alliance Dawn of the Third Age Omega-class destroyer",
+    weapons: OMEGA_DESTROYER_WEAPONS,
+  },
+  {
+    name: "Omega Command Destroyer",
+    aliases: [
+      "Omega Command Destroyer",
+      "Omega-class Command Destroyer",
+      "Command Omega",
+      "Command Omega Destroyer",
+    ],
+    filename: "command-omega3.glb",
+    faction: "Earth Alliance",
+    pointCost: 400,
+    priorityLevel: "war",
+    shipClass: "Command Destroyer",
+    hull: 6,
+    troops: 8,
+    damage: 58,
+    damageThreshold: 14,
+    hullRating: 6,
+    crew: 84,
+    crewThreshold: 18,
+    speed: 7,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Anti-Fighter 8; Carrier 2; Command +3; Interceptors 5; Jump Engine; Lumbering",
+    smallCraft: "Aurora Starfury Flight (6)",
+    weaponRange: 30,
+    weaponDamage: 16,
     description:
       "Earth Alliance Omega-class command destroyer using the updated rotating Omega hull mesh",
-    weapons: [
-      {
-        name: "Heavy Laser Cannon",
-        arc: "Boresight Forward",
-        range: 30,
-        attackDice: 6,
-        traits: "Beam; Double Damage",
-      },
-      {
-        name: "Heavy Laser Cannon",
-        arc: "Boresight Aft",
-        range: 30,
-        attackDice: 4,
-        traits: "Beam; Double Damage",
-      },
-      {
-        name: "Heavy Pulse Cannon",
-        arc: "Forward",
-        range: 12,
-        attackDice: 4,
-        traits: "Twin-Linked",
-      },
-      {
-        name: "Light Laser Cannon",
-        arc: "Port",
-        range: 15,
-        attackDice: 4,
-        traits: "Mini-Beam; Slow-Loading",
-      },
-      {
-        name: "Light Laser Cannon",
-        arc: "Starboard",
-        range: 15,
-        attackDice: 4,
-        traits: "Mini-Beam; Slow-Loading",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Aft",
-        range: 10,
-        attackDice: 4,
-        traits: "Twin-Linked",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Port",
-        range: 10,
-        attackDice: 8,
-        traits: "Twin-Linked",
-      },
-      {
-        name: "Medium Pulse Cannon",
-        arc: "Starboard",
-        range: 10,
-        attackDice: 8,
-        traits: "Twin-Linked",
-      },
-    ],
+    weapons: OMEGA_COMMAND_DESTROYER_WEAPONS,
   },
   {
     name: "Hyperion Missile Cruiser",
@@ -3133,6 +3538,469 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     description:
       "Earth Alliance Early Years Explorer-class survey ship with command, scout, and plasma support systems",
     weapons: EXPLORER_EARLY_WEAPONS,
+  },
+  {
+    name: "Hermes Transport",
+    aliases: ["Hermes Transport"],
+    filename: "hermes.glb",
+    faction: "Earth Alliance - Early Years",
+    pointCost: 25,
+    priorityLevel: "patrol",
+    shipClass: "Transport",
+    hull: 4,
+    troops: 1,
+    damage: 10,
+    damageThreshold: 3,
+    hullRating: 4,
+    crew: 12,
+    crewThreshold: 3,
+    speed: 12,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1; Jump Engine",
+    smallCraft: "Tiger Starfury Flight (1)",
+    weaponRange: 20,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Early Years Hermes-class transport with one Tiger Starfury flight",
+    weapons: HERMES_EARLY_WEAPONS,
+  },
+  {
+    name: "Artemis-class Heavy Frigate (Third Age)",
+    aliases: ["Artemis-class Heavy Frigate (Third Age)"],
+    filename: "artemis.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Heavy Frigate",
+    hull: 5,
+    troops: 2,
+    damage: 18,
+    damageThreshold: 5,
+    hullRating: 5,
+    crew: 22,
+    crewThreshold: 6,
+    speed: 10,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 4; Interceptors 2",
+    smallCraft: null,
+    weaponRange: 12,
+    weaponDamage: 5,
+    description:
+      "Earth Alliance Dawn of the Third Age Artemis-class heavy frigate",
+    weapons: ARTEMIS_HEAVY_FRIGATE_WEAPONS,
+  },
+  {
+    name: "Avenger Heavy Carrier (Third Age)",
+    aliases: ["Avenger Heavy Carrier (Third Age)"],
+    filename: "avenger.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Heavy Carrier",
+    hull: 5,
+    troops: 6,
+    damage: 40,
+    damageThreshold: 10,
+    hullRating: 5,
+    crew: 50,
+    crewThreshold: 12,
+    speed: 7,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Carrier 4; Command +1; Fleet Carrier; Interceptors 2; Jump Engine; Lumbering; Shuttles 2",
+    smallCraft: "Aurora Starfury Flight (8)",
+    weaponRange: 8,
+    weaponDamage: 6,
+    description:
+      "Earth Alliance Dawn of the Third Age Avenger-class heavy carrier with Aurora Starfury flights",
+    weapons: AVENGER_WEAPONS,
+  },
+  {
+    name: "Explorer Survey Ship (Third Age)",
+    aliases: ["Explorer Survey Ship (Third Age)"],
+    filename: "explorer.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Survey Ship",
+    hull: 4,
+    troops: 10,
+    damage: 140,
+    damageThreshold: 40,
+    hullRating: 4,
+    crew: 65,
+    crewThreshold: 15,
+    speed: 4,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Anti-Fighter 6; Command +1; Interceptors 3; Jump Engine; Lumbering; Scout",
+    smallCraft: "Aurora Starfury Flight (6)",
+    weaponRange: 12,
+    weaponDamage: 6,
+    description:
+      "Earth Alliance Dawn of the Third Age Explorer-class survey ship with pulse batteries",
+    weapons: EXPLORER_PULSE_WEAPONS,
+  },
+  {
+    name: "Hermes Transport (Third Age)",
+    aliases: ["Hermes Transport (Third Age)"],
+    filename: "hermes.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 25,
+    priorityLevel: "patrol",
+    shipClass: "Transport",
+    hull: 4,
+    troops: 1,
+    damage: 10,
+    damageThreshold: 3,
+    hullRating: 4,
+    crew: 12,
+    crewThreshold: 3,
+    speed: 12,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1; Jump Engine",
+    smallCraft: "Aurora Starfury Flight (1)",
+    weaponRange: 20,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Dawn of the Third Age Hermes-class transport with one Aurora Starfury flight",
+    weapons: HERMES_PULSE_WEAPONS,
+  },
+  {
+    name: "Hyperion Heavy Cruiser (Third Age)",
+    aliases: ["Hyperion Heavy Cruiser (Third Age)"],
+    filename: "hyperion.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Heavy Cruiser",
+    hull: 5,
+    troops: 3,
+    damage: 28,
+    damageThreshold: 6,
+    hullRating: 5,
+    crew: 32,
+    crewThreshold: 6,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Veteran",
+    traits: "Anti-Fighter 2; Interceptors 2; Jump Engine",
+    smallCraft: "Aurora Starfury Flight (1)",
+    weaponRange: 18,
+    weaponDamage: 4,
+    description:
+      "Earth Alliance Dawn of the Third Age Hyperion-class heavy cruiser",
+    weapons: HYPERION_PULSE_SECONDARY_WEAPONS,
+  },
+  {
+    name: "Hyperion Assault Cruiser (Third Age)",
+    aliases: ["Hyperion Assault Cruiser (Third Age)"],
+    filename: "hyperion.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Assault Cruiser",
+    hull: 5,
+    troops: 6,
+    damage: 28,
+    damageThreshold: 6,
+    hullRating: 5,
+    crew: 32,
+    crewThreshold: 6,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Veteran",
+    traits: "Anti-Fighter 2; Interceptors 2; Jump Engine; Shuttles 2",
+    smallCraft: null,
+    weaponRange: 10,
+    weaponDamage: 8,
+    description:
+      "Earth Alliance Dawn of the Third Age Hyperion-class assault cruiser",
+    weapons: HYPERION_ASSAULT_PULSE_WEAPONS,
+  },
+  {
+    name: "Nova Dreadnought (Third Age)",
+    aliases: ["Nova Dreadnought (Third Age)"],
+    filename: "nova.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Dreadnought",
+    hull: 5,
+    troops: 2,
+    damage: 36,
+    damageThreshold: 9,
+    hullRating: 5,
+    crew: 45,
+    crewThreshold: 12,
+    speed: 6,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 2; Jump Engine; Lumbering",
+    smallCraft: "Aurora Starfury Flight (4)",
+    weaponRange: 12,
+    weaponDamage: 14,
+    description:
+      "Earth Alliance Dawn of the Third Age Nova-class dreadnought with heavy pulse broadsides",
+    weapons: NOVA_DREADNOUGHT_PULSE_WEAPONS,
+  },
+  {
+    name: "Olympus Corvette (Third Age)",
+    aliases: ["Olympus Corvette (Third Age)"],
+    filename: "olympus.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Corvette",
+    hull: 5,
+    troops: 1,
+    damage: 18,
+    damageThreshold: 4,
+    hullRating: 5,
+    crew: 20,
+    crewThreshold: 4,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1",
+    smallCraft: null,
+    weaponRange: 30,
+    weaponDamage: 4,
+    description:
+      "Earth Alliance Dawn of the Third Age Olympus-class corvette",
+    weapons: OLYMPUS_CORVETTE_EARLY_WEAPONS,
+  },
+  {
+    name: "Omega Pulse Destroyer",
+    aliases: ["Omega Pulse Destroyer"],
+    filename: "omega3.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 225,
+    priorityLevel: "battle",
+    shipClass: "Pulse Destroyer",
+    hull: 6,
+    troops: 4,
+    damage: 48,
+    damageThreshold: 12,
+    hullRating: 6,
+    crew: 66,
+    crewThreshold: 16,
+    speed: 7,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 6; Interceptors 3; Jump Engine; Lumbering",
+    smallCraft: "Aurora Starfury Flight (4)",
+    weaponRange: 12,
+    weaponDamage: 20,
+    description:
+      "Earth Alliance Dawn of the Third Age Omega-class pulse destroyer variant",
+    weapons: OMEGA_PULSE_DESTROYER_WEAPONS,
+  },
+  {
+    name: "Oracle Scout Cruiser (Third Age)",
+    aliases: ["Oracle Scout Cruiser (Third Age)"],
+    filename: "oracle.glb",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Scout Cruiser",
+    hull: 4,
+    troops: 0,
+    damage: 16,
+    damageThreshold: 5,
+    hullRating: 4,
+    crew: 22,
+    crewThreshold: 6,
+    speed: 12,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 3; Interceptors 2; Jump Engine; Scout; Stealth +3",
+    smallCraft: null,
+    weaponRange: 30,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Dawn of the Third Age Oracle-class scout cruiser",
+    weapons: ORACLE_EARLY_WEAPONS,
+  },
+  {
+    name: "Explorer Survey Ship (Crusade Era)",
+    aliases: ["Explorer Survey Ship (Crusade Era)"],
+    filename: "explorer.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Survey Ship",
+    hull: 4,
+    troops: 10,
+    damage: 140,
+    damageThreshold: 40,
+    hullRating: 4,
+    crew: 65,
+    crewThreshold: 15,
+    speed: 4,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Anti-Fighter 6; Command +1; Interceptors 3; Jump Engine; Lumbering; Scout",
+    smallCraft: "Aurora Starfury Flight (6)",
+    weaponRange: 12,
+    weaponDamage: 6,
+    description:
+      "Earth Alliance Crusade Era Explorer-class survey ship",
+    weapons: EXPLORER_PULSE_WEAPONS,
+  },
+  {
+    name: "Hermes Transport (Crusade Era)",
+    aliases: ["Hermes Transport (Crusade Era)"],
+    filename: "hermes.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 25,
+    priorityLevel: "patrol",
+    shipClass: "Transport",
+    hull: 4,
+    troops: 1,
+    damage: 10,
+    damageThreshold: 3,
+    hullRating: 4,
+    crew: 12,
+    crewThreshold: 3,
+    speed: 12,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Interceptors 1; Jump Engine",
+    smallCraft: "Aurora Starfury Flight (1)",
+    weaponRange: 20,
+    weaponDamage: 2,
+    description:
+      "Earth Alliance Crusade Era Hermes-class transport",
+    weapons: HERMES_PULSE_WEAPONS,
+  },
+  {
+    name: "Hyperion Heavy Cruiser (Crusade Era)",
+    aliases: ["Hyperion Heavy Cruiser (Crusade Era)"],
+    filename: "hyperion.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Heavy Cruiser",
+    hull: 5,
+    troops: 3,
+    damage: 28,
+    damageThreshold: 6,
+    hullRating: 5,
+    crew: 32,
+    crewThreshold: 6,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Veteran",
+    traits: "Anti-Fighter 2; Interceptors 2; Jump Engine",
+    smallCraft: "Aurora Starfury Flight (1)",
+    weaponRange: 18,
+    weaponDamage: 4,
+    description:
+      "Earth Alliance Crusade Era Hyperion-class heavy cruiser",
+    weapons: HYPERION_PULSE_SECONDARY_WEAPONS,
+  },
+  {
+    name: "Hyperion Assault Cruiser (Crusade Era)",
+    aliases: ["Hyperion Assault Cruiser (Crusade Era)"],
+    filename: "hyperion.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Assault Cruiser",
+    hull: 5,
+    troops: 6,
+    damage: 28,
+    damageThreshold: 6,
+    hullRating: 5,
+    crew: 32,
+    crewThreshold: 6,
+    speed: 8,
+    turns: 2,
+    turnAngle: 45,
+    crewQuality: "Veteran",
+    traits: "Anti-Fighter 2; Interceptors 2; Jump Engine; Shuttles 2",
+    smallCraft: null,
+    weaponRange: 10,
+    weaponDamage: 8,
+    description:
+      "Earth Alliance Crusade Era Hyperion-class assault cruiser",
+    weapons: HYPERION_ASSAULT_PULSE_WEAPONS,
+  },
+  {
+    name: "Omega Destroyer (Crusade Era)",
+    aliases: ["Omega Destroyer (Crusade Era)"],
+    filename: "omega3.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 225,
+    priorityLevel: "battle",
+    shipClass: "Destroyer",
+    hull: 6,
+    troops: 4,
+    damage: 48,
+    damageThreshold: 10,
+    hullRating: 6,
+    crew: 62,
+    crewThreshold: 14,
+    speed: 7,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 6; Interceptors 3; Jump Engine; Lumbering",
+    smallCraft: "Aurora Starfury Flight (4)",
+    weaponRange: 30,
+    weaponDamage: 8,
+    description:
+      "Earth Alliance Crusade Era Omega-class destroyer",
+    weapons: OMEGA_DESTROYER_WEAPONS,
+  },
+  {
+    name: "Omega Command Destroyer (Crusade Era)",
+    aliases: ["Omega Command Destroyer (Crusade Era)"],
+    filename: "command-omega3.glb",
+    faction: "Earth Alliance - Crusade Era",
+    pointCost: 400,
+    priorityLevel: "war",
+    shipClass: "Command Destroyer",
+    hull: 6,
+    troops: 8,
+    damage: 58,
+    damageThreshold: 14,
+    hullRating: 6,
+    crew: 84,
+    crewThreshold: 18,
+    speed: 7,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits:
+      "Anti-Fighter 8; Carrier 2; Command +3; Interceptors 5; Jump Engine; Lumbering",
+    smallCraft: "Aurora Starfury Flight (6)",
+    weaponRange: 30,
+    weaponDamage: 16,
+    description:
+      "Earth Alliance Crusade Era Omega-class command destroyer",
+    weapons: OMEGA_COMMAND_DESTROYER_WEAPONS,
   },
   {
     name: "G'Lan-class Mag Cruiser",
@@ -4148,9 +5016,55 @@ async function removeStaleHyperionBaseRows(): Promise<void> {
   }
 }
 
+async function removeStaleOracleBaseRows(): Promise<void> {
+  const result = await pool.query<{ deleted_count: number }>(
+    `
+      WITH canonical AS (
+        SELECT id
+        FROM ship_models
+        WHERE lower(name) = lower('Oracle Scout Cruiser')
+        ORDER BY id
+        LIMIT 1
+      ),
+      stale AS (
+        SELECT id
+        FROM ship_models
+        WHERE lower(name) = lower('Oracle Cruiser')
+          AND EXISTS (SELECT 1 FROM canonical)
+      ),
+      reassigned_ships AS (
+        UPDATE ships
+        SET ship_model_id = (SELECT id FROM canonical)
+        WHERE ship_model_id IN (SELECT id FROM stale)
+        RETURNING id
+      ),
+      deleted_weapons AS (
+        DELETE FROM weapons
+        WHERE ship_model_id IN (SELECT id FROM stale)
+        RETURNING id
+      ),
+      deleted_models AS (
+        DELETE FROM ship_models
+        WHERE id IN (SELECT id FROM stale)
+        RETURNING id
+      )
+      SELECT count(*)::int AS deleted_count FROM deleted_models
+    `,
+  );
+
+  const deletedCount = result.rows[0]?.deleted_count ?? 0;
+  if (deletedCount > 0) {
+    logger.info(
+      { deletedCount },
+      "Removed stale duplicate Oracle Cruiser ship-model rows",
+    );
+  }
+}
+
 async function removeDuplicateCanonicalShipRows(): Promise<void> {
   const duplicateProneShipNames = [
     "Avioki Heavy Cruiser",
+    "Avenger Heavy Carrier",
     "G'Quan Heavy Cruiser",
     "Shadow Battlecrab",
     "Tethys-class Cutter",
@@ -4222,6 +5136,105 @@ async function removeDuplicateCanonicalShipRows(): Promise<void> {
       { removedShipModelDuplicates: result.rows },
       "Removed duplicate canonical ship-model rows",
     );
+  }
+}
+
+async function normalizeEarthAllianceEraFactions(): Promise<void> {
+  const earlyYearsShips = [
+    "Artemis-class Escort Frigate",
+    "Artemis-class Heavy Frigate",
+    "Avenger Heavy Carrier",
+    "Explorer Survey Ship",
+    "Hermes Transport",
+    "Hyperion Assault Cruiser",
+    "Hyperion Command Cruiser",
+    "Hyperion Heavy Cruiser",
+    "Hyperion Missile Cruiser",
+    "Hyperion Pulse Cruiser",
+    "Hyperion Rail Cruiser",
+    "Nova Dreadnought",
+    "Nova Starfury Flight",
+    "Olympus Corvette",
+    "Olympus Gunship",
+    "Oracle Cruiser",
+    "Oracle Scout Cruiser",
+    "Orion Space Station (Early Years)",
+    "Orestes-class Battleship",
+    "Sagittarius Missile Cruiser",
+    "Tethys-class Cutter",
+    "Tethys-class Laser Boat",
+    "Tethys-class Missile Boat",
+    "Tiger Starfury Flight",
+  ];
+  const thirdAgeShips = [
+    "Artemis-class Heavy Frigate (Third Age)",
+    "Avenger Heavy Carrier (Third Age)",
+    "Explorer Survey Ship (Third Age)",
+    "Hermes Transport (Third Age)",
+    "Hyperion Assault Cruiser (Third Age)",
+    "Hyperion Heavy Cruiser (Third Age)",
+    "Nova Dreadnought (Third Age)",
+    "Olympus Corvette (Third Age)",
+    "Omega Command Destroyer",
+    "Omega Destroyer",
+    "Omega Pulse Destroyer",
+    "Oracle Scout Cruiser (Third Age)",
+    "Orion Space Station",
+  ];
+  const crusadeShips = [
+    "Explorer Survey Ship (Crusade Era)",
+    "Hermes Transport (Crusade Era)",
+    "Hyperion Assault Cruiser (Crusade Era)",
+    "Hyperion Heavy Cruiser (Crusade Era)",
+    "Omega Command Destroyer (Crusade Era)",
+    "Omega Destroyer (Crusade Era)",
+    "Orion Space Station (Crusade Era)",
+    "Thunderbolt Starfury Flight",
+  ];
+
+  const result = await pool.query<{
+    early_years_count: number;
+    third_age_count: number;
+    crusade_count: number;
+  }>(
+    `
+      WITH early_years AS (
+        UPDATE ship_models
+        SET faction = 'Earth Alliance - Early Years'
+        WHERE name = ANY($1::text[])
+          AND faction IS DISTINCT FROM 'Earth Alliance - Early Years'
+        RETURNING id
+      ),
+      third_age AS (
+        UPDATE ship_models
+        SET faction = 'Earth Alliance - Dawn of the Third Age'
+        WHERE name = ANY($2::text[])
+          AND faction IS DISTINCT FROM 'Earth Alliance - Dawn of the Third Age'
+        RETURNING id
+      ),
+      crusade AS (
+        UPDATE ship_models
+        SET faction = 'Earth Alliance - Crusade Era'
+        WHERE name = ANY($3::text[])
+          AND faction IS DISTINCT FROM 'Earth Alliance - Crusade Era'
+        RETURNING id
+      )
+      SELECT
+        (SELECT count(*)::int FROM early_years) AS early_years_count,
+        (SELECT count(*)::int FROM third_age) AS third_age_count,
+        (SELECT count(*)::int FROM crusade) AS crusade_count
+    `,
+    [earlyYearsShips, thirdAgeShips, crusadeShips],
+  );
+
+  const counts = result.rows[0];
+  if (
+    counts &&
+    (counts.early_years_count > 0 ||
+      counts.third_age_count > 0 ||
+      counts.crusade_count > 0)
+  ) {
+    logger.info(counts, "Normalized Earth Alliance ships into 2E era factions");
   }
 }
 
@@ -4677,6 +5690,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     );
 
     await removeStaleHyperionBaseRows();
+    await removeStaleOracleBaseRows();
 
     for (const fighter of FIGHTER_FLIGHTS) {
       const fighterResult = await pool.query<{ id: number }>(
@@ -5308,8 +6322,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             weapon_range = 8,
             weapon_damage = 6,
             description = 'Earth Alliance Avenger-class heavy carrier with extensive Starfury launch capacity'
-          WHERE lower(filename) = 'avenger.glb'
-            OR lower(name) IN ('avenger', 'avenger heavy carrier', 'avenger-class heavy carrier')
+          WHERE lower(name) IN ('avenger', 'avenger heavy carrier', 'avenger-class heavy carrier')
           RETURNING id
         ),
         inserted AS (
@@ -5970,6 +6983,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       await syncWeaponsForShipModel(tinashiId, TINASHI_WEAPONS);
     }
 
+    await normalizeEarthAllianceEraFactions();
     await removeDuplicateCanonicalShipRows();
 
     // Ancient race identity and thresholds are authoritative data, not

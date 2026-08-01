@@ -1887,6 +1887,7 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
+  "hermes.glb": 0.7,
   [COMMAND_HYPERION_MODEL_FILENAME]: 1.2,
   [RAILGUN_HYPERION_MODEL_FILENAME]: 1.2,
   "missile-hyperion.glb": 1.2,
@@ -2870,9 +2871,11 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "dead-hyperion.glb": "20260718-163044",
   [DEAD_OMEGA_MODEL_FILENAME]: "20260718-231918",
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
+  "hermes.glb": "20260729-204846",
   "kirishiac.glb": "20260725-004107",
   "kirishiac1.glb": "20260725-beam-0100",
   "missile-hyperion.glb": "20260719-005010",
+  "nova.glb": "20260731-212414",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260729-194957",
   [COMMAND_OMEGA_MODEL_FILENAME]: "20260729-195216",
   [OMEGA_X_MODEL_FILENAME]: "20260729-202747",
