@@ -17037,10 +17037,7 @@ export default function GameBoard() {
         `/api/games/${gameId}/attack-audit-log?limit=80`,
       ),
     enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
-    refetchInterval:
-      game?.status === "active" && !pausePollingRef.current
-        ? POLL_INTERVAL_MS
-        : false,
+    refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const { data: movementAuditData } = useQuery<
     AuditLogResponse<MovementAuditLogEntry>
@@ -17051,10 +17048,7 @@ export default function GameBoard() {
         `/api/games/${gameId}/movement-audit-log?limit=80`,
       ),
     enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
-    refetchInterval:
-      game?.status === "active" && !pausePollingRef.current
-        ? POLL_INTERVAL_MS
-        : false,
+    refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const { data: specialActionAuditData } = useQuery<
     AuditLogResponse<SpecialActionAuditLogEntry>
@@ -17065,10 +17059,7 @@ export default function GameBoard() {
         `/api/games/${gameId}/special-action-audit-log?limit=80`,
       ),
     enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
-    refetchInterval:
-      game?.status === "active" && !pausePollingRef.current
-        ? POLL_INTERVAL_MS
-        : false,
+    refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const battleLogEntries = useMemo<BattleLogEntry[]>(() => {
     const entries: BattleLogEntry[] = [
