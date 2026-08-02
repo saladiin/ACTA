@@ -9636,7 +9636,7 @@ router.get("/games/:gameId/attack-audit-log", requireAuth, async (req, res): Pro
     .select()
     .from(gameAttackAuditLogsTable)
     .where(eq(gameAttackAuditLogsTable.gameId, params.data.gameId))
-    .orderBy(sql`created_at ASC`, sql`id ASC`)
+    .orderBy(desc(gameAttackAuditLogsTable.createdAt), desc(gameAttackAuditLogsTable.id))
     .limit(limit);
   res.json({ gameId: params.data.gameId, count: rows.length, logs: rows });
 });
@@ -9669,7 +9669,7 @@ router.get("/games/:gameId/movement-audit-log", requireAuth, async (req, res): P
     .select()
     .from(gameMovementAuditLogsTable)
     .where(eq(gameMovementAuditLogsTable.gameId, params.data.gameId))
-    .orderBy(sql`created_at ASC`, sql`id ASC`)
+    .orderBy(desc(gameMovementAuditLogsTable.createdAt), desc(gameMovementAuditLogsTable.id))
     .limit(limit);
   res.json({ gameId: params.data.gameId, count: rows.length, logs: rows });
 });
@@ -9702,7 +9702,7 @@ router.get("/games/:gameId/special-action-audit-log", requireAuth, async (req, r
     .select()
     .from(gameSpecialActionAuditLogsTable)
     .where(eq(gameSpecialActionAuditLogsTable.gameId, params.data.gameId))
-    .orderBy(sql`created_at ASC`, sql`id ASC`)
+    .orderBy(desc(gameSpecialActionAuditLogsTable.createdAt), desc(gameSpecialActionAuditLogsTable.id))
     .limit(limit);
   res.json({ gameId: params.data.gameId, count: rows.length, logs: rows });
 });
