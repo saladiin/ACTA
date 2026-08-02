@@ -66,6 +66,9 @@ type Tuning = {
   beamCorePulse?: number;
   diffuseTextureIndex?: number;
   alphaTextureIndex?: number;
+  gateSize?: number;
+  portalSize?: number;
+  portalOffset?: number;
 };
 
 function impactFadeEnvelope(t: number): number {
@@ -166,6 +169,8 @@ type SpecialStation = {
     | "weapon-arc-projection-state-sample"
     | "shield-token-hover"
     | "godot-jump-point-mesh"
+    | "jump-gate-mesh"
+    | "jump-gate-portal-combo"
     | "gas-cloud-terrain"
     | "test-cloud-mesh"
     | "cloud-flipbook-damage"
@@ -970,11 +975,85 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
       },
       {
         kind: "special",
+        id: "jump-point-mesh",
+        label: "Jump Point Mesh",
+        note: "Imported Godot jump-point mesh with panning shader texture from the hyperspace-jump-point source folder.",
+        effect: "godot-jump-point-mesh",
+        position: [-17, 8],
+        modelFilename: "_jumppoint.glb",
+        textureFilename: "T_Noise1_nk.png",
+        tuning: {
+          color: "#38e8ff",
+          secondaryColor: "#014cff",
+          speed: 1.35,
+          size: 1,
+          fade: 1.15,
+          intensity: 1.6,
+          spread: 1.25,
+          count: 8,
+          arc: 1.1,
+          thickness: 1,
+          portalOffset: -5,
+        },
+      },
+      {
+        kind: "special",
+        id: "new-hyperspace-point-mesh",
+        label: "New Hyperspace Portal",
+        note: "Replacement portal geometry using the same panning jump-point texture, color ramp, and animation.",
+        effect: "godot-jump-point-mesh",
+        position: [0, 28],
+        modelFilename: "new-hyperspace-point.glb",
+        textureFilename: "T_Noise1_nk.png",
+        tuning: {
+          color: "#38e8ff",
+          secondaryColor: "#014cff",
+          speed: 1.35,
+          size: 1.15,
+          fade: 1.15,
+          intensity: 1.6,
+          spread: 1.25,
+          count: 8,
+          arc: 1.1,
+          thickness: 1,
+          portalOffset: -5,
+          rotationX: 90,
+          rotationY: 180,
+        },
+      },
+      {
+        kind: "special",
+        id: "jump-gate-portal-combo",
+        label: "Jump Gate + Portal",
+        note: "Jump gate mesh with the Godot jump-point portal seated inside it and shifted behind the front arc marker.",
+        effect: "jump-gate-portal-combo",
+        position: [0, 8],
+        modelFilename: "jump-gate-4strut.glb",
+        tuning: {
+          color: "#38e8ff",
+          secondaryColor: "#014cff",
+          speed: 1.35,
+          size: 1,
+          fade: 1.15,
+          intensity: 1.6,
+          spread: 1.25,
+          count: 8,
+          arc: 1.1,
+          thickness: 1,
+          gateSize: 0.85,
+          portalSize: 1.15,
+          portalOffset: -5,
+          rotationX: 90,
+          rotationY: 180,
+        },
+      },
+      {
+        kind: "special",
         id: "energy-mine",
         label: "Energy Mine",
         note: "Expanding area pulse for mine detonation.",
         effect: "energy-mine",
-        position: [-9, 8],
+        position: [17, 8],
         tuning: { color: "#f472b6", secondaryColor: "#fde68a", speed: 0.85, size: 1.15, fade: 1, thickness: 1.2 },
       },
       {
@@ -983,7 +1062,7 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Stealth Shimmer",
         note: "Scout, stealth, or sensor ghost visualization.",
         effect: "stealth-shimmer",
-        position: [10, 8],
+        position: [-17, 28],
         tuning: { color: "#c4b5fd", secondaryColor: "#67e8f9", speed: 0.75, size: 1, fade: 1.5, intensity: 0.85 },
       },
     ],
@@ -1450,6 +1529,8 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "battlecrab.glb": "20260720-214405-organic",
   "vorlon-dreadnought.glb": "20260727-convergence-beam-v1",
   "_jumppoint.glb": "20260719-192131",
+  "new-hyperspace-point.glb": "20260801-233055",
+  "jump-gate-4strut.glb": "20260731-raw-4strut-v1",
 };
 
 const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
@@ -7607,10 +7688,14 @@ function GodotJumpPointShaderModel({
   filename,
   textureFilename,
   tuning,
+  depthTest = true,
+  renderOrder = 0,
 }: {
   filename: string;
   textureFilename: string;
   tuning: Tuning;
+  depthTest?: boolean;
+  renderOrder?: number;
 }) {
   const { scene } = useGLTF(showcaseModelUrl(filename));
   const baseTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
@@ -7623,6 +7708,22 @@ function GodotJumpPointShaderModel({
     baseTexture.needsUpdate = true;
   }, [baseTexture]);
 
+  const meshYBounds = useMemo(() => {
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    scene.traverse((child) => {
+      if (!(child as THREE.Mesh).isMesh) return;
+      const geometry = (child as THREE.Mesh).geometry;
+      geometry.computeBoundingBox();
+      if (!geometry.boundingBox) return;
+      min = Math.min(min, geometry.boundingBox.min.y);
+      max = Math.max(max, geometry.boundingBox.max.y);
+    });
+    return Number.isFinite(min) && Number.isFinite(max) && max > min
+      ? { min, max }
+      : { min: 0, max: 1 };
+  }, [scene]);
+
   const material = useMemo(() => {
     const shaderMaterial = new THREE.ShaderMaterial({
       uniforms: {
@@ -7630,11 +7731,20 @@ function GodotJumpPointShaderModel({
         uTime: { value: 0 },
         uOpacity: { value: tuning.intensity },
         uSpeed: { value: new THREE.Vector2(-0.5, -0.5) },
+        uColor: { value: new THREE.Color(tuning.color) },
+        uSecondaryColor: { value: new THREE.Color(tuning.secondaryColor) },
+        uNarrowFadeMinY: { value: meshYBounds.min },
+        uNarrowFadeMaxY: { value: meshYBounds.max },
       },
       vertexShader: `
         varying vec2 vUv;
+        varying float vNarrowTipFade;
+        uniform float uNarrowFadeMinY;
+        uniform float uNarrowFadeMaxY;
         void main() {
           vUv = uv;
+          float alongMesh = clamp((position.y - uNarrowFadeMinY) / max(uNarrowFadeMaxY - uNarrowFadeMinY, 0.0001), 0.0, 1.0);
+          vNarrowTipFade = smoothstep(0.0, 0.18, alongMesh);
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
@@ -7643,13 +7753,16 @@ function GodotJumpPointShaderModel({
         uniform float uTime;
         uniform float uOpacity;
         uniform vec2 uSpeed;
+        uniform vec3 uColor;
+        uniform vec3 uSecondaryColor;
         varying vec2 vUv;
+        varying float vNarrowTipFade;
 
         vec4 colorRamp(float value) {
-          vec4 c0 = vec4(0.0, 0.1625, 0.65, 0.0);
-          vec4 c1 = vec4(0.0, 0.1625, 0.65, 1.0);
-          vec4 c2 = vec4(0.093007304, 0.33048636, 1.0, 1.0);
-          vec4 c3 = vec4(0.1748, 0.68402004, 0.92, 1.0);
+          vec4 c0 = vec4(uSecondaryColor * 0.35, 0.0);
+          vec4 c1 = vec4(uSecondaryColor * 0.65, 1.0);
+          vec4 c2 = vec4(uSecondaryColor, 1.0);
+          vec4 c3 = vec4(uColor, 1.0);
           if (value < 0.102564104) {
             return mix(c0, c1, smoothstep(0.0076923077, 0.102564104, value));
           }
@@ -7681,26 +7794,28 @@ function GodotJumpPointShaderModel({
           float shaped = clamp(baseValue - subtractionMask(vUv), 0.0, 1.0);
           shaped = smoothstep(0.02, 0.78, shaped);
           vec4 ramped = colorRamp(shaped);
-          float alpha = ramped.a * shaped * edgeFade(vUv) * uOpacity;
+          float alpha = ramped.a * shaped * edgeFade(vUv) * vNarrowTipFade * uOpacity;
           if (alpha < 0.015) discard;
           gl_FragColor = vec4(ramped.rgb * (1.0 + shaped * 0.8), alpha);
         }
       `,
       transparent: true,
       depthWrite: false,
-      depthTest: true,
+      depthTest,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
     });
     materialRef.current = shaderMaterial;
     return shaderMaterial;
-  }, [baseTexture]);
+  }, [baseTexture, depthTest, meshYBounds.max, meshYBounds.min]);
 
   useFrame(({ clock }) => {
     if (!materialRef.current) return;
     materialRef.current.uniforms.uTime.value = clock.elapsedTime * tuning.speed;
     materialRef.current.uniforms.uOpacity.value = clamp(tuning.intensity, 0, 4);
+    materialRef.current.uniforms.uColor.value.set(tuning.color);
+    materialRef.current.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
   });
 
   const cloned = useMemo(() => {
@@ -7710,14 +7825,22 @@ function GodotJumpPointShaderModel({
       child.material = material;
       child.castShadow = false;
       child.receiveShadow = false;
+      child.renderOrder = renderOrder;
       child.raycast = () => null;
     });
     return c;
-  }, [scene, material]);
+  }, [scene, material, renderOrder]);
 
   const scale = useMemo(() => showcaseShipScale(cloned, 7.5 * tuning.size), [cloned, tuning.size]);
   return (
-    <group rotation={[Math.PI / 2, 0, 0]} scale={[scale, scale, scale]}>
+    <group
+      rotation={[
+        Math.PI / 2 + THREE.MathUtils.degToRad(tuning.rotationX ?? 0),
+        THREE.MathUtils.degToRad(tuning.rotationY ?? 0),
+        THREE.MathUtils.degToRad(tuning.rotationZ ?? 0),
+      ]}
+      scale={[scale, scale, scale]}
+    >
       <primitive object={cloned} />
     </group>
   );
@@ -7725,32 +7848,255 @@ function GodotJumpPointShaderModel({
 
 function GodotJumpPointMesh({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
   const filename = station.modelFilename ?? "_jumppoint.glb";
+  const portalOffset = tuning.portalOffset ?? 0;
   return (
     <group position={[station.position[0], 2.35, station.position[1]]}>
-      <Suspense fallback={null}>
-        <GodotJumpPointShaderModel
-          filename={filename}
-          textureFilename="T_Noise1_nk.png"
-          tuning={tuning}
-        />
-      </Suspense>
-      <pointLight
-        color={tuning.color}
-        intensity={1.4 * tuning.intensity}
-        distance={8 * tuning.spread}
-        position={[0, 1.2, 0]}
-      />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.33, 0]} raycast={() => null}>
-        <ringGeometry args={[2.45 * tuning.size, 2.65 * tuning.size, 96]} />
-        <meshBasicMaterial
+      <group position={[0, 0, portalOffset]}>
+        <Suspense fallback={null}>
+          <GodotJumpPointShaderModel
+            filename={filename}
+            textureFilename={station.textureFilename ?? "T_Noise1_nk.png"}
+            tuning={tuning}
+          />
+        </Suspense>
+        <pointLight
           color={tuning.color}
+          intensity={1.4 * tuning.intensity}
+          distance={8 * tuning.spread}
+          position={[0, 1.2, 0]}
+        />
+      </group>
+    </group>
+  );
+}
+
+function JumpGateForwardArc({
+  radius,
+  color,
+}: {
+  radius: number;
+  color: string;
+}) {
+  const geometry = useMemo(() => {
+    const shape = new THREE.Shape();
+    const segments = 36;
+    const start = Math.PI / 4;
+    const end = (Math.PI * 3) / 4;
+    shape.moveTo(0, 0);
+    for (let i = 0; i <= segments; i += 1) {
+      const t = start + ((end - start) * i) / segments;
+      shape.lineTo(Math.cos(t) * radius, Math.sin(t) * radius);
+    }
+    shape.lineTo(0, 0);
+    return new THREE.ShapeGeometry(shape);
+  }, [radius]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  return (
+    <>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.035, 0]} raycast={() => null} renderOrder={3}>
+        <primitive object={geometry} attach="geometry" />
+        <meshBasicMaterial
+          color={color}
           transparent
-          opacity={0.4}
+          opacity={0.17}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          toneMapped={false}
+        />
+      </mesh>
+      <Line
+        points={[
+          [0, 0.09, radius * 0.74],
+          [0, 0.09, radius + 0.36],
+        ]}
+        color={color}
+        lineWidth={1.4}
+        transparent
+        opacity={0.86}
+      />
+      <Billboard position={[0, 0.42, radius + 0.7]}>
+        <Text
+          fontSize={0.32}
+          color={color}
+          anchorX="center"
+          anchorY="middle"
+          outlineColor="#020617"
+          outlineWidth={0.025}
+        >
+          FRONT
+        </Text>
+      </Billboard>
+    </>
+  );
+}
+
+function JumpGateMeshShowcase({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+  const filename = station.modelFilename ?? "jump-gate-4strut.glb";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const { cloned, modelScale, floorOffsetY } = useMemo(() => {
+    const clone = scene.clone(true);
+    const tint = new THREE.Color(tuning.color);
+    clone.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.raycast = () => null;
+      const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = tint.clone();
+          adjustable.emissiveIntensity = 0.1 * tuning.intensity;
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const longest = Math.max(size.x, size.y, size.z, 1e-6);
+    const scale = (6.5 * tuning.size) / longest;
+    return { cloned: clone, modelScale: scale, floorOffsetY: -box.min.y * scale + 0.05 };
+  }, [scene, tuning.color, tuning.intensity, tuning.size]);
+
+  return (
+    <group position={[station.position[0], 0, station.position[1]]}>
+      <JumpGateForwardArc radius={5.3} color={tuning.color} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]} raycast={() => null} renderOrder={4}>
+        <ringGeometry args={[1.46, 1.54, 96]} />
+        <meshBasicMaterial
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0.72}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
           toneMapped={false}
         />
       </mesh>
+      <primitive
+        object={cloned}
+        scale={[modelScale, modelScale, modelScale]}
+        position={[0, floorOffsetY, 0]}
+      />
+      <pointLight
+        color={tuning.color}
+        intensity={1.1 * tuning.intensity}
+        distance={10 * tuning.spread}
+        position={[0, 3, 0]}
+      />
+    </group>
+  );
+}
+
+const JUMP_GATE_PORTAL_REAR_OFFSET_INCHES = 2;
+
+function JumpGatePortalComboShowcase({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+  const filename = station.modelFilename ?? "jump-gate-4strut.glb";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const gateSize = tuning.gateSize ?? tuning.size;
+  const portalSize = tuning.portalSize ?? 0.4;
+  const portalOffset = tuning.portalOffset ?? 0;
+  const portalTuning: Tuning = {
+    ...tuning,
+    size: portalSize,
+    rotationX: tuning.rotationX ?? 90,
+    rotationY: tuning.rotationY ?? 180,
+  };
+  const { cloned, modelScale, floorOffsetY, gateCenterY } = useMemo(() => {
+    const clone = scene.clone(true);
+    const tint = new THREE.Color(tuning.color);
+    clone.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.raycast = () => null;
+      const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = tint.clone();
+          adjustable.emissiveIntensity = 0.1 * tuning.intensity;
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const longest = Math.max(size.x, size.y, size.z, 1e-6);
+    const scale = (6.5 * gateSize) / longest;
+    const floorY = -box.min.y * scale + 0.05;
+    const centerY = floorY + ((box.min.y + box.max.y) / 2) * scale;
+    return { cloned: clone, modelScale: scale, floorOffsetY: floorY, gateCenterY: centerY };
+  }, [scene, tuning.color, tuning.intensity, gateSize]);
+
+  return (
+    <group position={[station.position[0], 0, station.position[1]]}>
+      <JumpGateForwardArc radius={5.3} color={tuning.color} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]} raycast={() => null} renderOrder={4}>
+        <ringGeometry args={[1.46, 1.54, 96]} />
+        <meshBasicMaterial
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0.72}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <group position={[0, 0, -JUMP_GATE_PORTAL_REAR_OFFSET_INCHES]}>
+        <primitive
+          object={cloned}
+          scale={[modelScale, modelScale, modelScale]}
+          position={[0, floorOffsetY, 0]}
+        />
+        <group position={[0, gateCenterY, portalOffset]}>
+          <GodotJumpPointShaderModel
+            filename="new-hyperspace-point.glb"
+            textureFilename="T_Noise1_nk.png"
+            tuning={portalTuning}
+            depthTest={false}
+            renderOrder={8}
+          />
+          <pointLight
+            color={tuning.color}
+            intensity={1.4 * tuning.intensity}
+            distance={8 * tuning.spread}
+            position={[0, 1.2, 0]}
+          />
+        </group>
+        <pointLight
+          color={tuning.color}
+          intensity={1.1 * tuning.intensity}
+          distance={10 * tuning.spread}
+          position={[0, 3, 0]}
+        />
+      </group>
     </group>
   );
 }
@@ -9023,6 +9369,16 @@ function SpecialFxStation({
         </Suspense>
       ) : null}
       {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
+      {station.effect === "jump-gate-mesh" ? (
+        <Suspense fallback={null}>
+          <JumpGateMeshShowcase station={station} tuning={tuning} />
+        </Suspense>
+      ) : null}
+      {station.effect === "jump-gate-portal-combo" ? (
+        <Suspense fallback={null}>
+          <JumpGatePortalComboShowcase station={station} tuning={tuning} />
+        </Suspense>
+      ) : null}
       {station.effect === "gas-cloud-terrain" ? (
         <Suspense fallback={null}>
           <GasCloudTerrainEffect station={station} tuning={tuning} paused={animationPaused} />
@@ -9377,6 +9733,7 @@ export default function VfxShowcase() {
   const selectedIsKirishiacBeam = selectedStation ? isKirishiacBeamStation(selectedStation) : false;
   const selectedIsVorlonBeam = selectedStation ? isVorlonBeamStation(selectedStation) : false;
   const selectedIsShieldToken = selectedStation ? isShieldTokenStation(selectedStation) : false;
+  const selectedIsJumpGatePortalCombo = selectedStation?.kind === "special" && selectedStation.effect === "jump-gate-portal-combo";
   const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
@@ -9605,6 +9962,15 @@ export default function VfxShowcase() {
                       <SliderControl label="Diffuse Strength" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
                       <SliderControl label="Tilt X" value={selectedTuning.rotationX ?? 0} min={-90} max={90} step={1} onChange={rotationX => updateSelected({ rotationX })} />
                       <SliderControl label="Tilt Z" value={selectedTuning.rotationZ ?? 0} min={-90} max={90} step={1} onChange={rotationZ => updateSelected({ rotationZ })} />
+                    </>
+                  ) : selectedIsJumpGatePortalCombo ? (
+                    <>
+                      <SliderControl label="Portal Speed" value={selectedTuning.speed} min={0.25} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
+                      <SliderControl label="Gate Mesh Size" value={selectedTuning.gateSize ?? selectedTuning.size} min={0.35} max={2.5} step={0.05} onChange={gateSize => updateSelected({ gateSize })} />
+                      <SliderControl label="Portal Mesh Size" value={selectedTuning.portalSize ?? 0.4} min={0.1} max={1.5} step={0.05} onChange={portalSize => updateSelected({ portalSize })} />
+                      <SliderControl label="Portal Front/Back" value={selectedTuning.portalOffset ?? 0} min={-3} max={3} step={0.05} onChange={portalOffset => updateSelected({ portalOffset })} />
+                      <SliderControl label="Portal Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
+                      <SliderControl label="Light Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
                     </>
                   ) : (
                     <>

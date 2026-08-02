@@ -52,6 +52,7 @@ import {
 import type {
   DamageControlResult,
   GameDetail,
+  GameJumpPoint,
   GameUnit,
   ShipModel,
   Weapon,
@@ -91,6 +92,7 @@ import {
   deploymentSideConfig,
   normalizeDeploymentConfig,
   type DeploymentConfig,
+  type DeploymentRect,
   type DeploymentSide,
 } from "@/lib/deployment-zones";
 import {
@@ -336,6 +338,10 @@ function traitHint(trait: string): string {
   );
 }
 
+function displayableLostTraits(lostTraits: string[] | null | undefined): string[] {
+  return (lostTraits ?? []).filter((trait) => normalizeHintKey(trait) !== "lumbering");
+}
+
 function criticalEffectHint(crit: {
   name: string;
   repairable?: boolean | null;
@@ -353,8 +359,9 @@ function criticalEffectHint(crit: {
     effects.push(`-${crit.damageApplied} hull`);
   if ((crit.crewApplied ?? 0) > 0) effects.push(`-${crit.crewApplied} crew`);
   if (crit.randomArc) effects.push(`${crit.randomArc} arc affected`);
-  if ((crit.lostTraits?.length ?? 0) > 0)
-    effects.push(`lost ${crit.lostTraits!.join(", ")}`);
+  const lostTraits = displayableLostTraits(crit.lostTraits);
+  if (lostTraits.length > 0)
+    effects.push(`lost ${lostTraits.join(", ")}`);
   if (effects.length === 0) effects.push("ongoing system damage");
   const repair =
     crit.repairable === false
@@ -1358,6 +1365,218 @@ function DeploymentZones({
   );
 }
 
+const HYPERSPACE_RESERVE_ZONE_WIDTH = 10;
+const HYPERSPACE_RESERVE_ZONE_DEPTH = 16;
+const HYPERSPACE_RESERVE_ZONE_BOARD_GAP = 0.75;
+const HYPERSPACE_RESERVE_POINTER_MARGIN =
+  HYPERSPACE_RESERVE_ZONE_WIDTH + HYPERSPACE_RESERVE_ZONE_BOARD_GAP + 1;
+
+type HyperspaceReserveZoneData = {
+  side: DeploymentSide;
+  x: number;
+  z: number;
+  width: number;
+  depth: number;
+};
+
+function unionDeploymentRects(rects: DeploymentRect[]): DeploymentRect {
+  if (rects.length === 0) {
+    return {
+      type: "rect",
+      xMin: -BOARD_W / 2,
+      xMax: BOARD_W / 2,
+      zMin: -BOARD_D / 2,
+      zMax: BOARD_D / 2,
+    };
+  }
+  return {
+    type: "rect",
+    xMin: Math.min(...rects.map((rect) => rect.xMin)),
+    xMax: Math.max(...rects.map((rect) => rect.xMax)),
+    zMin: Math.min(...rects.map((rect) => rect.zMin)),
+    zMax: Math.max(...rects.map((rect) => rect.zMax)),
+  };
+}
+
+function hyperspaceReserveZoneForSide(
+  config: DeploymentConfig,
+  side: DeploymentSide,
+): HyperspaceReserveZoneData {
+  const width = HYPERSPACE_RESERVE_ZONE_WIDTH;
+  const depth = HYPERSPACE_RESERVE_ZONE_DEPTH;
+  const halfWidth = width / 2;
+  const halfDepth = depth / 2;
+  const deployment = deploymentSideConfig(config, side);
+  const bounds = unionDeploymentRects(deployment.zones);
+  const boundsDepth = bounds.zMax - bounds.zMin;
+  const zoneCenterZ =
+    boundsDepth >= BOARD_D - 1
+      ? side === "challenger"
+        ? BOARD_D / 2 - halfDepth - 0.75
+        : -BOARD_D / 2 + halfDepth + 0.75
+      : (bounds.zMin + bounds.zMax) / 2;
+  const x = BOARD_W / 2 + HYPERSPACE_RESERVE_ZONE_BOARD_GAP + halfWidth;
+  const z = Math.max(
+    -BOARD_D / 2 + halfDepth + 0.75,
+    Math.min(BOARD_D / 2 - halfDepth - 0.75, zoneCenterZ),
+  );
+  return { side, x, z, width, depth };
+}
+
+function pointInsideHyperspaceReserveZone(
+  x: number,
+  z: number,
+  zone: HyperspaceReserveZoneData | null | undefined,
+): boolean {
+  if (!zone) return false;
+  const halfWidth = zone.width / 2;
+  const halfDepth = zone.depth / 2;
+  return x >= zone.x - halfWidth && x <= zone.x + halfWidth && z >= zone.z - halfDepth && z <= zone.z + halfDepth;
+}
+
+function hyperspaceReserveFootprintFits(
+  zone: HyperspaceReserveZoneData,
+  point: { x: number; z: number },
+  baseRadiusInches: number,
+): boolean {
+  const halfWidth = zone.width / 2;
+  const halfDepth = zone.depth / 2;
+  const margin = Math.max(0.35, baseRadiusInches + 0.15);
+  return (
+    point.x >= zone.x - halfWidth + margin &&
+    point.x <= zone.x + halfWidth - margin &&
+    point.z >= zone.z - halfDepth + margin &&
+    point.z <= zone.z + halfDepth - margin
+  );
+}
+
+function findHyperspaceReserveSlotPoint(
+  zone: HyperspaceReserveZoneData,
+  baseRadiusInches: number,
+  occupied: Array<{ x: number; z: number; baseRadiusInches: number }>,
+): [number, number] | null {
+  const spacing = Math.max(baseRadiusInches * 2 + 0.45, 1.25);
+  const halfWidth = zone.width / 2;
+  const halfDepth = zone.depth / 2;
+  const xMin = zone.x - halfWidth + baseRadiusInches + 0.25;
+  const xMax = zone.x + halfWidth - baseRadiusInches - 0.25;
+  const zMin = zone.z - halfDepth + baseRadiusInches + 0.25;
+  const zMax = zone.z + halfDepth - baseRadiusInches - 0.25;
+  if (xMin > xMax || zMin > zMax) return null;
+
+  const columns = Math.max(1, Math.floor((xMax - xMin) / spacing) + 1);
+  const rows = Math.max(1, Math.floor((zMax - zMin) / spacing) + 1);
+  const xStep = columns <= 1 ? 0 : (xMax - xMin) / (columns - 1);
+  const zStep = rows <= 1 ? 0 : (zMax - zMin) / (rows - 1);
+  const candidates: Array<{ x: number; z: number; score: number }> = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < columns; col += 1) {
+      const x = columns <= 1 ? zone.x : xMin + col * xStep;
+      const z = rows <= 1 ? zone.z : zMin + row * zStep;
+      candidates.push({
+        x,
+        z,
+        score: Math.hypot(x - zone.x, z - zone.z) + row * 0.01 + col * 0.001,
+      });
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score);
+
+  for (const candidate of candidates) {
+    if (!hyperspaceReserveFootprintFits(zone, candidate, baseRadiusInches)) continue;
+    const overlaps = occupied.some((other) => {
+      const clearance = baseRadiusInches + other.baseRadiusInches + 0.2;
+      return Math.hypot(candidate.x - other.x, candidate.z - other.z) < clearance;
+    });
+    if (!overlaps) {
+      return [snapBoardCoord(candidate.x), snapBoardCoord(candidate.z)];
+    }
+  }
+  return null;
+}
+
+function hyperspaceReservePointClears(
+  zone: HyperspaceReserveZoneData,
+  point: { x: number; z: number },
+  baseRadiusInches: number,
+  occupied: Array<{ x: number; z: number; baseRadiusInches: number }>,
+): boolean {
+  if (!hyperspaceReserveFootprintFits(zone, point, baseRadiusInches)) return false;
+  return !occupied.some((other) => {
+    const clearance = baseRadiusInches + other.baseRadiusInches + 0.2;
+    return Math.hypot(point.x - other.x, point.z - other.z) < clearance;
+  });
+}
+
+function resolveHyperspaceReservePoint(
+  zone: HyperspaceReserveZoneData,
+  requested: { x: number; z: number },
+  baseRadiusInches: number,
+  occupied: Array<{ x: number; z: number; baseRadiusInches: number }>,
+): [number, number] | null {
+  if (hyperspaceReservePointClears(zone, requested, baseRadiusInches, occupied)) {
+    return [snapBoardCoord(requested.x), snapBoardCoord(requested.z)];
+  }
+  return findHyperspaceReserveSlotPoint(zone, baseRadiusInches, occupied);
+}
+
+function HyperspaceReserveZones({
+  zones,
+  mySide,
+}: {
+  zones: Record<DeploymentSide, HyperspaceReserveZoneData>;
+  mySide: DeploymentSide | null;
+}) {
+  return (
+    <group renderOrder={3}>
+      {(["challenger", "opponent"] as DeploymentSide[]).map((side) => {
+        const zone = zones[side];
+        const own = mySide === side;
+        const halfWidth = zone.width / 2;
+        const halfDepth = zone.depth / 2;
+        return (
+          <group key={`hyperspace-reserve-${side}`} position={[zone.x, 0, zone.z]}>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]} renderOrder={3}>
+              <planeGeometry args={[zone.width, zone.depth]} />
+              <meshBasicMaterial
+                color={own ? "#2563eb" : "#1e3a8a"}
+                transparent
+                opacity={own ? 0.23 : 0.12}
+                depthWrite={false}
+              />
+            </mesh>
+            <Line
+              points={[
+                [-halfWidth, 0.024, -halfDepth],
+                [halfWidth, 0.024, -halfDepth],
+                [halfWidth, 0.024, halfDepth],
+                [-halfWidth, 0.024, halfDepth],
+                [-halfWidth, 0.024, -halfDepth],
+              ]}
+              color={own ? "#ffffff" : "#93c5fd"}
+              lineWidth={1.5}
+              transparent
+              opacity={own ? 0.94 : 0.58}
+            />
+            <Text
+              position={[0, 0.04, 0]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              fontSize={0.45}
+              color={own ? "#eff6ff" : "#bfdbfe"}
+              anchorX="center"
+              anchorY="middle"
+              maxWidth={zone.width - 0.7}
+              textAlign="center"
+            >
+              Hyperspace{"\n"}reserves
+            </Text>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 function CarriedFighterDeploymentGuide({
   carrier,
   radius = carriedFighterDeployCenterRadius(),
@@ -1763,12 +1982,14 @@ const PSI_CORPS_MOTHERSHIP_MODEL_FILENAME = "psicorpmother.glb";
 const ORION_SPACE_STATION_MODEL_FILENAME = "orion-space-station.glb";
 const CORPORATE_FREIGHTER_MODEL_FILENAME = "corporate-freighter.glb";
 const CENTURION_MODEL_FILENAME = "centurion.glb";
+const STANDARD_HYPERION_MODEL_FILENAME = "hyperion1.glb";
 const COMMAND_HYPERION_MODEL_FILENAME = "command-hyperion.glb";
 const RAILGUN_HYPERION_MODEL_FILENAME = "railgun-hyperion.glb";
 const DEAD_BATTLECRAB_MODEL_FILENAME = "dead-battlecrab.glb";
 const DEAD_BINTAK_MODEL_FILENAME = "dead-bintak.glb";
 const DEAD_HYPERION_MODEL_FILENAME = "dead-hyperion.glb";
 const DEAD_OMEGA_MODEL_FILENAME = "dead-omega.glb";
+const DEAD_OLYMPUS_MODEL_FILENAME = "dead-olympus.glb";
 const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
 const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
 const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
@@ -1779,9 +2000,12 @@ const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
 const VORLON_FIGHTER_MODEL_FILENAME = "vorlon-fighter.glb";
 const VORLON_LIGHT_CRUISER_MODEL_FILENAME = "vorlon-light-cruiser.glb";
 const VORLON_TRANSPORT_MODEL_FILENAME = "vorlon-transport.glb";
+const JUMP_GATE_MODEL_FILENAME = "jump-gate-4strut.glb";
 const DEFAULT_VISUAL_MODEL_FILENAMES: Record<string, string> = {
+  "hyperion.glb": STANDARD_HYPERION_MODEL_FILENAME,
   "kirishiac1.glb": "kirishiac.glb",
   "omega.glb": OMEGA_ROTATING_MODEL_FILENAME,
+  "olympus.glb": "olympus2.glb",
 };
 const ROTATING_MODEL_PARTS: Record<
   string,
@@ -1847,6 +2071,7 @@ const ROTATING_MODEL_PARTS: Record<
 const DEAD_MODEL_FILENAMES: Record<string, string> = {
   "battlecrab.glb": DEAD_BATTLECRAB_MODEL_FILENAME,
   "hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
+  [STANDARD_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
   [COMMAND_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
   [RAILGUN_HYPERION_MODEL_FILENAME]: DEAD_HYPERION_MODEL_FILENAME,
   "missile-hyperion.glb": DEAD_HYPERION_MODEL_FILENAME,
@@ -1854,6 +2079,9 @@ const DEAD_MODEL_FILENAMES: Record<string, string> = {
   [OMEGA_ROTATING_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
   [COMMAND_OMEGA_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
   [OMEGA_X_MODEL_FILENAME]: DEAD_OMEGA_MODEL_FILENAME,
+  "olympus.glb": DEAD_OLYMPUS_MODEL_FILENAME,
+  "olympus2.glb": DEAD_OLYMPUS_MODEL_FILENAME,
+  "olympus-gunship.glb": DEAD_OLYMPUS_MODEL_FILENAME,
   "bintak.glb": DEAD_BINTAK_MODEL_FILENAME,
 };
 const VISUAL_ROTATE_180_MODELS = new Set([
@@ -1878,7 +2106,9 @@ const VISUAL_ROTATE_180_MODELS = new Set([
   "whitestar.glb",
   "avenger.glb",
   "tloth.glb",
+  "olympus2.glb",
   "olympus-gunship.glb",
+  DEAD_OLYMPUS_MODEL_FILENAME,
   "orestes.glb",
   "rongoth.glb",
   "frazi.glb",
@@ -1889,12 +2119,14 @@ const VISUAL_ROTATE_180_MODELS = new Set([
 ]);
 const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "hyperion.glb": 1.2,
+  [STANDARD_HYPERION_MODEL_FILENAME]: 1.2,
   "hermes.glb": 0.5,
   [COMMAND_HYPERION_MODEL_FILENAME]: 1.2,
   [RAILGUN_HYPERION_MODEL_FILENAME]: 1.2,
   "missile-hyperion.glb": 1.2,
   "avenger.glb": 1.2,
   "olympus.glb": 0.7,
+  "olympus2.glb": 0.7,
   "olympus-gunship.glb": 0.7,
   "artemis.glb": 0.5,
   [EXPLORER_ROTATING_MODEL_FILENAME]: 2,
@@ -1928,6 +2160,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   [DEAD_BINTAK_MODEL_FILENAME]: 1.75,
   [DEAD_HYPERION_MODEL_FILENAME]: 1.2,
   [DEAD_OMEGA_MODEL_FILENAME]: 1.6,
+  [DEAD_OLYMPUS_MODEL_FILENAME]: 0.7,
   "aurora.glb": 0.165,
   [NOVA_STARFURY_MODEL_FILENAME]: 0.165,
   "black-omega.glb": 0.165,
@@ -2118,6 +2351,41 @@ function unitIsCombatEffective(unit: {
   );
 }
 
+function unitHasCriticalEffect(
+  unit: { criticals?: Array<{ effectKey?: string | null }> | null },
+  effectKey: string,
+): boolean {
+  return (unit.criticals ?? []).some((crit) => crit.effectKey === effectKey);
+}
+
+function unitIsEnginesDisabledDriftOnly(unit: {
+  damageState?: string | null;
+  isDestroyed: boolean;
+  hullPoints: number;
+  crewPoints?: number | null;
+  maxCrewPoints?: number | null;
+  criticals?: Array<{ effectKey?: string | null }> | null;
+}): boolean {
+  return (
+    unit.damageState === "adrift" &&
+    unitHasCriticalEffect(unit, "engines-disabled") &&
+    unitIsCombatEffective(unit)
+  );
+}
+
+function unitIsInactiveAdrift(unit: {
+  damageState?: string | null;
+  isDestroyed: boolean;
+  hullPoints: number;
+  crewPoints?: number | null;
+  maxCrewPoints?: number | null;
+  criticals?: Array<{ effectKey?: string | null }> | null;
+}): boolean {
+  if (unit.damageState === "exploding-end-of-next") return true;
+  if (unit.damageState !== "adrift") return false;
+  return !unitIsEnginesDisabledDriftOnly(unit);
+}
+
 type DamageVfxAnchor = {
   name: string;
   position: [number, number, number];
@@ -2185,6 +2453,8 @@ const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "T_Noise_HU85k.png": "20260722-hard-plasma",
   "weapon-damage-arc.png": "20260730-weapon-arc-damage-v1",
   "weapon-offline-arc.png": "20260730-weapon-arc-offline-v1",
+  "jump-trajectory-arc.jpg": "20260801-jump-trajectory-v1",
+  "jump-no-entry-arc.jpg": "20260801-jump-no-entry-v1",
 };
 const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
   color: "#f8fafc",
@@ -2865,6 +3135,8 @@ function ShipModelFallback({
 // Cache HEAD-check results so each URL is only fetched once per session
 const modelExistsCache = new Map<string, boolean>();
 const MODEL_ASSET_REVISIONS: Record<string, string> = {
+  "_jumppoint.glb": "20260719-192131",
+  "new-hyperspace-point.glb": "20260801-233055",
   "artemis.glb": "20260727-artemis-v1",
   "asteroid-light.glb": "20260721-field-v2",
   "asteroids_medium.glb": "20260725-medium-v1",
@@ -2879,16 +3151,20 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [DEAD_BINTAK_MODEL_FILENAME]: "20260724-223851",
   "dead-hyperion.glb": "20260718-163044",
   [DEAD_OMEGA_MODEL_FILENAME]: "20260718-231918",
+  [DEAD_OLYMPUS_MODEL_FILENAME]: "20260801-dead-olympus-v1",
   [EXPLORER_ROTATING_MODEL_FILENAME]: "20260720-160843",
   "hermes.glb": "20260729-204846",
+  [STANDARD_HYPERION_MODEL_FILENAME]: "20260802-hyperion1-v2",
   "kirishiac.glb": "20260725-004107",
   "kirishiac1.glb": "20260725-beam-0100",
+  [JUMP_GATE_MODEL_FILENAME]: "20260731-raw-4strut-v1",
   "missile-hyperion.glb": "20260719-005010",
   [NOVA_STARFURY_MODEL_FILENAME]: "20260731-223339",
   "nova.glb": "20260731-212414",
   [OMEGA_ROTATING_MODEL_FILENAME]: "20260729-194957",
   [COMMAND_OMEGA_MODEL_FILENAME]: "20260729-195216",
   [OMEGA_X_MODEL_FILENAME]: "20260729-202747",
+  "olympus2.glb": "20260727-corvette-v2",
   "olympus-gunship.glb": "20260727-gunship-v1",
   "orestes.glb": "20260724-191655",
   [ORION_SPACE_STATION_MODEL_FILENAME]: "20260721-191433-origin",
@@ -4206,6 +4482,629 @@ function TerrainFields({ fields }: { fields: TerrainObject[] }) {
   );
 }
 
+function jumpPointModelUrl(filename = "new-hyperspace-point.glb"): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision = MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
+  return `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
+function jumpPointTuningNumber(
+  point: GameJumpPoint,
+  key: string,
+  fallback: number,
+): number {
+  const tuning = point.vfxPreset?.tuning;
+  if (!tuning || typeof tuning !== "object" || Array.isArray(tuning)) return fallback;
+  const value = (tuning as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function jumpPointTuningColor(
+  point: GameJumpPoint,
+  key: string,
+  fallback: string,
+): string {
+  const tuning = point.vfxPreset?.tuning;
+  if (!tuning || typeof tuning !== "object" || Array.isArray(tuning)) return fallback;
+  const value = (tuning as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+const JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES = 1.5;
+const JUMP_POINT_BORDER_FACING_GUARD_INCHES = 6;
+const JUMP_POINT_EDGE_BUFFER_INCHES = 3;
+const STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES = 45;
+const JUMP_POINT_ROTATION_STEP_DEGREES = 15;
+const JUMP_POINT_VISUAL_REAR_OFFSET_INCHES = 2;
+const JUMP_POINT_DEFAULT_GATE_SIZE = 0.85;
+const JUMP_POINT_DEFAULT_PORTAL_SIZE = 1.15;
+const JUMP_POINT_DEFAULT_PORTAL_OFFSET_INCHES = -5;
+const JUMP_POINT_DEFAULT_SPEED = 1.35;
+const JUMP_POINT_DEFAULT_INTENSITY = 1.6;
+const JUMP_POINT_DEFAULT_SPREAD = 1.25;
+const JUMP_POINT_DEFAULT_ROTATION_X_DEGREES = 90;
+const JUMP_POINT_DEFAULT_ROTATION_Y_DEGREES = 180;
+
+function jumpPointBaseRadius(point?: { baseRadiusInches?: number | null }): number {
+  const radius = Number(point?.baseRadiusInches);
+  return Number.isFinite(radius) && radius > 0
+    ? radius
+    : JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES;
+}
+
+function clampJumpPointCenterInsideBufferedBoard(
+  x: number,
+  z: number,
+  radius = JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES,
+): [number, number] {
+  const inset = radius + JUMP_POINT_EDGE_BUFFER_INCHES;
+  return [
+    snapBoardCoord(Math.max(-BOARD_W / 2 + inset, Math.min(BOARD_W / 2 - inset, x))),
+    snapBoardCoord(Math.max(-BOARD_D / 2 + inset, Math.min(BOARD_D / 2 - inset, z))),
+  ];
+}
+
+function jumpPointCenterInsideBufferedBoard(
+  point: { x: number; z: number },
+  radius = JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES,
+): boolean {
+  const inset = radius + JUMP_POINT_EDGE_BUFFER_INCHES;
+  return (
+    point.x >= -BOARD_W / 2 + inset &&
+    point.x <= BOARD_W / 2 - inset &&
+    point.z >= -BOARD_D / 2 + inset &&
+    point.z <= BOARD_D / 2 - inset
+  );
+}
+
+function guardJumpPointHeadingAwayFromBorder(
+  point: { x: number; z: number },
+  heading: number,
+): number {
+  const normalized = (((heading % 360) + 360) % 360);
+  const headingRad = (normalized * Math.PI) / 180;
+  const forward = { x: Math.sin(headingRad), z: Math.cos(headingRad) };
+  const facingGuardedBorder =
+    (point.x + BOARD_W / 2 <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.x < -1e-6) ||
+    (BOARD_W / 2 - point.x <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.x > 1e-6) ||
+    (point.z + BOARD_D / 2 <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.z < -1e-6) ||
+    (BOARD_D / 2 - point.z <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.z > 1e-6);
+  if (!facingGuardedBorder) return normalized;
+  const centerHeading = THREE.MathUtils.radToDeg(Math.atan2(-point.x, -point.z));
+  return (((Math.round(centerHeading) % 360) + 360) % 360);
+}
+
+function JumpPointShaderModel({
+  point,
+  sizeOverride,
+  depthTest = true,
+  renderOrder = 0,
+}: {
+  point: GameJumpPoint;
+  sizeOverride?: number;
+  depthTest?: boolean;
+  renderOrder?: number;
+}) {
+  const { scene } = useGLTF(jumpPointModelUrl());
+  const noiseTexture = useLoader(THREE.TextureLoader, boardTextureUrl("T_Noise1_nk.png"));
+  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const speed = jumpPointTuningNumber(point, "speed", JUMP_POINT_DEFAULT_SPEED);
+  const size = sizeOverride ?? jumpPointTuningNumber(
+    point,
+    "size",
+    jumpPointTuningNumber(point, "portalSize", JUMP_POINT_DEFAULT_PORTAL_SIZE),
+  );
+  const intensity = jumpPointTuningNumber(point, "intensity", JUMP_POINT_DEFAULT_INTENSITY);
+  const color = jumpPointTuningColor(point, "color", "#38e8ff");
+  const secondaryColor = jumpPointTuningColor(point, "secondaryColor", "#014cff");
+  const rotationX = jumpPointTuningNumber(
+    point,
+    "rotationX",
+    JUMP_POINT_DEFAULT_ROTATION_X_DEGREES,
+  );
+  const rotationY = jumpPointTuningNumber(
+    point,
+    "rotationY",
+    JUMP_POINT_DEFAULT_ROTATION_Y_DEGREES,
+  );
+
+  useEffect(() => {
+    noiseTexture.wrapS = THREE.RepeatWrapping;
+    noiseTexture.wrapT = THREE.RepeatWrapping;
+    noiseTexture.colorSpace = THREE.NoColorSpace;
+    noiseTexture.needsUpdate = true;
+  }, [noiseTexture]);
+
+  const meshYBounds = useMemo(() => {
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    scene.traverse((child) => {
+      if (!(child as THREE.Mesh).isMesh) return;
+      const geometry = (child as THREE.Mesh).geometry;
+      geometry.computeBoundingBox();
+      if (!geometry.boundingBox) return;
+      min = Math.min(min, geometry.boundingBox.min.y);
+      max = Math.max(max, geometry.boundingBox.max.y);
+    });
+    return Number.isFinite(min) && Number.isFinite(max) && max > min
+      ? { min, max }
+      : { min: 0, max: 1 };
+  }, [scene]);
+
+  const material = useMemo(() => {
+    const shaderMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uBaseMap: { value: noiseTexture },
+        uTime: { value: 0 },
+        uOpacity: { value: intensity },
+        uSpeed: { value: new THREE.Vector2(-0.5, -0.5) },
+        uColor: { value: new THREE.Color(color) },
+        uSecondaryColor: { value: new THREE.Color(secondaryColor) },
+        uNarrowFadeMinY: { value: meshYBounds.min },
+        uNarrowFadeMaxY: { value: meshYBounds.max },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying float vNarrowTipFade;
+        uniform float uNarrowFadeMinY;
+        uniform float uNarrowFadeMaxY;
+        void main() {
+          vUv = uv;
+          float alongMesh = clamp((position.y - uNarrowFadeMinY) / max(uNarrowFadeMaxY - uNarrowFadeMinY, 0.0001), 0.0, 1.0);
+          vNarrowTipFade = smoothstep(0.0, 0.18, alongMesh);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uBaseMap;
+        uniform float uTime;
+        uniform float uOpacity;
+        uniform vec2 uSpeed;
+        uniform vec3 uColor;
+        uniform vec3 uSecondaryColor;
+        varying vec2 vUv;
+        varying float vNarrowTipFade;
+        vec4 colorRamp(float value) {
+          vec4 c0 = vec4(uSecondaryColor * 0.35, 0.0);
+          vec4 c1 = vec4(uSecondaryColor * 0.65, 1.0);
+          vec4 c2 = vec4(uSecondaryColor, 1.0);
+          vec4 c3 = vec4(uColor, 1.0);
+          if (value < 0.102564104) {
+            return mix(c0, c1, smoothstep(0.0076923077, 0.102564104, value));
+          }
+          if (value < 0.33076924) {
+            return mix(c1, c2, smoothstep(0.102564104, 0.33076924, value));
+          }
+          return mix(c2, c3, smoothstep(0.33076924, 0.6948718, value));
+        }
+        float subtractionMask(vec2 uv) {
+          float diagonal = clamp((uv.x + uv.y) * 0.5, 0.0, 1.0);
+          float nearStart = 1.0 - smoothstep(0.0, 0.07948718, diagonal);
+          float nearEnd = smoothstep(0.94871795, 1.0, diagonal);
+          return max(nearStart, nearEnd) * 0.65;
+        }
+        float edgeFade(vec2 uv) {
+          float vertical = smoothstep(0.0, 0.14, uv.y) * (1.0 - smoothstep(0.86, 1.0, uv.y));
+          float horizontal = smoothstep(0.0, 0.035, uv.x) * (1.0 - smoothstep(0.965, 1.0, uv.x));
+          float diagonal = clamp((uv.x + uv.y) * 0.5, 0.0, 1.0);
+          float diagonalGate = smoothstep(0.02, 0.16, diagonal) * (1.0 - smoothstep(0.84, 0.98, diagonal));
+          return vertical * horizontal * mix(0.35, 1.0, diagonalGate);
+        }
+        void main() {
+          vec2 pannedUv = fract(vUv + uSpeed * uTime);
+          vec3 baseSample = texture2D(uBaseMap, pannedUv).rgb;
+          float baseValue = max(max(baseSample.r, baseSample.g), baseSample.b);
+          float shaped = clamp(baseValue - subtractionMask(vUv), 0.0, 1.0);
+          shaped = smoothstep(0.02, 0.78, shaped);
+          vec4 ramped = colorRamp(shaped);
+          float alpha = ramped.a * shaped * edgeFade(vUv) * vNarrowTipFade * uOpacity;
+          if (alpha < 0.015) discard;
+          gl_FragColor = vec4(ramped.rgb * (1.0 + shaped * 0.8), alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      depthTest,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    materialRef.current = shaderMaterial;
+    return shaderMaterial;
+  }, [noiseTexture, intensity, color, secondaryColor, depthTest, meshYBounds.max, meshYBounds.min]);
+
+  useFrame(({ clock }) => {
+    if (!materialRef.current) return;
+    materialRef.current.uniforms.uTime.value = clock.elapsedTime * speed;
+    materialRef.current.uniforms.uOpacity.value = Math.max(0, Math.min(4, intensity));
+    materialRef.current.uniforms.uColor.value.set(color);
+    materialRef.current.uniforms.uSecondaryColor.value.set(secondaryColor);
+  });
+
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.material = material;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.renderOrder = renderOrder;
+      child.raycast = () => null;
+    });
+    return c;
+  }, [scene, material, renderOrder]);
+
+  const scale = useMemo(() => {
+    const box = new THREE.Box3().setFromObject(cloned);
+    const sizeVec = new THREE.Vector3();
+    box.getSize(sizeVec);
+    const longest = Math.max(sizeVec.x, sizeVec.y, sizeVec.z, 1e-6);
+    return (7.5 * size) / longest;
+  }, [cloned, size]);
+
+  return (
+    <group
+      rotation={[
+        Math.PI / 2 + THREE.MathUtils.degToRad(rotationX),
+        THREE.MathUtils.degToRad(rotationY),
+        0,
+      ]}
+      scale={[scale, scale, scale]}
+    >
+      <primitive object={cloned} />
+    </group>
+  );
+}
+
+function JumpGatePortalVisual({
+  point,
+  color,
+  secondaryColor,
+}: {
+  point: GameJumpPoint;
+  color: string;
+  secondaryColor: string;
+}) {
+  const { scene } = useGLTF(jumpPointModelUrl(JUMP_GATE_MODEL_FILENAME));
+  const gateSize = jumpPointTuningNumber(point, "gateSize", JUMP_POINT_DEFAULT_GATE_SIZE);
+  const portalSize = jumpPointTuningNumber(
+    point,
+    "size",
+    jumpPointTuningNumber(point, "portalSize", JUMP_POINT_DEFAULT_PORTAL_SIZE),
+  );
+  const portalOffset = jumpPointTuningNumber(
+    point,
+    "portalOffset",
+    JUMP_POINT_DEFAULT_PORTAL_OFFSET_INCHES,
+  );
+  const intensity = jumpPointTuningNumber(point, "intensity", JUMP_POINT_DEFAULT_INTENSITY);
+  const spread = jumpPointTuningNumber(point, "spread", JUMP_POINT_DEFAULT_SPREAD);
+  const { cloned, modelScale, floorOffsetY, gateCenterY } = useMemo(() => {
+    const clone = scene.clone(true);
+    const tint = new THREE.Color(color);
+    clone.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.raycast = () => null;
+      const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.color instanceof THREE.Color) {
+          adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
+        }
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = tint.clone();
+          adjustable.emissiveIntensity = 0.1 * intensity;
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const longest = Math.max(size.x, size.y, size.z, 1e-6);
+    const scale = (6.5 * gateSize) / longest;
+    const floorY = -box.min.y * scale + 0.05;
+    const centerY = floorY + ((box.min.y + box.max.y) / 2) * scale;
+    return { cloned: clone, modelScale: scale, floorOffsetY: floorY, gateCenterY: centerY };
+  }, [scene, color, intensity, gateSize]);
+
+  return (
+    <group position={[0, -2.35, -JUMP_POINT_VISUAL_REAR_OFFSET_INCHES]}>
+      <primitive
+        object={cloned}
+        scale={[modelScale, modelScale, modelScale]}
+        position={[0, floorOffsetY, 0]}
+      />
+      <group position={[0, gateCenterY, portalOffset]}>
+        <JumpPointShaderModel
+          point={point}
+          sizeOverride={portalSize}
+          depthTest={false}
+          renderOrder={8}
+        />
+        <pointLight color={color} intensity={1.4 * intensity} distance={8 * spread} position={[0, 1.2, 0]} />
+        <pointLight color={secondaryColor} intensity={0.7 * intensity} distance={5 * spread} position={[0, -0.5, 0]} />
+      </group>
+    </group>
+  );
+}
+
+function JumpPointPortalVisual({
+  point,
+  color,
+  secondaryColor,
+}: {
+  point: GameJumpPoint;
+  color: string;
+  secondaryColor: string;
+}) {
+  const portalSize = jumpPointTuningNumber(
+    point,
+    "size",
+    jumpPointTuningNumber(point, "portalSize", JUMP_POINT_DEFAULT_PORTAL_SIZE),
+  );
+  const intensity = jumpPointTuningNumber(point, "intensity", JUMP_POINT_DEFAULT_INTENSITY);
+  const spread = jumpPointTuningNumber(point, "spread", JUMP_POINT_DEFAULT_SPREAD);
+  return (
+    <group position={[0, -0.18, 0]}>
+      <JumpPointShaderModel
+        point={point}
+        sizeOverride={portalSize}
+        depthTest={false}
+        renderOrder={8}
+      />
+      <pointLight color={color} intensity={1.25 * intensity} distance={8 * spread} position={[0, 1.1, 0]} />
+      <pointLight color={secondaryColor} intensity={0.6 * intensity} distance={5 * spread} position={[0, -0.45, 0]} />
+    </group>
+  );
+}
+
+function JumpPointMarker({
+  point,
+  currentRound,
+}: {
+  point: GameJumpPoint;
+  currentRound: number;
+}) {
+  const color = jumpPointTuningColor(point, "color", "#38e8ff");
+  const secondaryColor = jumpPointTuningColor(point, "secondaryColor", "#014cff");
+  const baseRadius = jumpPointBaseRadius(point);
+  const arcRadius = Math.max(2.6, baseRadius + 2.1);
+  const spent = point.status === "spent";
+  const sameRoundNoEntry = point.createdRound >= currentRound;
+  const frontArcPlateTexture = spent
+    ? "jump-point-closing-arc.png"
+    : sameRoundNoEntry
+    ? "jump-no-entry-arc.jpg"
+    : "jump-trajectory-arc.jpg";
+  return (
+    <group
+      position={[point.hexQ, 2.35, point.hexR]}
+      rotation={[0, (point.heading * Math.PI) / 180, 0]}
+      renderOrder={7}
+    >
+      <Suspense fallback={null}>
+        <JumpPointPortalVisual point={point} color={color} secondaryColor={secondaryColor} />
+      </Suspense>
+      <group position={[0, -2.31, 0]} renderOrder={8}>
+        {!spent && (
+          <ArcSector
+            centerAngle={Math.PI / 2}
+            halfAngle={Math.PI / 4}
+            radius={arcRadius}
+            color={color}
+            opacity={0.13}
+            planeY={0.034}
+          />
+        )}
+        <WeaponArcStatusPlate
+          centerAngle={Math.PI / 2}
+          radius={arcRadius}
+          textureFilename={frontArcPlateTexture}
+          distance={Math.min(arcRadius - 0.64, baseRadius + 1.28)}
+          size={Math.min(1.35, Math.max(1.05, arcRadius - baseRadius - 0.55))}
+          planeY={0.071}
+          renderOrder={14}
+          opacity={spent ? 0.98 : sameRoundNoEntry ? 0.98 : 0.92}
+          flash
+        />
+        {!spent && (
+          <>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]} raycast={() => null}>
+              <circleGeometry args={[baseRadius, 64]} />
+              <meshBasicMaterial
+                color={secondaryColor}
+                transparent
+                opacity={0.2}
+                depthWrite={false}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.048, 0]} raycast={() => null}>
+              <ringGeometry args={[Math.max(0.01, baseRadius - 0.035), baseRadius + 0.035, 72]} />
+              <meshBasicMaterial
+                color={color}
+                transparent
+                opacity={0.85}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
+            </mesh>
+          </>
+        )}
+      </group>
+      {!spent && (
+        <Billboard position={[0, 1.5, 0]}>
+          <Text
+            fontSize={0.22}
+            color="#bfdbfe"
+            anchorX="center"
+            anchorY="middle"
+            outlineColor="#020617"
+            outlineWidth={0.03}
+          >
+            JUMP POINT
+          </Text>
+        </Billboard>
+      )}
+    </group>
+  );
+}
+
+function JumpPoints({
+  points,
+  currentRound,
+}: {
+  points: GameJumpPoint[];
+  currentRound: number;
+}) {
+  if (points.length === 0) return null;
+  return (
+    <>
+      {points.map((point) => (
+        <JumpPointMarker key={point.id} point={point} currentRound={currentRound} />
+      ))}
+    </>
+  );
+}
+
+function JumpPointPlacementPreview({
+  point,
+  legal,
+  heading,
+  baseRadius = JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES,
+}: {
+  point: { x: number; z: number };
+  legal: boolean;
+  heading: number;
+  baseRadius?: number;
+}) {
+  const color = legal ? "#38e8ff" : "#ef4444";
+  const arcRadius = Math.max(2.6, baseRadius + 2.1);
+  return (
+    <group
+      position={[point.x, 0, point.z]}
+      rotation={[0, (heading * Math.PI) / 180, 0]}
+      renderOrder={8}
+    >
+      <ArcSector
+        centerAngle={Math.PI / 2}
+        halfAngle={Math.PI / 4}
+        radius={arcRadius}
+        color={color}
+        opacity={legal ? 0.14 : 0.1}
+        planeY={0.04}
+      />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.048, 0]} raycast={() => null}>
+        <circleGeometry args={[baseRadius, 64]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={legal ? 0.22 : 0.16}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
+        <ringGeometry args={[Math.max(0.01, baseRadius - 0.035), baseRadius + 0.035, 72]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={0.7}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <Billboard position={[0, 1.05, 0]}>
+        <Text
+          fontSize={0.22}
+          color={legal ? "#bfdbfe" : "#fecaca"}
+          anchorX="center"
+          anchorY="middle"
+          outlineColor="#020617"
+          outlineWidth={0.03}
+        >
+          {legal ? "Place jump point" : "Illegal jump point"}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+function HyperspaceArrivalPreview({
+  unit,
+  point,
+  legal,
+}: {
+  unit: Pick<GameUnit, "name" | "baseRadiusInches">;
+  point: { x: number; z: number; heading: number };
+  legal: boolean;
+}) {
+  const baseRadius = rulesBaseRadius(unit);
+  const color = legal ? "#38e8ff" : "#ef4444";
+  return (
+    <group
+      position={[point.x, 0, point.z]}
+      rotation={[0, (point.heading * Math.PI) / 180, 0]}
+      renderOrder={9}
+    >
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]} raycast={() => null}>
+        <circleGeometry args={[baseRadius, 72]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={legal ? 0.2 : 0.14}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.055, 0]} raycast={() => null}>
+        <ringGeometry args={[Math.max(0.01, baseRadius - 0.04), baseRadius + 0.04, 72]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={0.85}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <Line
+        points={[
+          [0, 0.1, 0],
+          [0, 0.1, Math.max(1.2, baseRadius + 0.8)],
+        ]}
+        color={color}
+        lineWidth={2}
+      />
+      <Billboard position={[0, 1.0, 0]}>
+        <Text
+          fontSize={0.2}
+          color={legal ? "#bfdbfe" : "#fecaca"}
+          anchorX="center"
+          anchorY="middle"
+          outlineColor="#020617"
+          outlineWidth={0.03}
+        >
+          {legal ? `Arrive: ${unit.name}` : "Illegal arrival"}
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
 function TerrainPlacementPreview({
   field,
   legal,
@@ -5100,6 +5999,7 @@ function GameUnit3D({
   launchHighlight = false,
   damageControlHighlight = false,
   dogfightLocked = false,
+  jumpPointContactEligible = false,
   arcColorScheme = "classic",
   healthBarFacesCamera = false,
   shipMeshTintsEnabled = true,
@@ -5159,6 +6059,7 @@ function GameUnit3D({
   launchHighlight?: boolean;
   damageControlHighlight?: boolean;
   dogfightLocked?: boolean;
+  jumpPointContactEligible?: boolean;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
@@ -5169,7 +6070,8 @@ function GameUnit3D({
   const targetEligible = targetingPreview === "eligible" && !visuallyDestroyed;
   const targetIneligible = targetingPreview === "ineligible" && !visuallyDestroyed;
   const launchHighlighted = launchHighlight && !visuallyDestroyed;
-  const lightBlueHighlight = targetEligible || launchHighlighted;
+  const jumpEligibleHighlighted = jumpPointContactEligible && !visuallyDestroyed;
+  const lightBlueHighlight = targetEligible || launchHighlighted || jumpEligibleHighlighted;
   const haloColor = visuallyDestroyed
     ? destroyedGrey
     : lightBlueHighlight
@@ -5235,10 +6137,15 @@ function GameUnit3D({
   const pulseOuter = baseRadius + 0.28;
   const targetRingInner = baseRadius + 0.32;
   const targetRingOuter = baseRadius + 0.48;
+  const jumpEligibilityDiscRadius = baseRadius + 0.9;
+  const jumpEligibilityRingInner = baseRadius + 0.74;
+  const jumpEligibilityRingOuter = baseRadius + 1.04;
   const haloMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const targetMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const damageControlDiskMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const dogfightRimMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const jumpEligibilityDiscMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const jumpEligibilityRingMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   const modelHeadingRef = useRef<THREE.Group>(null);
   const modelAttitudeRef = useRef<THREE.Group>(null);
   const visualAttackKeyRef = useRef<string | null>(null);
@@ -5261,7 +6168,8 @@ function GameUnit3D({
     DEAD_HYPERION_MODEL_FILENAME,
     DEAD_OMEGA_MODEL_FILENAME,
   ].includes(visualModelFilename.toLowerCase());
-  const usesAdriftVisual = unit.damageState === "adrift" && !isFighter;
+  const usesAdriftVisual =
+    unit.damageState === "adrift" && !isFighter && !visuallyDestroyed;
   const usesOmegaAdriftWreckVisual =
     usesAdriftVisual && visualModelFilename.toLowerCase() === "omega.glb";
   const usesAnimatedAdriftVisual =
@@ -5270,6 +6178,10 @@ function GameUnit3D({
     unit.damageState === "exploding-end-of-next" &&
     !unit.isDestroyed &&
     !isFighter;
+  const usesStrickenTumbleVisual =
+    visuallyDestroyed &&
+    !isFighter &&
+    !usesExplodingVisual;
   const showGenericDamageSparks =
     !usesAnimatedAdriftVisual &&
     !usesExplodingVisual &&
@@ -5285,6 +6197,21 @@ function GameUnit3D({
     unit.specialAction === "maneuver-to-shield" &&
     !hasPreview &&
     !visuallyDestroyed;
+  const strickenTumbleTiming = useMemo(() => {
+    const seed = unit.id;
+    const tumbleRate = 0.5;
+    return {
+      phaseX: terrainVisualSeededUnit(seed, 3) * Math.PI * 2,
+      phaseY: terrainVisualSeededUnit(seed, 7) * Math.PI * 2,
+      phaseZ: terrainVisualSeededUnit(seed, 11) * Math.PI * 2,
+      speedX: (0.1 + terrainVisualSeededUnit(seed, 17) * 0.12) * tumbleRate,
+      speedY: (0.07 + terrainVisualSeededUnit(seed, 23) * 0.1) * tumbleRate,
+      speedZ: (0.09 + terrainVisualSeededUnit(seed, 29) * 0.11) * tumbleRate,
+      wobbleX: (0.24 + terrainVisualSeededUnit(seed, 31) * 0.22) * tumbleRate,
+      wobbleY: (0.2 + terrainVisualSeededUnit(seed, 37) * 0.2) * tumbleRate,
+      wobbleZ: (0.22 + terrainVisualSeededUnit(seed, 41) * 0.24) * tumbleRate,
+    };
+  }, [unit.id]);
 
   useFrame(({ clock }) => {
     const elapsedSeconds = clock.getElapsedTime();
@@ -5316,7 +6243,21 @@ function GameUnit3D({
     }
     const modelAttitude = modelAttitudeRef.current;
     if (modelAttitude) {
-      if (usesAnimatedAdriftVisual && !hasPreview) {
+      if (usesStrickenTumbleVisual && !hasPreview) {
+        const t = clock.elapsedTime;
+        modelAttitude.rotation.x =
+          strickenTumbleTiming.phaseX +
+          t * strickenTumbleTiming.speedX +
+          Math.sin(t * strickenTumbleTiming.wobbleX + strickenTumbleTiming.phaseY) * 0.08;
+        modelAttitude.rotation.y =
+          strickenTumbleTiming.phaseY +
+          t * strickenTumbleTiming.speedY +
+          Math.sin(t * strickenTumbleTiming.wobbleY + strickenTumbleTiming.phaseZ) * 0.06;
+        modelAttitude.rotation.z =
+          strickenTumbleTiming.phaseZ +
+          t * strickenTumbleTiming.speedZ +
+          Math.cos(t * strickenTumbleTiming.wobbleZ + strickenTumbleTiming.phaseX) * 0.07;
+      } else if (usesAnimatedAdriftVisual && !hasPreview) {
         const t = clock.elapsedTime * 0.35;
         modelAttitude.rotation.x = THREE.MathUtils.degToRad(
           9 + Math.sin(t * 0.83) * 8,
@@ -5356,6 +6297,16 @@ function GameUnit3D({
       const t = (Math.sin(elapsedSeconds * 4.8) + 1) / 2;
       dogfightRimMat.opacity = 0.5 + t * 0.28;
       dogfightRimMat.emissiveIntensity = 0.7 + t * 0.55;
+    }
+    const jumpDiscMat = jumpEligibilityDiscMaterialRef.current;
+    const jumpRingMat = jumpEligibilityRingMaterialRef.current;
+    if (jumpDiscMat || jumpRingMat) {
+      const t = (Math.sin(elapsedSeconds * 5.2) + 1) / 2;
+      if (jumpDiscMat) jumpDiscMat.opacity = 0.12 + t * 0.24;
+      if (jumpRingMat) {
+        jumpRingMat.opacity = 0.66 + t * 0.28;
+        jumpRingMat.emissiveIntensity = 1.1 + t * 1.7;
+      }
     }
   });
 
@@ -5428,6 +6379,44 @@ function GameUnit3D({
             depthWrite={false}
           />
         </mesh>
+      )}
+      {jumpEligibleHighlighted && !hasPreview && (
+        <group>
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.033, 0]}
+            renderOrder={8}
+          >
+            <circleGeometry args={[jumpEligibilityDiscRadius, 72]} />
+            <meshBasicMaterial
+              ref={jumpEligibilityDiscMaterialRef}
+              color="#0ea5ff"
+              transparent
+              opacity={0.24}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.039, 0]}
+            renderOrder={9}
+          >
+            <ringGeometry args={[jumpEligibilityRingInner, jumpEligibilityRingOuter, 80]} />
+            <meshStandardMaterial
+              ref={jumpEligibilityRingMaterialRef}
+              color="#38bdf8"
+              emissive="#0284ff"
+              emissiveIntensity={1.4}
+              transparent
+              opacity={0.78}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
       )}
       {/* Base ring edge */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
@@ -5601,6 +6590,44 @@ function GameUnit3D({
               emissiveIntensity={0.6}
             />
           </mesh>
+          {jumpEligibleHighlighted && (
+            <group>
+              <mesh
+                rotation={[-Math.PI / 2, 0, 0]}
+                position={[0, 0.047, 0]}
+                renderOrder={8}
+              >
+                <circleGeometry args={[jumpEligibilityDiscRadius, 72]} />
+                <meshBasicMaterial
+                  ref={jumpEligibilityDiscMaterialRef}
+                  color="#0ea5ff"
+                  transparent
+                  opacity={0.24}
+                  blending={THREE.AdditiveBlending}
+                  depthWrite={false}
+                  toneMapped={false}
+                />
+              </mesh>
+              <mesh
+                rotation={[-Math.PI / 2, 0, 0]}
+                position={[0, 0.054, 0]}
+                renderOrder={9}
+              >
+                <ringGeometry args={[jumpEligibilityRingInner, jumpEligibilityRingOuter, 80]} />
+                <meshStandardMaterial
+                  ref={jumpEligibilityRingMaterialRef}
+                  color="#38bdf8"
+                  emissive="#0284ff"
+                  emissiveIntensity={1.4}
+                  transparent
+                  opacity={0.78}
+                  blending={THREE.AdditiveBlending}
+                  depthWrite={false}
+                  toneMapped={false}
+                />
+              </mesh>
+            </group>
+          )}
           {isSelected && weapons.length > 0 && (
             <group rotation={[0, previewHeadingRad, 0]}>
               <WeaponArcDisplay
@@ -6620,6 +7647,8 @@ function WeaponArcStatusPlate({
   size,
   planeY = 0.036,
   renderOrder = 12,
+  opacity = 0.94,
+  flash = false,
 }: {
   centerAngle: number;
   radius: number;
@@ -6628,11 +7657,14 @@ function WeaponArcStatusPlate({
   size?: number;
   planeY?: number;
   renderOrder?: number;
+  opacity?: number;
+  flash?: boolean;
 }) {
   const texture = useLoader(
     THREE.TextureLoader,
     boardTextureUrl(textureFilename),
   ) as THREE.Texture;
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
   useEffect(() => {
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -6681,7 +7713,7 @@ function WeaponArcStatusPlate({
     const shader = new THREE.ShaderMaterial({
       uniforms: {
         map: { value: texture },
-        opacity: { value: 0.94 },
+        opacity: { value: opacity },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -6708,9 +7740,21 @@ function WeaponArcStatusPlate({
       blending: THREE.AdditiveBlending,
       toneMapped: false,
     });
+    materialRef.current = shader;
     return shader;
-  }, [texture]);
+  }, [opacity, texture]);
   useEffect(() => () => material.dispose(), [material]);
+
+  useFrame(({ clock }) => {
+    const mat = materialRef.current;
+    if (!mat) return;
+    if (!flash) {
+      mat.uniforms.opacity.value = opacity;
+      return;
+    }
+    const flashOn = clock.getElapsedTime() % 1 < 0.52;
+    mat.uniforms.opacity.value = flashOn ? opacity : opacity * 0.18;
+  });
 
   return <mesh geometry={geometry} material={material} renderOrder={renderOrder} />;
 }
@@ -7811,6 +8855,21 @@ function signedHeadingDeltaDegrees(from: number, to: number): number {
   return delta;
 }
 
+function normalizeHeadingDegrees(heading: number): number {
+  return ((Math.round(heading) % 360) + 360) % 360;
+}
+
+function headingToPoint(from: { x: number; z: number }, to: { x: number; z: number }): number {
+  const degrees = (Math.atan2(to.x - from.x, to.z - from.z) * 180) / Math.PI;
+  return normalizeHeadingDegrees(degrees);
+}
+
+function limitHeadingToward(from: number, to: number, maxDelta: number): number {
+  const delta = signedHeadingDeltaDegrees(from, to);
+  const limited = Math.max(-maxDelta, Math.min(maxDelta, delta));
+  return normalizeHeadingDegrees(from + limited);
+}
+
 function interpolateHeadingDegrees(from: number, to: number, amount: number): number {
   return from + signedHeadingDeltaDegrees(from, to) * clampNumber(amount, 0, 1);
 }
@@ -7878,6 +8937,57 @@ function headingForwardVec(unit: { heading: number; modelFilename: string }): {
   const sign = flip ? -1 : 1;
   const hRad = (unit.heading * Math.PI) / 180;
   return { x: sign * Math.sin(hRad), z: sign * Math.cos(hRad) };
+}
+
+function pointInForwardArcForUnit(
+  unit: { hexQ: number; hexR: number; heading: number; modelFilename: string },
+  point: { x: number; z: number },
+): boolean {
+  const dx = point.x - unit.hexQ;
+  const dz = point.z - unit.hexR;
+  const dist = Math.hypot(dx, dz);
+  if (dist <= 1e-6) return true;
+  const forward = headingForwardVec(unit);
+  const dot = (dx * forward.x + dz * forward.z) / dist;
+  return dot >= Math.cos(Math.PI / 4) - 1e-6;
+}
+
+function pointInForwardArcForJumpPoint(
+  jumpPoint: Pick<GameJumpPoint, "hexQ" | "hexR" | "heading">,
+  point: { x: number; z: number },
+): boolean {
+  const dx = point.x - jumpPoint.hexQ;
+  const dz = point.z - jumpPoint.hexR;
+  const dist = Math.hypot(dx, dz);
+  if (dist <= 1e-6) return true;
+  const hRad = (jumpPoint.heading * Math.PI) / 180;
+  const forward = { x: Math.sin(hRad), z: Math.cos(hRad) };
+  const dot = (dx * forward.x + dz * forward.z) / dist;
+  return dot >= Math.cos(Math.PI / 4) - 1e-6;
+}
+
+function unitContactsJumpPointBase(
+  unit: { x: number; z: number; baseRadiusInches?: number | null },
+  jumpPoint: GameJumpPoint,
+): boolean {
+  const edge =
+    Math.hypot(unit.x - jumpPoint.hexQ, unit.z - jumpPoint.hexR) -
+    rulesBaseRadius(unit) -
+    jumpPointBaseRadius(jumpPoint);
+  return edge <= 0.05;
+}
+
+function unitIsOffBoard(unit: { boardState?: string | null }): boolean {
+  return unit.boardState === "hyperspace" || unit.boardState === "withdrawn";
+}
+
+function uiJumpEngineTraits(traits: string | null | undefined): {
+  jumpEngine: boolean;
+  advancedJumpEngine: boolean;
+} {
+  const advancedJumpEngine = /\badvanced\s+jump\s+engine\b/i.test(traits ?? "");
+  const jumpEngine = advancedJumpEngine || /\bjump\s+engine\b/i.test(traits ?? "");
+  return { jumpEngine, advancedJumpEngine };
 }
 
 type UiRulesProfile = "standard" | "ancients" | "shadows" | "vorlons";
@@ -9319,6 +10429,7 @@ interface StagedUnitData {
   deploymentGroupOrdinal?: number | null;
   x: number;
   z: number;
+  boardState: "deployed" | "hyperspace";
   heading: number; // degrees, 0 = +Z axis, clockwise
   locked: boolean;
   // Crew Quality 1..7. Always 4 in "standard" games; chosen per ship in
@@ -9567,6 +10678,7 @@ function StagedUnit3D({
   isSelected,
   onClick,
   onPointerDown,
+  onHoverChange,
   arcColorScheme = "classic",
   shipMeshTintsEnabled = true,
   shipHullNamesEnabled = true,
@@ -9575,6 +10687,7 @@ function StagedUnit3D({
   isSelected: boolean;
   onClick: (e: any) => void;
   onPointerDown?: (e: any) => void;
+  onHoverChange?: (unitId: string | null) => void;
   arcColorScheme?: UiArcColorScheme;
   shipMeshTintsEnabled?: boolean;
   shipHullNamesEnabled?: boolean;
@@ -9587,13 +10700,28 @@ function StagedUnit3D({
   const ringInner = Math.max(0.05, baseRadius - 0.05);
   const pulseInner = baseRadius + 0.18;
   const pulseOuter = baseRadius + 0.28;
+  const hitPadSize = unit.boardState === "hyperspace"
+    ? Math.max(baseRadius * 2.8, 2.6)
+    : Math.max(baseRadius * 2.15, 1.65);
 
   return (
     <group
       position={[unit.x, 0, unit.z]}
       onClick={onClick}
       onPointerDown={onPointerDown}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        onHoverChange?.(unit.id);
+      }}
+      onPointerOut={(e) => {
+        e.stopPropagation();
+        onHoverChange?.(null);
+      }}
     >
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.075, 0]}>
+        <planeGeometry args={[hitPadSize, hitPadSize]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
       {/* Selection pulse ring */}
       {isSelected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
@@ -10309,6 +11437,7 @@ function screenToBoard(
     camera: THREE.Camera;
     gl: THREE.WebGLRenderer;
   } | null>,
+  boardMargin = 0,
 ): [number, number] | null {
   if (!refs.current) return null;
   const { camera, gl } = refs.current;
@@ -10321,9 +11450,10 @@ function screenToBoard(
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const hit = new THREE.Vector3();
   if (!raycaster.ray.intersectPlane(plane, hit)) return null;
+  const margin = Math.max(0, boardMargin);
   return [
-    Math.max(-BOARD_W / 2, Math.min(BOARD_W / 2, hit.x)),
-    Math.max(-BOARD_D / 2, Math.min(BOARD_D / 2, hit.z)),
+    Math.max(-BOARD_W / 2 - margin, Math.min(BOARD_W / 2 + margin, hit.x)),
+    Math.max(-BOARD_D / 2 - margin, Math.min(BOARD_D / 2 + margin, hit.z)),
   ];
 }
 
@@ -10553,8 +11683,11 @@ export default function GameBoard() {
   const game = gameData?.game;
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
+  const jumpPoints = gameData?.jumpPoints ?? [];
   const [hoveredUnitId, setHoveredUnitId] = useState<number | null>(null);
   const [inspectedUnitId, setInspectedUnitId] = useState<number | null>(null);
+  const [hoveredStagedUnitId, setHoveredStagedUnitId] = useState<string | null>(null);
+  const [inspectedStagedUnitId, setInspectedStagedUnitId] = useState<string | null>(null);
   const terrainConfig = useMemo(
     () => normalizeTerrainConfig(game?.terrainConfig),
     [game?.terrainConfig],
@@ -10860,6 +11993,38 @@ export default function GameBoard() {
   const [activationFeedback, setActivationFeedback] = useState<string | null>(
     null,
   );
+  const [jumpPointPreviewPoint, setJumpPointPreviewPoint] = useState<{
+    x: number;
+    z: number;
+    heading: number;
+  } | null>(null);
+  const [reserveJumpPointPlacement, setReserveJumpPointPlacement] = useState<{
+    unitId: number;
+    x: number;
+    z: number;
+    heading: number;
+    attemptShockWave?: boolean;
+  } | null>(null);
+  const [reserveEntryPlacement, setReserveEntryPlacement] = useState<{
+    unitId: number;
+    jumpPointId: number;
+    x: number;
+    z: number;
+    heading: number;
+  } | null>(null);
+  const rotateReserveJumpPointPlacement = useCallback((delta: number) => {
+    setReserveJumpPointPlacement((current) =>
+      current
+        ? {
+            ...current,
+            heading: guardJumpPointHeadingAwayFromBorder(
+              current,
+              current.heading + delta,
+            ),
+          }
+        : current,
+    );
+  }, []);
   const [fighterBayFeedback, setFighterBayFeedback] = useState<string | null>(
     null,
   );
@@ -12305,6 +13470,16 @@ export default function GameBoard() {
       : myUserId === game.opponentId
         ? "opponent"
         : null;
+  const hyperspaceReserveZones = useMemo<Record<DeploymentSide, HyperspaceReserveZoneData>>(
+    () => ({
+      challenger: hyperspaceReserveZoneForSide(deploymentConfig, "challenger"),
+      opponent: hyperspaceReserveZoneForSide(deploymentConfig, "opponent"),
+    }),
+    [deploymentConfig],
+  );
+  const myHyperspaceReserveZone = mySide
+    ? hyperspaceReserveZones[mySide]
+    : null;
   const [manualTerrainChoice, setManualTerrainChoice] =
     useState<ManualTerrainChoice>("asteroid-light");
   const [manualTerrainRotationDeg, setManualTerrainRotationDeg] =
@@ -12414,6 +13589,197 @@ export default function GameBoard() {
     onError: (err: any) => {
       setActivationFeedback(
         cleanApiErrorMessage(err, "Terrain placement failed"),
+      );
+    },
+  });
+  const placeJumpPoint = useMutation({
+    mutationFn: ({
+      unitId,
+      x,
+      z,
+      heading,
+    }: {
+      unitId: number;
+      x: number;
+      z: number;
+      heading: number;
+    }) =>
+      customFetch<{ jumpPoint: GameJumpPoint }>(
+        `/api/games/${gameId}/units/${unitId}/jump-point`,
+        {
+          method: "POST",
+          body: JSON.stringify({ x, z, heading }),
+          responseType: "json",
+        },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData<GameDetail | undefined>(
+        getGetGameQueryKey(gameId),
+        (old) => {
+          if (!old) return old;
+          const existing = old.jumpPoints ?? [];
+          const withoutDuplicate = existing.filter(
+            (point) => point.id !== result.jumpPoint.id,
+          );
+          return {
+            ...old,
+            jumpPoints: [...withoutDuplicate, result.jumpPoint],
+          };
+        },
+      );
+      setJumpPointPreviewPoint(null);
+      setActivationFeedback("Jump point placed.");
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(cleanApiErrorMessage(err, "Jump point placement failed"));
+    },
+  });
+  const openReserveJumpPoint = useMutation({
+    mutationFn: ({
+      unitId,
+      x,
+      z,
+      heading,
+      attemptShockWave,
+    }: {
+      unitId: number;
+      x: number;
+      z: number;
+      heading: number;
+      attemptShockWave?: boolean;
+    }) =>
+      customFetch<{ jumpPoint: GameJumpPoint; unit: GameUnit; shockWave?: unknown }>(
+        `/api/games/${gameId}/hyperspace/open-jump-point`,
+        {
+          method: "POST",
+          body: JSON.stringify({ unitId, x, z, heading, attemptShockWave: attemptShockWave === true }),
+          responseType: "json",
+        },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData<GameDetail | undefined>(
+        getGetGameQueryKey(gameId),
+        (old) => {
+          if (!old) return old;
+          const withoutDuplicate = (old.jumpPoints ?? []).filter(
+            (point) => point.id !== result.jumpPoint.id,
+          );
+          return {
+            ...old,
+            units: old.units.map((unit) =>
+              unit.id === result.unit.id ? { ...unit, ...result.unit } : unit,
+            ),
+            jumpPoints: [...withoutDuplicate, result.jumpPoint],
+          };
+        },
+      );
+      setReserveJumpPointPlacement(null);
+      setActivationFeedback(
+        result.shockWave
+          ? "Reserve jump point opened; shock wave resolved."
+          : "Reserve jump point opened. End activation to hold it open.",
+      );
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        cleanApiErrorMessage(err, "Reserve jump point failed"),
+      );
+    },
+  });
+  const enterReserveFromJumpPoint = useMutation({
+    mutationFn: ({
+      unitId,
+      jumpPointId,
+      x,
+      z,
+      heading,
+    }: {
+      unitId: number;
+      jumpPointId: number;
+      x: number;
+      z: number;
+      heading: number;
+    }) =>
+      customFetch<{ unit: GameUnit; jumpPoints: GameJumpPoint[] }>(
+        `/api/games/${gameId}/hyperspace/enter-realspace`,
+        {
+          method: "POST",
+          body: JSON.stringify({ unitId, jumpPointId, x, z, heading }),
+          responseType: "json",
+        },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData<GameDetail | undefined>(
+        getGetGameQueryKey(gameId),
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            units: old.units.map((unit) =>
+              unit.id === result.unit.id ? { ...unit, ...result.unit } : unit,
+            ),
+            jumpPoints: result.jumpPoints,
+          };
+        },
+      );
+      setReserveEntryPlacement(null);
+      setSelectedUnit(result.unit.id);
+      setActivationFeedback(
+        result.unit.hasFiredThisRound
+          ? "Reserve ship arrived. No friendly Scout was already deployed, so it cannot fire this round."
+          : "Reserve ship arrived and may fire this round.",
+      );
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        cleanApiErrorMessage(err, "Reserve arrival failed"),
+      );
+    },
+  });
+  const enterHyperspaceThroughJumpPoint = useMutation({
+    mutationFn: ({
+      unitId,
+      jumpPointId,
+    }: {
+      unitId: number;
+      jumpPointId: number;
+    }) =>
+      customFetch<{ unit: GameUnit; jumpPoints: GameJumpPoint[] }>(
+        `/api/games/${gameId}/hyperspace/enter-hyperspace`,
+        {
+          method: "POST",
+          body: JSON.stringify({ unitId, jumpPointId }),
+          responseType: "json",
+        },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData<GameDetail | undefined>(
+        getGetGameQueryKey(gameId),
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            units: old.units.map((unit) =>
+              unit.id === result.unit.id ? { ...unit, ...result.unit } : unit,
+            ),
+            jumpPoints: result.jumpPoints,
+          };
+        },
+      );
+      setSelectedUnit(result.unit.id);
+      setMovePlan(null);
+      setActivationFeedback(
+        "Ship entered hyperspace as a tactical withdrawal. End activation to continue.",
+      );
+      void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+      void qc.invalidateQueries({ queryKey: ["movement-audit-log", gameId] });
+    },
+    onError: (err: any) => {
+      setActivationFeedback(
+        cleanApiErrorMessage(err, "Hyperspace entry failed"),
       );
     },
   });
@@ -12544,7 +13910,7 @@ export default function GameBoard() {
     (ignoredStagedIds: Set<string> = new Set()): UiBaseFootprint[] => {
       return [
         ...units
-          .filter((unit) => !unit.isDestroyed)
+          .filter((unit) => !unit.isDestroyed && !unitIsOffBoard(unit))
           .map((unit) => ({
             id: unit.id,
             x: unit.hexQ,
@@ -12553,7 +13919,7 @@ export default function GameBoard() {
             baseRadiusInches: unit.baseRadiusInches,
           })),
         ...currentStagedUnits
-          .filter((unit) => !ignoredStagedIds.has(unit.id))
+          .filter((unit) => !ignoredStagedIds.has(unit.id) && unit.boardState !== "hyperspace")
           .map((unit) => ({
             id: unit.id,
             x: unit.x,
@@ -12578,6 +13944,7 @@ export default function GameBoard() {
   );
   const deploymentOverlapWarning = useMemo(() => {
     for (const staged of currentStagedUnits) {
+      if (staged.boardState === "hyperspace") continue;
       const ignored = new Set([staged.id]);
       const candidate: UiBaseFootprint = {
         id: staged.id,
@@ -12592,6 +13959,42 @@ export default function GameBoard() {
     }
     return null;
   }, [currentStagedUnits, deploymentPlacementOverlaps, stagedUnitIsFighter]);
+  const hyperspaceReserveWarning = useMemo(() => {
+    const reserveUnits = currentStagedUnits.filter(
+      (unit) => unit.boardState === "hyperspace",
+    );
+    const reserveShips = currentStagedUnits.filter(
+      (unit) => unit.boardState === "hyperspace" && !stagedUnitIsFighter(unit),
+    );
+    if (reserveUnits.length === 0) return null;
+    if (myHyperspaceReserveZone) {
+      for (const unit of reserveUnits) {
+        if (!hyperspaceReserveFootprintFits(myHyperspaceReserveZone, unit, unit.baseRadiusInches)) {
+          return "Hyperspace reserve bases must fit wholly inside the reserve area.";
+        }
+      }
+      for (let i = 0; i < reserveUnits.length; i += 1) {
+        const a = reserveUnits[i]!;
+        for (let j = i + 1; j < reserveUnits.length; j += 1) {
+          const b = reserveUnits[j]!;
+          const clearance = a.baseRadiusInches + b.baseRadiusInches + 0.2;
+          if (Math.hypot(a.x - b.x, a.z - b.z) < clearance) {
+            return "Hyperspace reserve bases overlap. Drag ships apart before committing.";
+          }
+        }
+      }
+    }
+    if (!reserveShips.some((unit) => uiJumpEngineTraits(unit.traits).jumpEngine)) {
+      return "Hyperspace reserves need at least one reserved ship with Jump Engine.";
+    }
+    const realspaceShips = currentStagedUnits.filter(
+      (unit) => unit.boardState !== "hyperspace" && !stagedUnitIsFighter(unit),
+    );
+    if (realspaceShips.length === 0) {
+      return "Hyperspace reserves need at least one friendly ship in realspace.";
+    }
+    return null;
+  }, [currentStagedUnits, myHyperspaceReserveZone, stagedUnitIsFighter]);
   const makeStagedUnit = useCallback(
     (
       ship: ShipModel,
@@ -12637,6 +14040,7 @@ export default function GameBoard() {
         deploymentGroupOrdinal,
         x: cx,
         z: cz,
+        boardState: "deployed",
         heading: deployment.defaultHeading,
         locked: false,
         crewQuality: 4,
@@ -12710,14 +14114,52 @@ export default function GameBoard() {
       const heading = mySide
         ? deploymentSideConfig(deploymentConfig, mySide).defaultHeading
         : 0;
+      const reserveRequested = pointInsideHyperspaceReserveZone(
+        rawX,
+        rawZ,
+        myHyperspaceReserveZone,
+      );
+      const reserveOccupied = currentStagedUnits
+        .filter((unit) => unit.boardState === "hyperspace")
+        .map((unit) => ({
+          x: unit.x,
+          z: unit.z,
+          baseRadiusInches: unit.baseRadiusInches,
+        }));
 
       for (let index = 0; index < offsets.length; index += 1) {
         const offset = offsets[index]!;
-        const [x, z] = clampToDeployZone(
-          rawX + offset.x,
-          rawZ + offset.z,
-          ship.baseRadiusInches,
-        );
+        let x: number;
+        let z: number;
+        if (reserveRequested && myHyperspaceReserveZone) {
+          const occupied = [
+            ...reserveOccupied,
+            ...stagedCandidates.map(({ footprint }) => ({
+              x: footprint.x,
+              z: footprint.z,
+              baseRadiusInches: footprint.baseRadiusInches ?? 0.5,
+            })),
+          ];
+          const reservePoint = resolveHyperspaceReservePoint(
+            myHyperspaceReserveZone,
+            { x: rawX + offset.x, z: rawZ + offset.z },
+            ship.baseRadiusInches,
+            occupied,
+          );
+          if (!reservePoint) {
+            setActivationFeedback(
+              `Cannot reserve ${ship.name}: hyperspace reserve area is full.`,
+            );
+            return;
+          }
+          [x, z] = reservePoint;
+        } else {
+          [x, z] = clampToDeployZone(
+            rawX + offset.x,
+            rawZ + offset.z,
+            ship.baseRadiusInches,
+          );
+        }
         const candidate: UiBaseFootprint = {
           id: `candidate-${ship.id}-${index}`,
           x,
@@ -12731,7 +14173,7 @@ export default function GameBoard() {
         const overlapsNew = stagedCandidates.some(({ footprint }) =>
           uiBaseFootprintsIllegallyOverlap(candidate, footprint),
         );
-        if (overlapsExisting || overlapsNew) {
+        if (!reserveRequested && (overlapsExisting || overlapsNew)) {
           setActivationFeedback(
             isMultiUnitPurchase
               ? `Cannot place ${ship.name}: not enough legal space for ${purchaseUnitCount} units.`
@@ -12773,6 +14215,7 @@ export default function GameBoard() {
               : null,
             x,
             z,
+            boardState: reserveRequested ? "hyperspace" : "deployed",
             heading,
             locked: false,
             crewQuality: 4,
@@ -12794,9 +14237,11 @@ export default function GameBoard() {
     },
     [
       clampToDeployZone,
+      currentStagedUnits,
       deploymentConfig,
       deploymentBlockers,
       manualTerrainPending,
+      myHyperspaceReserveZone,
       mySide,
       myUserId,
       shipModels,
@@ -12804,6 +14249,10 @@ export default function GameBoard() {
   );
   const stageCarrierFighter = useCallback(
     (carrier: StagedUnitData, item: StagedFighterInventoryItem) => {
+      if (carrier.boardState === "hyperspace") {
+        setActivationFeedback("Deploy the carrier in realspace before staging carried fighters.");
+        return;
+      }
       if (!item.shipModelId) return;
       const fighterModel = (shipModels ?? []).find(
         (model) => model.id === item.shipModelId,
@@ -12821,7 +14270,7 @@ export default function GameBoard() {
 
       const allBlockers = [
         ...units
-          .filter((unit) => !unit.isDestroyed)
+          .filter((unit) => !unit.isDestroyed && !unitIsOffBoard(unit))
           .map((unit) => ({
             id: unit.id,
             hexQ: unit.hexQ,
@@ -12925,6 +14374,7 @@ export default function GameBoard() {
           launchedFromStagedId: carrier.id,
           x: spot.x,
           z: spot.z,
+          boardState: "deployed",
           heading: carrier.heading,
           locked: false,
           crewQuality: carrier.crewQuality,
@@ -12937,6 +14387,7 @@ export default function GameBoard() {
       currentStagedUnits,
       isFighterUnit,
       myUserId,
+      setActivationFeedback,
       shipModelById,
       shipModels,
       units,
@@ -13130,20 +14581,111 @@ export default function GameBoard() {
     inspectedUnitId === null
       ? null
       : units.find((unit) => unit.id === inspectedUnitId) ?? null;
+  const inspectedStagedUnit =
+    inspectedStagedUnitId === null
+      ? null
+      : currentStagedUnits.find((unit) => unit.id === inspectedStagedUnitId) ?? null;
+  const inspectedStagedShipModel = inspectedStagedUnit
+    ? shipModelById[inspectedStagedUnit.shipModelId]
+    : undefined;
+  const inspectedStagedUnitData = useMemo<GameUnit | null>(() => {
+    if (!inspectedStagedUnit) return null;
+    const model = inspectedStagedShipModel;
+    const maxCrew = model?.crew ?? 0;
+    return {
+      id: -Math.max(1, currentStagedUnits.findIndex((unit) => unit.id === inspectedStagedUnit.id) + 1),
+      gameId,
+      ownerId: inspectedStagedUnit.ownerId,
+      shipId: 0,
+      shipModelId: inspectedStagedUnit.shipModelId,
+      name: inspectedStagedUnit.name,
+      modelFilename: inspectedStagedUnit.modelFilename,
+      faction: inspectedStagedUnit.faction,
+      baseRadiusInches: inspectedStagedUnit.baseRadiusInches,
+      boardState: inspectedStagedUnit.boardState,
+      hullPoints: inspectedStagedUnit.hullPoints,
+      maxHullPoints: inspectedStagedUnit.hullPoints,
+      damageThreshold: model?.damageThreshold ?? 0,
+      physicalDisruptionThreshold: model?.physicalDisruptionThreshold ?? 0,
+      permanentlyCrippled: false,
+      ancientStatusEffects: [],
+      shadowPointDefenseRound: 0,
+      shadowManeuverMode: null,
+      mindScreamTargetIdsThisRound: [],
+      telepathicTargetsAttemptedThisRound: [],
+      telepathicDisruptionExhausted: false,
+      shieldsCurrent: model?.shieldMax ?? 0,
+      lastDcRound: 0,
+      lastSelfRepairRound: 0,
+      crewPoints: maxCrew,
+      maxCrewPoints: maxCrew,
+      crewThreshold: model?.crewThreshold ?? (maxCrew ? Math.ceil(maxCrew / 2) : 0),
+      damageState: "normal",
+      isCrippled: false,
+      isSkeletonCrew: false,
+      carriedFighters: [],
+      launchedFromUnitId: null,
+      fighterBayOperationsRound: 0,
+      fighterBayOperationsUsed: 0,
+      criticals: [],
+      hexQ: inspectedStagedUnit.x,
+      hexR: inspectedStagedUnit.z,
+      heading: inspectedStagedUnit.heading,
+      speed: inspectedStagedUnit.speed,
+      turnAngle: model?.turnAngle ?? 45,
+      turns: model?.turns ?? 1,
+      weaponRange: inspectedStagedUnit.weaponRange,
+      weaponDamage: inspectedStagedUnit.weaponDamage,
+      crewQuality: inspectedStagedUnit.crewQuality,
+      isDestroyed: false,
+      hasMovedThisRound: false,
+      hasFiredThisRound: false,
+      inchesMovedThisActivation: 0,
+      oneWeaponThisRound: false,
+      firedWeaponIds: [],
+      splitFireFirstTargetByWeapon: {},
+      slowLoadingWeaponCooldowns: {},
+      hitByUnitIdsThisRound: [],
+      specialAction: null,
+      specialActionTargetId: null,
+      allStopReady: false,
+      scoutAction: null,
+      scoutActionTargetId: null,
+      scoutCoordConsumed: false,
+    } as GameUnit;
+  }, [currentStagedUnits, gameId, inspectedStagedShipModel, inspectedStagedUnit]);
+  const inspectorUnitData = inspectedStagedUnitData ?? inspectedUnitData;
+  const inspectorShipModel = inspectedStagedUnitData
+    ? inspectedStagedShipModel
+    : inspectedUnitData
+      ? getShipModelForUnit(inspectedUnitData)
+      : undefined;
   const inspectedShipModel = inspectedUnitData
     ? getShipModelForUnit(inspectedUnitData)
     : undefined;
   const inspectedUnitWeapons = inspectedUnitData
     ? getWeaponsForUnit(inspectedUnitData)
     : [];
+  const inspectorUnitWeapons = inspectedStagedUnitData
+    ? ((inspectedStagedShipModel?.weapons as Weapon[] | undefined) ?? [])
+    : inspectedUnitWeapons;
   const inspectedUnitIsFighter = inspectedUnitData
     ? isFighterUnit(inspectedUnitData)
     : false;
+  const inspectorUnitIsFighter = inspectedStagedUnitData
+    ? shipModelHasFighterTrait(inspectedStagedShipModel)
+    : inspectedUnitIsFighter;
   const inspectedUnitDogfightLocked =
     !!inspectedUnitData &&
     dogfightingFighterUnitIds.has(inspectedUnitData.id);
+  const inspectorUnitDogfightLocked = inspectedStagedUnitData
+    ? false
+    : inspectedUnitDogfightLocked;
   const handleUnitHoverChange = useCallback((unitId: number | null) => {
     setHoveredUnitId((current) => (current === unitId ? current : unitId));
+  }, []);
+  const handleStagedUnitHoverChange = useCallback((unitId: string | null) => {
+    setHoveredStagedUnitId((current) => (current === unitId ? current : unitId));
   }, []);
   useEffect(() => {
     if (hoveredUnitId !== null && !units.some((unit) => unit.id === hoveredUnitId)) {
@@ -13152,7 +14694,20 @@ export default function GameBoard() {
     if (inspectedUnitId !== null && !units.some((unit) => unit.id === inspectedUnitId)) {
       setInspectedUnitId(null);
     }
-  }, [hoveredUnitId, inspectedUnitId, units]);
+    if (hoveredStagedUnitId !== null && !currentStagedUnits.some((unit) => unit.id === hoveredStagedUnitId)) {
+      setHoveredStagedUnitId(null);
+    }
+    if (inspectedStagedUnitId !== null && !currentStagedUnits.some((unit) => unit.id === inspectedStagedUnitId)) {
+      setInspectedStagedUnitId(null);
+    }
+  }, [
+    currentStagedUnits,
+    hoveredStagedUnitId,
+    hoveredUnitId,
+    inspectedStagedUnitId,
+    inspectedUnitId,
+    units,
+  ]);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -13167,13 +14722,19 @@ export default function GameBoard() {
       }
       if (event.altKey || event.ctrlKey || event.metaKey) return;
       if (event.key !== "u" && event.key !== "U") return;
-      if (hoveredUnitId === null) return;
+      if (hoveredStagedUnitId === null && hoveredUnitId === null) return;
       event.preventDefault();
+      if (hoveredStagedUnitId !== null) {
+        setInspectedStagedUnitId(hoveredStagedUnitId);
+        setInspectedUnitId(null);
+        return;
+      }
       setInspectedUnitId(hoveredUnitId);
+      setInspectedStagedUnitId(null);
     };
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [hoveredUnitId]);
+  }, [hoveredStagedUnitId, hoveredUnitId]);
   // The selected ship is only "controllable" if it's the one the server
   // currently has activated for THIS player.
   const isSelectedUnitActive =
@@ -13463,6 +15024,7 @@ export default function GameBoard() {
     const isAllStopPivot = baseAction === "all-stop-pivot";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
+    const isInitiateJumpPoint = baseAction === "initiate-jump-point";
     const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
     const movementModel = getShipModelForUnit(u);
     const movementTraits = uiMovementTraitsForModel(movementModel, u);
@@ -13474,13 +15036,13 @@ export default function GameBoard() {
     const baseTurnAngle = isSuperManeuverable ? 360 : effectiveUiTurnAngle(u);
     const speedCap = isAllStopPivot
       ? 0
-      : isAllStop || isRunSilent
+      : isAllStop || isRunSilent || isInitiateJumpPoint
         ? Math.floor(baseSpeed / 2)
         : isAllPower
           ? Math.floor(baseSpeed * 1.5)
           : baseSpeed;
     const maxTurns = baseTurns + (isComeAboutExtra ? 1 : 0);
-    const turnsForbidden = isAllPower || isRunSilent || isAllStop;
+    const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
     const led = getLedger(u.id);
     let toHexQ = u.hexQ,
       toHexR = u.hexR,
@@ -13717,6 +15279,8 @@ export default function GameBoard() {
     isFighterUnit,
     unitsWithFighterFlags,
     dogfightingFighterUnitIds,
+    reserveJumpPointPlacement,
+    rotateReserveJumpPointPlacement,
   ]);
 
   const confirmMovePlan = useCallback(() => {
@@ -13793,6 +15357,15 @@ export default function GameBoard() {
           | "end"
           | undefined) ?? "movement";
       if (phase !== "movement") return;
+      if (
+        reserveJumpPointPlacement &&
+        selectedUnitData.id === reserveJumpPointPlacement.unitId &&
+        (e.key === "q" || e.key === "Q" || e.key === "e" || e.key === "E")
+      ) {
+        e.preventDefault();
+        rotateReserveJumpPointPlacement(e.key === "q" || e.key === "Q" ? 15 : -15);
+        return;
+      }
       const u = selectedUnitData;
       const selectedFighterMoveKey =
         isFighterUnit(u) &&
@@ -13832,13 +15405,14 @@ export default function GameBoard() {
       const isAllStopPivot = baseAction === "all-stop-pivot";
       const isAllPower = baseAction === "all-power-engines";
       const isRunSilent = baseAction === "run-silent";
+      const isInitiateJumpPoint = baseAction === "initiate-jump-point";
       const isComeAboutExtra = u.specialAction === "come-about-extra-turn"; // success-only
       const isComeAboutSharp = comeAboutSharpBonusAvailable(u.specialAction); // success-only and unspent
       // Come About (extra-turn variant): +1 extra turn this activation.
       const maxTurns = baseTurns + (isComeAboutExtra ? 1 : 0);
       // No turns allowed under All Power to Engines, Run Silent, or All Stop.
       // All Stop and Pivot doubles turn rate but allows turns.
-      const turnsForbidden = isAllPower || isRunSilent || isAllStop;
+      const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
       // Per sheet: a ship must move ≥ ½ base speed before its FIRST turn, and
       // ≥ 2" of fresh forward motion before each follow-up turn. Agile lowers
       // those to ¼ speed and 1"; Super Manoeuvrable ignores the gate. All Stop
@@ -13865,7 +15439,7 @@ export default function GameBoard() {
       // All Stop and Pivot: no movement.
       const speedCap = isAllStopPivot
         ? 0
-        : isAllStop || isRunSilent
+        : isAllStop || isRunSilent || isInitiateJumpPoint
           ? Math.floor(baseSpeed / 2)
           : isAllPower
             ? Math.floor(baseSpeed * 1.5)
@@ -14000,6 +15574,8 @@ export default function GameBoard() {
     isFighterUnit,
     unitsWithFighterFlags,
     dogfightingFighterUnitIds,
+    reserveJumpPointPlacement,
+    rotateReserveJumpPointPlacement,
   ]);
 
   // Special-Action-adjusted caps for the selected unit. Single source of truth
@@ -14014,6 +15590,7 @@ export default function GameBoard() {
     const isAllStopPivot = baseAction === "all-stop-pivot";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
+    const isInitiateJumpPoint = baseAction === "initiate-jump-point";
     const isComeAboutExtra = u.specialAction === "come-about-extra-turn";
     const movementModel = getShipModelForUnit(u);
     const movementTraits = uiMovementTraitsForModel(movementModel, u);
@@ -14026,10 +15603,10 @@ export default function GameBoard() {
       (isComeAboutExtra ? 1 : 0);
     // Keep in sync with the keyboard handler's turnsForbidden — All Stop
     // forbids turning per the sheet ("ship halts; may not turn").
-    const turnsForbidden = isAllPower || isRunSilent || isAllStop;
+    const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
     const speedCap = isAllStopPivot
       ? 0
-      : isAllStop || isRunSilent
+      : isAllStop || isRunSilent || isInitiateJumpPoint
         ? Math.floor(baseSpeed / 2)
         : isAllPower
           ? Math.floor(baseSpeed * 1.5)
@@ -14055,6 +15632,7 @@ export default function GameBoard() {
     const isAllStop = baseAction === "all-stop";
     const isAllPower = baseAction === "all-power-engines";
     const isRunSilent = baseAction === "run-silent";
+    const isInitiateJumpPoint = baseAction === "initiate-jump-point";
     const isComeAboutSharp = comeAboutSharpBonusAvailable(u.specialAction);
     const movementModel = getShipModelForUnit(u);
     const movementTraits = uiMovementTraitsForModel(movementModel, u);
@@ -14083,7 +15661,7 @@ export default function GameBoard() {
         turnGateExempt ||
         (Number.isFinite(neededStraight) &&
           led.distSinceLastTurn + 1e-6 >= neededStraight);
-    const turnsForbidden = isAllPower || isRunSilent || isAllStop;
+    const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
     const canTurn =
       !turnsForbidden &&
       led.turns < selectedSaCaps.maxTurns &&
@@ -14235,6 +15813,110 @@ export default function GameBoard() {
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
     (game?.phase as "initiative" | "movement" | "firing" | "end") ?? "movement";
+  const selectedJumpTraits = uiJumpEngineTraits(selectedShipModel?.traits);
+  const selectedJumpPointAlreadyPlaced = selectedUnitData
+    ? jumpPoints.some(
+        (point) =>
+          point.creatorUnitId === selectedUnitData.id &&
+          point.createdRound === game?.currentRound &&
+          point.status === "open",
+      )
+    : false;
+  const canPlaceJumpPoint =
+    !!game &&
+    game.status === "active" &&
+    currentPhase === "movement" &&
+    isSelectedUnitActive &&
+    !!selectedUnitData &&
+    selectedUnitData.ownerId === myUserId &&
+    selectedUnitData.specialAction === "initiate-jump-point" &&
+    selectedJumpTraits.jumpEngine &&
+    !selectedJumpPointAlreadyPlaced;
+  const jumpPointFacingInitiator = useCallback((
+    unit: { hexQ: number; hexR: number },
+    point: { x: number; z: number },
+  ): number => headingToPoint(point, { x: unit.hexQ, z: unit.hexR }), []);
+  const rotateJumpPointPreview = useCallback((delta: number) => {
+    if (!selectedUnitData) return;
+    setJumpPointPreviewPoint((current) => {
+      if (!current) return current;
+      const facingInitiator = jumpPointFacingInitiator(selectedUnitData, current);
+      const requestedHeading = current.heading + delta;
+      const guardedHeading = guardJumpPointHeadingAwayFromBorder(
+        current,
+        requestedHeading,
+      );
+      return {
+        ...current,
+        heading: selectedJumpTraits.advancedJumpEngine
+          ? normalizeHeadingDegrees(guardedHeading)
+          : limitHeadingToward(
+              facingInitiator,
+              guardedHeading,
+              STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES,
+            ),
+      };
+    });
+  }, [jumpPointFacingInitiator, selectedJumpTraits.advancedJumpEngine, selectedUnitData]);
+  const jumpPointPreviewLegal = useMemo(() => {
+    if (!canPlaceJumpPoint || !selectedUnitData || !jumpPointPreviewPoint) return false;
+    const distance = Math.hypot(
+      jumpPointPreviewPoint.x - selectedUnitData.hexQ,
+      jumpPointPreviewPoint.z - selectedUnitData.hexR,
+    );
+    if (distance > 8 + 1e-6) return false;
+    if (
+      !selectedJumpTraits.advancedJumpEngine &&
+      !pointInForwardArcForUnit(selectedUnitData, jumpPointPreviewPoint)
+    ) {
+      return false;
+    }
+    if (
+      !selectedJumpTraits.advancedJumpEngine &&
+      headingDeltaDegrees(jumpPointFacingInitiator(selectedUnitData, jumpPointPreviewPoint), jumpPointPreviewPoint.heading) >
+        STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES + 1e-6
+    ) {
+      return false;
+    }
+    return true;
+  }, [
+    canPlaceJumpPoint,
+    jumpPointFacingInitiator,
+    jumpPointPreviewPoint,
+    selectedJumpTraits.advancedJumpEngine,
+    selectedUnitData,
+  ]);
+  useEffect(() => {
+    if (!canPlaceJumpPoint) setJumpPointPreviewPoint(null);
+  }, [canPlaceJumpPoint]);
+  useEffect(() => {
+    if (!jumpPointPreviewPoint || !canPlaceJumpPoint) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "q" && event.key !== "Q" && event.key !== "e" && event.key !== "E") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      rotateJumpPointPreview(
+        event.key === "q" || event.key === "Q"
+          ? JUMP_POINT_ROTATION_STEP_DEGREES
+          : -JUMP_POINT_ROTATION_STEP_DEGREES,
+      );
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [canPlaceJumpPoint, jumpPointPreviewPoint, rotateJumpPointPreview]);
   useEffect(() => {
     if (currentPhase !== "movement" || serverActiveUnitId == null) return;
     setPhaseLedger((prev) => {
@@ -15048,10 +16730,10 @@ export default function GameBoard() {
     if (unitPinnedInCurrentRound(selectedUnitData)) {
       return "Movement unavailable: ship is pinned this round.";
     }
-    if (
-      selectedUnitData.damageState === "adrift" ||
-      selectedUnitData.damageState === "exploding-end-of-next"
-    ) {
+    if (unitIsEnginesDisabledDriftOnly(selectedUnitData)) {
+      return "Movement unavailable: Engines Disabled; drift resolves in End Phase.";
+    }
+    if (unitIsInactiveAdrift(selectedUnitData)) {
       return "Movement unavailable: ship is drifting under critical damage.";
     }
     if (
@@ -15083,6 +16765,10 @@ export default function GameBoard() {
   const unitEligibleForCurrentPhase = useCallback(
     (u: BoardUnit): boolean => {
       if (u.isDestroyed) return false;
+      if (u.boardState === "withdrawn") return false;
+      if (u.boardState === "hyperspace" && currentPhase !== "movement") {
+        return false;
+      }
       if (unitPinnedInCurrentRound(u)) return false;
       const phaseDone =
         currentPhase === "firing" ? u.hasFiredThisRound : u.hasMovedThisRound;
@@ -15093,10 +16779,7 @@ export default function GameBoard() {
         const crew = u.crewPoints ?? 0;
         if (maxCrew > 0 && crew <= 0) return false;
       } else {
-        if (
-          u.damageState === "adrift" ||
-          u.damageState === "exploding-end-of-next"
-        )
+        if (unitIsInactiveAdrift(u))
           return false;
         if (
           isFighterUnit(u) &&
@@ -15128,15 +16811,15 @@ export default function GameBoard() {
     unitEligibleForCurrentPhase,
     units,
   ]);
-  const myEligibleActivations = useMemo(() => {
-    if (!isMyActivation || !myUserId) return 0;
+  const myEligibleActivationUnits = useMemo(() => {
+    if (!isMyActivation || !myUserId) return [];
     return units.filter((u) => {
       if (u.ownerId !== myUserId) return false;
       if (!unitEligibleForCurrentPhase(u)) return false;
       if (activationSegment === "fighter" && !isFighterUnit(u)) return false;
       if (activationSegment === "capital" && isFighterUnit(u)) return false;
       return true;
-    }).length;
+    });
   }, [
     activationSegment,
     isFighterUnit,
@@ -15145,8 +16828,15 @@ export default function GameBoard() {
     unitEligibleForCurrentPhase,
     units,
   ]);
+  const myEligibleActivations = myEligibleActivationUnits.length;
+  const myEligibleOnlyHyperspaceReserves =
+    currentPhase === "movement" &&
+    myEligibleActivations > 0 &&
+    myEligibleActivationUnits.every((u) => u.boardState === "hyperspace");
   const canPassPhase =
-    isMyActivation && !hasActiveUnit && myEligibleActivations === 0;
+    isMyActivation &&
+    !hasActiveUnit &&
+    (myEligibleActivations === 0 || myEligibleOnlyHyperspaceReserves);
   const canPassAllFiring =
     isMyActivation &&
     currentPhase === "firing" &&
@@ -15167,9 +16857,11 @@ export default function GameBoard() {
   const activationPickLabel =
     activationSegment === "fighter" ? "Pick a Fighter Flight" : "Pick a Ship";
   const activationPassLabel =
-    activationSegment === "fighter"
-      ? "No eligible fighter flights - pass to opponent"
-      : "No eligible ships - pass the phase";
+    myEligibleOnlyHyperspaceReserves
+      ? "Pass hyperspace reserves for this movement phase"
+      : activationSegment === "fighter"
+        ? "No eligible fighter flights - pass to opponent"
+        : "No eligible ships - pass the phase";
   const { data: attackAuditData } = useQuery<AttackAuditLogResponse>({
     queryKey: ["attack-audit-log", gameId],
     queryFn: () =>
@@ -15280,6 +16972,229 @@ export default function GameBoard() {
   const activeUnitData = hasActiveUnit
     ? (units.find((u) => u.id === activeUnitId) ?? null)
     : null;
+  const hyperspaceReserveUnits = useMemo(
+    () =>
+      units.filter(
+        (unit) =>
+          (unit as GameUnit & { boardState?: string | null }).boardState ===
+          "hyperspace",
+      ),
+    [units],
+  );
+  const myHyperspaceReserveUnits = useMemo(
+    () => hyperspaceReserveUnits.filter((unit) => unit.ownerId === myUserId),
+    [hyperspaceReserveUnits, myUserId],
+  );
+  const activeReserveUnit =
+    activeUnitData?.boardState === "hyperspace" ? activeUnitData : null;
+  const activeReserveShipModel = activeReserveUnit
+    ? getShipModelForUnit(activeReserveUnit)
+    : undefined;
+  const activeReserveJumpTraits = uiJumpEngineTraits(
+    activeReserveShipModel?.traits,
+  );
+  const myDeployedScoutPresent = useMemo(
+    () =>
+      units.some((unit) => {
+        if (
+          unit.ownerId !== myUserId ||
+          unit.isDestroyed ||
+          unitIsOffBoard(unit) ||
+          unit.hullPoints <= 0 ||
+          ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
+        ) {
+          return false;
+        }
+        const model = getShipModelForUnit(unit);
+        return Boolean(model && /\bscout\b/i.test(model.traits ?? ""));
+      }),
+    [getShipModelForUnit, myUserId, units],
+  );
+  const canAttemptReserveJumpShockWave =
+    activeReserveJumpTraits.advancedJumpEngine && myDeployedScoutPresent;
+  const myOpenToRealspaceJumpPoints = useMemo(
+    () =>
+      jumpPoints.filter(
+        (point) =>
+          point.ownerId === myUserId &&
+          point.direction === "to-realspace" &&
+          point.status === "open",
+      ),
+    [jumpPoints, myUserId],
+  );
+  const myOpenToHyperspaceJumpPoints = useMemo(
+    () =>
+      jumpPoints.filter(
+        (point) =>
+          point.ownerId === myUserId &&
+          point.direction === "to-hyperspace" &&
+          point.status === "open" &&
+          point.createdRound < (game?.currentRound ?? 0),
+      ),
+    [game?.currentRound, jumpPoints, myUserId],
+  );
+  const activeHyperspaceExitPoint = useMemo(() => {
+    if (
+      !activeUnitData ||
+      activeUnitData.boardState !== "deployed" ||
+      currentPhase !== "movement" ||
+      activeUnitData.ownerId !== myUserId
+    ) {
+      return null;
+    }
+    return (
+      myOpenToHyperspaceJumpPoints.find((point) => {
+        const unitPoint = {
+          x: activeUnitData.hexQ,
+          z: activeUnitData.hexR,
+          baseRadiusInches: activeUnitData.baseRadiusInches,
+        };
+        return (
+          unitContactsJumpPointBase(unitPoint, point) &&
+          pointInForwardArcForJumpPoint(point, unitPoint)
+        );
+      }) ?? null
+    );
+  }, [
+    activeUnitData,
+    currentPhase,
+    myOpenToHyperspaceJumpPoints,
+    myUserId,
+  ]);
+  const jumpPointContactEligibleUnitIds = useMemo(() => {
+    const ids = new Set<number>();
+    if (currentPhase !== "movement" || myOpenToHyperspaceJumpPoints.length === 0) {
+      return ids;
+    }
+    for (const unit of units) {
+      if (
+        unit.ownerId !== myUserId ||
+        unit.isDestroyed ||
+        unitIsOffBoard(unit) ||
+        unit.damageState === "adrift" ||
+        unit.damageState === "exploding-end-of-next"
+      ) {
+        continue;
+      }
+      const previewOffset =
+        unit.id === selectedUnit && selectedDragOffset
+          ? selectedDragOffset
+          : null;
+      const unitPoint = {
+        x: unit.hexQ + (previewOffset?.x ?? 0),
+        z: unit.hexR + (previewOffset?.z ?? 0),
+        baseRadiusInches: unit.baseRadiusInches,
+      };
+      if (
+        myOpenToHyperspaceJumpPoints.some(
+          (point) =>
+            unitContactsJumpPointBase(unitPoint, point) &&
+            pointInForwardArcForJumpPoint(point, unitPoint),
+        )
+      ) {
+        ids.add(unit.id);
+      }
+    }
+    return ids;
+  }, [
+    currentPhase,
+    myOpenToHyperspaceJumpPoints,
+    myUserId,
+    selectedDragOffset,
+    selectedUnit,
+    units,
+  ]);
+  const reserveJumpPointPlacementLegal = useMemo(() => {
+    if (!reserveJumpPointPlacement || !activeReserveUnit) return false;
+    if (reserveJumpPointPlacement.unitId !== activeReserveUnit.id) return false;
+    return jumpPointCenterInsideBufferedBoard(reserveJumpPointPlacement);
+  }, [activeReserveUnit, reserveJumpPointPlacement]);
+  useEffect(() => {
+    if (!reserveJumpPointPlacement) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "q" && event.key !== "Q" && event.key !== "e" && event.key !== "E") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      rotateReserveJumpPointPlacement(event.key === "q" || event.key === "Q" ? 15 : -15);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [reserveJumpPointPlacement, rotateReserveJumpPointPlacement]);
+  const reserveEntryJumpPoint = reserveEntryPlacement
+    ? myOpenToRealspaceJumpPoints.find(
+        (point) => point.id === reserveEntryPlacement.jumpPointId,
+      ) ?? null
+    : null;
+  const reserveEntryPlacementLegal = useMemo(() => {
+    if (!reserveEntryPlacement || !activeReserveUnit || !reserveEntryJumpPoint) {
+      return false;
+    }
+    if (reserveEntryPlacement.unitId !== activeReserveUnit.id) return false;
+    const radius = rulesBaseRadius(activeReserveUnit);
+    if (
+      reserveEntryPlacement.x < -BOARD_W / 2 + radius ||
+      reserveEntryPlacement.x > BOARD_W / 2 - radius ||
+      reserveEntryPlacement.z < -BOARD_D / 2 + radius ||
+      reserveEntryPlacement.z > BOARD_D / 2 - radius
+    ) {
+      return false;
+    }
+    if (!unitContactsJumpPointBase(reserveEntryPlacement, reserveEntryJumpPoint)) {
+      return false;
+    }
+    if (!pointInForwardArcForJumpPoint(reserveEntryJumpPoint, reserveEntryPlacement)) {
+      return false;
+    }
+    const candidate: UiBaseFootprint = {
+      id: activeReserveUnit.id,
+      x: reserveEntryPlacement.x,
+      z: reserveEntryPlacement.z,
+      isFighter: isFighterUnit(activeReserveUnit),
+      baseRadiusInches: activeReserveUnit.baseRadiusInches,
+    };
+    return !unitsWithFighterFlags.some((other) => {
+      if (other.isDestroyed || unitIsOffBoard(other)) return false;
+      return uiBaseFootprintsIllegallyOverlap(candidate, {
+        id: other.id,
+        x: other.hexQ,
+        z: other.hexR,
+        isFighter: other.isFighter,
+        baseRadiusInches: other.baseRadiusInches,
+      });
+    });
+  }, [
+    activeReserveUnit,
+    isFighterUnit,
+    reserveEntryJumpPoint,
+    reserveEntryPlacement,
+    unitsWithFighterFlags,
+  ]);
+  useEffect(() => {
+    if (!activeReserveUnit) {
+      setReserveJumpPointPlacement(null);
+      setReserveEntryPlacement(null);
+      return;
+    }
+    setReserveJumpPointPlacement((current) =>
+      current && current.unitId === activeReserveUnit.id ? current : null,
+    );
+    setReserveEntryPlacement((current) =>
+      current && current.unitId === activeReserveUnit.id ? current : null,
+    );
+  }, [activeReserveUnit?.id]);
   const activeTargetingPreview = useMemo(() => {
     if (
       !activeUnitReadyForActions ||
@@ -15383,16 +17298,21 @@ export default function GameBoard() {
     isSelectedUnitActive &&
     canConfirmMovePlan;
   const canEndActivationFromPcMovePopover =
-    canUsePcMoveConfirmPopover &&
+    !isTouchInput &&
+    !mobileGameChrome &&
+    currentPhase === "movement" &&
+    isSelectedUnitActive &&
     hasActiveUnit &&
     !canPassPhase &&
     !minMoveGate.blocked &&
     !moveUnit.isPending &&
     !activateUnit.isPending &&
     !endActivation.isPending;
+  const canShowPcMoveConfirmPopover =
+    canUsePcMoveConfirmPopover || canEndActivationFromPcMovePopover;
   useEffect(() => {
-    if (!canUsePcMoveConfirmPopover) setMoveConfirmPopover(null);
-  }, [canUsePcMoveConfirmPopover]);
+    if (!canShowPcMoveConfirmPopover) setMoveConfirmPopover(null);
+  }, [canShowPcMoveConfirmPopover]);
   const tabletMoveHint = useMemo(() => {
     if (!selectedMovementUi) return "";
     if (activateUnit.isPending) return "Activating ship...";
@@ -15670,10 +17590,7 @@ export default function GameBoard() {
   const isAdriftActive = useMemo(() => {
     if (!selectedUnitData || !isSelectedUnitActive) return false;
     if (currentPhase !== "movement") return false;
-    return (
-      selectedUnitData.damageState === "adrift" ||
-      selectedUnitData.damageState === "exploding-end-of-next"
-    );
+    return unitIsInactiveAdrift(selectedUnitData);
   }, [selectedUnitData, isSelectedUnitActive, currentPhase]);
   const commitDriftRef = useRef(false);
   const commitCompulsoryDrift = useCallback(() => {
@@ -16262,6 +18179,122 @@ export default function GameBoard() {
     setAttackTarget(null);
   };
 
+  const activateHyperspaceReserveUnit = useCallback(
+    (unit: GameUnit) => {
+      if (
+        game?.status !== "active" ||
+        !isMyActivation ||
+        currentPhase !== "movement" ||
+        unit.ownerId !== myUserId ||
+        unit.boardState !== "hyperspace" ||
+        unit.hasMovedThisRound ||
+        activateUnit.isPending
+      ) {
+        return;
+      }
+      if (hasActiveUnit && activeUnitId !== unit.id && activeActivationCommitted) {
+        setActivationFeedback("Finish the active ship before selecting another one.");
+        return;
+      }
+      const prevSelected = selectedUnit;
+      const prevOptimisticActive = optimisticActiveUnitId;
+      setActivationAttemptDebug({
+        unitId: unit.id,
+        unitName: unit.name,
+        phase: currentPhase,
+        source: hasActiveUnit ? "swap" : "pick",
+        startedAt: new Date().toISOString(),
+      });
+      setSelectedUnit(unit.id);
+      setOptimisticActiveUnitId(unit.id);
+      setActivationFeedback(null);
+      setMovePlan(null);
+      setMoveTarget(null);
+      setAttackTarget(null);
+      activateUnit.mutate(
+        { gameId, unitId: unit.id },
+        {
+          onSuccess: () => {
+            setActivationAttemptDebug(null);
+            mergeActiveUnitIntoGame(unit.id);
+            setOptimisticActiveUnitId(null);
+            void qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          },
+          onError: (err: any) => {
+            setActivationAttemptDebug(null);
+            setSelectedUnit(prevSelected);
+            setOptimisticActiveUnitId(prevOptimisticActive);
+            setActivationFeedback(
+              `Cannot activate ${unit.name}: ${cleanApiErrorMessage(err)}`,
+            );
+          },
+        },
+      );
+    },
+    [
+      activateUnit,
+      activeActivationCommitted,
+      activeUnitId,
+      currentPhase,
+      game?.status,
+      gameId,
+      hasActiveUnit,
+      isMyActivation,
+      mergeActiveUnitIntoGame,
+      myUserId,
+      optimisticActiveUnitId,
+      qc,
+      selectedUnit,
+    ],
+  );
+
+  const beginReserveJumpPointPlacement = useCallback(
+    (unit: GameUnit) => {
+      if (activeReserveUnit?.id !== unit.id) {
+        setActivationFeedback("Activate this reserve ship first.");
+        return;
+      }
+      setReserveEntryPlacement(null);
+      const [x, z] = clampJumpPointCenterInsideBufferedBoard(0, 0);
+      setReserveJumpPointPlacement({
+        unitId: unit.id,
+        x,
+        z,
+        heading: unit.heading ?? 0,
+        attemptShockWave: false,
+      });
+      setActivationFeedback("Choose a point on the battlefield for the reserve jump point.");
+    },
+    [activeReserveUnit?.id],
+  );
+
+  const beginReserveEntryPlacement = useCallback(
+    (unit: GameUnit, jumpPoint: GameJumpPoint) => {
+      if (activeReserveUnit?.id !== unit.id) {
+        setActivationFeedback("Activate this reserve ship first.");
+        return;
+      }
+      const hRad = (jumpPoint.heading * Math.PI) / 180;
+      const distance =
+        rulesBaseRadius(unit) + jumpPointBaseRadius(jumpPoint) - 0.02;
+      const [x, z] = clampBaseCenterInsideBoard(
+        jumpPoint.hexQ + Math.sin(hRad) * distance,
+        jumpPoint.hexR + Math.cos(hRad) * distance,
+        unit,
+      );
+      setReserveJumpPointPlacement(null);
+      setReserveEntryPlacement({
+        unitId: unit.id,
+        jumpPointId: jumpPoint.id,
+        x: snapBoardCoord(x),
+        z: snapBoardCoord(z),
+        heading: jumpPoint.heading,
+      });
+      setActivationFeedback("Place the reserve ship in the jump point forward arc.");
+    },
+    [activeReserveUnit?.id],
+  );
+
   const handleRequestEndActivation = useCallback(() => {
     // Either ending a real activation OR passing the phase when zero
     // eligible ships remain. Pass authorisation is enforced server-side.
@@ -16680,6 +18713,10 @@ export default function GameBoard() {
       setActivationFeedback(deploymentOverlapWarning);
       return;
     }
+    if (hyperspaceReserveWarning) {
+      setActivationFeedback(hyperspaceReserveWarning);
+      return;
+    }
     // Two paths, mirroring the API's two deploy modes:
     //   1. A saved fleet is selected → match each staged ship to a fleet
     //      Ship row by model filename and send `shipId`.
@@ -16690,6 +18727,7 @@ export default function GameBoard() {
       shipModelId?: number;
       hexQ: number;
       hexR: number;
+      boardState?: "deployed" | "hyperspace";
       heading: number;
       crewQuality?: number;
       launchedFromPlacementIndex?: number | null;
@@ -16739,6 +18777,7 @@ export default function GameBoard() {
             shipModelId: staged.shipModelId,
             hexQ: snapBoardCoord(staged.x),
             hexR: snapBoardCoord(staged.z),
+            boardState: staged.boardState,
             heading: staged.heading,
             crewQuality: staged.crewQuality,
             deploymentGroupId,
@@ -16749,6 +18788,7 @@ export default function GameBoard() {
           shipId: ship.id,
           hexQ: snapBoardCoord(staged.x),
           hexR: snapBoardCoord(staged.z),
+          boardState: staged.boardState,
           heading: staged.heading,
           crewQuality: staged.crewQuality,
           deploymentGroupId,
@@ -16764,6 +18804,7 @@ export default function GameBoard() {
           shipModelId: s.shipModelId,
           hexQ: snapBoardCoord(s.x),
           hexR: snapBoardCoord(s.z),
+          boardState: s.boardState,
           heading: s.heading,
           crewQuality: s.crewQuality,
           deploymentGroupId: s.deploymentGroupId?.trim() || null,
@@ -16774,6 +18815,7 @@ export default function GameBoard() {
         shipModelId: s.shipModelId,
         hexQ: snapBoardCoord(s.x),
         hexR: snapBoardCoord(s.z),
+        boardState: s.boardState,
         heading: s.heading,
         crewQuality: s.crewQuality,
         launchedFromPlacementIndex: s.launchedFromStagedId
@@ -16810,6 +18852,7 @@ export default function GameBoard() {
     deploymentOverlapWarning,
     deployFleet,
     gameId,
+    hyperspaceReserveWarning,
     manualTerrainPending,
     qc,
     myUserId,
@@ -17086,7 +19129,54 @@ export default function GameBoard() {
               });
               return;
             }
-            if (!canUsePcMoveConfirmPopover) return;
+            if (
+              reserveJumpPointPlacement &&
+              activeReserveUnit &&
+              !openReserveJumpPoint.isPending
+            ) {
+              e.preventDefault();
+              if (!reserveJumpPointPlacementLegal) {
+                setActivationFeedback("Choose a legal point with buffer from the battlefield edge.");
+                return;
+              }
+              openReserveJumpPoint.mutate(reserveJumpPointPlacement);
+              return;
+            }
+            if (
+              reserveEntryPlacement &&
+              activeReserveUnit &&
+              !enterReserveFromJumpPoint.isPending
+            ) {
+              e.preventDefault();
+              if (!reserveEntryPlacementLegal) {
+                setActivationFeedback(
+                  "Arrival must touch the jump point base, stay in its forward arc, and avoid overlaps.",
+                );
+                return;
+              }
+              enterReserveFromJumpPoint.mutate(reserveEntryPlacement);
+              return;
+            }
+            if (
+              canPlaceJumpPoint &&
+              selectedUnitData &&
+              jumpPointPreviewPoint &&
+              !placeJumpPoint.isPending
+            ) {
+              e.preventDefault();
+              if (!jumpPointPreviewLegal) {
+                setActivationFeedback("Choose a legal jump point within 8 inches and facing limits.");
+                return;
+              }
+              placeJumpPoint.mutate({
+                unitId: selectedUnitData.id,
+                x: jumpPointPreviewPoint.x,
+                z: jumpPointPreviewPoint.z,
+                heading: jumpPointPreviewPoint.heading,
+              });
+              return;
+            }
+            if (!canShowPcMoveConfirmPopover) return;
             e.preventDefault();
             const start = boardPointerDownRef.current;
             if (start) {
@@ -17095,7 +19185,10 @@ export default function GameBoard() {
               if (dx * dx + dy * dy > 100) return;
             }
             const width = canEndActivationFromPcMovePopover ? 132 : 92;
-            const height = canEndActivationFromPcMovePopover ? 88 : 48;
+            const height =
+              canUsePcMoveConfirmPopover && canEndActivationFromPcMovePopover
+                ? 88
+                : 48;
             setDisplacedFighterConfirmPopover(null);
             setMoveConfirmPopover({
               x: Math.max(8, Math.min(rect.width - width - 8, e.clientX - rect.left)),
@@ -17112,6 +19205,105 @@ export default function GameBoard() {
               y: e.clientY,
               time: performance.now(),
             };
+            if (
+              e.button === 0 &&
+              reserveJumpPointPlacement &&
+              activeReserveUnit &&
+              !openReserveJumpPoint.isPending
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              setReserveJumpPointPlacement((current) =>
+                current && current.unitId === activeReserveUnit.id
+                  ? (() => {
+                      const [x, z] = clampJumpPointCenterInsideBufferedBoard(
+                        pos[0],
+                        pos[1],
+                      );
+                      const nextPoint = {
+                        x,
+                        z,
+                      };
+                      return {
+                        ...current,
+                        ...nextPoint,
+                        heading: guardJumpPointHeadingAwayFromBorder(
+                          nextPoint,
+                          current.heading,
+                        ),
+                      };
+                    })()
+                  : current,
+              );
+              setActivationFeedback(
+                touchGameControls
+                  ? "Reserve jump point staged. Use Confirm or Cancel."
+                  : "Reserve jump point staged. Right-click to commit or use the panel.",
+              );
+              return;
+            }
+            if (
+              e.button === 0 &&
+              reserveEntryPlacement &&
+              activeReserveUnit &&
+              !enterReserveFromJumpPoint.isPending
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const [rawX, rawZ] = pos;
+              const [x, z] = clampBaseCenterInsideBoard(
+                rawX,
+                rawZ,
+                activeReserveUnit,
+              );
+              setReserveEntryPlacement((current) =>
+                current && current.unitId === activeReserveUnit.id
+                  ? { ...current, x: snapBoardCoord(x), z: snapBoardCoord(z) }
+                  : current,
+              );
+              setActivationFeedback(
+                touchGameControls
+                  ? "Arrival staged. Use Confirm or Cancel."
+                  : "Arrival staged. Right-click to commit or use the panel.",
+              );
+              return;
+            }
+            if (
+              e.button === 0 &&
+              canPlaceJumpPoint &&
+              selectedUnitData &&
+              !placeJumpPoint.isPending
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const nextPoint = {
+                x: snapBoardCoord(pos[0]),
+                z: snapBoardCoord(pos[1]),
+              };
+              setJumpPointPreviewPoint((current) => {
+                const facingInitiator = jumpPointFacingInitiator(selectedUnitData, nextPoint);
+                const guardedHeading = guardJumpPointHeadingAwayFromBorder(
+                  nextPoint,
+                  current?.heading ?? facingInitiator,
+                );
+                return {
+                  ...nextPoint,
+                  heading: selectedJumpTraits.advancedJumpEngine
+                    ? normalizeHeadingDegrees(guardedHeading)
+                    : limitHeadingToward(
+                        facingInitiator,
+                        guardedHeading,
+                        STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES,
+                      ),
+                };
+              });
+              setActivationFeedback(
+                touchGameControls
+                  ? "Jump point staged. Use Confirm Jump Point or Cancel."
+                  : "Jump point staged. Right-click to commit or use the panel.",
+              );
+              return;
+            }
             if (
               e.button === 0 &&
               pendingShadowDispersalPlacement &&
@@ -17244,6 +19436,83 @@ export default function GameBoard() {
               stageDisplacedFighterPlacementAtPointer(e.clientX, e.clientY);
               return;
             }
+            if (canPlaceJumpPoint && !placeJumpPoint.isPending) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const nextPoint = {
+                x: snapBoardCoord(pos[0]),
+                z: snapBoardCoord(pos[1]),
+              };
+              setJumpPointPreviewPoint((current) => {
+                if (!selectedUnitData) return current;
+                const facingInitiator = jumpPointFacingInitiator(selectedUnitData, nextPoint);
+                const guardedHeading = guardJumpPointHeadingAwayFromBorder(
+                  nextPoint,
+                  current?.heading ?? facingInitiator,
+                );
+                return {
+                  ...nextPoint,
+                  heading: selectedJumpTraits.advancedJumpEngine
+                    ? normalizeHeadingDegrees(guardedHeading)
+                    : limitHeadingToward(
+                        facingInitiator,
+                        guardedHeading,
+                        STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES,
+                      ),
+                };
+              });
+              return;
+            }
+            if (
+              reserveJumpPointPlacement &&
+              activeReserveUnit &&
+              !openReserveJumpPoint.isPending
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              setReserveJumpPointPlacement((current) =>
+                current && current.unitId === activeReserveUnit.id
+                  ? (() => {
+                      const [x, z] = clampJumpPointCenterInsideBufferedBoard(
+                        pos[0],
+                        pos[1],
+                      );
+                      const nextPoint = {
+                        x,
+                        z,
+                      };
+                      return {
+                        ...current,
+                        ...nextPoint,
+                        heading: guardJumpPointHeadingAwayFromBorder(
+                          nextPoint,
+                          current.heading,
+                        ),
+                      };
+                    })()
+                  : current,
+              );
+              return;
+            }
+            if (
+              reserveEntryPlacement &&
+              activeReserveUnit &&
+              !enterReserveFromJumpPoint.isPending
+            ) {
+              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              if (!pos) return;
+              const [x, z] = clampBaseCenterInsideBoard(
+                pos[0],
+                pos[1],
+                activeReserveUnit,
+              );
+              setReserveEntryPlacement((current) =>
+                current && current.unitId === activeReserveUnit.id
+                  ? { ...current, x: snapBoardCoord(x), z: snapBoardCoord(z) }
+                  : current,
+              );
+              return;
+            }
             if (canPlaceManualTerrain && !placeManualTerrain.isPending) {
               const pos = screenToBoard(e.clientX, e.clientY, threeRef);
               if (!pos) return;
@@ -17255,7 +19524,12 @@ export default function GameBoard() {
             }
             // Staged unit drag (deploy phase)
             if (draggingId) {
-              const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+              const pos = screenToBoard(
+                e.clientX,
+                e.clientY,
+                threeRef,
+                HYPERSPACE_RESERVE_POINTER_MARGIN,
+              );
               if (!pos) return;
               const [rx, rz] = pos;
               setStagedUnits((prev) => {
@@ -17264,9 +19538,48 @@ export default function GameBoard() {
                 const carrier = moving.launchedFromStagedId
                   ? prev.find((unit) => unit.id === moving.launchedFromStagedId)
                   : null;
-                const [x, z] = carrier
-                  ? clampToCarriedFighterDeployCircle(rx, rz, carrier, moving)
-                  : clampToDeployZone(rx, rz, moving.baseRadiusInches);
+                const reserveRequested =
+                  !carrier &&
+                  pointInsideHyperspaceReserveZone(rx, rz, myHyperspaceReserveZone);
+                if (
+                  reserveRequested &&
+                  prev.some((unit) => unit.launchedFromStagedId === moving.id)
+                ) {
+                  return prev;
+                }
+                let x: number;
+                let z: number;
+                if (reserveRequested && myHyperspaceReserveZone) {
+                  const occupied = prev
+                    .filter(
+                      (unit) =>
+                        unit.ownerId === moving.ownerId &&
+                        unit.id !== moving.id &&
+                        unit.boardState === "hyperspace",
+                    )
+                    .map((unit) => ({
+                      x: unit.x,
+                      z: unit.z,
+                      baseRadiusInches: unit.baseRadiusInches,
+                    }));
+                  const reservePoint = resolveHyperspaceReservePoint(
+                    myHyperspaceReserveZone,
+                    { x: rx, z: rz },
+                    moving.baseRadiusInches,
+                    occupied,
+                  );
+                  if (!reservePoint) {
+                    setActivationFeedback("Hyperspace reserve area is full.");
+                    return prev;
+                  }
+                  [x, z] = reservePoint;
+                } else {
+                  [x, z] = carrier
+                    ? clampToCarriedFighterDeployCircle(rx, rz, carrier, moving)
+                    : clampToDeployZone(rx, rz, moving.baseRadiusInches);
+                }
+                const nextBoardState: StagedUnitData["boardState"] =
+                  reserveRequested ? "hyperspace" : "deployed";
                 const ignoredStagedIds = new Set([
                   moving.id,
                   ...prev
@@ -17280,10 +19593,10 @@ export default function GameBoard() {
                   isFighter: stagedUnitIsFighter(moving),
                   baseRadiusInches: moving.baseRadiusInches,
                 };
-                if (deploymentPlacementOverlaps(candidate, ignoredStagedIds)) {
+                if (nextBoardState !== "hyperspace" && deploymentPlacementOverlaps(candidate, ignoredStagedIds)) {
                   return prev;
                 }
-                const movedCarrier = { ...moving, x, z };
+                const movedCarrier = { ...moving, x, z, boardState: nextBoardState };
                 return prev.map((unit) => {
                   if (unit.id === draggingId) return movedCarrier;
                   if (unit.launchedFromStagedId === draggingId) {
@@ -17293,7 +19606,7 @@ export default function GameBoard() {
                       movedCarrier,
                       unit,
                     );
-                    return { ...unit, x: childX, z: childZ };
+                    return { ...unit, x: childX, z: childZ, boardState: "deployed" };
                   }
                   return unit;
                 });
@@ -17635,7 +19948,12 @@ export default function GameBoard() {
             }
             const ship = draggedShipRef.current!;
             if (!ship) return;
-            const pos = screenToBoard(e.clientX, e.clientY, threeRef);
+            const pos = screenToBoard(
+              e.clientX,
+              e.clientY,
+              threeRef,
+              HYPERSPACE_RESERVE_POINTER_MARGIN,
+            );
             if (!pos) return;
             const [rx, rz] = pos;
             stageShipAtBoardPoint(ship, rx, rz);
@@ -17666,6 +19984,7 @@ export default function GameBoard() {
                 launchedFromStagedId: null,
                 x,
                 z,
+                boardState: "deployed",
                 // Default facing: nose toward the opposing player's edge so a
                 // freshly-dropped ship is already pointed at the enemy.
                 // Challenger deploys from +Z → faces -Z (heading 180°);
@@ -18271,6 +20590,263 @@ export default function GameBoard() {
               )}
             </div>
           )}
+          {activeReserveUnit && reserveJumpPointPlacement && (
+            <div
+              className="absolute left-3 top-3 z-30 w-[min(340px,calc(100%-1.5rem))] rounded border border-sky-300/45 bg-black/88 px-3 py-2 shadow-xl shadow-sky-950/30 backdrop-blur"
+              data-testid="reserve-jump-point-placement-panel"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-sky-200">
+                    Hyperspace Reserves
+                  </div>
+                  <div className="mt-1 text-[11px] font-mono text-slate-200">
+                    Open jump point for {activeReserveUnit.name}. Scatter resolves on confirm.
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase tracking-wider ${
+                    reserveJumpPointPlacementLegal
+                      ? "border-emerald-300/50 bg-emerald-300/10 text-emerald-200"
+                      : "border-slate-500/50 bg-slate-900/80 text-slate-300"
+                  }`}
+                >
+                  {reserveJumpPointPlacementLegal ? "legal" : "pick point"}
+                </span>
+              </div>
+              {canAttemptReserveJumpShockWave && (
+                <label className="mt-2 flex items-center gap-2 rounded border border-fuchsia-300/35 bg-fuchsia-500/10 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-fuchsia-100">
+                  <input
+                    type="checkbox"
+                    checked={reserveJumpPointPlacement.attemptShockWave === true}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setReserveJumpPointPlacement((current) =>
+                        current
+                          ? { ...current, attemptShockWave: checked }
+                          : current,
+                      );
+                    }}
+                    className="h-3.5 w-3.5 accent-fuchsia-400"
+                    data-testid="checkbox-reserve-jump-shock-wave"
+                  />
+                  Arm shock wave
+                </label>
+              )}
+              <div className="mt-2 flex items-center justify-between gap-2 rounded border border-sky-200/25 bg-sky-950/35 px-2 py-1.5">
+                <button
+                  type="button"
+                  disabled={openReserveJumpPoint.isPending}
+                  onClick={() => rotateReserveJumpPointPlacement(15)}
+                  className="rounded border border-sky-200/45 bg-sky-300/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                  data-testid="button-reserve-jump-rotate-left"
+                >
+                  Q
+                </button>
+                <div className="min-w-0 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-sky-100">
+                  Facing {Math.round(reserveJumpPointPlacement.heading)} deg
+                  <div className="text-[9px] normal-case tracking-normal text-sky-200/75">
+                    Scatter may drift facing up to 45 deg
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={openReserveJumpPoint.isPending}
+                  onClick={() => rotateReserveJumpPointPlacement(-15)}
+                  className="rounded border border-sky-200/45 bg-sky-300/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                  data-testid="button-reserve-jump-rotate-right"
+                >
+                  E
+                </button>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={
+                    !reserveJumpPointPlacementLegal ||
+                    openReserveJumpPoint.isPending
+                  }
+                  onClick={() => {
+                    if (!reserveJumpPointPlacementLegal) return;
+                    openReserveJumpPoint.mutate(reserveJumpPointPlacement);
+                  }}
+                  className="rounded border border-sky-300/45 bg-sky-400/10 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                  data-testid="button-confirm-reserve-jump-point"
+                >
+                  {openReserveJumpPoint.isPending ? "Opening..." : "Confirm"}
+                </button>
+                <button
+                  type="button"
+                  disabled={openReserveJumpPoint.isPending}
+                  onClick={() => {
+                    setReserveJumpPointPlacement(null);
+                    setActivationFeedback("Reserve jump point cancelled.");
+                  }}
+                  className="rounded border border-slate-600 bg-slate-950/80 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-300 disabled:opacity-40"
+                  data-testid="button-cancel-reserve-jump-point"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] font-mono text-slate-300">
+                Click a board point away from the edge, rotate the forward arc, then confirm.
+              </div>
+            </div>
+          )}
+          {activeReserveUnit && reserveEntryPlacement && reserveEntryJumpPoint && (
+            <div
+              className="absolute left-3 top-3 z-30 w-[min(360px,calc(100%-1.5rem))] rounded border border-sky-300/45 bg-black/88 px-3 py-2 shadow-xl shadow-sky-950/30 backdrop-blur"
+              data-testid="reserve-entry-placement-panel"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-sky-200">
+                    Enter Realspace
+                  </div>
+                  <div className="mt-1 text-[11px] font-mono text-slate-200">
+                    Place {activeReserveUnit.name} touching the jump point, forward arc.
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase tracking-wider ${
+                    reserveEntryPlacementLegal
+                      ? "border-emerald-300/50 bg-emerald-300/10 text-emerald-200"
+                      : "border-red-400/50 bg-red-500/10 text-red-200"
+                  }`}
+                >
+                  {reserveEntryPlacementLegal ? "legal" : "illegal"}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={
+                    !reserveEntryPlacementLegal ||
+                    enterReserveFromJumpPoint.isPending
+                  }
+                  onClick={() => {
+                    if (!reserveEntryPlacementLegal) return;
+                    enterReserveFromJumpPoint.mutate(reserveEntryPlacement);
+                  }}
+                  className="rounded border border-sky-300/45 bg-sky-400/10 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                  data-testid="button-confirm-reserve-entry"
+                >
+                  {enterReserveFromJumpPoint.isPending ? "Entering..." : "Confirm"}
+                </button>
+                <button
+                  type="button"
+                  disabled={enterReserveFromJumpPoint.isPending}
+                  onClick={() => {
+                    setReserveEntryPlacement(null);
+                    setActivationFeedback("Reserve arrival cancelled.");
+                  }}
+                  className="rounded border border-slate-600 bg-slate-950/80 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-300 disabled:opacity-40"
+                  data-testid="button-cancel-reserve-entry"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] font-mono text-slate-300">
+                Right-click commits on PC; tablet users can use Confirm.
+              </div>
+            </div>
+          )}
+          {canPlaceJumpPoint && selectedUnitData && (
+            <div
+              className="absolute left-3 top-3 z-30 w-[min(340px,calc(100%-1.5rem))] rounded border border-sky-300/45 bg-black/88 px-3 py-2 shadow-xl shadow-sky-950/30 backdrop-blur"
+              data-testid="jump-point-placement-panel"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-sky-200">
+                    Initiate Jump Point
+                  </div>
+                  <div className="mt-1 text-[11px] font-mono text-slate-200">
+                    {selectedJumpTraits.advancedJumpEngine
+                      ? "Place 1\" counter within 8 inches; face any direction"
+                      : "Place 1\" counter within 8 inches, forward arc; face within 45 deg"}
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded border px-2 py-1 text-[10px] font-mono uppercase tracking-wider ${
+                    jumpPointPreviewPoint && jumpPointPreviewLegal
+                      ? "border-emerald-300/50 bg-emerald-300/10 text-emerald-200"
+                      : "border-slate-500/50 bg-slate-900/80 text-slate-300"
+                  }`}
+                >
+                  {jumpPointPreviewPoint && jumpPointPreviewLegal ? "legal" : "pick point"}
+                </span>
+              </div>
+              {jumpPointPreviewPoint && (
+                <div className="mt-2 flex items-center justify-between gap-2 rounded border border-sky-200/25 bg-sky-950/35 px-2 py-1.5">
+                  <button
+                    type="button"
+                    disabled={placeJumpPoint.isPending}
+                    onClick={() => rotateJumpPointPreview(JUMP_POINT_ROTATION_STEP_DEGREES)}
+                    className="rounded border border-sky-200/45 bg-sky-300/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                    data-testid="button-jump-point-rotate-left"
+                  >
+                    Q
+                  </button>
+                  <div className="min-w-0 text-center font-mono text-[10px] uppercase tracking-[0.16em] text-sky-100">
+                    Facing {Math.round(jumpPointPreviewPoint.heading)} deg
+                    <div className="text-[9px] normal-case tracking-normal text-sky-200/75">
+                      {selectedJumpTraits.advancedJumpEngine
+                        ? "Advanced engine: 360 deg"
+                        : `Standard engine: +/-${STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES} deg facing ship`}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={placeJumpPoint.isPending}
+                    onClick={() => rotateJumpPointPreview(-JUMP_POINT_ROTATION_STEP_DEGREES)}
+                    className="rounded border border-sky-200/45 bg-sky-300/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                    data-testid="button-jump-point-rotate-right"
+                  >
+                    E
+                  </button>
+                </div>
+              )}
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={
+                    !jumpPointPreviewPoint ||
+                    !jumpPointPreviewLegal ||
+                    placeJumpPoint.isPending
+                  }
+                  onClick={() => {
+                    if (!jumpPointPreviewPoint || !selectedUnitData) return;
+                    placeJumpPoint.mutate({
+                      unitId: selectedUnitData.id,
+                      x: jumpPointPreviewPoint.x,
+                      z: jumpPointPreviewPoint.z,
+                      heading: jumpPointPreviewPoint.heading,
+                    });
+                  }}
+                  className="rounded border border-sky-300/45 bg-sky-400/10 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-sky-100 disabled:opacity-40"
+                  data-testid="button-confirm-jump-point"
+                >
+                  {placeJumpPoint.isPending ? "Placing..." : "Confirm Jump Point"}
+                </button>
+                <button
+                  type="button"
+                  disabled={placeJumpPoint.isPending}
+                  onClick={() => {
+                    setJumpPointPreviewPoint(null);
+                    setActivationFeedback("Jump point placement cancelled.");
+                  }}
+                  className="rounded border border-slate-600 bg-slate-950/80 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-300 disabled:opacity-40"
+                  data-testid="button-cancel-jump-point"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] font-mono text-slate-300">
+                Click a board point, then confirm. Ships jump out by overlapping the counter base from its forward arc.
+              </div>
+            </div>
+          )}
           {isoCameraControlsEnabled && (
             <TacticalCameraControls
               selectedDisabled={!selectedUnitData}
@@ -18324,17 +20900,49 @@ export default function GameBoard() {
               strength={attackPulseStrength}
             />
             {game.status === "active" && (
-              <ConcentrateFireTargetLines units={units} />
+              <ConcentrateFireTargetLines
+                units={units.filter((unit) => !unitIsOffBoard(unit))}
+              />
             )}
             <BoardBoundary />
             {game.status === "deploying" && (
               <DeploymentZones config={deploymentConfig} mySide={mySide} />
             )}
+            {game.status === "deploying" && (
+              <HyperspaceReserveZones
+                zones={hyperspaceReserveZones}
+                mySide={mySide}
+              />
+            )}
             <TerrainFields fields={terrainFields} />
+            <JumpPoints points={jumpPoints} currentRound={game.currentRound ?? 0} />
             {manualTerrainPreview && canPlaceManualTerrain && (
               <TerrainPlacementPreview
                 field={manualTerrainPreview}
                 legal={manualTerrainPreviewIsLegal}
+              />
+            )}
+            {jumpPointPreviewPoint && canPlaceJumpPoint && (
+              <JumpPointPlacementPreview
+                point={jumpPointPreviewPoint}
+                legal={jumpPointPreviewLegal}
+                heading={jumpPointPreviewPoint.heading}
+                baseRadius={JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES}
+              />
+            )}
+            {reserveJumpPointPlacement && activeReserveUnit && (
+              <JumpPointPlacementPreview
+                point={reserveJumpPointPlacement}
+                legal={reserveJumpPointPlacementLegal}
+                heading={reserveJumpPointPlacement.heading}
+                baseRadius={JUMP_POINT_DEFAULT_BASE_RADIUS_INCHES}
+              />
+            )}
+            {reserveEntryPlacement && activeReserveUnit && (
+              <HyperspaceArrivalPreview
+                unit={activeReserveUnit}
+                point={reserveEntryPlacement}
+                legal={reserveEntryPlacementLegal}
               />
             )}
             {game.status === "deploying" &&
@@ -18488,6 +21096,7 @@ export default function GameBoard() {
               />
             ))}
             {units.map((unit) => {
+              if (unitIsOffBoard(unit)) return null;
               if (displacedFighterUnitIds.has(unit.id)) return null;
               const unitIsFighter = isFighterUnit(unit);
               if (unit.isDestroyed && unitIsFighter) return null;
@@ -18655,6 +21264,7 @@ export default function GameBoard() {
                     weaponArcProjectionStyle === "outline"
                   }
                   dogfightLocked={dogfightingFighterUnitIds.has(unit.id)}
+                  jumpPointContactEligible={jumpPointContactEligibleUnitIds.has(unit.id)}
                   launchHighlight={
                     endPhaseLaunchPrompt?.mode === "highlight" &&
                     eligibleLaunchCarrierIds.has(unit.id)
@@ -18681,6 +21291,7 @@ export default function GameBoard() {
                 const minExempt =
                   baseAction === "all-stop" ||
                   baseAction === "all-stop-pivot" ||
+                  baseAction === "initiate-jump-point" ||
                   Boolean(selectedMovementUi?.isSuperManeuverable);
                 const minRequired = minExempt
                   ? 0
@@ -18847,6 +21458,7 @@ export default function GameBoard() {
                         setDraggingId(unit.id);
                       }
                 }
+                onHoverChange={handleStagedUnitHoverChange}
                 arcColorScheme={uiArcColorScheme}
                 shipMeshTintsEnabled={shipMeshTintsEnabled}
                 shipHullNamesEnabled={shipHullNamesEnabled}
@@ -19085,7 +21697,7 @@ export default function GameBoard() {
                 </div>
               );
             })()}
-          {moveConfirmPopover && canUsePcMoveConfirmPopover && (
+          {moveConfirmPopover && canShowPcMoveConfirmPopover && (
             <div
               className="absolute z-40 flex flex-col items-stretch gap-1 rounded border border-cyan-300/50 bg-black/88 p-1 shadow-xl shadow-black/60 backdrop-blur-sm"
               style={{
@@ -19102,29 +21714,31 @@ export default function GameBoard() {
                 e.stopPropagation();
               }}
             >
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  title="Confirm move"
-                  aria-label="Confirm move"
-                  disabled={!canConfirmMovePlan}
-                  onClick={confirmMovePlan}
-                  className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
-                  data-testid="button-pc-confirm-move-plan"
-                >
-                  <Check className="h-5 w-5" />
-                </button>
-                <button
-                  type="button"
-                  title="Cancel move"
-                  aria-label="Cancel move"
-                  onClick={cancelMovePlan}
-                  className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25"
-                  data-testid="button-pc-cancel-move-plan"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
+              {canUsePcMoveConfirmPopover && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    title="Confirm move"
+                    aria-label="Confirm move"
+                    disabled={!canConfirmMovePlan}
+                    onClick={confirmMovePlan}
+                    className="flex h-9 w-9 items-center justify-center rounded border border-emerald-300/70 bg-emerald-400/15 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.22)] transition-colors hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-900 disabled:text-slate-500 disabled:shadow-none"
+                    data-testid="button-pc-confirm-move-plan"
+                  >
+                    <Check className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Cancel move"
+                    aria-label="Cancel move"
+                    onClick={cancelMovePlan}
+                    className="flex h-9 w-9 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25"
+                    data-testid="button-pc-cancel-move-plan"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              )}
               {canEndActivationFromPcMovePopover && (
                 <button
                   type="button"
@@ -19928,6 +22542,14 @@ export default function GameBoard() {
                       {deploymentOverlapWarning}
                     </p>
                   )}
+                  {hyperspaceReserveWarning && (
+                    <p
+                      className="text-[10px] font-mono text-blue-300 leading-snug px-1 pb-1"
+                      data-testid="text-deploy-hyperspace-warning"
+                    >
+                      {hyperspaceReserveWarning}
+                    </p>
+                  )}
                   {currentStagedUnits.map((u) => {
                     const isExpanded = selectedStagedId === u.id;
                     const carrier = currentStagedUnits.find(
@@ -19967,6 +22589,14 @@ export default function GameBoard() {
                               title={`Deployed from ${carrier.name}`}
                             >
                               carried
+                            </span>
+                          )}
+                          {u.boardState === "hyperspace" && (
+                            <span
+                              className="text-[9px] text-blue-300/90 shrink-0"
+                              title="Starts in hyperspace reserves"
+                            >
+                              reserve
                             </span>
                           )}
                           {u.deploymentGroupSize &&
@@ -20068,6 +22698,7 @@ export default function GameBoard() {
                                       unit.shipModelId === item.shipModelId,
                                   ).length;
                                 const disabled =
+                                  u.boardState === "hyperspace" ||
                                   !item.shipModelId ||
                                   deployedThisModel >= item.total ||
                                   deployedFromCarrier.length >=
@@ -20119,6 +22750,7 @@ export default function GameBoard() {
                   currentStagedUnits.length === 0 ||
                   !stagedAllocation.legal ||
                   Boolean(deploymentOverlapWarning) ||
+                  Boolean(hyperspaceReserveWarning) ||
                   deployFleet.isPending
                 }
                 onClick={handleYardsDeploy}
@@ -21064,6 +23696,131 @@ export default function GameBoard() {
                         : "Dogfight"}
                     </Button>
                   )}
+                {currentPhase === "movement" &&
+                  activeUnitReadyForActions &&
+                  activeUnitData &&
+                  activeHyperspaceExitPoint && (
+                    <Button
+                      size="sm"
+                      data-testid="button-enter-hyperspace"
+                      className="w-full gap-1.5 border border-sky-300/70 bg-sky-500/20 font-mono text-xs font-bold uppercase tracking-widest text-sky-100 hover:bg-sky-500/30"
+                      disabled={
+                        enterHyperspaceThroughJumpPoint.isPending ||
+                        moveUnit.isPending ||
+                        endActivation.isPending
+                      }
+                      onClick={() => {
+                        enterHyperspaceThroughJumpPoint.mutate({
+                          unitId: activeUnitData.id,
+                          jumpPointId: activeHyperspaceExitPoint.id,
+                        });
+                      }}
+                      title="Enter hyperspace through this jump point's forward arc"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      Jump Out
+                    </Button>
+                  )}
+                <div
+                  className="rounded border border-white/85 bg-blue-600/75 px-3 py-2 text-white shadow-sm shadow-blue-950/40"
+                  data-testid="hyperspace-reserves-panel"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-mono text-[11px] font-bold uppercase tracking-[0.18em]">
+                      Hyperspace reserves
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="border-white/80 bg-white/10 font-mono text-[9px] text-white"
+                    >
+                      {hyperspaceReserveUnits.length}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 space-y-1 font-mono text-[10px] leading-snug text-blue-50">
+                    {hyperspaceReserveUnits.length === 0 ? (
+                      <div className="opacity-85">No ships in reserve.</div>
+                    ) : (
+                      hyperspaceReserveUnits.slice(0, 6).map((unit) => (
+                        <div
+                          key={unit.id}
+                          className="rounded border border-white/15 bg-white/5 px-2 py-1"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate">{unit.name}</span>
+                            <span className="shrink-0 opacity-80">
+                              {unit.ownerId === myUserId
+                                ? activeReserveUnit?.id === unit.id
+                                  ? "Active"
+                                  : "Yours"
+                                : "Enemy"}
+                            </span>
+                          </div>
+                          {unit.ownerId === myUserId && currentPhase === "movement" && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {activeReserveUnit?.id !== unit.id ? (
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !isMyActivation ||
+                                    unit.hasMovedThisRound ||
+                                    activateUnit.isPending
+                                  }
+                                  onClick={() => activateHyperspaceReserveUnit(unit)}
+                                  className="rounded border border-white/65 bg-white/10 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-white disabled:opacity-40"
+                                  data-testid={`button-activate-reserve-${unit.id}`}
+                                >
+                                  Activate
+                                </button>
+                              ) : (
+                                <>
+                                  {uiJumpEngineTraits(
+                                    getShipModelForUnit(unit)?.traits,
+                                  ).jumpEngine && (
+                                    <button
+                                      type="button"
+                                      disabled={openReserveJumpPoint.isPending}
+                                      onClick={() =>
+                                        beginReserveJumpPointPlacement(unit)
+                                      }
+                                      className="rounded border border-cyan-100/70 bg-cyan-200/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-cyan-50 disabled:opacity-40"
+                                      data-testid={`button-open-reserve-jump-${unit.id}`}
+                                    >
+                                      Open point
+                                    </button>
+                                  )}
+                                  {myOpenToRealspaceJumpPoints.map((point) => (
+                                    <button
+                                      key={point.id}
+                                      type="button"
+                                      disabled={enterReserveFromJumpPoint.isPending}
+                                      onClick={() =>
+                                        beginReserveEntryPlacement(unit, point)
+                                      }
+                                      className="rounded border border-emerald-100/70 bg-emerald-200/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-50 disabled:opacity-40"
+                                      data-testid={`button-enter-reserve-${unit.id}-${point.id}`}
+                                    >
+                                      Enter JP {point.id}
+                                    </button>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                    {hyperspaceReserveUnits.length > 6 && (
+                      <div className="opacity-80">
+                        +{hyperspaceReserveUnits.length - 6} more
+                      </div>
+                    )}
+                    {myHyperspaceReserveUnits.length > 0 && (
+                      <div className="mt-1 text-[9px] uppercase tracking-wider text-blue-100/80">
+                        Last jump-capable ship must not leave non-jump reserves behind.
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <Button
                   size="sm"
                   data-testid="button-end-activation"
@@ -21144,9 +23901,7 @@ export default function GameBoard() {
                   selectedUnitData &&
                   selectedUnitData.ownerId === myUserId &&
                   !selectedUnitData.isDestroyed &&
-                  (selectedUnitData.damageState === "adrift" ||
-                    selectedUnitData.damageState ===
-                      "exploding-end-of-next") && (
+                  unitIsInactiveAdrift(selectedUnitData) && (
                     <div
                       className="space-y-1.5"
                       data-testid="adrift-end-phase-note"
@@ -21185,6 +23940,7 @@ export default function GameBoard() {
                         !/\bmini[-\s]?beam\b/i.test(weapon.traits ?? ""),
                     );
                     const isLumbering = /\blumbering\b/i.test(traitsForSA);
+                    const jumpTraitsForSA = uiJumpEngineTraits(traitsForSA);
                     const psychicCrewForSA = parseUiPsychicCrew(traitsForSA);
                     const hasBoresightWeaponForSA = (modelForSA?.weapons ?? []).some(
                       (weapon) => trackThatTargetRelaxedArc(weapon.arc) !== null,
@@ -21203,6 +23959,7 @@ export default function GameBoard() {
                         | "track-that-target"
                         | "maneuver-to-shield"
                         | "cause-confusion"
+                        | "initiate-jump-point"
                         | "all-hands-on-deck"
                         | "scramble"
                         | "regenerate";
@@ -21295,6 +24052,15 @@ export default function GameBoard() {
                           isFighterUnit(selectedUnitData),
                       },
                       {
+                        id: "initiate-jump-point",
+                        label: "Initiate Jump Point!",
+                        cq: null,
+                        hint: jumpTraitsForSA.advancedJumpEngine
+                          ? "0..1/2 speed; no turns/fire; place within 8\""
+                          : "0..1/2 speed; no turns/fire; forward arc within 8\"",
+                        hidden: !jumpTraitsForSA.jumpEngine,
+                      },
+                      {
                         id: "all-hands-on-deck",
                         label: "All Hands on Deck!",
                         cq: 9,
@@ -21316,13 +24082,14 @@ export default function GameBoard() {
                     ];
                     const profileActionIds =
                       rulesProfile === "shadows"
-                        ? new Set(["run-silent", "track-that-target", "maneuver-to-shield"])
+                        ? new Set(["run-silent", "track-that-target", "maneuver-to-shield", "initiate-jump-point"])
                         : rulesProfile === "vorlons"
                           ? new Set([
                               "all-stop",
                               "all-stop-pivot",
                               "come-about-extra-turn",
                               "come-about-sharp-turn",
+                              "initiate-jump-point",
                               "run-silent",
                               "regenerate",
                               "track-that-target",
@@ -21334,6 +24101,7 @@ export default function GameBoard() {
                                 "all-stop-pivot",
                                 "come-about-extra-turn",
                                 "come-about-sharp-turn",
+                                "initiate-jump-point",
                                 "run-silent",
                                 "track-that-target",
                                 "maneuver-to-shield",
@@ -21367,16 +24135,24 @@ export default function GameBoard() {
                     const noSACrit = (selectedUnitData.criticals ?? []).find(
                       (c) => NO_SA_CRIT_KEYS.has(c.effectKey),
                     );
-                    const isAdrift = selectedUnitData.damageState === "adrift";
+                    const hasAdriftStatus =
+                      selectedUnitData.damageState === "adrift" ||
+                      selectedUnitData.damageState === "exploding-end-of-next";
+                    const ADRIFT_FORBIDDEN_SPECIAL_ACTION_IDS = new Set([
+                      "all-power-engines",
+                      "all-stop",
+                      "all-stop-pivot",
+                      "come-about-extra-turn",
+                      "come-about-sharp-turn",
+                      "maneuver-to-shield",
+                    ]);
                     const maxCrewSA = selectedUnitData.maxCrewPoints ?? 0;
                     const crewSA = selectedUnitData.crewPoints ?? 0;
                     const isSkeletonSA =
                       maxCrewSA > 0 && crewSA * 2 <= maxCrewSA;
                     const noSAReason = noSACrit
                       ? `Cannot declare — ${noSACrit.name} active`
-                      : isAdrift
-                        ? "Cannot declare — ship is adrift"
-                        : isSkeletonSA
+                      : isSkeletonSA
                           ? "Cannot declare — skeleton crew"
                           : null;
                     const scoutActionLocked = !!selectedUnitData.scoutAction;
@@ -21634,12 +24410,16 @@ export default function GameBoard() {
                                   a.id === "run-silent" &&
                                   selectedUnitData.shadowManeuverMode ===
                                     "sweep";
+                                const adriftMovementBlocked =
+                                  hasAdriftStatus &&
+                                  ADRIFT_FORBIDDEN_SPECIAL_ACTION_IDS.has(a.id);
                                 const disabled =
                                   chooseSpecialAction.isPending ||
                                   (needsTarget && !enemyAlive) ||
                                   alreadyMoved ||
                                   scoutActionLocked ||
                                   !!noSAReason ||
+                                  adriftMovementBlocked ||
                                   needsAllStopPrereq ||
                                   conflictsWithShadowSweep;
                                 return (
@@ -21722,6 +24502,8 @@ export default function GameBoard() {
                                           : "▸ Click an enemy ship to nominate"
                                         : needsAllStopPrereq
                                           ? "Requires All Stop last round"
+                                          : adriftMovementBlocked
+                                            ? "Adrift status forbids movement-control actions"
                                           : conflictsWithShadowSweep
                                             ? "Unavailable in Shadow sweep mode"
                                           : a.hint}
@@ -21786,7 +24568,8 @@ export default function GameBoard() {
                       const isAllStop = baseAction === "all-stop";
                       const isAllPower = baseAction === "all-power-engines";
                       const isRunSilent = baseAction === "run-silent";
-                      if (isAllStop || isAllPower || isRunSilent) return null;
+                      const isInitiateJumpPoint = baseAction === "initiate-jump-point";
+                      if (isAllStop || isAllPower || isRunSilent || isInitiateJumpPoint) return null;
                       const led = getLedger(selectedUnitData.id);
                       const movementTraits = uiMovementTraitsForModel(getShipModelForUnit(selectedUnitData), selectedUnitData);
                       const exempt = isAllStopPivot
@@ -22655,27 +25438,31 @@ export default function GameBoard() {
                             {c.crewApplied > 0 && `−${c.crewApplied}C`}
                           </span>
                         </div>
-                        {(c.randomArc || (c.lostTraits?.length ?? 0) > 0) && (
-                          <div className="text-[9px] opacity-70 mt-0.5">
-                            {c.randomArc && <>arc: {c.randomArc} </>}
-                            {(c.lostTraits?.length ?? 0) > 0 && (
-                              <>
-                                lost:{" "}
-                                {c.lostTraits!.map((trait, index) => (
-                                  <React.Fragment key={`${c.id}-lost-${trait}`}>
-                                    {index > 0 ? ", " : ""}
-                                    <TraitTooltip
-                                      trait={trait}
-                                      enabled={pcHoverHintsEnabled}
-                                    >
-                                      <span className="cursor-help">{trait}</span>
-                                    </TraitTooltip>
-                                  </React.Fragment>
-                                ))}
-                              </>
-                            )}
-                          </div>
-                        )}
+                        {(() => {
+                          const lostTraits = displayableLostTraits(c.lostTraits);
+                          if (!c.randomArc && lostTraits.length === 0) return null;
+                          return (
+                            <div className="text-[9px] opacity-70 mt-0.5">
+                              {c.randomArc && <>arc: {c.randomArc} </>}
+                              {lostTraits.length > 0 && (
+                                <>
+                                  lost:{" "}
+                                  {lostTraits.map((trait, index) => (
+                                    <React.Fragment key={`${c.id}-lost-${trait}`}>
+                                      {index > 0 ? ", " : ""}
+                                      <TraitTooltip
+                                        trait={trait}
+                                        enabled={pcHoverHintsEnabled}
+                                      >
+                                        <span className="cursor-help">{trait}</span>
+                                      </TraitTooltip>
+                                    </React.Fragment>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <button
                           data-testid={`damage-control-${c.id}`}
                           disabled={!canRepair}
@@ -23413,17 +26200,20 @@ export default function GameBoard() {
       )}
 
       <ShipStatusInspectorDialog
-        open={inspectedUnitData !== null}
+        open={inspectorUnitData !== null}
         onOpenChange={(open) => {
-          if (!open) setInspectedUnitId(null);
+          if (!open) {
+            setInspectedUnitId(null);
+            setInspectedStagedUnitId(null);
+          }
         }}
-        unit={inspectedUnitData}
-        model={inspectedShipModel}
-        weapons={inspectedUnitWeapons}
+        unit={inspectorUnitData}
+        model={inspectorShipModel}
+        weapons={inspectorUnitWeapons}
         myUserId={myUserId}
         currentRound={currentRoundNumber}
-        isFighter={inspectedUnitIsFighter}
-        dogfightLocked={inspectedUnitDogfightLocked}
+        isFighter={inspectorUnitIsFighter}
+        dogfightLocked={inspectorUnitDogfightLocked}
       />
 
       {diceModal && (
@@ -25089,29 +27879,33 @@ function DiceRollModal({
                         <div className="font-bold uppercase">
                           {c.name}
                         </div>
-                        {(c.randomArc || c.lostTraits.length > 0) && (
-                          <div className="opacity-70 mt-0.5">
-                            {c.randomArc && <>arc: {c.randomArc} </>}
-                            {c.lostTraits.length > 0 && (
-                              <>
-                                lost:{" "}
-                                {c.lostTraits.map((trait, index) => (
-                                  <React.Fragment
-                                    key={`${c.id}-modal-lost-${trait}`}
-                                  >
-                                    {index > 0 ? ", " : ""}
-                                    <TraitTooltip
-                                      trait={trait}
-                                      enabled={pcHoverHintsEnabled}
+                        {(() => {
+                          const lostTraits = displayableLostTraits(c.lostTraits);
+                          if (!c.randomArc && lostTraits.length === 0) return null;
+                          return (
+                            <div className="opacity-70 mt-0.5">
+                              {c.randomArc && <>arc: {c.randomArc} </>}
+                              {lostTraits.length > 0 && (
+                                <>
+                                  lost:{" "}
+                                  {lostTraits.map((trait, index) => (
+                                    <React.Fragment
+                                      key={`${c.id}-modal-lost-${trait}`}
                                     >
-                                      <span className="cursor-help">{trait}</span>
-                                    </TraitTooltip>
-                                  </React.Fragment>
-                                ))}
-                              </>
-                            )}
-                          </div>
-                        )}
+                                      {index > 0 ? ", " : ""}
+                                      <TraitTooltip
+                                        trait={trait}
+                                        enabled={pcHoverHintsEnabled}
+                                      >
+                                        <span className="cursor-help">{trait}</span>
+                                      </TraitTooltip>
+                                    </React.Fragment>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </>
                     )}
                   </div>

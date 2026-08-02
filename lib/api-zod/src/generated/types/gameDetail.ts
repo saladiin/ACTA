@@ -9,8 +9,28 @@ import type { Game } from './game';
 import type { GameUnit } from './gameUnit';
 import type { Turn } from './turn';
 
+export interface GameJumpPoint {
+  id: number;
+  gameId: number;
+  ownerId: string;
+  creatorUnitId: number;
+  direction: 'to-hyperspace' | 'to-realspace';
+  hexQ: number;
+  hexR: number;
+  baseRadiusInches: number;
+  heading: number;
+  createdRound: number;
+  expiresAfterRound: number;
+  status: 'open' | 'closed' | 'spent';
+  shockWaveArmed: boolean;
+  shockWaveResolved: boolean;
+  vfxPreset: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface GameDetail {
   game: Game;
   units: GameUnit[];
   turns: Turn[];
+  jumpPoints?: GameJumpPoint[];
 }

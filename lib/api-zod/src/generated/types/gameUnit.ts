@@ -25,6 +25,8 @@ export interface GameUnit {
   faction: string;
   /** Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement. */
   baseRadiusInches: number;
+  /** Board state. hyperspace units are alive but off-table in reserves; withdrawn units have tactically left the battle. */
+  boardState?: 'deployed' | 'hyperspace' | 'withdrawn';
   hullPoints: number;
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */

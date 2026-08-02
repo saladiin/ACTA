@@ -56,9 +56,21 @@ export interface ShipModel {
   pointCost: number;
   priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
+  /** Printed Damage threshold copied to deployed units. */
+  damageThreshold?: number | null;
   /** Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable. */
   physicalDisruptionThreshold?: number;
+  /** Printed crew complement. */
+  crew?: number | null;
+  /** Printed Crew threshold copied to deployed units. */
+  crewThreshold?: number | null;
   speed: number;
+  /** Printed turns per movement activation. */
+  turns?: number | null;
+  /** Printed degrees per turn. */
+  turnAngle?: number | null;
+  /** Maximum shield pool, if any. */
+  shieldMax?: number;
   weaponRange: number;
   weaponDamage: number;
   /** Gameplay base radius in board inches. Used for contact/overlap/fighter edge range; independent of rendered model scale. */
@@ -615,6 +627,8 @@ export interface GameUnit {
   faction: string;
   /** Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement. */
   baseRadiusInches: number;
+  /** Board state. hyperspace units are alive but off-table in reserves; withdrawn units have tactically left the battle. */
+  boardState?: 'deployed' | 'hyperspace' | 'withdrawn';
   hullPoints: number;
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
@@ -735,6 +749,26 @@ export interface GameDetail {
   game: Game;
   units: GameUnit[];
   turns: Turn[];
+  jumpPoints?: GameJumpPoint[];
+}
+
+export interface GameJumpPoint {
+  id: number;
+  gameId: number;
+  ownerId: string;
+  creatorUnitId: number;
+  direction: 'to-hyperspace' | 'to-realspace';
+  hexQ: number;
+  hexR: number;
+  baseRadiusInches: number;
+  heading: number;
+  createdRound: number;
+  expiresAfterRound: number;
+  status: 'open' | 'closed' | 'spent';
+  shockWaveArmed: boolean;
+  shockWaveResolved: boolean;
+  vfxPreset: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ShipPlacement {
@@ -750,6 +784,8 @@ export interface ShipPlacement {
   shipModelId?: number | null;
   hexQ: number;
   hexR: number;
+  /** Deployment state. deployed = starts on the board; hyperspace = starts in hyperspace reserves. */
+  boardState?: 'deployed' | 'hyperspace';
   heading: number;
   /**
      * Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
@@ -1004,6 +1040,7 @@ export const SpecialActionInputAction = {
   'track-that-target': 'track-that-target',
   'maneuver-to-shield': 'maneuver-to-shield',
   'cause-confusion': 'cause-confusion',
+  'initiate-jump-point': 'initiate-jump-point',
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',
   regenerate: 'regenerate',

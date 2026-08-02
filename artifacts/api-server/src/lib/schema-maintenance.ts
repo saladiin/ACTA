@@ -1,4 +1,4 @@
-import { pool } from "@workspace/db";
+import { JUMP_POINT_VFX_PRESET, pool } from "@workspace/db";
 import fs from "node:fs";
 import path from "node:path";
 import { SHIP_AI_PROFILE_SEEDS } from "./ai-opponent";
@@ -190,12 +190,12 @@ const CSV_MODEL_FILENAMES: Record<string, string> = {
   "shadowcloak escort": "shadowcloak.glb",
   "shadowcloak-class escort": "shadowcloak.glb",
   shadowcloak: "shadowcloak.glb",
-  "hyperion cruiser": "hyperion.glb",
+  "hyperion cruiser": "hyperion1.glb",
   "hermes transport": "hermes.glb",
   "orestes-class battleship": "orestes.glb",
   "orestes battleship": "orestes.glb",
   "sharlin war cruiser": "sharlin.glb",
-  "olympus corvette": "olympus.glb",
+  "olympus corvette": "olympus2.glb",
   tinashi: "tinashi.glb",
   "oracle cruiser": "oracle.glb",
   "omega destroyer": "omega3.glb",
@@ -2440,7 +2440,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
       "Hyperion-class Cruiser",
       "Hyperion-class Heavy Cruiser",
     ],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance",
     pointCost: 200,
     priorityLevel: "raid",
@@ -2510,7 +2510,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Assault Cruiser",
     aliases: ["Hyperion Assault Cruiser", "Hyperion-class Assault Cruiser"],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance",
     pointCost: 150,
     priorityLevel: "skirmish",
@@ -2759,7 +2759,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Pulse Cruiser",
     aliases: ["Hyperion Pulse Cruiser", "Hyperion-class Pulse Cruiser"],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance",
     pointCost: 200,
     priorityLevel: "raid",
@@ -3111,7 +3111,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Olympus Corvette",
     aliases: ["Olympus Corvette", "Olympus-class Corvette", "Olympus"],
-    filename: "olympus.glb",
+    filename: "olympus2.glb",
     faction: "Earth Alliance",
     pointCost: 150,
     priorityLevel: "skirmish",
@@ -3679,7 +3679,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Heavy Cruiser (Third Age)",
     aliases: ["Hyperion Heavy Cruiser (Third Age)"],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance - Dawn of the Third Age",
     pointCost: 200,
     priorityLevel: "raid",
@@ -3706,7 +3706,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Assault Cruiser (Third Age)",
     aliases: ["Hyperion Assault Cruiser (Third Age)"],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance - Dawn of the Third Age",
     pointCost: 150,
     priorityLevel: "skirmish",
@@ -3760,7 +3760,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Olympus Corvette (Third Age)",
     aliases: ["Olympus Corvette (Third Age)"],
-    filename: "olympus.glb",
+    filename: "olympus2.glb",
     faction: "Earth Alliance - Dawn of the Third Age",
     pointCost: 150,
     priorityLevel: "skirmish",
@@ -3896,7 +3896,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Heavy Cruiser (Crusade Era)",
     aliases: ["Hyperion Heavy Cruiser (Crusade Era)"],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance - Crusade Era",
     pointCost: 200,
     priorityLevel: "raid",
@@ -3923,7 +3923,7 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   {
     name: "Hyperion Assault Cruiser (Crusade Era)",
     aliases: ["Hyperion Assault Cruiser (Crusade Era)"],
-    filename: "hyperion.glb",
+    filename: "hyperion1.glb",
     faction: "Earth Alliance - Crusade Era",
     pointCost: 150,
     priorityLevel: "skirmish",
@@ -5373,6 +5373,58 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS split_fire_first_target_by_weapon jsonb NOT NULL DEFAULT '{}'::jsonb
     `);
     await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS board_state text NOT NULL DEFAULT 'deployed'
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_jump_points (
+        id serial PRIMARY KEY,
+        game_id integer NOT NULL,
+        owner_id text NOT NULL,
+        creator_unit_id integer NOT NULL,
+        direction text NOT NULL DEFAULT 'to-hyperspace',
+        hex_q real NOT NULL,
+        hex_r real NOT NULL,
+        base_radius_inches real NOT NULL DEFAULT 1.5,
+        heading integer NOT NULL DEFAULT 0,
+        created_round integer NOT NULL,
+        expires_after_round integer NOT NULL,
+        status text NOT NULL DEFAULT 'open',
+        shock_wave_armed boolean NOT NULL DEFAULT false,
+        shock_wave_resolved boolean NOT NULL DEFAULT false,
+        vfx_preset jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS game_jump_points_game_status_idx
+      ON game_jump_points (game_id, status)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS game_jump_points_creator_idx
+      ON game_jump_points (creator_unit_id, game_id)
+    `);
+    await pool.query(`
+      ALTER TABLE game_jump_points
+      ADD COLUMN IF NOT EXISTS base_radius_inches real NOT NULL DEFAULT 1.5
+    `);
+    await pool.query(`
+      UPDATE game_jump_points
+      SET base_radius_inches = 1.5
+      WHERE base_radius_inches <> 1.5
+    `);
+    await pool.query(
+      `
+        UPDATE game_jump_points
+        SET vfx_preset = $1::jsonb
+        WHERE COALESCE(vfx_preset->>'stationId', '') IN (
+          'jump-gate-portal-combo',
+          'jump-point-mesh'
+        )
+      `,
+      [JSON.stringify(JUMP_POINT_VFX_PRESET)],
+    );
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS game_attack_audit_logs (
         id serial PRIMARY KEY,
         game_id integer NOT NULL,
@@ -5685,6 +5737,31 @@ export async function ensureActaAllocationSchema(): Promise<void> {
         SET model_filename = 'railgun-hyperion.glb'
         WHERE lower(name) IN ('hyperion rail cruiser', 'hyperion-class rail cruiser')
           AND lower(model_filename) = 'hyperion.glb'
+      `,
+    );
+
+    await pool.query(
+      `
+        UPDATE game_units
+        SET model_filename = 'hyperion1.glb'
+        WHERE lower(model_filename) = 'hyperion.glb'
+          AND lower(name) NOT IN (
+            'hyperion command cruiser',
+            'hyperion-class command cruiser',
+            'hyperion missile cruiser',
+            'hyperion-class missile cruiser',
+            'hyperion rail cruiser',
+            'hyperion-class rail cruiser'
+          )
+      `,
+    );
+
+    await pool.query(
+      `
+        UPDATE game_units
+        SET model_filename = 'olympus2.glb'
+        WHERE lower(name) IN ('olympus corvette', 'olympus corvette (third age)', 'olympus-class corvette')
+          AND lower(model_filename) = 'olympus.glb'
       `,
     );
 

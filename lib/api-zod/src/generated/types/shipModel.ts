@@ -19,9 +19,21 @@ export interface ShipModel {
   pointCost: number;
   priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
+  /** Printed Damage threshold copied to deployed units. */
+  damageThreshold?: number | null;
   /** Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable. */
   physicalDisruptionThreshold?: number;
+  /** Printed crew complement. */
+  crew?: number | null;
+  /** Printed Crew threshold copied to deployed units. */
+  crewThreshold?: number | null;
   speed: number;
+  /** Printed turns per movement activation. */
+  turns?: number | null;
+  /** Printed degrees per turn. */
+  turnAngle?: number | null;
+  /** Maximum shield pool, if any. */
+  shieldMax?: number;
   weaponRange: number;
   weaponDamage: number;
   /** Gameplay base radius in board inches. Used for contact/overlap/fighter edge range; independent of rendered model scale. */

@@ -28,8 +28,14 @@ export const ListShipModelsResponseItem = zod.object({
   "pointCost": zod.number(),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "hullPoints": zod.number(),
+  "damageThreshold": zod.number().nullish(),
   "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable.'),
+  "crew": zod.number().nullish(),
+  "crewThreshold": zod.number().nullish(),
   "speed": zod.number(),
+  "turns": zod.number().nullish(),
+  "turnAngle": zod.number().nullish(),
+  "shieldMax": zod.number().optional(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact\/overlap\/fighter edge range; independent of rendered model scale.'),
@@ -359,6 +365,7 @@ export const GetGameResponse = zod.object({
   "modelFilename": zod.string(),
   "faction": zod.string(),
   "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional().describe('Board state. hyperspace units are alive but off-table in reserves; withdrawn units have tactically left the battle.'),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
@@ -450,7 +457,25 @@ export const GetGameResponse = zod.object({
 
 }).passthrough(),
   "resolvedAt": zod.coerce.date().nullable()
-}))
+})),
+  "jumpPoints": zod.array(zod.object({
+  "id": zod.number(),
+  "gameId": zod.number(),
+  "ownerId": zod.string(),
+  "creatorUnitId": zod.number(),
+  "direction": zod.enum(['to-hyperspace', 'to-realspace']),
+  "hexQ": zod.number(),
+  "hexR": zod.number(),
+  "baseRadiusInches": zod.number(),
+  "heading": zod.number(),
+  "createdRound": zod.number(),
+  "expiresAfterRound": zod.number(),
+  "status": zod.enum(['open', 'closed', 'spent']),
+  "shockWaveArmed": zod.boolean(),
+  "shockWaveResolved": zod.boolean(),
+  "vfxPreset": zod.record(zod.string(), zod.unknown()),
+  "createdAt": zod.coerce.date()
+})).optional()
 })
 
 
@@ -657,6 +682,7 @@ export const DeployFleetBody = zod.object({
   "shipModelId": zod.number().nullish().describe('Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model.'),
   "hexQ": zod.number(),
   "hexR": zod.number(),
+  "boardState": zod.enum(['deployed', 'hyperspace']).optional().describe('Deployment state. deployed = starts on the board; hyperspace = starts in hyperspace reserves.'),
   "heading": zod.number(),
   "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.'),
   "launchedFromPlacementIndex": zod.number().min(deployFleetBodyPlacementsItemLaunchedFromPlacementIndexMin).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.'),
@@ -1343,7 +1369,7 @@ export const ChooseSpecialActionParams = zod.object({
 })
 
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'maneuver-to-shield', 'cause-confusion', 'all-hands-on-deck', 'scramble', 'regenerate']),
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'maneuver-to-shield', 'cause-confusion', 'initiate-jump-point', 'all-hands-on-deck', 'scramble', 'regenerate']),
   "targetUnitId": zod.number().nullish().describe('Required for targeted Special Actions such as \'concentrate-fire\', \'track-that-target\', and \'cause-confusion\' — the nominated enemy unit id.')
 })
 

@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, type CarriedFighterInventoryItem } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
 import { requireAuth, getUserId, isAdminUser } from "../lib/auth";
 import {
   parseShipTraits,
@@ -209,6 +209,7 @@ function unitAuditState(unit: typeof gameUnitsTable.$inferSelect): Record<string
     firedWeaponIds: unit.firedWeaponIds,
     slowLoadingWeaponCooldowns: unit.slowLoadingWeaponCooldowns,
     baseRadiusInches: unit.baseRadiusInches,
+    boardState: unit.boardState,
     modelFilename: unit.modelFilename,
   };
 }
@@ -217,7 +218,7 @@ async function recordAttackAuditLog(
   tx: any,
   args: {
     game: typeof gamesTable.$inferSelect;
-    actorKind: "player" | "ai";
+    actorKind: "player" | "ai" | "system";
     actorPlayerId: string | null;
     attacker: typeof gameUnitsTable.$inferSelect;
     targetBefore: typeof gameUnitsTable.$inferSelect;
@@ -262,7 +263,7 @@ async function recordMovementAuditLog(
     actorPlayerId: string | null;
     unitBefore: typeof gameUnitsTable.$inferSelect;
     unitAfter: typeof gameUnitsTable.$inferSelect;
-    movementKind: "move" | "turn" | "move-and-turn" | "all-stop" | "adrift-drift" | "fighter-launch" | "fighter-recovery" | "forced-hold";
+    movementKind: "move" | "turn" | "move-and-turn" | "all-stop" | "adrift-drift" | "fighter-launch" | "fighter-recovery" | "forced-hold" | "hyperspace-arrival" | "hyperspace-withdrawal";
     summary: string;
     payload: Record<string, unknown>;
   },
@@ -293,7 +294,7 @@ async function recordSpecialActionAuditLog(
   tx: any,
   args: {
     game: typeof gamesTable.$inferSelect;
-    actorKind: "player" | "ai";
+    actorKind: "player" | "ai" | "system";
     actorPlayerId: string | null;
     unitBefore: typeof gameUnitsTable.$inferSelect;
     unitAfter: typeof gameUnitsTable.$inferSelect;
@@ -394,6 +395,15 @@ type SlowLoadingCooldowns = Record<string, number>;
 
 type ParsedShipTraits = ReturnType<typeof parseShipTraits>;
 
+const ADRIFT_FORBIDDEN_SPECIAL_ACTIONS = new Set([
+  "all-power-engines",
+  "all-stop",
+  "all-stop-pivot",
+  "come-about-extra-turn",
+  "come-about-sharp-turn",
+  "maneuver-to-shield",
+]);
+
 function stealthPenetrationIgnoresTarget(
   attackerTraits: ParsedShipTraits,
   _targetTraits: ParsedShipTraits,
@@ -492,8 +502,10 @@ function unitCountsForVictory(unit: {
   crewPoints: number;
   maxCrewPoints: number;
   isDestroyed?: boolean;
+  boardState?: string | null;
 }): boolean {
   return !unit.isDestroyed
+    && !unitIsWithdrawn(unit)
     && unit.hullPoints > 0
     && (unit.maxCrewPoints <= 0 || unit.crewPoints > 0);
 }
@@ -506,12 +518,36 @@ function comparableTraitName(raw: string): string {
     .replace(/[\s_]+/g, "-");
 }
 
+const CRITICAL_TRAIT_LOSS_EXCLUDED_TRAITS = new Set([
+  comparableTraitName("Lumbering"),
+]);
+
 function filterLostTraits(raw: string | null | undefined, lostTraitNames: Iterable<string>): string {
-  const lost = new Set(Array.from(lostTraitNames).map(comparableTraitName));
+  const lost = new Set(
+    Array.from(lostTraitNames)
+      .map(comparableTraitName)
+      .filter(name => !CRITICAL_TRAIT_LOSS_EXCLUDED_TRAITS.has(name)),
+  );
   if (!raw) return "";
   return raw.split(/[;,]/).map(t => t.trim()).filter(Boolean)
     .filter(t => !lost.has(comparableTraitName(t)))
     .join("; ");
+}
+
+function criticalTraitLossCandidates(
+  raw: string | null | undefined,
+  lostTraitNames: Iterable<string>,
+): string[] {
+  const lost = new Set(Array.from(lostTraitNames).map(comparableTraitName));
+  if (!raw) return [];
+  return raw.split(/[;,]/)
+    .map(name => name.trim())
+    .filter(Boolean)
+    .filter(name => {
+      const comparable = comparableTraitName(name);
+      return !lost.has(comparable) && !CRITICAL_TRAIT_LOSS_EXCLUDED_TRAITS.has(comparable);
+    })
+    .map(name => name.split(/\s+/)[0]!);
 }
 
 function skeletonPenaltiesApply(unit: {
@@ -547,7 +583,7 @@ function movementSpeedCap(unit: {
   const baseSpeed = effectiveBaseSpeed(unit, crits, options);
   if (baseAction === "regenerate" && unit.specialAction === "regenerate") return 0;
   if (baseAction === "all-stop-pivot") return 0;
-  if (baseAction === "all-stop" || baseAction === "run-silent") return Math.floor(baseSpeed / 2);
+  if (baseAction === "all-stop" || baseAction === "run-silent" || baseAction === "initiate-jump-point") return Math.floor(baseSpeed / 2);
   if (baseAction === "all-power-engines") return Math.floor(baseSpeed * 1.5);
   if (unit.shadowManeuverMode === "sweep") return baseSpeed * 2;
   return baseSpeed;
@@ -589,8 +625,16 @@ function effectiveTurnProfile(unit: {
   return {
     maxTurns: baseTurns + (isComeAboutExtra ? 1 : 0),
     turnAngle: (baseTurnAngle + sharpBonus) * pivotMultiplier,
-    turnsForbidden: baseAction === "all-power-engines" || baseAction === "run-silent" || baseAction === "all-stop",
+    turnsForbidden: baseAction === "all-power-engines" || baseAction === "run-silent" || baseAction === "all-stop" || baseAction === "initiate-jump-point",
   };
+}
+
+function unitIsInHyperspace(unit: { boardState?: string | null }): boolean {
+  return unit.boardState === "hyperspace";
+}
+
+function unitIsWithdrawn(unit: { boardState?: string | null }): boolean {
+  return unit.boardState === "withdrawn";
 }
 
 function comeAboutSharpBaseTurnCap(unit: { specialAction: string | null }, turnProfile: { turnAngle: number }): number {
@@ -677,16 +721,26 @@ function isPointInsideBoard(point: { x: number; z: number }): boolean {
     && point.z <= BOARD_MAX_Z;
 }
 
-function shouldAddEdgeRecoveryHeading(unit: { hexQ: number; hexR: number; heading: number; modelFilename: string }, speedCap: number, minMove: number): boolean {
+function isFootprintInsideBoard(footprint: { x: number; z: number; baseRadiusInches?: number | null }): boolean {
+  const radius = rulesBaseRadius(footprint);
+  return footprint.x >= BOARD_MIN_X + radius
+    && footprint.x <= BOARD_MAX_X - radius
+    && footprint.z >= BOARD_MIN_Z + radius
+    && footprint.z <= BOARD_MAX_Z - radius;
+}
+
+function shouldAddEdgeRecoveryHeading(unit: { hexQ: number; hexR: number; heading: number; modelFilename: string; baseRadiusInches?: number | null }, speedCap: number, minMove: number): boolean {
   const current = { x: unit.hexQ, z: unit.hexR };
-  if (boardEdgeClearance(current) <= AI_EDGE_RECOVERY_BUFFER_INCHES) return true;
+  const baseRadius = rulesBaseRadius(unit);
+  if (boardEdgeClearance(current) - baseRadius <= AI_EDGE_RECOVERY_BUFFER_INCHES) return true;
   const forward = headingForwardVec(unit);
   const projectedDistance = Math.max(minMove, Math.min(speedCap, AI_EDGE_RECOVERY_BUFFER_INCHES));
   const projected = {
     x: current.x + forward.x * projectedDistance,
     z: current.z + forward.z * projectedDistance,
+    baseRadiusInches: baseRadius,
   };
-  return !isPointInsideBoard(projected);
+  return !isFootprintInsideBoard(projected);
 }
 
 // Arc center angles match game-board.tsx (local +Z = forward when heading=0).
@@ -762,6 +816,320 @@ function trackThatTargetRelaxedArc(weaponArc: string): "Forward" | "Aft" | null 
   const arc = canonicalWeaponArc(weaponArc);
   if (arc === "Boresight Forward") return "Forward";
   if (arc === "Boresight Aft") return "Aft";
+  return null;
+}
+
+const JUMP_POINT_PLACEMENT_RANGE_INCHES = 8;
+const JUMP_POINT_BASE_RADIUS_INCHES = 1.5;
+const JUMP_POINT_BORDER_FACING_GUARD_INCHES = 6;
+const JUMP_POINT_EDGE_BUFFER_INCHES = 3;
+const STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES = 45;
+
+function jumpEngineTraitsForModel(
+  model: Pick<typeof shipModelsTable.$inferSelect, "traits"> | null | undefined,
+  lostTraitNames: Iterable<string> = [],
+): { jumpEngine: boolean; advancedJumpEngine: boolean } {
+  const traits = parseShipTraits(filterLostTraits(model?.traits ?? "", lostTraitNames));
+  return {
+    jumpEngine: traits.jumpEngine || traits.advancedJumpEngine,
+    advancedJumpEngine: traits.advancedJumpEngine,
+  };
+}
+
+function jumpPointPlacementError(
+  unit: typeof gameUnitsTable.$inferSelect,
+  model: Pick<typeof shipModelsTable.$inferSelect, "traits">,
+  lostTraitNames: Iterable<string>,
+  point: { x: number; z: number },
+): string | null {
+  if (!isPointInsideBoard(point)) return "Jump point must be inside the battlefield border";
+  const distance = Math.hypot(point.x - unit.hexQ, point.z - unit.hexR);
+  if (distance > JUMP_POINT_PLACEMENT_RANGE_INCHES + 1e-6) {
+    return `Jump point must be within ${JUMP_POINT_PLACEMENT_RANGE_INCHES}"`;
+  }
+  const traits = jumpEngineTraitsForModel(model, lostTraitNames);
+  if (!traits.jumpEngine) return "Initiate Jump Point requires Jump Engine or Advanced Jump Engine";
+  if (!traits.advancedJumpEngine) {
+    const forward = isInArc(
+      {
+        x: unit.hexQ,
+        z: unit.hexR,
+        headingDeg: unit.heading,
+        flipped: FLIP_MODELS.has(unit.modelFilename),
+      },
+      point,
+      "Forward",
+    );
+    if (!forward) return "Standard Jump Engine must place the point in the forward arc";
+  }
+  return null;
+}
+
+function jumpPointHeadingPlacementError(
+  unit: typeof gameUnitsTable.$inferSelect,
+  model: Pick<typeof shipModelsTable.$inferSelect, "traits">,
+  lostTraitNames: Iterable<string>,
+  point: { x: number; z: number },
+  heading: number,
+): string | null {
+  const traits = jumpEngineTraitsForModel(model, lostTraitNames);
+  if (!traits.jumpEngine) return "Initiate Jump Point requires Jump Engine or Advanced Jump Engine";
+  if (traits.advancedJumpEngine) return null;
+  const facingInitiator = headingToPoint(point, { x: unit.hexQ, z: unit.hexR });
+  if (headingDeltaDegrees(facingInitiator, heading) > STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES + 1e-6) {
+    return `Standard Jump Engine may face the jump point up to ${STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES} degrees toward the initiating ship`;
+  }
+  return null;
+}
+
+function unitOverlapsJumpPointBase(
+  unit: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+  jumpPoint: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+): boolean {
+  return edgeDistance(
+    { x: unit.hexQ, z: unit.hexR, baseRadiusInches: rulesBaseRadius(unit) },
+    {
+      x: jumpPoint.hexQ,
+      z: jumpPoint.hexR,
+      baseRadiusInches: jumpPoint.baseRadiusInches ?? JUMP_POINT_BASE_RADIUS_INCHES,
+    },
+  ) <= BASE_CONTACT_EPSILON;
+}
+
+function unitIsInsideJumpPointShockWave(
+  unit: { hexQ: number; hexR: number; baseRadiusInches?: number | null },
+  jumpPoint: { hexQ: number; hexR: number; heading: number; baseRadiusInches?: number | null },
+): boolean {
+  if (unitOverlapsJumpPointBase(unit, jumpPoint)) return true;
+  const unitPoint = { x: unit.hexQ, z: unit.hexR };
+  const edgeDistanceFromCounter = edgeDistance(
+    { x: unit.hexQ, z: unit.hexR, baseRadiusInches: rulesBaseRadius(unit) },
+    {
+      x: jumpPoint.hexQ,
+      z: jumpPoint.hexR,
+      baseRadiusInches: jumpPoint.baseRadiusInches ?? JUMP_POINT_BASE_RADIUS_INCHES,
+    },
+  );
+  return edgeDistanceFromCounter <= 2 + BASE_CONTACT_EPSILON
+    && isInArc(
+      {
+        x: jumpPoint.hexQ,
+        z: jumpPoint.hexR,
+        headingDeg: jumpPoint.heading,
+        flipped: false,
+      },
+      unitPoint,
+      "Forward",
+    );
+}
+
+function clampBoardCoord(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampJumpPointCenterInsideBufferedBoard(point: { x: number; z: number }): { x: number; z: number } {
+  const inset = JUMP_POINT_BASE_RADIUS_INCHES + JUMP_POINT_EDGE_BUFFER_INCHES;
+  return {
+    x: snapBoardCoord(clampBoardCoord(point.x, BOARD_MIN_X + inset, BOARD_MAX_X - inset)),
+    z: snapBoardCoord(clampBoardCoord(point.z, BOARD_MIN_Z + inset, BOARD_MAX_Z - inset)),
+  };
+}
+
+function jumpPointBorderFacingGuard(point: { x: number; z: number }, heading: number): {
+  heading: number;
+  adjusted: boolean;
+  edges: string[];
+} {
+  const headingRad = (heading * Math.PI) / 180;
+  const forward = { x: Math.sin(headingRad), z: Math.cos(headingRad) };
+  const edges: string[] = [];
+  if (point.x - BOARD_MIN_X <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.x < -1e-6) {
+    edges.push("west");
+  }
+  if (BOARD_MAX_X - point.x <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.x > 1e-6) {
+    edges.push("east");
+  }
+  if (point.z - BOARD_MIN_Z <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.z < -1e-6) {
+    edges.push("south");
+  }
+  if (BOARD_MAX_Z - point.z <= JUMP_POINT_BORDER_FACING_GUARD_INCHES && forward.z > 1e-6) {
+    edges.push("north");
+  }
+  if (edges.length === 0) {
+    return { heading, adjusted: false, edges };
+  }
+  return {
+    heading: headingToPoint(point, {
+      x: (BOARD_MIN_X + BOARD_MAX_X) / 2,
+      z: (BOARD_MIN_Z + BOARD_MAX_Z) / 2,
+    }),
+    adjusted: true,
+    edges,
+  };
+}
+
+function scatterHyperspaceJumpPoint(point: { x: number; z: number }, crewQuality: number, heading: number): {
+  x: number;
+  z: number;
+  heading: number;
+  scatterDistance: number;
+  scatterRolls: number[];
+  scatterDirectionDeg: number;
+  headingDriftDeg: number;
+  headingDriftMaxDeg: number;
+  headingBeforeBorderGuard: number;
+  borderFacingGuardAdjusted: boolean;
+  borderFacingGuardEdges: string[];
+} {
+  const scatterRolls = [
+    Math.floor(Math.random() * 6) + 1,
+    Math.floor(Math.random() * 6) + 1,
+    Math.floor(Math.random() * 6) + 1,
+  ];
+  const scatterDistance = Math.max(0, scatterRolls.reduce((sum, roll) => sum + roll, 0) - crewQuality);
+  const scatterDirectionDeg = Math.random() * 360;
+  const rad = (scatterDirectionDeg * Math.PI) / 180;
+  const rawX = point.x + Math.sin(rad) * scatterDistance;
+  const rawZ = point.z + Math.cos(rad) * scatterDistance;
+  const headingDriftMaxDeg = Math.min(45, Math.max(0, (scatterDistance / 18) * 45));
+  const headingDriftDeg = headingDriftMaxDeg > 0
+    ? (Math.random() * 2 - 1) * headingDriftMaxDeg
+    : 0;
+  const bufferedPoint = clampJumpPointCenterInsideBufferedBoard({ x: rawX, z: rawZ });
+  const { x, z } = bufferedPoint;
+  const headingBeforeBorderGuard = normalizeHeadingDegrees(heading + headingDriftDeg);
+  const borderGuard = jumpPointBorderFacingGuard({ x, z }, headingBeforeBorderGuard);
+  return {
+    x,
+    z,
+    heading: borderGuard.heading,
+    scatterDistance,
+    scatterRolls,
+    scatterDirectionDeg,
+    headingDriftDeg,
+    headingDriftMaxDeg,
+    headingBeforeBorderGuard,
+    borderFacingGuardAdjusted: borderGuard.adjusted,
+    borderFacingGuardEdges: borderGuard.edges,
+  };
+}
+
+async function ownerHasDeployedShipOnBattlefield(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+): Promise<boolean> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.ownerId, ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+  ));
+  for (const row of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    const model = await getShipModelForUnit(tx, row);
+    if (model && !shipModelIsFighter(model)) return true;
+  }
+  return false;
+}
+
+async function ownerHasFriendlyScoutOnBattlefield(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+): Promise<boolean> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.ownerId, ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+  ));
+  for (const row of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (row.hullPoints <= 0 || ((row.maxCrewPoints ?? 0) > 0 && row.crewPoints <= 0)) continue;
+    const model = await getShipModelForUnit(tx, row);
+    if (!model || shipModelIsFighter(model)) continue;
+    const critRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, row.id));
+    const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    const traits = parseShipTraits(filterLostTraits(model.traits ?? "", crits.lostTraitNames));
+    if (traits.scout) return true;
+  }
+  return false;
+}
+
+async function friendlyOpenToRealspaceJumpPoints(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+): Promise<Array<typeof gameJumpPointsTable.$inferSelect>> {
+  return tx.select().from(gameJumpPointsTable).where(and(
+    eq(gameJumpPointsTable.gameId, gameId),
+    eq(gameJumpPointsTable.ownerId, ownerId),
+    eq(gameJumpPointsTable.direction, "to-realspace"),
+    eq(gameJumpPointsTable.status, "open"),
+  ));
+}
+
+async function hyperspaceReserveMovementActivationEligible(
+  tx: any,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<boolean> {
+  if (unit.isDestroyed || unit.hasMovedThisRound) return false;
+  const model = await getShipModelForUnit(tx, unit);
+  if (!model) return false;
+  const critRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+  const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+    effectKey: r.effectKey,
+    randomArc: r.randomArc,
+    randomWeaponId: r.randomWeaponId,
+    lostTraits: r.lostTraits ?? [],
+  })));
+  const jumpTraits = jumpEngineTraitsForModel(model, crits.lostTraitNames);
+  if (jumpTraits.jumpEngine && await ownerHasDeployedShipOnBattlefield(tx, unit.gameId, unit.ownerId)) {
+    return true;
+  }
+  return (await friendlyOpenToRealspaceJumpPoints(tx, unit.gameId, unit.ownerId)).length > 0;
+}
+
+async function hyperspaceReserveStrandingError(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+  departingUnitId: number,
+): Promise<string | null> {
+  const reserveRows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.ownerId, ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "hyperspace"),
+  ));
+  let nonJumpRemaining = 0;
+  let jumpCapableRemaining = 0;
+  for (const row of reserveRows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (row.id === departingUnitId) continue;
+    const model = await getShipModelForUnit(tx, row);
+    const critRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, row.id));
+    const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    if (jumpEngineTraitsForModel(model, crits.lostTraitNames).jumpEngine) {
+      jumpCapableRemaining += 1;
+    } else {
+      nonJumpRemaining += 1;
+    }
+  }
+  if (nonJumpRemaining > 0 && jumpCapableRemaining === 0) {
+    return "Bring non-jump reserve ships through first, or leave a jump-capable ship in reserve";
+  }
   return null;
 }
 
@@ -1451,6 +1819,241 @@ async function applyAsteroidMovementHazards(
   }
 
   return { unit: damagedUnit, hazards, gameCompleted, winnerId };
+}
+
+type JumpPointShockWaveTargetResult = {
+  unitId: number;
+  unitName: string;
+  ownerId: string;
+  hitThreshold: number;
+  attackRolls: number[];
+  hits: number;
+  dodgeRolls: number[];
+  dodgesSuccessful: number;
+  remainingHits: number;
+  shieldedHits: number;
+  damage: number;
+  crewLost: number;
+  hullBefore: number;
+  hullAfter: number;
+  crewBefore: number;
+  crewAfter: number;
+  damageStateBefore: string | null;
+  damageStateAfter: string | null;
+  destroyed: boolean;
+  damageTable: { overkill: number; roll: number; total: number; outcome: "adrift" | "destroyed" | "exploding-end-of-next" } | null;
+};
+
+async function resolveJumpPointShockWaveTarget(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  target: typeof gameUnitsTable.$inferSelect,
+  model: typeof shipModelsTable.$inferSelect,
+): Promise<{ unit: typeof gameUnitsTable.$inferSelect; result: JumpPointShockWaveTargetResult; gameCompleted: boolean; winnerId: string | null }> {
+  const critRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, target.id));
+  const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(row => ({
+    effectKey: row.effectKey,
+    randomArc: row.randomArc,
+    randomWeaponId: row.randomWeaponId,
+    lostTraits: row.lostTraits ?? [],
+  })));
+  const targetTraits = parseShipTraits(filterLostTraits(model.traits, crits.lostTraitNames));
+  const targetIsFighter = shipModelIsFighter(model);
+  const targetCrippled = isCrippledUnit(target);
+  const attack = resolveAsteroidAttack({
+    attackDice: 8,
+    hullRating: model.hullRating,
+    dodgeTarget: targetTraits.dodge,
+    dodgeActive: targetTraits.dodge > 0,
+    shieldsCurrent: targetCrippled ? 0 : target.shieldsCurrent,
+    geg: targetTraits.geg,
+    adaptiveArmour: targetTraits.adaptiveArmour,
+    blastDoorsActive: target.specialAction === "blast-doors",
+    hasCrewTrack: target.maxCrewPoints > 0,
+    fighter: targetIsFighter,
+    fighterHullPoints: target.hullPoints,
+  }, rollD6);
+  const targetHullAfter = Math.max(0, target.hullPoints - attack.damage);
+  const targetCrewAfter = target.maxCrewPoints > 0
+    ? Math.max(0, target.crewPoints - attack.crewLost)
+    : target.crewPoints;
+  let nextDamageState = targetIsFighter && attack.remainingHits > 0 ? "destroyed" : target.damageState;
+  let targetDestroyed = targetIsFighter && attack.remainingHits > 0 ? true : target.isDestroyed;
+  let damageTable: JumpPointShockWaveTargetResult["damageTable"] = null;
+  if (!targetIsFighter && targetHullAfter === 0 && target.damageState === "normal" && !target.isDestroyed) {
+    const overkill = Math.max(0, attack.damage - target.hullPoints);
+    const roll = rollD6();
+    const total = roll + overkill;
+    if (total <= 6) {
+      nextDamageState = "adrift";
+      damageTable = { overkill, roll, total, outcome: "adrift" };
+    } else if (total <= 11) {
+      nextDamageState = "destroyed";
+      targetDestroyed = true;
+      damageTable = { overkill, roll, total, outcome: "destroyed" };
+    } else {
+      nextDamageState = "exploding-end-of-next";
+      damageTable = { overkill, roll, total, outcome: "exploding-end-of-next" };
+    }
+  }
+  if (!targetIsFighter && target.maxCrewPoints > 0 && targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
+    nextDamageState = "adrift";
+  }
+  const targetWillBeCrippled = isCrippledUnit({
+    ...target,
+    hullPoints: targetHullAfter,
+    isDestroyed: targetDestroyed,
+  });
+  const [updatedTarget] = await tx.update(gameUnitsTable).set({
+    hullPoints: targetHullAfter,
+    crewPoints: targetCrewAfter,
+    shieldsCurrent: targetWillBeCrippled ? 0 : attack.shieldsAfter,
+    interceptorDiceRemaining: targetWillBeCrippled ? 0 : target.interceptorDiceRemaining,
+    interceptorThresholdCurrent: targetWillBeCrippled ? 2 : target.interceptorThresholdCurrent,
+    damageState: nextDamageState,
+    isDestroyed: targetDestroyed,
+  }).where(eq(gameUnitsTable.id, target.id)).returning();
+  if (targetDestroyed && updatedTarget) {
+    await resolveDestroyedFighterRecovery(tx, game, updatedTarget, "weapon");
+  }
+
+  const allUnits = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
+  let challengerAlive = 0;
+  let opponentAlive = 0;
+  for (const row of allUnits as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (!unitCountsForVictory(row)) continue;
+    if (row.ownerId === game.challengerId) challengerAlive++;
+    else if (row.ownerId === game.opponentId) opponentAlive++;
+  }
+  let winnerId: string | null = null;
+  let gameCompleted = false;
+  if (game.opponentId && challengerAlive === 0 && opponentAlive > 0) {
+    winnerId = game.opponentId;
+    gameCompleted = true;
+  } else if (game.opponentId && opponentAlive === 0 && challengerAlive > 0) {
+    winnerId = game.challengerId;
+    gameCompleted = true;
+  } else if (game.opponentId && challengerAlive === 0 && opponentAlive === 0) {
+    gameCompleted = true;
+  }
+  if (gameCompleted) {
+    await tx.update(gamesTable)
+      .set({ status: "completed", winnerId, activePlayerId: null, activeUnitId: null })
+      .where(eq(gamesTable.id, game.id));
+  }
+
+  return {
+    unit: updatedTarget ?? target,
+    gameCompleted,
+    winnerId,
+    result: {
+      unitId: target.id,
+      unitName: target.name,
+      ownerId: target.ownerId,
+      hitThreshold: attack.hitThreshold,
+      attackRolls: attack.attackRolls,
+      hits: attack.hits,
+      dodgeRolls: attack.dodgeRolls,
+      dodgesSuccessful: attack.dodgesSuccessful,
+      remainingHits: attack.remainingHits,
+      shieldedHits: attack.shieldedHits,
+      damage: attack.damage,
+      crewLost: attack.crewLost,
+      hullBefore: target.hullPoints,
+      hullAfter: updatedTarget?.hullPoints ?? targetHullAfter,
+      crewBefore: target.crewPoints,
+      crewAfter: updatedTarget?.crewPoints ?? targetCrewAfter,
+      damageStateBefore: target.damageState,
+      damageStateAfter: updatedTarget?.damageState ?? nextDamageState,
+      destroyed: updatedTarget?.isDestroyed ?? targetDestroyed,
+      damageTable,
+    },
+  };
+}
+
+async function closeExpiredOrUnsupportedJumpPoints(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  nextRound: number,
+): Promise<Array<{ id: number; reason: string; creatorUnitId: number }>> {
+  const points = await tx.select().from(gameJumpPointsTable).where(and(
+    eq(gameJumpPointsTable.gameId, game.id),
+    or(
+      eq(gameJumpPointsTable.status, "open"),
+      eq(gameJumpPointsTable.status, "spent"),
+    ),
+  ));
+  const closed: Array<{ id: number; reason: string; creatorUnitId: number }> = [];
+  for (const point of points as Array<typeof gameJumpPointsTable.$inferSelect>) {
+    let reason: string | null = null;
+    if (point.status === "spent") {
+      if (point.expiresAfterRound < nextRound) {
+        reason = "spent jump point visual expired";
+      }
+    } else if (point.expiresAfterRound < nextRound) {
+      reason = "three-turn duration expired";
+    }
+    if (point.status === "spent" && !reason) continue;
+    const [creator] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, point.creatorUnitId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
+    if (!creator) {
+      reason = reason ?? "creator missing";
+    } else if (creator.isDestroyed) {
+      reason = reason ?? "creator destroyed";
+    } else if (unitIsWithdrawn(creator)) {
+      reason = reason ?? "creator withdrew";
+    } else if (creator.hullPoints <= 0 || (creator.maxCrewPoints > 0 && creator.crewPoints <= 0)) {
+      reason = reason ?? "creator no longer combat effective";
+    } else {
+      const critRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, creator.id));
+      const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(row => ({
+        effectKey: row.effectKey,
+        randomArc: row.randomArc,
+        randomWeaponId: row.randomWeaponId,
+        lostTraits: row.lostTraits ?? [],
+      })));
+      const state = effectiveDamageState(creator.damageState, critRows);
+      if (state === "adrift" || crits.noSA) {
+        reason = reason ?? "creator cannot sustain special action";
+      }
+    }
+    if (!reason) continue;
+    await tx.update(gameJumpPointsTable).set({
+      status: "closed",
+    }).where(eq(gameJumpPointsTable.id, point.id));
+    closed.push({ id: point.id, reason, creatorUnitId: point.creatorUnitId });
+    if (creator) {
+      await recordSpecialActionAuditLog(tx, {
+        game,
+        actorKind: "system",
+        actorPlayerId: null,
+        unitBefore: creator,
+        unitAfter: creator,
+        action: "jump-point-closed",
+        storedAction: "jump-point-closed",
+        success: true,
+        cqRequired: null,
+        cqRoll: null,
+        cqTotal: null,
+        targetUnitId: null,
+        summary: `Jump point ${point.id} closed: ${reason}.`,
+        payload: {
+          rulesPath: "jump-points.lifecycle.close",
+          jumpPointId: point.id,
+          direction: point.direction,
+          createdRound: point.createdRound,
+          expiresAfterRound: point.expiresAfterRound,
+          nextRound,
+          reason,
+        },
+      });
+    }
+  }
+  return closed;
 }
 
 // Render-time orientation patch for legacy/misauthored models. Empty by
@@ -2714,6 +3317,17 @@ type AiMovementHeadingCandidate = {
   label: string;
 };
 
+async function aiMovementTargetIsCombatEffective(
+  tx: any,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<boolean> {
+  if (unit.boardState !== "deployed") return false;
+  if (!unitCountsForVictory(unit)) return false;
+  const critRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+  return effectiveDamageState(unit.damageState, critRows) !== "adrift";
+}
+
 type AiEnemyThreat = UnitFootprint & {
   heading: number;
   flipped: boolean;
@@ -3015,9 +3629,9 @@ function scoreAiMovementEndpoint(
     : aiProfile === "apex-predator"
       ? -incomingThreat * 0.75
       : -incomingThreat * 1.5;
-  const edgeClearance = boardEdgeClearance(candidate);
+  const edgeClearance = boardEdgeClearance(candidate) - rulesBaseRadius(candidate);
   const edgeRecoveryScore = edgeClearance < AI_EDGE_RECOVERY_BUFFER_INCHES
-    ? -(AI_EDGE_RECOVERY_BUFFER_INCHES - edgeClearance) * 7
+    ? -Math.pow(AI_EDGE_RECOVERY_BUFFER_INCHES - edgeClearance, 1.4) * 12
     : 0;
   const score = attackScore + rangeScore + profileMoveBias + survivalScore + edgeRecoveryScore + moved * 0.02;
   return {
@@ -3092,11 +3706,11 @@ function buildLegalAiMovementPlans(
             moved = snapHalfInch(moved + distance);
             distanceSinceLastTurn = snapHalfInch(distanceSinceLastTurn + distance);
             steps.push({ kind: "forward", distance, from, to: { x, z }, heading });
-            if (!isPointInsideBoard({ x, z })) {
+            const footprint = { ...moving, x, z };
+            if (!isFootprintInsideBoard(footprint)) {
               valid = false;
               break;
             }
-            const footprint = { ...moving, x, z };
             if (findIllegalBaseOverlap(footprint, blockers)) {
               valid = false;
               break;
@@ -3119,6 +3733,7 @@ function buildLegalAiMovementPlans(
         if (!valid) continue;
 
         const candidateFootprint = { ...moving, x, z };
+        if (!isFootprintInsideBoard(candidateFootprint)) continue;
         if (findIllegalBaseOverlap(candidateFootprint, blockers)) continue;
         const scored = scoreAiMovementEndpoint(
           candidateFootprint,
@@ -3147,13 +3762,19 @@ function buildLegalAiMovementPlans(
     }
   }
 
-  plans.sort((a, b) =>
+  const startingEdgeClearance = boardEdgeClearance(start) - rulesBaseRadius(moving);
+  const edgeAwarePlans = startingEdgeClearance <= AI_EDGE_RECOVERY_BUFFER_INCHES
+    ? plans.filter(plan => boardEdgeClearance(plan) - rulesBaseRadius(moving) >= startingEdgeClearance - 0.05)
+    : plans;
+  const sortablePlans = edgeAwarePlans.length > 0 ? edgeAwarePlans : plans;
+
+  sortablePlans.sort((a, b) =>
     b.score - a.score
     || b.ownThreat - a.ownThreat
     || a.incomingThreat - b.incomingThreat
     || b.moved - a.moved,
   );
-  return plans;
+  return sortablePlans;
 }
 
 function fighterWeaponRangeDistance(
@@ -3392,6 +4013,905 @@ function withAiDecisionLog(
   };
 }
 
+function withAiDecisionLogs(
+  raw: unknown,
+  patch: AiStatePatch,
+  entries: AiDecisionEntry[],
+): AiStatePatch {
+  const base = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const existing = Array.isArray(base.decisionLog)
+    ? base.decisionLog.filter((item): item is AiDecisionEntry => Boolean(item && typeof item === "object"))
+    : [];
+  return {
+    ...patch,
+    decisionLog: [...existing, ...entries].slice(-20),
+  };
+}
+
+type AiHyperspaceTarget = {
+  unit: typeof gameUnitsTable.$inferSelect;
+  value: number;
+  breakdown: Record<string, number>;
+};
+
+type AiReserveJumpPointPlan = {
+  nominated: { x: number; z: number; heading: number };
+  target: AiHyperspaceTarget | null;
+  score: number;
+  breakdown: Record<string, number | string | null>;
+};
+
+type AiHyperspaceEntryPlan = {
+  jumpPoint: typeof gameJumpPointsTable.$inferSelect;
+  x: number;
+  z: number;
+  heading: number;
+  score: number;
+  target: AiHyperspaceTarget | null;
+  creatorEnteredAndClosedPoint: boolean;
+  breakdown: Record<string, number | string | boolean | null>;
+};
+
+type AiReserveEngagementProfile = {
+  label: string;
+  aiProfile: ShipAiProfile;
+  favoredRange: number;
+  rangeTolerance: number;
+  rearBonus: number;
+  flankBonus: number;
+  frontPenalty: number;
+  tooClosePenaltyRange: number;
+  weightedWeaponRange: number;
+  maxWeaponRange: number;
+};
+
+async function aiHyperspaceTargets(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<AiHyperspaceTarget[]> {
+  const enemies = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.ownerId, game.challengerId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+    sql`${gameUnitsTable.hullPoints} > 0`,
+    sql`(${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`,
+  ));
+  const targets: AiHyperspaceTarget[] = [];
+  for (const enemy of enemies as Array<typeof gameUnitsTable.$inferSelect>) {
+    const model = await getShipModelForUnit(tx, enemy);
+    if (!model) continue;
+    const weapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, model.id));
+    const strategicValue = strategicTargetValue(model);
+    const weaponThreat = strategicWeaponThreat(weapons);
+    const damagedOpportunity = Math.max(0, enemy.maxHullPoints - enemy.hullPoints) * 0.2;
+    const value = strategicValue + weaponThreat.total * 2.5 + weaponThreat.heavyForward * 2 + damagedOpportunity;
+    targets.push({
+      unit: enemy,
+      value,
+      breakdown: {
+        strategicValue: Number(strategicValue.toFixed(2)),
+        weaponThreat: Number(weaponThreat.total.toFixed(2)),
+        heavyForwardThreat: Number(weaponThreat.heavyForward.toFixed(2)),
+        damagedOpportunity: Number(damagedOpportunity.toFixed(2)),
+        finalTargetValue: Number(value.toFixed(2)),
+      },
+    });
+  }
+  targets.sort((a, b) => b.value - a.value || a.unit.id - b.unit.id);
+  return targets;
+}
+
+async function aiReserveUnitsStillNeedPoint(
+  tx: any,
+  gameId: number,
+  ownerId: string,
+  excludingUnitId: number,
+): Promise<Array<typeof gameUnitsTable.$inferSelect>> {
+  const reserves = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.ownerId, ownerId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "hyperspace"),
+    eq(gameUnitsTable.hasMovedThisRound, false),
+  ));
+  return (reserves as Array<typeof gameUnitsTable.$inferSelect>)
+    .filter(row => row.id !== excludingUnitId);
+}
+
+async function aiDeployedBlockerFootprints(
+  tx: any,
+  gameId: number,
+  excludingUnitId: number,
+): Promise<UnitFootprint[]> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+  ));
+  const blockers: UnitFootprint[] = [];
+  for (const row of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (row.id === excludingUnitId) continue;
+    const model = await getShipModelForUnit(tx, row);
+    blockers.push({
+      id: row.id,
+      ownerId: row.ownerId,
+      x: row.hexQ,
+      z: row.hexR,
+      baseRadiusInches: rulesBaseRadius(row),
+      isFighter: model ? shipModelIsFighter(model) : false,
+    });
+  }
+  return blockers;
+}
+
+function aiBorderPenalty(point: { x: number; z: number }, baseRadius = 0): number {
+  const clearance = Math.min(
+    point.x - BOARD_MIN_X - baseRadius,
+    BOARD_MAX_X - point.x - baseRadius,
+    point.z - BOARD_MIN_Z - baseRadius,
+    BOARD_MAX_Z - point.z - baseRadius,
+  );
+  return clearance < 3 ? (3 - clearance) * 3 : 0;
+}
+
+function aiReserveEngagementProfile(
+  unit: typeof gameUnitsTable.$inferSelect,
+  model: typeof shipModelsTable.$inferSelect,
+  weapons: Array<Pick<typeof weaponsTable.$inferSelect, "name" | "range" | "arc" | "attackDice" | "traits">>,
+): AiReserveEngagementProfile {
+  const aiProfile = shipAiProfileForModel(model);
+  const weaponRanges = weapons.filter(weapon => Number.isFinite(weapon.range) && weapon.range > 0);
+  let weightedRangeTotal = 0;
+  let weightTotal = 0;
+  let maxWeaponRange = 0;
+  for (const weapon of weaponRanges) {
+    const value = Math.max(0.5, weaponThreatValue(weapon));
+    weightedRangeTotal += weapon.range * value;
+    weightTotal += value;
+    maxWeaponRange = Math.max(maxWeaponRange, weapon.range);
+  }
+  const weightedWeaponRange = weightTotal > 0 ? weightedRangeTotal / weightTotal : 10;
+  const searchableText = [
+    unit.name,
+    unit.modelFilename,
+    model.name,
+    model.filename,
+    ...weapons.map(weapon => weapon.name),
+    ...weapons.map(weapon => weapon.traits),
+  ].join(" ");
+  const novaCloseBrawler = isNovaDreadnought(model, unit);
+  const artilleryOrMissile = /\b(artillery|missile|torpedo|rail|mass driver|rocket)\b/i.test(searchableText)
+    || (maxWeaponRange >= 30 && weightedWeaponRange >= 18);
+  if (novaCloseBrawler) {
+    return {
+      label: "nova-close-rear",
+      aiProfile,
+      favoredRange: 4,
+      rangeTolerance: 4,
+      rearBonus: 44,
+      flankBonus: 22,
+      frontPenalty: 16,
+      tooClosePenaltyRange: 1.5,
+      weightedWeaponRange: Number(weightedWeaponRange.toFixed(2)),
+      maxWeaponRange,
+    };
+  }
+  if (artilleryOrMissile || aiProfile === "standoff") {
+    const favoredRange = Math.max(16, Math.min(30, Math.max(weightedWeaponRange * 0.72, maxWeaponRange * 0.58, 18)));
+    return {
+      label: artilleryOrMissile ? "artillery-flanking-range" : "standoff-flanking-range",
+      aiProfile,
+      favoredRange,
+      rangeTolerance: 7,
+      rearBonus: 18,
+      flankBonus: 36,
+      frontPenalty: 14,
+      tooClosePenaltyRange: Math.max(8, favoredRange * 0.48),
+      weightedWeaponRange: Number(weightedWeaponRange.toFixed(2)),
+      maxWeaponRange,
+    };
+  }
+  if (aiProfile === "broadside") {
+    return {
+      label: "broadside-rear-flank",
+      aiProfile,
+      favoredRange: Math.max(7, Math.min(12, weightedWeaponRange * 0.55)),
+      rangeTolerance: 5,
+      rearBonus: 24,
+      flankBonus: 34,
+      frontPenalty: 10,
+      tooClosePenaltyRange: 2.5,
+      weightedWeaponRange: Number(weightedWeaponRange.toFixed(2)),
+      maxWeaponRange,
+    };
+  }
+  if (aiProfile === "brawler") {
+    return {
+      label: "brawler-close-rear",
+      aiProfile,
+      favoredRange: 4,
+      rangeTolerance: 4,
+      rearBonus: 36,
+      flankBonus: 18,
+      frontPenalty: 14,
+      tooClosePenaltyRange: 1.5,
+      weightedWeaponRange: Number(weightedWeaponRange.toFixed(2)),
+      maxWeaponRange,
+    };
+  }
+  if (aiProfile === "jouster" || aiProfile === "apex-predator") {
+    return {
+      label: `${aiProfile}-rear-angle`,
+      aiProfile,
+      favoredRange: 10,
+      rangeTolerance: 5,
+      rearBonus: 26,
+      flankBonus: 18,
+      frontPenalty: 8,
+      tooClosePenaltyRange: 3,
+      weightedWeaponRange: Number(weightedWeaponRange.toFixed(2)),
+      maxWeaponRange,
+    };
+  }
+  return {
+    label: "balanced-rear-flank",
+    aiProfile,
+    favoredRange: Math.max(6, Math.min(12, weightedWeaponRange * 0.6)),
+    rangeTolerance: 5,
+    rearBonus: 26,
+    flankBonus: 22,
+    frontPenalty: 10,
+    tooClosePenaltyRange: 2.5,
+    weightedWeaponRange: Number(weightedWeaponRange.toFixed(2)),
+    maxWeaponRange,
+  };
+}
+
+function aiRelativeArcForPoint(target: typeof gameUnitsTable.$inferSelect, point: { x: number; z: number }): "rear" | "flank" | "front" | "other" {
+  const attacker = {
+    x: target.hexQ,
+    z: target.hexR,
+    headingDeg: target.heading,
+    flipped: FLIP_MODELS.has(target.modelFilename),
+  };
+  if (isInArc(attacker, point, "Aft")) return "rear";
+  if (isInArc(attacker, point, "Port") || isInArc(attacker, point, "Starboard")) return "flank";
+  if (isInArc(attacker, point, "Forward") || isInArc(attacker, point, "Boresight Forward")) return "front";
+  return "other";
+}
+
+function aiRelativeArcScore(
+  target: typeof gameUnitsTable.$inferSelect,
+  point: { x: number; z: number },
+  engagement: AiReserveEngagementProfile,
+): { arc: "rear" | "flank" | "front" | "other"; score: number } {
+  const arc = aiRelativeArcForPoint(target, point);
+  if (arc === "rear") return { arc, score: engagement.rearBonus };
+  if (arc === "flank") return { arc, score: engagement.flankBonus };
+  if (arc === "front") return { arc, score: -engagement.frontPenalty };
+  return { arc, score: 0 };
+}
+
+function aiRangeScore(distance: number, engagement: AiReserveEngagementProfile): {
+  score: number;
+  pressure: number;
+  tooClosePenalty: number;
+} {
+  const outsideTolerance = Math.max(0, Math.abs(distance - engagement.favoredRange) - engagement.rangeTolerance);
+  const pressure = outsideTolerance * 1.8 + Math.abs(distance - engagement.favoredRange) * 0.35;
+  const tooClosePenalty = distance < engagement.tooClosePenaltyRange
+    ? (engagement.tooClosePenaltyRange - distance) * 4
+    : 0;
+  return {
+    score: -(pressure + tooClosePenalty),
+    pressure,
+    tooClosePenalty,
+  };
+}
+
+function aiJumpPointNominationCandidates(
+  target: AiHyperspaceTarget | null,
+  engagement: AiReserveEngagementProfile,
+  unitRadius: number,
+): Array<{ x: number; z: number; heading: number; label: string }> {
+  const center = { x: (BOARD_MIN_X + BOARD_MAX_X) / 2, z: (BOARD_MIN_Z + BOARD_MAX_Z) / 2 };
+  if (!target) {
+    return [{ x: center.x, z: center.z, heading: 0, label: "board-center" }];
+  }
+  const targetPoint = { x: target.unit.hexQ, z: target.unit.hexR };
+  const candidates: Array<{ x: number; z: number; heading: number; label: string }> = [];
+  const targetFacing = normalizeHeadingDegrees(target.unit.heading + (FLIP_MODELS.has(target.unit.modelFilename) ? 180 : 0));
+  const bearings = [
+    { deg: targetFacing + 180, label: "rear" },
+    { deg: targetFacing + 145, label: "rear-port-quarter" },
+    { deg: targetFacing - 145, label: "rear-starboard-quarter" },
+    { deg: targetFacing + 95, label: "port-flank" },
+    { deg: targetFacing - 95, label: "starboard-flank" },
+    { deg: targetFacing + 45, label: "front-port-pressure" },
+    { deg: targetFacing - 45, label: "front-starboard-pressure" },
+  ];
+  const contactDistance = JUMP_POINT_BASE_RADIUS_INCHES + unitRadius - 0.03;
+  const idealPointDistance = Math.max(4, engagement.favoredRange + contactDistance);
+  const distanceCandidates = Array.from(new Set([
+    Math.max(4, Math.round(idealPointDistance - 6)),
+    Math.max(4, Math.round(idealPointDistance - 3)),
+    Math.max(4, Math.round(idealPointDistance)),
+    Math.round(idealPointDistance + 3),
+    Math.round(idealPointDistance + 6),
+    Math.round(idealPointDistance + 10),
+  ])).sort((a, b) => a - b);
+  for (const distance of distanceCandidates) {
+    for (const bearing of bearings) {
+      const rad = (normalizeHeadingDegrees(bearing.deg) * Math.PI) / 180;
+      const x = snapBoardCoord(targetPoint.x + Math.sin(rad) * distance);
+      const z = snapBoardCoord(targetPoint.z + Math.cos(rad) * distance);
+      if (!isPointInsideBoard({ x, z })) continue;
+      const rawHeading = headingToPoint({ x, z }, targetPoint);
+      const guarded = jumpPointBorderFacingGuard({ x, z }, rawHeading);
+      candidates.push({ x, z, heading: normalizeHeadingDegrees(guarded.heading), label: `${bearing.label}-${distance}` });
+    }
+  }
+  return candidates;
+}
+
+async function chooseAiReserveJumpPointPlan(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  unit: typeof gameUnitsTable.$inferSelect,
+  model: typeof shipModelsTable.$inferSelect,
+): Promise<AiReserveJumpPointPlan | null> {
+  const targets = await aiHyperspaceTargets(tx, game);
+  const weapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, model.id));
+  const engagement = aiReserveEngagementProfile(unit, model, weapons);
+  const unitRadius = rulesBaseRadius(unit);
+  const seededTargets: Array<AiHyperspaceTarget | null> = targets.length > 0 ? targets.slice(0, 4) : [null];
+  const plans: AiReserveJumpPointPlan[] = [];
+  for (const target of seededTargets) {
+    for (const candidate of aiJumpPointNominationCandidates(target, engagement, unitRadius)) {
+      const nearestEnemyDistance = target
+        ? centerDistance({ x: candidate.x, z: candidate.z }, { x: target.unit.hexQ, z: target.unit.hexR })
+        : centerDistance({ x: candidate.x, z: candidate.z }, { x: 0, z: 0 });
+      const projectedArrivalDistance = target
+        ? Math.max(0, nearestEnemyDistance - (JUMP_POINT_BASE_RADIUS_INCHES + unitRadius))
+        : nearestEnemyDistance;
+      const range = aiRangeScore(projectedArrivalDistance, engagement);
+      const relativeArc = target
+        ? aiRelativeArcScore(target.unit, candidate, engagement)
+        : { arc: "other" as const, score: 0 };
+      const borderPressure = aiBorderPenalty(candidate);
+      const score = (target?.value ?? 20) + relativeArc.score + range.score - borderPressure;
+      plans.push({
+        nominated: { x: candidate.x, z: candidate.z, heading: candidate.heading },
+        target,
+        score,
+        breakdown: {
+          label: candidate.label,
+          reserveProfile: engagement.label,
+          aiProfile: engagement.aiProfile,
+          targetValue: target ? Number(target.value.toFixed(2)) : null,
+          relativeArc: relativeArc.arc,
+          relativeArcScore: Number(relativeArc.score.toFixed(2)),
+          favoredRange: Number(engagement.favoredRange.toFixed(2)),
+          weightedWeaponRange: engagement.weightedWeaponRange,
+          maxWeaponRange: engagement.maxWeaponRange,
+          nearestEnemyDistance: Number(nearestEnemyDistance.toFixed(2)),
+          projectedArrivalDistance: Number(projectedArrivalDistance.toFixed(2)),
+          rangePressure: Number(range.pressure.toFixed(2)),
+          tooClosePenalty: Number(range.tooClosePenalty.toFixed(2)),
+          borderPressure: Number(borderPressure.toFixed(2)),
+          finalScore: Number(score.toFixed(2)),
+        },
+      });
+    }
+  }
+  plans.sort((a, b) => b.score - a.score);
+  return plans[0] ?? null;
+}
+
+async function chooseAiHyperspaceEntryPlan(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  unit: typeof gameUnitsTable.$inferSelect,
+  model: typeof shipModelsTable.$inferSelect,
+  candidateJumpPoints?: Array<typeof gameJumpPointsTable.$inferSelect>,
+): Promise<AiHyperspaceEntryPlan | null> {
+  const jumpPoints = candidateJumpPoints ?? await friendlyOpenToRealspaceJumpPoints(tx, game.id, unit.ownerId);
+  if (jumpPoints.length === 0) return null;
+  const targets = await aiHyperspaceTargets(tx, game);
+  const weapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, model.id));
+  const engagement = aiReserveEngagementProfile(unit, model, weapons);
+  const blockers = await aiDeployedBlockerFootprints(tx, game.id, unit.id);
+  const unitRadius = rulesBaseRadius(unit);
+  const isFighter = shipModelIsFighter(model);
+  const reserveRows = await aiReserveUnitsStillNeedPoint(tx, game.id, unit.ownerId, unit.id);
+  const plans: AiHyperspaceEntryPlan[] = [];
+  for (const jumpPoint of jumpPoints) {
+    const creatorEnteredAndClosedPoint = jumpPoint.creatorUnitId === unit.id;
+    if (creatorEnteredAndClosedPoint && reserveRows.length > 0) continue;
+    const pointRadius = jumpPoint.baseRadiusInches ?? JUMP_POINT_BASE_RADIUS_INCHES;
+    const contactDistance = Math.max(0, pointRadius + unitRadius - 0.03);
+    for (const offset of [0, -18, 18, -36, 36, -44, 44]) {
+      for (const distanceDelta of [0, -0.35, -0.7]) {
+        const placementDistance = Math.max(0, contactDistance + distanceDelta);
+        const bearing = normalizeHeadingDegrees(jumpPoint.heading + offset);
+        const rad = (bearing * Math.PI) / 180;
+        const x = snapBoardCoord(jumpPoint.hexQ + Math.sin(rad) * placementDistance);
+        const z = snapBoardCoord(jumpPoint.hexR + Math.cos(rad) * placementDistance);
+        if (
+          x < BOARD_MIN_X + unitRadius ||
+          x > BOARD_MAX_X - unitRadius ||
+          z < BOARD_MIN_Z + unitRadius ||
+          z > BOARD_MAX_Z - unitRadius
+        ) continue;
+        if (!unitOverlapsJumpPointBase({ hexQ: x, hexR: z, baseRadiusInches: unitRadius }, jumpPoint)) continue;
+        if (!isInArc(
+          { x: jumpPoint.hexQ, z: jumpPoint.hexR, headingDeg: jumpPoint.heading, flipped: false },
+          { x, z },
+          "Forward",
+        )) continue;
+        const candidate: UnitFootprint = {
+          id: unit.id,
+          ownerId: unit.ownerId,
+          x,
+          z,
+          baseRadiusInches: unitRadius,
+          isFighter,
+        };
+        if (findIllegalBaseOverlap(candidate, blockers)) continue;
+        const targetScores = targets.map(t => {
+          const distance = edgeDistance(candidate, {
+            x: t.unit.hexQ,
+            z: t.unit.hexR,
+            baseRadiusInches: rulesBaseRadius(t.unit),
+          });
+          const range = aiRangeScore(distance, engagement);
+          const relativeArc = aiRelativeArcScore(t.unit, candidate, engagement);
+          return {
+            target: t,
+            distance,
+            range,
+            relativeArc,
+            score: t.value + relativeArc.score + range.score,
+          };
+        }).sort((a, b) => b.score - a.score);
+        const target = targetScores[0] ?? null;
+        const distanceToTarget = target?.distance ?? centerDistance({ x, z }, { x: 0, z: 0 });
+        const borderPressure = aiBorderPenalty({ x, z }, unitRadius);
+        const score = (target?.score ?? 15) - borderPressure;
+        plans.push({
+          jumpPoint,
+          x,
+          z,
+          heading: target ? headingToPoint({ x, z }, { x: target.target.unit.hexQ, z: target.target.unit.hexR }) : normalizeHeadingDegrees(jumpPoint.heading),
+          score,
+          target: target?.target ?? null,
+          creatorEnteredAndClosedPoint,
+          breakdown: {
+            jumpPointId: jumpPoint.id,
+            reserveProfile: engagement.label,
+            aiProfile: engagement.aiProfile,
+            offset,
+            placementDistance: Number(placementDistance.toFixed(2)),
+            targetValue: target ? Number(target.target.value.toFixed(2)) : null,
+            favoredRange: Number(engagement.favoredRange.toFixed(2)),
+            weightedWeaponRange: engagement.weightedWeaponRange,
+            maxWeaponRange: engagement.maxWeaponRange,
+            relativeArc: target?.relativeArc.arc ?? null,
+            relativeArcScore: target ? Number(target.relativeArc.score.toFixed(2)) : null,
+            distanceToTarget: Number(distanceToTarget.toFixed(2)),
+            rangePressure: target ? Number(target.range.pressure.toFixed(2)) : null,
+            tooClosePenalty: target ? Number(target.range.tooClosePenalty.toFixed(2)) : null,
+            borderPressure: Number(borderPressure.toFixed(2)),
+            creatorClosureBlocked: false,
+            remainingReserveShipsNeedPoint: reserveRows.length,
+            finalScore: Number(score.toFixed(2)),
+          },
+        });
+      }
+    }
+  }
+  plans.sort((a, b) => b.score - a.score);
+  return plans[0] ?? null;
+}
+
+async function finishAiHyperspaceEntry(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  unit: typeof gameUnitsTable.$inferSelect,
+  entryPlan: AiHyperspaceEntryPlan,
+  statePatch: AiStatePatch,
+): Promise<typeof gamesTable.$inferSelect> {
+  if (entryPlan.creatorEnteredAndClosedPoint) {
+    const remainingReserveRows = await aiReserveUnitsStillNeedPoint(tx, game.id, unit.ownerId, unit.id);
+    if (remainingReserveRows.length > 0) {
+      throw Object.assign(new Error(
+        "A jump-point creator cannot enter realspace before the other reserve ships using its jump point",
+      ), { status: 409 });
+    }
+  }
+  const friendlyScoutAlreadyDeployed = await ownerHasFriendlyScoutOnBattlefield(tx, game.id, unit.ownerId);
+  const [arrivedUnit] = await tx.update(gameUnitsTable).set({
+    boardState: "deployed",
+    hexQ: entryPlan.x,
+    hexR: entryPlan.z,
+    heading: entryPlan.heading,
+    specialAction: "hyperspace-arrival",
+    hasInitiatedMoveThisActivation: true,
+    inchesMovedThisActivation: 0,
+    hasFiredThisRound: friendlyScoutAlreadyDeployed ? unit.hasFiredThisRound : true,
+  }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+  if (entryPlan.creatorEnteredAndClosedPoint) {
+    await tx.update(gameJumpPointsTable).set({
+      status: "spent",
+      expiresAfterRound: game.currentRound,
+      baseRadiusInches: 0,
+    })
+      .where(eq(gameJumpPointsTable.id, entryPlan.jumpPoint.id));
+  }
+  await recordMovementAuditLog(tx, {
+    game,
+    actorKind: "ai",
+    actorPlayerId: AI_OPPONENT_ID,
+    unitBefore: unit,
+    unitAfter: arrivedUnit,
+    movementKind: "hyperspace-arrival",
+    summary: `AI brought ${unit.name} in from hyperspace through jump point ${entryPlan.jumpPoint.id}.`,
+    payload: {
+      rulesPath: "ai-hyperspace.enter-realspace",
+      jumpPointId: entryPlan.jumpPoint.id,
+      creatorEnteredAndClosedPoint: entryPlan.creatorEnteredAndClosedPoint,
+      friendlyScoutAlreadyDeployed,
+      mayFireThisRound: friendlyScoutAlreadyDeployed,
+      score: Number(entryPlan.score.toFixed(2)),
+      scoring: entryPlan.breakdown,
+      target: entryPlan.target ? {
+        id: entryPlan.target.unit.id,
+        name: entryPlan.target.unit.name,
+        breakdown: entryPlan.target.breakdown,
+      } : null,
+    },
+  });
+  return finishAiActivation(tx, game, arrivedUnit, "movement", statePatch);
+}
+
+async function performAiHyperspaceReserveActivation(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<typeof gamesTable.$inferSelect> {
+  const model = await getShipModelForUnit(tx, unit);
+  if (!model) throw new Error("AI reserve unit ship model missing");
+  const critRows = await tx.select().from(unitCriticalEffectsTable)
+    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+  const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+    effectKey: r.effectKey,
+    randomArc: r.randomArc,
+    randomWeaponId: r.randomWeaponId,
+    lostTraits: r.lostTraits ?? [],
+  })));
+  const jumpTraits = jumpEngineTraitsForModel(model, crits.lostTraitNames);
+  const openPoints = await friendlyOpenToRealspaceJumpPoints(tx, game.id, unit.ownerId);
+  const reserveRows = await aiReserveUnitsStillNeedPoint(tx, game.id, unit.ownerId, unit.id);
+  const reserveHoldForPoint = reserveRows.map(row => ({
+    id: row.id,
+    name: row.name,
+  }));
+  const creatorPointBlockingOthers = openPoints.some(point => point.creatorUnitId === unit.id) && reserveRows.length > 0;
+
+  if (!creatorPointBlockingOthers && openPoints.length > 0) {
+    if (jumpTraits.jumpEngine) {
+      const strandingError = await hyperspaceReserveStrandingError(tx, game.id, unit.ownerId, unit.id);
+      if (strandingError && reserveRows.length > 0) {
+        const [heldUnit] = await tx.update(gameUnitsTable).set({
+          specialAction: "hyperspace-hold",
+          hasInitiatedMoveThisActivation: true,
+        }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+        await recordMovementAuditLog(tx, {
+          game,
+          actorKind: "ai",
+          actorPlayerId: AI_OPPONENT_ID,
+          unitBefore: unit,
+          unitAfter: heldUnit ?? unit,
+          movementKind: "forced-hold",
+          summary: `AI held ${unit.name} in hyperspace to avoid stranding reserve ships.`,
+          payload: {
+            rulesPath: "ai-hyperspace.reserve-hold-stranding",
+            strandingError,
+            remainingReserveUnitIds: reserveRows.map(row => row.id),
+          },
+        });
+        const decision = aiDecision(
+          "movement.hyperspace-hold-stranding",
+          "movement",
+          `AI held ${unit.name} in hyperspace to avoid stranding reserve ships.`,
+          { strandingError, remainingReserveUnitIds: reserveRows.map(row => row.id) },
+          unit,
+        );
+        return finishAiActivation(tx, game, heldUnit ?? unit, "movement", withAiDecisionLog(
+          game.aiState,
+          aiState("acted", "movement.hyperspace-hold-stranding", {
+            message: `AI held ${unit.name} in hyperspace to avoid stranding reserves.`,
+            unitIds: [unit.id],
+          }),
+          decision,
+        ));
+      }
+    }
+
+    const entryPlan = await chooseAiHyperspaceEntryPlan(tx, game, unit, model);
+    if (entryPlan && entryPlan.score > -900) {
+      const decision = aiDecision(
+        "movement.hyperspace-enter-realspace",
+        "movement",
+        `AI brought ${unit.name} in from hyperspace through jump point ${entryPlan.jumpPoint.id}.`,
+        {
+          jumpPointId: entryPlan.jumpPoint.id,
+          x: entryPlan.x,
+          z: entryPlan.z,
+          heading: entryPlan.heading,
+          score: Number(entryPlan.score.toFixed(2)),
+          scoring: entryPlan.breakdown,
+          target: entryPlan.target ? { id: entryPlan.target.unit.id, name: entryPlan.target.unit.name } : null,
+        },
+        unit,
+      );
+      return finishAiHyperspaceEntry(tx, game, unit, entryPlan, withAiDecisionLog(
+        game.aiState,
+        aiState("acted", "movement.hyperspace-enter-realspace", {
+          message: `AI brought ${unit.name} in from hyperspace.`,
+          unitIds: [unit.id],
+        }),
+        decision,
+      ));
+    }
+  }
+
+  if (creatorPointBlockingOthers) {
+    const [heldUnit] = await tx.update(gameUnitsTable).set({
+      specialAction: "hyperspace-hold",
+      hasInitiatedMoveThisActivation: true,
+    }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+    await recordMovementAuditLog(tx, {
+      game,
+      actorKind: "ai",
+      actorPlayerId: AI_OPPONENT_ID,
+      unitBefore: unit,
+      unitAfter: heldUnit ?? unit,
+      movementKind: "forced-hold",
+      summary: `AI kept ${unit.name} in hyperspace so other reserves can use its jump point.`,
+      payload: {
+        rulesPath: "ai-hyperspace.reserve-creator-hold",
+        openJumpPointIds: openPoints.map(point => point.id),
+        remainingReserveUnitIds: reserveRows.map(row => row.id),
+      },
+    });
+    const decision = aiDecision(
+      "movement.hyperspace-creator-hold",
+      "movement",
+      `AI kept ${unit.name} in hyperspace so other reserves can use its jump point.`,
+      {
+        openJumpPointIds: openPoints.map(point => point.id),
+        remainingReserveUnitIds: reserveRows.map(row => row.id),
+      },
+      unit,
+    );
+    return finishAiActivation(tx, game, heldUnit ?? unit, "movement", withAiDecisionLog(
+      game.aiState,
+      aiState("acted", "movement.hyperspace-creator-hold", {
+        message: `AI kept ${unit.name} in hyperspace to sustain the jump point.`,
+        unitIds: [unit.id],
+      }),
+      decision,
+    ));
+  }
+
+  const canOpenPoint = jumpTraits.jumpEngine
+    && await ownerHasDeployedShipOnBattlefield(tx, game.id, unit.ownerId)
+    && effectiveDamageState(unit.damageState, critRows) !== "adrift"
+    && !crits.noSA;
+  const priorCreatorPoints = await tx.select({ id: gameJumpPointsTable.id })
+    .from(gameJumpPointsTable)
+    .where(and(
+      eq(gameJumpPointsTable.gameId, game.id),
+      eq(gameJumpPointsTable.creatorUnitId, unit.id),
+    ));
+  if (canOpenPoint && priorCreatorPoints.length === 0) {
+    const openPlan = await chooseAiReserveJumpPointPlan(tx, game, unit, model);
+    if (openPlan) {
+      const scattered = scatterHyperspaceJumpPoint(openPlan.nominated, unit.crewQuality, openPlan.nominated.heading);
+      const [jumpPoint] = await tx.insert(gameJumpPointsTable).values({
+        gameId: game.id,
+        ownerId: unit.ownerId,
+        creatorUnitId: unit.id,
+        direction: "to-realspace",
+        hexQ: scattered.x,
+        hexR: scattered.z,
+        baseRadiusInches: JUMP_POINT_BASE_RADIUS_INCHES,
+        heading: scattered.heading,
+        createdRound: game.currentRound,
+        expiresAfterRound: game.currentRound + 2,
+        status: "open",
+        shockWaveArmed: false,
+        shockWaveResolved: false,
+        vfxPreset: JUMP_POINT_VFX_PRESET,
+      }).returning();
+      const [updatedUnit] = await tx.update(gameUnitsTable).set({
+        specialAction: "initiate-jump-point",
+        hasInitiatedMoveThisActivation: true,
+      }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+      await recordSpecialActionAuditLog(tx, {
+        game,
+        actorKind: "ai",
+        actorPlayerId: AI_OPPONENT_ID,
+        unitBefore: unit,
+        unitAfter: updatedUnit ?? unit,
+        action: "open-reserve-jump-point",
+        storedAction: "initiate-jump-point",
+        success: true,
+        cqRequired: null,
+        cqRoll: null,
+        cqTotal: null,
+        targetUnitId: null,
+        summary: reserveHoldForPoint.length > 0
+          ? `AI opened a reserve jump point with ${unit.name} at (${scattered.x.toFixed(1)}, ${scattered.z.toFixed(1)}) and held the creator in hyperspace for remaining reserves.`
+          : `AI opened a reserve jump point with ${unit.name} at (${scattered.x.toFixed(1)}, ${scattered.z.toFixed(1)}).`,
+        payload: {
+          rulesPath: "ai-hyperspace.open-reserve-jump-point",
+          nominated: openPlan.nominated,
+          scatterRolls: scattered.scatterRolls,
+          scatterDistance: scattered.scatterDistance,
+          scatterDirectionDeg: scattered.scatterDirectionDeg,
+          nominatedHeading: openPlan.nominated.heading,
+          finalHeading: scattered.heading,
+          headingDriftDeg: scattered.headingDriftDeg,
+          headingDriftMaxDeg: scattered.headingDriftMaxDeg,
+          headingBeforeBorderGuard: scattered.headingBeforeBorderGuard,
+          borderFacingGuardAdjusted: scattered.borderFacingGuardAdjusted,
+          borderFacingGuardEdges: scattered.borderFacingGuardEdges,
+          jumpPoint,
+          score: Number(openPlan.score.toFixed(2)),
+          scoring: openPlan.breakdown,
+          target: openPlan.target ? {
+            id: openPlan.target.unit.id,
+            name: openPlan.target.unit.name,
+            breakdown: openPlan.target.breakdown,
+          } : null,
+          shockWave: {
+            attempted: false,
+            reason: "ai-reserve-entry-prefers-safe-point",
+          },
+          creatorEntryPolicy: {
+            creatorMayEnterImmediately: reserveHoldForPoint.length === 0,
+            reason: reserveHoldForPoint.length > 0
+              ? "creator-holds-point-for-remaining-reserves"
+              : "no-remaining-reserves-need-creator-point",
+            remainingReserveShips: reserveHoldForPoint,
+          },
+        },
+      });
+      const openedUnit = updatedUnit ?? unit;
+      const immediateEntryPlan = await chooseAiHyperspaceEntryPlan(tx, game, openedUnit, model, [jumpPoint]);
+      const canEnterImmediately = Boolean(immediateEntryPlan && immediateEntryPlan.score > -900);
+      const immediateEntryStatus = immediateEntryPlan ? {
+        attempted: canEnterImmediately,
+        score: Number(immediateEntryPlan.score.toFixed(2)),
+        reason: canEnterImmediately ? "legal-arrival-found" : "arrival-score-below-threshold",
+        scoring: immediateEntryPlan.breakdown,
+      } : reserveHoldForPoint.length > 0 ? {
+        attempted: false,
+        reason: "creator-holds-point-for-remaining-reserves",
+        remainingReserveShips: reserveHoldForPoint,
+      } : {
+        attempted: false,
+        reason: "no-legal-arrival-through-new-point",
+      };
+      const openDecision = aiDecision(
+        "movement.hyperspace-open-jump-point",
+        "movement",
+        reserveHoldForPoint.length > 0
+          ? `AI opened a reserve jump point with ${unit.name} and held it open for remaining reserves.`
+          : `AI opened a reserve jump point with ${unit.name}.`,
+        {
+          nominated: openPlan.nominated,
+          final: { x: scattered.x, z: scattered.z, heading: scattered.heading },
+          score: Number(openPlan.score.toFixed(2)),
+          scoring: openPlan.breakdown,
+          target: openPlan.target ? { id: openPlan.target.unit.id, name: openPlan.target.unit.name } : null,
+          scatter: {
+            rolls: scattered.scatterRolls,
+            distance: scattered.scatterDistance,
+            headingDriftDeg: Number(scattered.headingDriftDeg.toFixed(2)),
+          },
+          immediateEntry: immediateEntryStatus,
+        },
+        unit,
+      );
+      if (immediateEntryPlan && canEnterImmediately) {
+        const entryDecision = aiDecision(
+          "movement.hyperspace-enter-realspace",
+          "movement",
+          `AI brought ${unit.name} in from hyperspace through the new jump point ${jumpPoint.id}.`,
+          {
+            jumpPointId: jumpPoint.id,
+            x: immediateEntryPlan.x,
+            z: immediateEntryPlan.z,
+            heading: immediateEntryPlan.heading,
+            score: Number(immediateEntryPlan.score.toFixed(2)),
+            scoring: immediateEntryPlan.breakdown,
+            target: immediateEntryPlan.target
+              ? { id: immediateEntryPlan.target.unit.id, name: immediateEntryPlan.target.unit.name }
+              : null,
+            openedAndEnteredSameActivation: true,
+          },
+          unit,
+        );
+        return finishAiHyperspaceEntry(tx, game, openedUnit, immediateEntryPlan, withAiDecisionLogs(
+          game.aiState,
+          aiState("acted", "movement.hyperspace-open-and-enter-realspace", {
+            message: `AI opened a reserve jump point and brought ${unit.name} in from hyperspace.`,
+            unitIds: [unit.id],
+          }),
+          [openDecision, entryDecision],
+        ));
+      }
+      return finishAiActivation(tx, game, openedUnit, "movement", withAiDecisionLog(
+        game.aiState,
+        aiState("acted", "movement.hyperspace-open-jump-point", {
+          message: reserveHoldForPoint.length > 0
+            ? `AI opened a reserve jump point with ${unit.name}; creator is holding it open for remaining reserves.`
+            : `AI opened a reserve jump point with ${unit.name}.`,
+          unitIds: [unit.id],
+        }),
+        openDecision,
+      ));
+    }
+  }
+
+  const [heldUnit] = await tx.update(gameUnitsTable).set({
+    specialAction: "hyperspace-hold",
+    hasInitiatedMoveThisActivation: true,
+  }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+  await recordMovementAuditLog(tx, {
+    game,
+    actorKind: "ai",
+    actorPlayerId: AI_OPPONENT_ID,
+    unitBefore: unit,
+    unitAfter: heldUnit ?? unit,
+    movementKind: "forced-hold",
+    summary: `AI held ${unit.name} in hyperspace; no useful reserve entry was available.`,
+    payload: {
+      rulesPath: "ai-hyperspace.reserve-hold-no-plan",
+      openJumpPointIds: openPoints.map(point => point.id),
+      jumpCapable: jumpTraits.jumpEngine,
+      canOpenPoint,
+      priorCreatorPointIds: (priorCreatorPoints as Array<{ id: number }>).map(row => row.id),
+    },
+  });
+  const decision = aiDecision(
+    "movement.hyperspace-hold-no-plan",
+    "movement",
+    `AI held ${unit.name} in hyperspace; no useful reserve entry was available.`,
+    {
+      openJumpPointIds: openPoints.map(point => point.id),
+      jumpCapable: jumpTraits.jumpEngine,
+      canOpenPoint,
+      priorCreatorPointIds: (priorCreatorPoints as Array<{ id: number }>).map(row => row.id),
+    },
+    unit,
+  );
+  return finishAiActivation(tx, game, heldUnit ?? unit, "movement", withAiDecisionLog(
+    game.aiState,
+    aiState("acted", "movement.hyperspace-hold-no-plan", {
+      message: `AI held ${unit.name} in hyperspace.`,
+      unitIds: [unit.id],
+    }),
+    decision,
+  ));
+}
+
 function chooseAiDeploymentModel(
   models: Array<typeof shipModelsTable.$inferSelect>,
   scenarioPriority: ReturnType<typeof normalizePriorityLevel>,
@@ -3628,11 +5148,55 @@ function headingToPoint(from: { x: number; z: number }, to: { x: number; z: numb
   return ((Math.round(deg) % 360) + 360) % 360;
 }
 
-async function getShipModelForUnit(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<typeof shipModelsTable.$inferSelect | null> {
+async function findReplacementShipModelForUnit(
+  tx: any,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<typeof shipModelsTable.$inferSelect | null> {
+  const exactMatches = await tx.select().from(shipModelsTable).where(and(
+    eq(shipModelsTable.name, unit.name),
+    eq(shipModelsTable.faction, unit.faction),
+  ));
+  if (exactMatches.length === 1) return exactMatches[0] ?? null;
+  const exactFilenameMatch = exactMatches.find(
+    (model: typeof shipModelsTable.$inferSelect) =>
+      model.filename === unit.modelFilename,
+  );
+  if (exactFilenameMatch) return exactFilenameMatch;
+
+  const filenameFactionMatches = await tx.select().from(shipModelsTable).where(and(
+    eq(shipModelsTable.filename, unit.modelFilename),
+    eq(shipModelsTable.faction, unit.faction),
+  ));
+  if (filenameFactionMatches.length === 1) return filenameFactionMatches[0] ?? null;
+  return null;
+}
+
+async function resolveShipModelForUnit(
+  tx: any,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<{
+  ship: typeof shipsTable.$inferSelect | null;
+  model: typeof shipModelsTable.$inferSelect | null;
+}> {
   const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
-  if (!ship) return null;
+  if (!ship) return { ship: null, model: null };
   const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
-  return model ?? null;
+  if (model) return { ship, model };
+
+  const replacement = await findReplacementShipModelForUnit(tx, unit);
+  if (!replacement) return { ship, model: null };
+
+  await tx.update(shipsTable)
+    .set({ shipModelId: replacement.id })
+    .where(eq(shipsTable.id, ship.id));
+  return {
+    ship: { ...ship, shipModelId: replacement.id },
+    model: replacement,
+  };
+}
+
+async function getShipModelForUnit(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<typeof shipModelsTable.$inferSelect | null> {
+  return (await resolveShipModelForUnit(tx, unit)).model;
 }
 
 type ActivationSegment = "capital" | "fighter";
@@ -3720,15 +5284,16 @@ async function unitPinnedForRound(
 }
 
 async function movementActivationEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
+  if (unitIsWithdrawn(unit)) return false;
+  if (unitIsInHyperspace(unit)) {
+    return hyperspaceReserveMovementActivationEligible(tx, unit);
+  }
   if (unit.isDestroyed || unit.hasMovedThisRound) return false;
   const [game] = await tx.select({
     currentRound: gamesTable.currentRound,
   }).from(gamesTable).where(eq(gamesTable.id, unit.gameId));
   if (game && await unitPinnedForRound(tx, unit, game.currentRound)) return false;
-  const critRows = await tx.select().from(unitCriticalEffectsTable)
-    .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
-  const state = effectiveDamageState(unit.damageState, critRows);
-  if (state === "adrift" || state === "exploding-end-of-next") return false;
+  if (unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next") return false;
   if (await fighterIsLockedInDogfight(tx, unit.gameId, unit)) return false;
   return true;
 }
@@ -3738,7 +5303,9 @@ async function firingActivationEligible(
   unit: typeof gameUnitsTable.$inferSelect,
   currentRound: number,
 ): Promise<boolean> {
-  return !await unitPinnedForRound(tx, unit, currentRound)
+  return !unitIsInHyperspace(unit)
+    && !unitIsWithdrawn(unit)
+    && !await unitPinnedForRound(tx, unit, currentRound)
     && !unit.isDestroyed
     && !unit.hasFiredThisRound
     && unit.hullPoints > 0
@@ -4179,9 +5746,10 @@ async function activateAiUnitForPhase(
   const segment = await activationSegmentForGame(tx, game, phase);
   const unit = await firstAiEligibleUnit(tx, game, phase);
   if (!unit) {
-    if (segment && game.challengerId && await countEligibleForAiStep(tx, game, game.challengerId, phase, segment) > 0) {
+    const humanId = game.challengerId;
+    if (segment && humanId && await countEligibleForAiStep(tx, game, humanId, phase, segment) > 0) {
       const [row] = await tx.update(gamesTable).set({
-        activePlayerId: game.challengerId,
+        activePlayerId: humanId,
         activeUnitId: null,
         lastActivatorId: AI_OPPONENT_ID,
         aiState: mergeAiState(game.aiState, aiState("acted", `${phase}.pass-no-eligible-${segment}`, {
@@ -4190,11 +5758,37 @@ async function activateAiUnitForPhase(
       }).where(eq(gamesTable.id, game.id)).returning();
       return row;
     }
+    let nextPhase: "initiative" | "movement" | "firing" | "end" = phase;
+    let nextActivePlayerId: string | null = null;
+    if (phase === "movement") {
+      nextPhase = "firing";
+      const first = game.initiativeWinnerId === AI_OPPONENT_ID ? AI_OPPONENT_ID : humanId;
+      const second = first === humanId ? AI_OPPONENT_ID : humanId;
+      nextActivePlayerId = first && await countEligibleForAiStep(tx, game, first, "firing") > 0
+        ? first
+        : second && await countEligibleForAiStep(tx, game, second, "firing") > 0
+          ? second
+          : (game.initiativeWinnerId ?? humanId ?? null);
+      if (
+        (!humanId || await countEligibleForAiStep(tx, game, humanId, "firing") === 0)
+        && await countEligibleForAiStep(tx, game, AI_OPPONENT_ID, "firing") === 0
+      ) {
+        nextPhase = "end";
+        nextActivePlayerId = game.initiativeWinnerId ?? humanId ?? null;
+      }
+    } else {
+      nextPhase = "end";
+      nextActivePlayerId = game.initiativeWinnerId ?? humanId ?? null;
+    }
     const [row] = await tx.update(gamesTable).set({
-      aiState: mergeAiState(game.aiState, aiState("idle", `${phase}.no-eligible-unit`, {
+      phase: nextPhase,
+      activePlayerId: nextActivePlayerId,
+      activeUnitId: null,
+      lastActivatorId: AI_OPPONENT_ID,
+      aiState: mergeAiState(game.aiState, aiState("acted", `${phase}.no-eligible-unit`, {
         message: segment
-          ? `AI has no eligible ${segment} ${phase} activations.`
-          : `AI has no eligible ${phase} activations.`,
+          ? `AI has no eligible ${segment} ${phase} activations; advancing to ${nextPhase}.`
+          : `AI has no eligible ${phase} activations; advancing to ${nextPhase}.`,
       })),
     }).where(eq(gamesTable.id, game.id)).returning();
     return row;
@@ -4233,6 +5827,9 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
     eq(gameUnitsTable.ownerId, AI_OPPONENT_ID),
   ));
   if (!unit) throw new Error("AI active movement unit not found");
+  if (unitIsInHyperspace(unit)) {
+    return performAiHyperspaceReserveActivation(tx, game, unit);
+  }
 
   const critRows = await tx.select().from(unitCriticalEffectsTable)
     .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
@@ -4251,11 +5848,16 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
   const novaBroadsideBias = isNovaDreadnought(model, unit);
   const shipAiProfile = shipAiProfileForModel(model);
   const lowHealth = lowHullRatio(unit) < (shipAiProfile === "apex-predator" ? 0.2 : 0.3);
-  const enemies = await tx.select().from(gameUnitsTable).where(and(
+  const enemyRows = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.ownerId, game.challengerId),
     eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
   ));
+  const enemies: Array<typeof gameUnitsTable.$inferSelect> = [];
+  for (const enemy of enemyRows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (await aiMovementTargetIsCombatEffective(tx, enemy)) enemies.push(enemy);
+  }
   const nearestByDistance = (enemies as Array<typeof gameUnitsTable.$inferSelect>)
     .map((enemy: typeof gameUnitsTable.$inferSelect) => ({ enemy, distance: centerDistance({ x: unit.hexQ, z: unit.hexR }, { x: enemy.hexQ, z: enemy.hexR }) }))
     .sort((a: { distance: number }, b: { distance: number }) => a.distance - b.distance)[0]?.enemy ?? null;
@@ -4393,6 +5995,7 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
   const blockers = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
   ));
   const blockerFootprints: UnitFootprint[] = [];
   const enemyThreats: AiEnemyThreat[] = [];
@@ -4408,7 +6011,7 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
       isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
     };
     blockerFootprints.push(footprint);
-    if (other.ownerId === game.challengerId && otherModel) {
+    if (other.ownerId === game.challengerId && otherModel && await aiMovementTargetIsCombatEffective(tx, other)) {
       const enemyWeapons = await tx.select().from(weaponsTable).where(eq(weaponsTable.shipModelId, otherModel.id));
       enemyThreats.push({
         ...footprint,
@@ -4471,7 +6074,7 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
     idealRequested: { x: Number(idealRequested.x.toFixed(3)), z: Number(idealRequested.z.toFixed(3)), heading: newHeading },
     headingCandidates: dedupedHeadingCandidates,
     generatedLegalPlanCount: legalPlans.length,
-    boardEdgeClearance: Number(boardEdgeClearance({ x: unit.hexQ, z: unit.hexR }).toFixed(3)),
+    boardEdgeClearance: Number((boardEdgeClearance({ x: unit.hexQ, z: unit.hexR }) - rulesBaseRadius(unit)).toFixed(3)),
     edgeRecoveryNeeded,
     topLegalPlans: legalPlans.slice(0, 5).map(plan => ({
       x: plan.x,
@@ -5368,15 +6971,10 @@ async function resolveBasicAiWeaponFire(
     arcWeapons.push(targetWeapon);
     weaponsByArc.set(targetWeapon.arc, arcWeapons);
   }
-  const lostTraitNames = new Set(
-    Array.from(targetCrits.lostTraitNames).map(name => name.toLowerCase()),
+  const targetTraitNames = criticalTraitLossCandidates(
+    targetModel.traits,
+    targetCrits.lostTraitNames,
   );
-  const targetTraitNames = String(targetModel.traits ?? "")
-    .split(/[;,]/)
-    .map(name => name.trim())
-    .filter(Boolean)
-    .filter(name => !lostTraitNames.has(name.toLowerCase().split(/\s+/)[0]!))
-    .map(name => name.split(/\s+/)[0]!);
   const criticalsApplied: Array<{
     effectKey: string;
     name: string;
@@ -7287,6 +8885,8 @@ async function rollOverRoundAfterEndPhase(
     }
   }
 
+  await closeExpiredOrUnsupportedJumpPoints(tx, game, game.currentRound + 1);
+
   const [row] = await tx.update(gamesTable).set({
     ...gameUpdate,
     currentRound: game.currentRound + 1,
@@ -7564,12 +9164,20 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const units = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
   const turns = await db.select().from(turnsTable).where(eq(turnsTable.gameId, params.data.gameId)).orderBy(turnsTable.turnNumber);
-  const shipIds = [...new Set(units.map(u => u.shipId))];
-  const unitShips = shipIds.length === 0 ? [] : await db.select().from(shipsTable).where(inArray(shipsTable.id, shipIds));
-  const shipModelIdByShipId = new Map(unitShips.map(ship => [ship.id, ship.shipModelId]));
-  const shipModelIds = [...new Set(unitShips.map(ship => ship.shipModelId))];
-  const unitShipModels = shipModelIds.length === 0 ? [] : await db.select().from(shipModelsTable).where(inArray(shipModelsTable.id, shipModelIds));
-  const shipModelById = new Map(unitShipModels.map(model => [model.id, model]));
+  const jumpPoints = await db.select().from(gameJumpPointsTable).where(and(
+    eq(gameJumpPointsTable.gameId, params.data.gameId),
+    or(
+      eq(gameJumpPointsTable.status, "open"),
+      eq(gameJumpPointsTable.status, "spent"),
+    ),
+  ));
+  const shipModelByUnitId = new Map<number, typeof shipModelsTable.$inferSelect>();
+  const shipModelIdByUnitId = new Map<number, number>();
+  for (const unit of units) {
+    const resolved = await resolveShipModelForUnit(db, unit);
+    if (resolved.model) shipModelByUnitId.set(unit.id, resolved.model);
+    if (resolved.ship) shipModelIdByUnitId.set(unit.id, resolved.ship.shipModelId);
+  }
   // Attach live critical-hit rows to each unit so the UI can render the
   // crit panel and DC button without a second query.
   const unitIds = units.map(u => u.id);
@@ -7583,10 +9191,10 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
   }
   const unitsWithCrits = units.map(u => {
     const rows = critsByUnit.get(u.id) ?? [];
-    const model = shipModelById.get(shipModelIdByShipId.get(u.shipId) ?? 0);
+    const model = shipModelByUnitId.get(u.id);
     return {
       ...u,
-      shipModelId: shipModelIdByShipId.get(u.shipId) ?? 0,
+      shipModelId: shipModelIdByUnitId.get(u.id) ?? 0,
       // Centralized adrift overlay — see `effectiveDamageState` for the
       // why. Used here AND by every mutation route that echoes a unit row,
       // so all consumers see the same canonical state.
@@ -7598,7 +9206,7 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
       isSkeletonCrew: isSkeletonCrewUnit(u),
     };
   });
-  res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns }));
+  res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns, jumpPoints }));
 });
 
 router.get("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> => {
@@ -8540,10 +10148,16 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         const placement = parsed.data.placements[index]!;
         const carrierIndex = placement.launchedFromPlacementIndex;
         if (carrierIndex == null) continue;
+        if (placement.boardState === "hyperspace") {
+          throw Object.assign(new Error("Pre-battle launched fighter flights cannot start in hyperspace reserves"), { status: 400 });
+        }
         if (!Number.isInteger(carrierIndex) || carrierIndex < 0 || carrierIndex >= parsed.data.placements.length || carrierIndex === index) {
           throw Object.assign(new Error("Invalid carrier placement link for deployed fighter"), { status: 400 });
         }
         const carrierPlacement = parsed.data.placements[carrierIndex]!;
+        if (carrierPlacement.boardState === "hyperspace") {
+          throw Object.assign(new Error("Carrier-launched fighters cannot be deployed from a carrier in hyperspace reserves"), { status: 400 });
+        }
         if (carrierPlacement.launchedFromPlacementIndex != null) {
           throw Object.assign(new Error("A deployed fighter cannot act as another fighter's carrier"), { status: 400 });
         }
@@ -8617,6 +10231,34 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         ), { status: 400 });
       }
 
+      let reservePlacementCount = 0;
+      let reserveJumpCapableShipCount = 0;
+      let realspaceShipCount = 0;
+      for (let index = 0; index < parsed.data.placements.length; index += 1) {
+        const placement = parsed.data.placements[index]!;
+        const ship = placedShips[index];
+        const model = ship ? placedModelByShipId.get(ship.id) : undefined;
+        if (placement.boardState === "hyperspace") {
+          reservePlacementCount += 1;
+        }
+        if (!model || shipModelIsFighter(model)) continue;
+        if (placement.boardState === "hyperspace") {
+          if (jumpEngineTraitsForModel(model).jumpEngine) {
+            reserveJumpCapableShipCount += 1;
+          }
+        } else {
+          realspaceShipCount += 1;
+        }
+      }
+      if (reservePlacementCount > 0) {
+        if (reserveJumpCapableShipCount < 1) {
+          throw Object.assign(new Error("Hyperspace reserves require at least one reserved ship with Jump Engine or Advanced Jump Engine"), { status: 400 });
+        }
+        if (realspaceShipCount < 1) {
+          throw Object.assign(new Error("Hyperspace reserves require at least one friendly ship deployed in realspace"), { status: 400 });
+        }
+      }
+
       // Zone validation: hexQ/hexR are world inches. Deployment config is
       // authoritative; legacy games without JSON fall back to depth-only
       // short-edge strips. Validate the full base footprint, not just center.
@@ -8624,6 +10266,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       const deploymentSide: DeploymentSide = isChallenger ? "challenger" : "opponent";
       for (let index = 0; index < parsed.data.placements.length; index += 1) {
         const placement = parsed.data.placements[index]!;
+        if (placement.boardState === "hyperspace") continue;
         const ship = placedShips[index];
         const model = ship ? placedModelByShipId.get(ship.id) : undefined;
         const baseRadius = model ? rulesBaseRadius(model) : 0;
@@ -8648,6 +10291,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       const existingFootprints: UnitFootprint[] = [];
       for (const existing of existingUnits) {
         if (devAiRedeploy && existing.ownerId === AI_OPPONENT_ID) continue;
+        if (unitIsInHyperspace(existing)) continue;
         const [existingShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, existing.shipId));
         if (!existingShip) continue;
         const [existingModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, existingShip.shipModelId));
@@ -8662,6 +10306,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       }
       const pendingFootprints: UnitFootprint[] = [];
       parsed.data.placements.forEach((placement, index) => {
+        if (placement.boardState === "hyperspace") return;
         const ship = placedShips[index];
         const model = ship ? placedModelByShipId.get(ship.id) : undefined;
         if (!ship || !model) return;
@@ -8716,6 +10361,7 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           modelFilename: model.filename,
           faction: model.faction,
           baseRadiusInches: model.baseRadiusInches,
+          boardState: placement.boardState === "hyperspace" ? "hyperspace" : "deployed",
           hullPoints: model.hullPoints,
           maxHullPoints: model.hullPoints,
           damageThreshold: model.damageThreshold ?? 0,
@@ -8812,13 +10458,16 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
             count: sql<number>`count(*)::int`,
           })
           .from(gameUnitsTable)
-          .where(eq(gameUnitsTable.gameId, params.data.gameId))
+          .where(and(
+            eq(gameUnitsTable.gameId, params.data.gameId),
+            eq(gameUnitsTable.boardState, "deployed"),
+          ))
           .groupBy(gameUnitsTable.ownerId);
         const countByOwner = new Map(unitCounts.map(x => [x.ownerId, Number(x.count)]));
         const challengerUnits = countByOwner.get(row.challengerId) ?? 0;
         const opponentUnits = row.opponentId ? (countByOwner.get(row.opponentId) ?? 0) : 0;
         if (challengerUnits < 1 || opponentUnits < 1) {
-          throw Object.assign(new Error("Both commanders must have at least one ship deployed before the engagement can begin."), { status: 400 });
+          throw Object.assign(new Error("Both commanders must have at least one ship deployed in realspace before the engagement can begin."), { status: 400 });
         }
         [row] = await tx.update(gamesTable).set({
           status: "active",
@@ -9060,6 +10709,7 @@ async function resolveMindScreamForMovement(
     if (
       target.ownerId === before.ownerId
       || target.id === before.id
+      || unitIsInHyperspace(target)
       || alreadyAffected.has(target.id)
       || target.maxCrewPoints <= 0
       || target.crewPoints <= 0
@@ -9127,6 +10777,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     and(eq(gameUnitsTable.id, params.data.unitId), eq(gameUnitsTable.ownerId, userId), eq(gameUnitsTable.gameId, params.data.gameId))
   );
   if (!unit) { res.status(404).json({ error: "Unit not found" }); return; }
+  if (unitIsInHyperspace(unit)) { res.status(400).json({ error: "Ship is in hyperspace reserves and cannot move normally" }); return; }
   if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
   if (unit.hasMovedThisRound) { res.status(400).json({ error: "Unit has already moved this round" }); return; }
   // "All Stop": ship halts and may not turn this round. Reject any heading
@@ -10228,6 +11879,7 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Unit is destroyed"), { status: 400 });
+      if (unitIsWithdrawn(unit)) throw Object.assign(new Error("Unit has withdrawn from the battle"), { status: 400 });
       if (await unitPinnedForRound(tx, unit, game.currentRound)) {
         throw Object.assign(new Error("Unit is disrupted and may take no action this turn"), { status: 400 });
       }
@@ -10254,6 +11906,9 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       // movement activation is still eligible to be picked up again for its
       // firing activation, and vice-versa.
       if (game.phase === "firing") {
+        if (unitIsInHyperspace(unit)) {
+          throw Object.assign(new Error("Ship is in hyperspace reserves and cannot fire yet"), { status: 400 });
+        }
         if (unit.hasFiredThisRound) throw Object.assign(new Error("Unit already fired this round"), { status: 400 });
         // A ship reduced to 0 hull or 0 crew can no longer fire — even if it
         // hasn't taken its activation this round. Adrift / hulk / skeleton
@@ -10268,14 +11923,17 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
         }
       } else {
         if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
-        const moveCritRows = await tx.select().from(unitCriticalEffectsTable)
-          .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
-        const moveDamageState = effectiveDamageState(unit.damageState, moveCritRows);
-        if (moveDamageState === "adrift" || moveDamageState === "exploding-end-of-next") {
-          throw Object.assign(new Error("Adrift ships drift automatically in the End Phase"), { status: 400 });
-        }
-        if (unitIsFighter && await fighterIsLockedInDogfight(tx, gameId, unit)) {
-          throw Object.assign(new Error("Fighter is locked in a dogfight and cannot move"), { status: 400 });
+        if (unitIsInHyperspace(unit)) {
+          if (!await hyperspaceReserveMovementActivationEligible(tx, unit)) {
+            throw Object.assign(new Error("Reserve ship needs Jump Engine/Advanced Jump Engine or an open friendly jump point"), { status: 400 });
+          }
+        } else {
+          if (unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next") {
+            throw Object.assign(new Error("Adrift ships drift automatically in the End Phase"), { status: 400 });
+          }
+          if (unitIsFighter && await fighterIsLockedInDogfight(tx, gameId, unit)) {
+            throw Object.assign(new Error("Fighter is locked in a dogfight and cannot move"), { status: 400 });
+          }
         }
       }
 
@@ -10946,6 +12604,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         const eligible: Array<typeof gameUnitsTable.$inferSelect> = [];
         for (const row of rows) {
           if (pid !== null && row.ownerId !== pid) continue;
+          if (firing && (unitIsInHyperspace(row) || unitIsWithdrawn(row))) continue;
           if (!firing && !(await isMovementActivationEligible(row))) continue;
           if (segment) {
             const fighter = await isFighterUnit(row);
@@ -10977,7 +12636,17 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       if (!endedUnitId) {
         // Verify the pass is legitimate: caller really has nothing to do.
         const segment = await activationSegmentFor(isFiring);
-        const myEligible = segment ? await countEligibleFor(userId, isFiring, segment) : 0;
+        const myEligibleRows = segment ? await eligibleRowsFor(userId, isFiring, segment) : [];
+        const onlyHyperspaceReservesRemain =
+          !isFiring &&
+          myEligibleRows.length > 0 &&
+          myEligibleRows.every(unitIsInHyperspace);
+        if (onlyHyperspaceReservesRemain) {
+          await tx.update(gameUnitsTable)
+            .set({ hasMovedThisRound: true })
+            .where(inArray(gameUnitsTable.id, myEligibleRows.map((row) => row.id)));
+        }
+        const myEligible = onlyHyperspaceReservesRemain ? 0 : myEligibleRows.length;
         if (myEligible > 0) {
           throw Object.assign(new Error("You still have eligible activations — pick a ship"), { status: 400 });
         }
@@ -11013,6 +12682,19 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
             if (!isAdriftLike && !isPinned) {
               const baseSA = (endedUnit.specialAction ?? "").replace(/-failed$/, "");
               const allStopDeclared = baseSA === "all-stop" || baseSA === "all-stop-pivot";
+              if (baseSA === "initiate-jump-point") {
+                const openJumpPoints = await tx.select({ id: gameJumpPointsTable.id })
+                  .from(gameJumpPointsTable)
+                  .where(and(
+                    eq(gameJumpPointsTable.gameId, game.id),
+                    eq(gameJumpPointsTable.creatorUnitId, endedUnit.id),
+                    eq(gameJumpPointsTable.status, "open"),
+                  ))
+                  .limit(1);
+                if (openJumpPoints.length === 0) {
+                  throw Object.assign(new Error("Place this ship's jump point before ending activation"), { status: 400 });
+                }
+              }
               if (!allStopDeclared) {
                 // Compute effective max speed: printed speed minus the
                 // highest active speedReduce from similar engine/reactor
@@ -11032,7 +12714,9 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                   ? movementTraitsForModel(endedModel, cap)
                   : parseShipTraits("");
                 const effectiveMax = effectiveBaseSpeed(endedUnit, cap);
-                const minRequired = endedTraits.superManeuverable
+                const minRequired = baseSA === "initiate-jump-point" || baseSA === "hyperspace-arrival" || baseSA === "hyperspace-withdrawal"
+                  ? 0
+                  : endedTraits.superManeuverable
                   ? 0
                   : effectiveMax > 0 ? Math.max(1, effectiveMax / 2) : 0;
                 if (minRequired > 0 && endedUnit.inchesMovedThisActivation < minRequired) {
@@ -11488,6 +13172,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       ));
       if (!attacker) throw Object.assign(new Error("Attacker not found"), { status: 404 });
       if (attacker.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unitIsInHyperspace(attacker)) throw Object.assign(new Error("Ship is in hyperspace reserves and cannot fire"), { status: 400 });
       if (attacker.isDestroyed) throw Object.assign(new Error("Attacker is destroyed"), { status: 400 });
       // Hull or crew exhausted → ineligible to fire even if activation was
       // somehow obtained (race with damage application from another shot).
@@ -11572,6 +13257,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (baseAction === "run-silent") {
         throw Object.assign(new Error("Cannot fire while Running Silent"), { status: 400 });
       }
+      if (baseAction === "initiate-jump-point") {
+        throw Object.assign(new Error("Cannot fire after Initiate Jump Point!"), { status: 400 });
+      }
       const weaponProfile = effectiveWeaponProfile(
         game,
         attacker,
@@ -11606,6 +13294,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       ));
       if (!initialTarget) throw Object.assign(new Error("Target not found"), { status: 404 });
       if (initialTarget.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
+      if (unitIsInHyperspace(initialTarget)) throw Object.assign(new Error("Target is in hyperspace reserves"), { status: 400 });
       if (initialTarget.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
       let target = initialTarget;
       let resolvedTargetUnitId = targetUnitId;
@@ -12321,10 +14010,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         list.push(w);
         weaponsByArc.set(w.arc, list);
       }
-      const targetTraitNames = (targetModel.traits ?? "")
-        .split(/[;,]/).map(t => t.trim()).filter(Boolean)
-        .filter(t => !lostLc.has(t.toLowerCase().split(/\s+/)[0]))
-        .map(t => t.split(/\s+/)[0]);
+      const targetTraitNames = criticalTraitLossCandidates(
+        targetModel.traits,
+        targetCrits.lostTraitNames,
+      );
       const currentRound = game.currentRound;
       const targetHasCrewTrack = target.maxCrewPoints > 0;
       if (!targetHasCrewTrack) crewAfterGeg = 0;
@@ -12914,6 +14603,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "track-that-target": 9,
     "maneuver-to-shield": null,
     "cause-confusion": null,
+    "initiate-jump-point": null,
     "all-hands-on-deck": 9,
     "scramble": 7,
     "regenerate": 9,
@@ -12962,15 +14652,11 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       if (unit.hasInitiatedMoveThisActivation) throw Object.assign(new Error("Cannot declare a Special Action after movement has started"), { status: 400 });
       // Slice C: Skeleton Crew (crewPoints ≤ ½ max) and Adrift ships
       // cannot declare Special Actions.
-      if (unit.damageState === "adrift") {
-        throw Object.assign(new Error("Adrift ship cannot declare Special Actions"), { status: 400 });
-      }
-
-      // Critical-effect gate: Reactor 5/6, Bridge, Decompression all set
+      // Critical-effect gate: Reactor 5/6, Bridge, and Decompression set
       // noSA. Block the action entirely (no -failed bookkeeping — the rule
-      // is "cannot declare", not "declare and roll"). Engines 6 sets
-      // crit-adrift which is treated identically to hull-zero adrift for
-      // SA purposes (sheet: adrift ships cannot declare SAs).
+      // is "cannot declare", not "declare and roll"). Engines Disabled only
+      // says the ship moves as though adrift, so it does not import the
+      // inactive-derelict Special Action ban.
       const saCritRows = await tx.select().from(unitCriticalEffectsTable)
         .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
       const saCrits = deriveCritEffects(saCritRows.map(r => ({
@@ -12979,17 +14665,18 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         randomWeaponId: r.randomWeaponId,
         lostTraits: r.lostTraits ?? [],
       })));
-      if (saCrits.adrift) {
-        throw Object.assign(new Error("Adrift ship cannot declare Special Actions"), { status: 400 });
-      }
       if (saCrits.noSA) {
-        throw Object.assign(new Error("Cannot declare Special Actions — Bridge / Reactor crit active"), { status: 400 });
+        throw Object.assign(new Error("Cannot declare Special Actions: critical effect active"), { status: 400 });
+      }
+      const saEffectiveDamageState = effectiveDamageState(unit.damageState, saCritRows);
+      if (
+        (saEffectiveDamageState === "adrift" || saEffectiveDamageState === "exploding-end-of-next")
+        && ADRIFT_FORBIDDEN_SPECIAL_ACTIONS.has(action)
+      ) {
+        throw Object.assign(new Error("Adrift status forbids movement-control Special Actions"), { status: 400 });
       }
 
-      const [unitShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
-      const [unitModel] = unitShip
-        ? await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, unitShip.shipModelId))
-        : [];
+      const { model: unitModel } = await resolveShipModelForUnit(tx, unit);
       const unitTraits = parseShipTraits(filterLostTraits(unitModel?.traits ?? "", saCrits.lostTraitNames));
       if (unitTraits.fighter || (unitModel ? shipModelIsFighter(unitModel) : false)) {
         throw Object.assign(new Error("Fighter flights cannot declare Special Actions"), { status: 400 });
@@ -13008,6 +14695,25 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         && unit.shadowManeuverMode === "sweep"
       ) {
         throw Object.assign(new Error("Shadow sweep movement cannot be combined with Run Silent"), { status: 400 });
+      }
+      if (action === "initiate-jump-point") {
+        const jumpTraits = jumpEngineTraitsForModel(unitModel, saCrits.lostTraitNames);
+        if (!jumpTraits.jumpEngine) {
+          throw Object.assign(new Error("Initiate Jump Point requires Jump Engine or Advanced Jump Engine"), { status: 400 });
+        }
+        const previousJumpPoints = await tx.select({
+          id: gameJumpPointsTable.id,
+          status: gameJumpPointsTable.status,
+        })
+          .from(gameJumpPointsTable)
+          .where(and(
+            eq(gameJumpPointsTable.gameId, game.id),
+            eq(gameJumpPointsTable.creatorUnitId, unit.id),
+          ))
+          .limit(1);
+        if (previousJumpPoints.length > 0 && previousJumpPoints[0]?.status !== "open") {
+          throw Object.assign(new Error("This ship has already initiated a jump point this battle"), { status: 400 });
+        }
       }
 
       // Per-action prereqs.
@@ -13255,6 +14961,626 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
 // One scout action per ship per round; cleared at round rollover alongside
 // specialAction. Independent of the activation system — either participant
 // may declare during the shared pre-fire window at the start of the phase.
+router.post("/games/:gameId/units/:unitId/jump-point", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  const unitId = Number(req.params.unitId);
+  const raw = isPlainRecord(req.body) ? req.body : {};
+  const x = Number(raw.x ?? raw.hexQ);
+  const z = Number(raw.z ?? raw.hexR);
+  if (!Number.isInteger(gameId) || !Number.isInteger(unitId) || !Number.isFinite(x) || !Number.isFinite(z)) {
+    res.status(400).json({ error: "A valid jump point position is required" });
+    return;
+  }
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement") throw Object.assign(new Error("Jump points are placed in the movement phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+      if (game.activeUnitId !== unitId) throw Object.assign(new Error("This unit is not the one you activated"), { status: 409 });
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId),
+        eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unitIsInHyperspace(unit)) {
+        throw Object.assign(new Error("Ship is in hyperspace reserves and cannot use this action yet"), { status: 400 });
+      }
+      if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.specialAction !== "initiate-jump-point") {
+        throw Object.assign(new Error("Declare Initiate Jump Point! before placing the counter"), { status: 400 });
+      }
+
+      const critRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+      const crits = deriveCritEffects(critRows.map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+      if (unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next" || crits.noSA) {
+        throw Object.assign(new Error("This ship can no longer sustain Initiate Jump Point!"), { status: 400 });
+      }
+
+      const { ship, model } = await resolveShipModelForUnit(tx, unit);
+      if (!ship) throw Object.assign(new Error("Ship record missing"), { status: 500 });
+      if (!model) throw Object.assign(new Error("Ship model missing"), { status: 500 });
+
+      const point = { x: snapBoardCoord(x), z: snapBoardCoord(z) };
+      const facingInitiator = headingToPoint(point, { x: unit.hexQ, z: unit.hexR });
+      const headingInputPresent = raw.heading !== undefined && raw.heading !== null;
+      const rawHeading = headingInputPresent ? Number(raw.heading) : facingInitiator;
+      if (!Number.isFinite(rawHeading)) {
+        throw Object.assign(new Error("A valid jump point facing is required"), { status: 400 });
+      }
+      const heading = normalizeHeadingDegrees(rawHeading);
+      const jumpTraits = jumpEngineTraitsForModel(model, crits.lostTraitNames);
+      const placementError = jumpPointPlacementError(unit, model, crits.lostTraitNames, point);
+      if (placementError) throw Object.assign(new Error(placementError), { status: 400 });
+      const headingError = jumpPointHeadingPlacementError(unit, model, crits.lostTraitNames, point, heading);
+      if (headingError) throw Object.assign(new Error(headingError), { status: 400 });
+
+      const creatorPoints = await tx.select({ id: gameJumpPointsTable.id })
+        .from(gameJumpPointsTable)
+        .where(and(
+          eq(gameJumpPointsTable.gameId, game.id),
+          eq(gameJumpPointsTable.creatorUnitId, unit.id),
+        ));
+      if (creatorPoints.length > 0) {
+        throw Object.assign(new Error("This ship has already initiated a jump point this battle"), { status: 400 });
+      }
+
+      const [jumpPoint] = await tx.insert(gameJumpPointsTable).values({
+        gameId: game.id,
+        ownerId: unit.ownerId,
+        creatorUnitId: unit.id,
+        direction: "to-hyperspace",
+        hexQ: point.x,
+        hexR: point.z,
+        baseRadiusInches: JUMP_POINT_BASE_RADIUS_INCHES,
+        heading,
+        createdRound: game.currentRound,
+        expiresAfterRound: game.currentRound + 2,
+        status: "open",
+        shockWaveArmed: false,
+        shockWaveResolved: false,
+        vfxPreset: JUMP_POINT_VFX_PRESET,
+      }).returning();
+      if (!jumpPoint) throw Object.assign(new Error("Failed to create jump point"), { status: 500 });
+
+      await recordSpecialActionAuditLog(tx, {
+        game,
+        actorKind: "player",
+        actorPlayerId: userId,
+        unitBefore: unit,
+        unitAfter: unit,
+        action: "place-jump-point",
+        storedAction: "place-jump-point",
+        success: true,
+        cqRequired: null,
+        cqRoll: null,
+        cqTotal: null,
+        targetUnitId: null,
+        summary: `${unit.name} opened a jump point at (${point.x.toFixed(1)}, ${point.z.toFixed(1)}).`,
+        payload: {
+          rulesPath: "jump-points.realspace-to-hyperspace.create",
+          jumpPoint,
+          rangeInches: Math.hypot(point.x - unit.hexQ, point.z - unit.hexR),
+          facingInitiatorHeading: facingInitiator,
+          heading,
+          headingDeltaFromFacingInitiator: headingDeltaDegrees(facingInitiator, heading),
+          headingLimitDegrees: jumpTraits.advancedJumpEngine ? 360 : STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES,
+          advancedJumpEngine: jumpTraits.advancedJumpEngine,
+        },
+      });
+
+      return { jumpPoint };
+    });
+    res.status(201).json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/hyperspace/open-jump-point", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  const raw = isPlainRecord(req.body) ? req.body : {};
+  const unitId = Number(raw.unitId);
+  const x = Number(raw.x ?? raw.hexQ);
+  const z = Number(raw.z ?? raw.hexR);
+  const heading = normalizeHeadingDegrees(Number(raw.heading ?? 0));
+  const attemptShockWave = raw.attemptShockWave === true;
+  if (!Number.isInteger(gameId) || !Number.isInteger(unitId) || !Number.isFinite(x) || !Number.isFinite(z)) {
+    res.status(400).json({ error: "A valid reserve ship and jump point position are required" });
+    return;
+  }
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement") throw Object.assign(new Error("Reserve jump points open in the movement phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+      if (game.activeUnitId !== unitId) throw Object.assign(new Error("Activate the reserve ship before opening a jump point"), { status: 409 });
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId),
+        eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (!unitIsInHyperspace(unit)) throw Object.assign(new Error("This ship is already in realspace"), { status: 400 });
+      if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+      if (!await ownerHasDeployedShipOnBattlefield(tx, game.id, unit.ownerId)) {
+        throw Object.assign(new Error("At least one friendly ship must remain on the battlefield to call in reserves"), { status: 400 });
+      }
+
+      const model = await getShipModelForUnit(tx, unit);
+      if (!model) throw Object.assign(new Error("Ship model missing"), { status: 500 });
+      const critRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+      const crits = deriveCritEffects((critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+      const jumpTraits = jumpEngineTraitsForModel(model, crits.lostTraitNames);
+      if (!jumpTraits.jumpEngine) {
+        throw Object.assign(new Error("Opening a reserve jump point requires Jump Engine or Advanced Jump Engine"), { status: 400 });
+      }
+      const friendlyScoutAlreadyDeployed = await ownerHasFriendlyScoutOnBattlefield(tx, game.id, unit.ownerId);
+      if (attemptShockWave && !jumpTraits.advancedJumpEngine) {
+        throw Object.assign(new Error("Jump point shock waves require Advanced Jump Engine"), { status: 400 });
+      }
+      if (attemptShockWave && !friendlyScoutAlreadyDeployed) {
+        throw Object.assign(new Error("Jump point shock waves require an allied Scout already on the table"), { status: 400 });
+      }
+      if (unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next" || crits.noSA) {
+        throw Object.assign(new Error("This ship can no longer sustain Initiate Jump Point!"), { status: 400 });
+      }
+
+      const creatorPoints = await tx.select({ id: gameJumpPointsTable.id })
+        .from(gameJumpPointsTable)
+        .where(and(
+          eq(gameJumpPointsTable.gameId, game.id),
+          eq(gameJumpPointsTable.creatorUnitId, unit.id),
+        ));
+      if (creatorPoints.length > 0) {
+        throw Object.assign(new Error("This ship has already initiated a jump point this battle"), { status: 400 });
+      }
+
+      const nominated = {
+        ...clampJumpPointCenterInsideBufferedBoard({ x, z }),
+        heading,
+      };
+      const scattered = scatterHyperspaceJumpPoint(nominated, unit.crewQuality, heading);
+      const [jumpPoint] = await tx.insert(gameJumpPointsTable).values({
+        gameId: game.id,
+        ownerId: unit.ownerId,
+        creatorUnitId: unit.id,
+        direction: "to-realspace",
+        hexQ: scattered.x,
+        hexR: scattered.z,
+        baseRadiusInches: JUMP_POINT_BASE_RADIUS_INCHES,
+        heading: scattered.heading,
+        createdRound: game.currentRound,
+        expiresAfterRound: game.currentRound + 2,
+        status: "open",
+        shockWaveArmed: attemptShockWave,
+        shockWaveResolved: attemptShockWave,
+        vfxPreset: JUMP_POINT_VFX_PRESET,
+      }).returning();
+      if (!jumpPoint) throw Object.assign(new Error("Failed to create jump point"), { status: 500 });
+
+      let shockWaveResult: Record<string, unknown> | null = null;
+      if (attemptShockWave) {
+        const cqRoll = rollD6();
+        const cqRequired = 10;
+        const cqTotal = cqRoll + terrainAdjustedCrewQuality(
+          unit.crewQuality,
+          { x: unit.hexQ, z: unit.hexR },
+          game.terrainConfig,
+          "special-action",
+        );
+        const success = cqTotal >= cqRequired;
+        const targets: JumpPointShockWaveTargetResult[] = [];
+        let gameCompleted = false;
+        let winnerId: string | null = null;
+        if (success) {
+          const rows = await tx.select().from(gameUnitsTable).where(and(
+            eq(gameUnitsTable.gameId, game.id),
+            eq(gameUnitsTable.isDestroyed, false),
+            eq(gameUnitsTable.boardState, "deployed"),
+          ));
+          for (const row of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+            if (!unitIsInsideJumpPointShockWave(row, jumpPoint)) continue;
+            const rowModel = await getShipModelForUnit(tx, row);
+            if (!rowModel) continue;
+            const resolved = await resolveJumpPointShockWaveTarget(tx, game, row, rowModel);
+            targets.push(resolved.result);
+            if (resolved.gameCompleted) {
+              gameCompleted = true;
+              winnerId = resolved.winnerId;
+              break;
+            }
+          }
+        }
+        shockWaveResult = {
+          attempted: true,
+          success,
+          cqRequired,
+          cqRoll,
+          cqTotal,
+          advancedJumpEngine: jumpTraits.advancedJumpEngine,
+          friendlyScoutAlreadyDeployed,
+          affectedTargets: targets,
+          gameCompleted,
+          winnerId,
+        };
+      }
+
+      const [updatedUnit] = await tx.update(gameUnitsTable).set({
+        specialAction: "initiate-jump-point",
+        hasInitiatedMoveThisActivation: true,
+      }).where(eq(gameUnitsTable.id, unit.id)).returning();
+
+      await recordSpecialActionAuditLog(tx, {
+        game,
+        actorKind: "player",
+        actorPlayerId: userId,
+        unitBefore: unit,
+        unitAfter: updatedUnit ?? unit,
+        action: "open-reserve-jump-point",
+        storedAction: "initiate-jump-point",
+        success: true,
+        cqRequired: null,
+        cqRoll: null,
+        cqTotal: null,
+        targetUnitId: null,
+        summary: `${unit.name} opened a reserve jump point at (${scattered.x.toFixed(1)}, ${scattered.z.toFixed(1)}).`,
+        payload: {
+          rulesPath: "jump-points.hyperspace-to-realspace.create",
+          nominated,
+          scatterRolls: scattered.scatterRolls,
+          scatterDistance: scattered.scatterDistance,
+          scatterDirectionDeg: scattered.scatterDirectionDeg,
+          nominatedHeading: nominated.heading,
+          finalHeading: scattered.heading,
+          headingDriftDeg: scattered.headingDriftDeg,
+          headingDriftMaxDeg: scattered.headingDriftMaxDeg,
+          headingBeforeBorderGuard: scattered.headingBeforeBorderGuard,
+          borderFacingGuardAdjusted: scattered.borderFacingGuardAdjusted,
+          borderFacingGuardEdges: scattered.borderFacingGuardEdges,
+          borderFacingGuardInches: JUMP_POINT_BORDER_FACING_GUARD_INCHES,
+          edgeBufferInches: JUMP_POINT_EDGE_BUFFER_INCHES,
+          minimumCenterEdgeDistanceInches: JUMP_POINT_BASE_RADIUS_INCHES + JUMP_POINT_EDGE_BUFFER_INCHES,
+          jumpPoint,
+          advancedJumpEngine: jumpTraits.advancedJumpEngine,
+          friendlyScoutAlreadyDeployed,
+          shockWave: shockWaveResult ?? {
+            attempted: false,
+            advancedJumpEngine: jumpTraits.advancedJumpEngine,
+            friendlyScoutAlreadyDeployed,
+          },
+        },
+      });
+
+      return { jumpPoint, unit: updatedUnit ?? unit, shockWave: shockWaveResult };
+    });
+    res.status(201).json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/hyperspace/enter-realspace", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  const raw = isPlainRecord(req.body) ? req.body : {};
+  const unitId = Number(raw.unitId);
+  const jumpPointId = Number(raw.jumpPointId);
+  const x = Number(raw.x ?? raw.hexQ);
+  const z = Number(raw.z ?? raw.hexR);
+  const heading = normalizeHeadingDegrees(Number(raw.heading ?? 0));
+  if (
+    !Number.isInteger(gameId)
+    || !Number.isInteger(unitId)
+    || !Number.isInteger(jumpPointId)
+    || !Number.isFinite(x)
+    || !Number.isFinite(z)
+  ) {
+    res.status(400).json({ error: "A valid reserve ship, jump point, and placement are required" });
+    return;
+  }
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement") throw Object.assign(new Error("Ships enter from hyperspace in the movement phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+      if (game.activeUnitId !== unitId) throw Object.assign(new Error("Activate the reserve ship before entering realspace"), { status: 409 });
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId),
+        eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (!unitIsInHyperspace(unit)) throw Object.assign(new Error("This ship is already in realspace"), { status: 400 });
+      if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+
+      const [jumpPoint] = await tx.select().from(gameJumpPointsTable).where(and(
+        eq(gameJumpPointsTable.id, jumpPointId),
+        eq(gameJumpPointsTable.gameId, gameId),
+        eq(gameJumpPointsTable.ownerId, userId),
+        eq(gameJumpPointsTable.direction, "to-realspace"),
+        eq(gameJumpPointsTable.status, "open"),
+      ));
+      if (!jumpPoint) throw Object.assign(new Error("Open friendly realspace jump point not found"), { status: 404 });
+
+      const model = await getShipModelForUnit(tx, unit);
+      if (!model) throw Object.assign(new Error("Ship model missing"), { status: 500 });
+      const unitCritRows = await tx.select().from(unitCriticalEffectsTable)
+        .where(eq(unitCriticalEffectsTable.gameUnitId, unit.id));
+      const unitCrits = deriveCritEffects((unitCritRows as Array<typeof unitCriticalEffectsTable.$inferSelect>).map(r => ({
+        effectKey: r.effectKey,
+        randomArc: r.randomArc,
+        randomWeaponId: r.randomWeaponId,
+        lostTraits: r.lostTraits ?? [],
+      })));
+      if (jumpEngineTraitsForModel(model, unitCrits.lostTraitNames).jumpEngine) {
+        const strandingError = await hyperspaceReserveStrandingError(tx, game.id, unit.ownerId, unit.id);
+        if (strandingError) throw Object.assign(new Error(strandingError), { status: 400 });
+      }
+      const isFighter = shipModelIsFighter(model);
+      const finalX = snapBoardCoord(x);
+      const finalZ = snapBoardCoord(z);
+      const finalBaseRadius = rulesBaseRadius(unit);
+      if (
+        finalX < BOARD_MIN_X + finalBaseRadius ||
+        finalX > BOARD_MAX_X - finalBaseRadius ||
+        finalZ < BOARD_MIN_Z + finalBaseRadius ||
+        finalZ > BOARD_MAX_Z - finalBaseRadius
+      ) {
+        throw Object.assign(new Error("Arriving ship base must remain inside the board"), { status: 400 });
+      }
+      const candidate: UnitFootprint = {
+        id: unit.id,
+        ownerId: unit.ownerId,
+        x: finalX,
+        z: finalZ,
+        baseRadiusInches: finalBaseRadius,
+        isFighter,
+      };
+      if (!unitOverlapsJumpPointBase({ hexQ: finalX, hexR: finalZ, baseRadiusInches: finalBaseRadius }, jumpPoint)) {
+        throw Object.assign(new Error("Arriving ship must overlap the 1 inch jump point base"), { status: 400 });
+      }
+      if (!isInArc(
+        {
+          x: jumpPoint.hexQ,
+          z: jumpPoint.hexR,
+          headingDeg: jumpPoint.heading,
+          flipped: false,
+        },
+        { x: finalX, z: finalZ },
+        "Forward",
+      )) {
+        throw Object.assign(new Error("Arriving ship must leave from the jump point forward arc"), { status: 400 });
+      }
+
+      const otherRows = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.gameId, gameId),
+        eq(gameUnitsTable.isDestroyed, false),
+        eq(gameUnitsTable.boardState, "deployed"),
+      ));
+      const blockers: UnitFootprint[] = [];
+      for (const other of otherRows as Array<typeof gameUnitsTable.$inferSelect>) {
+        if (other.id === unit.id) continue;
+        const otherModel = await getShipModelForUnit(tx, other);
+        blockers.push({
+          id: other.id,
+          ownerId: other.ownerId,
+          x: other.hexQ,
+          z: other.hexR,
+          baseRadiusInches: rulesBaseRadius(other),
+          isFighter: otherModel ? shipModelIsFighter(otherModel) : false,
+        });
+      }
+      if (findIllegalBaseOverlap(candidate, blockers)) {
+        throw Object.assign(new Error("Arrival would overlap another base illegally"), { status: 400 });
+      }
+
+      const friendlyScoutAlreadyDeployed = await ownerHasFriendlyScoutOnBattlefield(tx, game.id, unit.ownerId);
+      const [updatedUnit] = await tx.update(gameUnitsTable).set({
+        boardState: "deployed",
+        hexQ: finalX,
+        hexR: finalZ,
+        heading,
+        specialAction: "hyperspace-arrival",
+        hasInitiatedMoveThisActivation: true,
+        inchesMovedThisActivation: 0,
+        hasFiredThisRound: friendlyScoutAlreadyDeployed ? unit.hasFiredThisRound : true,
+      }).where(eq(gameUnitsTable.id, unit.id)).returning();
+      if (!updatedUnit) throw Object.assign(new Error("Failed to place reserve ship"), { status: 500 });
+
+      if (jumpPoint.creatorUnitId === unit.id) {
+        await tx.update(gameJumpPointsTable).set({
+          status: "spent",
+          expiresAfterRound: game.currentRound,
+          baseRadiusInches: 0,
+        }).where(eq(gameJumpPointsTable.id, jumpPoint.id));
+      }
+      const openJumpPoints = await tx.select().from(gameJumpPointsTable).where(and(
+        eq(gameJumpPointsTable.gameId, game.id),
+        or(
+          eq(gameJumpPointsTable.status, "open"),
+          eq(gameJumpPointsTable.status, "spent"),
+        ),
+      ));
+
+      await recordMovementAuditLog(tx, {
+        game,
+        actorKind: "player",
+        actorPlayerId: userId,
+        unitBefore: unit,
+        unitAfter: updatedUnit,
+        movementKind: "hyperspace-arrival",
+        summary: `${unit.name} entered realspace through jump point ${jumpPoint.id}.`,
+        payload: {
+          rulesPath: "jump-points.hyperspace-to-realspace.enter",
+          jumpPointId: jumpPoint.id,
+          creatorEnteredAndClosedPoint: jumpPoint.creatorUnitId === unit.id,
+          friendlyScoutAlreadyDeployed,
+          mayFireThisRound: friendlyScoutAlreadyDeployed,
+          strandingGuardChecked: true,
+        },
+      });
+
+      return { unit: updatedUnit, jumpPoints: openJumpPoints };
+    });
+    res.json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.post("/games/:gameId/hyperspace/enter-hyperspace", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const gameId = Number(req.params.gameId);
+  const raw = isPlainRecord(req.body) ? req.body : {};
+  const unitId = Number(raw.unitId);
+  const jumpPointId = Number(raw.jumpPointId);
+  if (!Number.isInteger(gameId) || !Number.isInteger(unitId) || !Number.isInteger(jumpPointId)) {
+    res.status(400).json({ error: "A valid ship and jump point are required" });
+    return;
+  }
+
+  try {
+    const out = await db.transaction(async (tx) => {
+      const lockedRows = await tx.execute(sql`SELECT id FROM games WHERE id = ${gameId} FOR UPDATE`);
+      if (lockedRows.rows.length === 0) throw Object.assign(new Error("Game not found"), { status: 404 });
+
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.status !== "active") throw Object.assign(new Error("Game is not active"), { status: 400 });
+      if (game.phase !== "movement") throw Object.assign(new Error("Ships enter hyperspace in the movement phase"), { status: 400 });
+      if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 409 });
+      if (game.activeUnitId !== unitId) throw Object.assign(new Error("Activate the ship before entering hyperspace"), { status: 409 });
+
+      const [unit] = await tx.select().from(gameUnitsTable).where(and(
+        eq(gameUnitsTable.id, unitId),
+        eq(gameUnitsTable.gameId, gameId),
+      ));
+      if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
+      if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unitIsInHyperspace(unit)) throw Object.assign(new Error("Ship is already in hyperspace reserves"), { status: 400 });
+      if (unitIsWithdrawn(unit)) throw Object.assign(new Error("Ship has already withdrawn"), { status: 400 });
+      if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.hasMovedThisRound) throw Object.assign(new Error("Unit already moved this round"), { status: 400 });
+
+      const [jumpPoint] = await tx.select().from(gameJumpPointsTable).where(and(
+        eq(gameJumpPointsTable.id, jumpPointId),
+        eq(gameJumpPointsTable.gameId, gameId),
+        eq(gameJumpPointsTable.ownerId, userId),
+        eq(gameJumpPointsTable.direction, "to-hyperspace"),
+        eq(gameJumpPointsTable.status, "open"),
+      ));
+      if (!jumpPoint) throw Object.assign(new Error("Open friendly hyperspace jump point not found"), { status: 404 });
+      if (jumpPoint.createdRound === game.currentRound) {
+        throw Object.assign(new Error("No ship can enter a jump point on the turn it is created"), { status: 400 });
+      }
+      if (!unitOverlapsJumpPointBase(unit, jumpPoint)) {
+        throw Object.assign(new Error("Ship must touch the jump point counter before entering hyperspace"), { status: 400 });
+      }
+      if (!isInArc(
+        {
+          x: jumpPoint.hexQ,
+          z: jumpPoint.hexR,
+          headingDeg: jumpPoint.heading,
+          flipped: false,
+        },
+        { x: unit.hexQ, z: unit.hexR },
+        "Forward",
+      )) {
+        throw Object.assign(new Error("Ship must enter the jump point through its forward arc"), { status: 400 });
+      }
+
+      const [updatedUnit] = await tx.update(gameUnitsTable).set({
+        boardState: "withdrawn",
+        specialAction: "hyperspace-withdrawal",
+        hasInitiatedMoveThisActivation: true,
+        hasFiredThisRound: true,
+      }).where(eq(gameUnitsTable.id, unit.id)).returning();
+      if (!updatedUnit) throw Object.assign(new Error("Failed to withdraw ship into hyperspace"), { status: 500 });
+
+      if (jumpPoint.creatorUnitId === unit.id) {
+        await tx.update(gameJumpPointsTable).set({
+          status: "spent",
+          expiresAfterRound: game.currentRound,
+          baseRadiusInches: 0,
+        }).where(eq(gameJumpPointsTable.id, jumpPoint.id));
+      }
+      const openJumpPoints = await tx.select().from(gameJumpPointsTable).where(and(
+        eq(gameJumpPointsTable.gameId, game.id),
+        or(
+          eq(gameJumpPointsTable.status, "open"),
+          eq(gameJumpPointsTable.status, "spent"),
+        ),
+      ));
+
+      await recordMovementAuditLog(tx, {
+        game,
+        actorKind: "player",
+        actorPlayerId: userId,
+        unitBefore: unit,
+        unitAfter: updatedUnit,
+        movementKind: "hyperspace-withdrawal",
+        summary: `${unit.name} entered hyperspace through jump point ${jumpPoint.id}.`,
+        payload: {
+          rulesPath: "jump-points.realspace-to-hyperspace.enter",
+          jumpPointId: jumpPoint.id,
+          tacticalWithdrawal: true,
+          creatorEnteredAndClosedPoint: jumpPoint.creatorUnitId === unit.id,
+          jumpPointCreatedRound: jumpPoint.createdRound,
+          currentRound: game.currentRound,
+          counterDiameterInches: (jumpPoint.baseRadiusInches ?? JUMP_POINT_BASE_RADIUS_INCHES) * 2,
+        },
+      });
+
+      return { unit: updatedUnit, jumpPoints: openJumpPoints };
+    });
+    res.json(out);
+  } catch (e) {
+    const err = e as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
 router.post("/games/:gameId/scout-support/skip", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const gameId = Number(req.params.gameId);
@@ -13956,8 +16282,20 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
 
       // 6. Advance round → Initiative phase. Clear init rolls & end-pass
       // latches so both players have to roll fresh.
+      const nextRoundNumber = game.currentRound + 1;
+      await tx.update(gameJumpPointsTable).set({
+        status: "closed",
+      }).where(and(
+        eq(gameJumpPointsTable.gameId, game.id),
+        or(
+          eq(gameJumpPointsTable.status, "open"),
+          eq(gameJumpPointsTable.status, "spent"),
+        ),
+        sql`${gameJumpPointsTable.expiresAfterRound} < ${nextRoundNumber}`,
+      ));
+
       const [row] = await tx.update(gamesTable).set({
-        currentRound: game.currentRound + 1,
+        currentRound: nextRoundNumber,
         currentTurn: game.currentTurn + 1,
         phase: "initiative",
         activePlayerId: null,
@@ -14127,10 +16465,7 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
 
       const dcRoll = rollD6();
       // Slice C: Skeleton Crew levies an additional -2 to damage control.
-      const [unitShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
-      const [unitModel] = unitShip
-        ? await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, unitShip.shipModelId))
-        : [];
+      const unitModel = await getShipModelForUnit(tx, unit);
       const unitTraits = parseShipTraits(filterLostTraits(unitModel?.traits ?? "", crits.lostTraitNames));
       const skeletonPenalty = skeletonPenaltiesApply(unit, unitTraits) ? 2 : 0;
       const dcPenalty = crits.damageControlPenalty + skeletonPenalty;

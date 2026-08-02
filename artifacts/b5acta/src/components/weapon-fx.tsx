@@ -244,7 +244,7 @@ function isShadowOmegaHeavyPhasingPulseWeapon(weapon: Pick<Weapon, "name">): boo
 function isRailWeapon(weapon: Pick<Weapon, "name" | "traits">): boolean {
   const text = `${weapon.name ?? ""} ${weapon.traits ?? ""}`.toLowerCase();
   return (
-    /\brail[- ]?(gun|cannon|weapon)?\b/.test(text) ||
+    /\brail[- ]?(guns?|cannons?|weapons?)?\b/.test(text) ||
     /\bmatter[- ]?cannons?\b/.test(text)
   );
 }

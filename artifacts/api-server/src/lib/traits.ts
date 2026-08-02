@@ -72,6 +72,8 @@ export interface ShipTraits {
   antiFighter: number;
   advancedAntiFighter: number;
   psychicCrew: number;
+  jumpEngine: boolean;
+  advancedJumpEngine: boolean;
 }
 
 export function parseShipTraits(s: string | null | undefined): ShipTraits {
@@ -116,6 +118,8 @@ export function parseShipTraits(s: string | null | undefined): ShipTraits {
     psychicCrew: hasTrait(t, ["Psychic Crew"])
       ? Math.max(1, numericTrait(t, ["Psychic Crew"]))
       : 0,
+    jumpEngine: hasTrait(t, ["Jump Engine", "Jump-Engine", "Advanced Jump Engine", "Advanced Jump-Engine"]),
+    advancedJumpEngine: hasTrait(t, ["Advanced Jump Engine", "Advanced Jump-Engine"]),
   };
 }
 

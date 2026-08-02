@@ -19,6 +19,8 @@ export interface ShipPlacement {
   shipModelId?: number | null;
   hexQ: number;
   hexR: number;
+  /** Deployment state. deployed = starts on the board; hyperspace = starts in hyperspace reserves. */
+  boardState?: 'deployed' | 'hyperspace';
   heading: number;
   /**
      * Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.

@@ -213,6 +213,18 @@ export function effectiveDamageState(
   return d.adrift ? "adrift" : rawDamageState;
 }
 
+function comparableTraitName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\s*[+-]?\d+.*$/, "")
+    .trim()
+    .replace(/[\s_]+/g, "-");
+}
+
+const CRITICAL_TRAIT_LOSS_EXCLUDED_TRAITS = new Set([
+  comparableTraitName("Lumbering"),
+]);
+
 export function deriveCritEffects(rows: ReadonlyArray<{
   effectKey: string;
   randomArc: string | null;
@@ -248,7 +260,11 @@ export function deriveCritEffects(rows: ReadonlyArray<{
     if (f.randomArcNoFire && row.randomArc) {
       out.forbiddenArcs.add(row.randomArc);
     }
-    for (const t of row.lostTraits) out.lostTraitNames.add(t);
+    for (const t of row.lostTraits) {
+      if (!CRITICAL_TRAIT_LOSS_EXCLUDED_TRAITS.has(comparableTraitName(t))) {
+        out.lostTraitNames.add(t);
+      }
+    }
   }
   return out;
 }

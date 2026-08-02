@@ -29,6 +29,36 @@ export type AncientStatusEffect = {
   releaseWhenSourceDestroyed: boolean;
 };
 
+export type JumpPointVfxPreset = {
+  stationId: string;
+  label: string;
+  source: string;
+  effect: string;
+  tuning: Record<string, unknown>;
+};
+
+export const JUMP_POINT_VFX_PRESET: JumpPointVfxPreset = {
+  stationId: "new-hyperspace-point-mesh",
+  label: "New Hyperspace Portal",
+  source: "vfx-showcase-preview-only",
+  effect: "godot-jump-point-mesh",
+  tuning: {
+    color: "#38e8ff",
+    secondaryColor: "#014cff",
+    speed: 1.35,
+    size: 1.15,
+    fade: 1.15,
+    intensity: 1.6,
+    spread: 1.25,
+    count: 8,
+    arc: 1.1,
+    thickness: 1,
+    portalOffset: -5,
+    rotationX: 90,
+    rotationY: 180,
+  },
+};
+
 export const gamesTable = pgTable("games", {
   id: serial("id").primaryKey(),
   challengerId: text("challenger_id").notNull(),
@@ -134,6 +164,9 @@ export const gameUnitsTable = pgTable("game_units", {
   modelFilename: text("model_filename").notNull(),
   faction: text("faction").notNull(),
   baseRadiusInches: real("base_radius_inches").notNull().default(0.8),
+  // "deployed" units exist in realspace on the board. "hyperspace" units
+  // are reserve units held off-table until a jump point brings them in.
+  boardState: text("board_state").notNull().default("deployed"),
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
   // Printed Damage threshold from the ship sheet. When current hullPoints is
@@ -347,6 +380,30 @@ export const gameUnitsTable = pgTable("game_units", {
     .$type<number[]>()
     .notNull()
     .default([]),
+});
+
+export const gameJumpPointsTable = pgTable("game_jump_points", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  ownerId: text("owner_id").notNull(),
+  creatorUnitId: integer("creator_unit_id").notNull(),
+  direction: text("direction").notNull().default("to-hyperspace"),
+  hexQ: real("hex_q").notNull(),
+  hexR: real("hex_r").notNull(),
+  baseRadiusInches: real("base_radius_inches").notNull().default(1.5),
+  heading: integer("heading").notNull().default(0),
+  createdRound: integer("created_round").notNull(),
+  expiresAfterRound: integer("expires_after_round").notNull(),
+  status: text("status").notNull().default("open"),
+  shockWaveArmed: boolean("shock_wave_armed").notNull().default(false),
+  shockWaveResolved: boolean("shock_wave_resolved").notNull().default(false),
+  vfxPreset: jsonb("vfx_preset")
+    .$type<JumpPointVfxPreset>()
+    .notNull()
+    .default(JUMP_POINT_VFX_PRESET),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 export const turnsTable = pgTable("turns", {
