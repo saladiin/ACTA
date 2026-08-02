@@ -2721,9 +2721,17 @@ async function resolveManeuverToShieldInterposition(
     if (damageState === "adrift" || damageState === "exploding-end-of-next" || crits.noSA) continue;
 
     const sPos = hexToWorld(shield.hexQ, shield.hexR);
-    const protectedDistance = centerDistance(sPos, tPos);
+    const shieldRadius = rulesBaseRadius(shield);
+    const protectedDistance = edgeDistance(
+      { x: sPos.x, z: sPos.z, baseRadiusInches: shieldRadius },
+      {
+        x: tPos.x,
+        z: tPos.z,
+        baseRadiusInches: rulesBaseRadius(originalTarget),
+      },
+    );
     if (protectedDistance > 5 + 1e-6) continue;
-    const lineDistance = pointToSegmentDistance(sPos, aPos, tPos);
+    const lineDistance = Math.max(0, pointToSegmentDistance(sPos, aPos, tPos) - shieldRadius);
     nearbyCandidates.push({ unit: shield, model: shieldModel, position: sPos, lineDistance, protectedDistance });
   }
 

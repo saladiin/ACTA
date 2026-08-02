@@ -17130,6 +17130,31 @@ export default function GameBoard() {
     });
     return lastOpponentLog ? attackAuditSummary(lastOpponentLog, units) : null;
   }, [attackAuditData?.logs, currentPhase, game, myUserId, units]);
+  const auditShieldDefenseMarkers = useMemo<ShieldDefenseMarker[]>(() => {
+    if (!game) return [];
+    return (attackAuditData?.logs ?? [])
+      .filter((log) => log.round === game.currentRound)
+      .map((log) =>
+        shieldDefenseMarkerFromFireResult(
+          log.payload,
+          `audit-shield-${log.id}`,
+          log.round,
+        ),
+      )
+      .filter((marker): marker is ShieldDefenseMarker => marker !== null);
+  }, [attackAuditData?.logs, game]);
+  const visibleShieldDefenseMarkers = useMemo<ShieldDefenseMarker[]>(() => {
+    const byUnit = new Map<number, ShieldDefenseMarker>();
+    for (const marker of auditShieldDefenseMarkers) {
+      byUnit.set(marker.unitId, marker);
+    }
+    for (const marker of shieldDefenseMarkers) {
+      byUnit.set(marker.unitId, marker);
+    }
+    return [...byUnit.values()].filter(
+      (marker) => marker.round === currentRoundNumber,
+    );
+  }, [auditShieldDefenseMarkers, currentRoundNumber, shieldDefenseMarkers]);
 
   // Movement-phase minimum-speed gate (mirrors the server check in
   // /end-activation). A ship must either move at least half speed
@@ -21453,7 +21478,7 @@ export default function GameBoard() {
                   }
                   damageControlHighlight={unitCanUseDamageControlNow(unit)}
                   shieldDefenseOutcome={
-                    shieldDefenseMarkers.find((marker) => marker.unitId === unit.id)
+                    visibleShieldDefenseMarkers.find((marker) => marker.unitId === unit.id)
                       ?.outcome ?? null
                   }
                 />
