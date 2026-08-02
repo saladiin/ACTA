@@ -3338,7 +3338,13 @@ function objectScaleToTargetInches(object: THREE.Object3D, targetInches: number)
   return targetInches / largest;
 }
 
-function LiveShieldTokenMarker() {
+function LiveShieldTokenMarker({
+  color = "#60a5fa",
+  secondaryColor = "#dbeafe",
+}: {
+  color?: string;
+  secondaryColor?: string;
+}) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const assetRevision =
     MODEL_ASSET_REVISIONS[SHIELD_TOKEN_MODEL_FILENAME] ?? APP_BUILD_SHA;
@@ -3366,13 +3372,13 @@ function LiveShieldTokenMarker() {
     object.traverse((child: any) => {
       if (!child.isMesh) return;
       child.material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color("#60a5fa"),
+        color: new THREE.Color(color),
         map: diffuseTexture,
         alphaMap: alphaTexture,
         transparent: true,
         opacity: 0.78,
         alphaTest: 0.03,
-        emissive: new THREE.Color("#dbeafe"),
+        emissive: new THREE.Color(secondaryColor),
         emissiveIntensity: 0.56,
         roughness: 0.42,
         metalness: 0.12,
@@ -3383,7 +3389,7 @@ function LiveShieldTokenMarker() {
       });
     });
     return object;
-  }, [alphaTexture, diffuseTexture, scene]);
+  }, [alphaTexture, color, diffuseTexture, scene, secondaryColor]);
 
   useEffect(() => {
     return () => {
@@ -3405,8 +3411,62 @@ function LiveShieldTokenMarker() {
   return (
     <group ref={tokenRef} position={[0, 4, 0]} scale={[tokenScale, tokenScale, tokenScale]} raycast={() => null}>
       <primitive object={cloned} />
-      <pointLight color="#60a5fa" intensity={2.75} distance={5.5} />
+      <pointLight color={color} intensity={2.75} distance={5.5} />
     </group>
+  );
+}
+
+function LiveShieldCoverageRing() {
+  const [diffuseTexture, alphaTexture] = useLoader(THREE.TextureLoader, [
+    boardTextureUrl("T_FirePanningCyl45.png"),
+    boardTextureUrl("T_Noise_HU85k.png"),
+  ]) as THREE.Texture[];
+  const materialRef = useRef<THREE.MeshBasicMaterial>(null);
+
+  useEffect(() => {
+    diffuseTexture.colorSpace = THREE.SRGBColorSpace;
+    alphaTexture.colorSpace = THREE.NoColorSpace;
+    for (const texture of [diffuseTexture, alphaTexture]) {
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(5, 0.7);
+      texture.anisotropy = 8;
+      texture.needsUpdate = true;
+    }
+  }, [alphaTexture, diffuseTexture]);
+
+  useFrame(({ clock }) => {
+    const elapsed = clock.getElapsedTime();
+    diffuseTexture.offset.x = (elapsed * 0.035) % 1;
+    alphaTexture.offset.x = (elapsed * 0.02) % 1;
+    const material = materialRef.current;
+    if (!material) return;
+    const pulse = (Math.sin(elapsed * 2.2) + 1) / 2;
+    material.opacity = 0.34 + pulse * 0.22;
+  });
+
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0.058, 0]}
+      renderOrder={9}
+      raycast={() => null}
+    >
+      <ringGeometry args={[4.92, 5, 160]} />
+      <meshBasicMaterial
+        ref={materialRef}
+        color="#60a5fa"
+        map={diffuseTexture}
+        alphaMap={alphaTexture}
+        transparent
+        opacity={0.46}
+        alphaTest={0.02}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        toneMapped={false}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
   );
 }
 
@@ -6000,6 +6060,7 @@ function GameUnit3D({
   damageControlHighlight = false,
   dogfightLocked = false,
   jumpPointContactEligible = false,
+  shieldDefenseOutcome = null,
   arcColorScheme = "classic",
   healthBarFacesCamera = false,
   shipMeshTintsEnabled = true,
@@ -6060,6 +6121,7 @@ function GameUnit3D({
   damageControlHighlight?: boolean;
   dogfightLocked?: boolean;
   jumpPointContactEligible?: boolean;
+  shieldDefenseOutcome?: "success" | "failed" | null;
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
@@ -6195,6 +6257,10 @@ function GameUnit3D({
     (visuallyDestroyed || fireLevel >= 0.7);
   const showShieldToken =
     unit.specialAction === "maneuver-to-shield" &&
+    !hasPreview &&
+    !visuallyDestroyed;
+  const showShieldDefenseMarker =
+    shieldDefenseOutcome !== null &&
     !hasPreview &&
     !visuallyDestroyed;
   const strickenTumbleTiming = useMemo(() => {
@@ -6462,7 +6528,16 @@ function GameUnit3D({
       )}
       {showShieldToken && (
         <Suspense fallback={null}>
+          <LiveShieldCoverageRing />
           <LiveShieldTokenMarker />
+        </Suspense>
+      )}
+      {showShieldDefenseMarker && (
+        <Suspense fallback={null}>
+          <LiveShieldTokenMarker
+            color={shieldDefenseOutcome === "success" ? "#22c55e" : "#ef4444"}
+            secondaryColor={shieldDefenseOutcome === "success" ? "#bbf7d0" : "#fecaca"}
+          />
         </Suspense>
       )}
       {/* Selection pulse ring */}
@@ -8247,6 +8322,63 @@ type DiceModalState = {
   // meaningful in phases crit-ready / crit-rolling / crit-shown.
   critIndex?: number;
 };
+
+type ManeuverToShieldUiResult = {
+  originalTargetUnitId: number;
+  originalTargetName?: string;
+  shieldUnitId: number;
+  shieldUnitName?: string;
+  lineDistance: number;
+  protectedDistance: number;
+  attackerRoll?: number | null;
+  attackerCrewQuality?: number | null;
+  attackerTotal?: number | null;
+  shieldRoll?: number | null;
+  shieldCrewQuality?: number | null;
+  shieldTotal?: number | null;
+  success: boolean;
+  failureReason?: "line-outside" | "roll-failed";
+};
+
+type FireWeaponResultWithShield = FireWeaponResult & {
+  originalTargetUnitId?: number;
+  maneuverToShield?: ManeuverToShieldUiResult | null;
+};
+
+type ShieldDefenseMarker = {
+  key: string;
+  unitId: number;
+  round: number;
+  outcome: "success" | "failed";
+  shieldUnitId: number;
+  failureReason?: "line-outside" | "roll-failed";
+};
+
+function shieldDefenseMarkerFromFireResult(
+  result: FireWeaponResult | Record<string, unknown>,
+  key: string,
+  round: number,
+): ShieldDefenseMarker | null {
+  const raw = (result as FireWeaponResultWithShield).maneuverToShield;
+  if (!raw || typeof raw !== "object") return null;
+  const originalTargetUnitId = Number(raw.originalTargetUnitId);
+  const shieldUnitId = Number(raw.shieldUnitId);
+  if (!Number.isFinite(originalTargetUnitId) || !Number.isFinite(shieldUnitId)) {
+    return null;
+  }
+  const failureReason =
+    raw.failureReason === "line-outside" || raw.failureReason === "roll-failed"
+      ? raw.failureReason
+      : undefined;
+  return {
+    key,
+    unitId: originalTargetUnitId,
+    round,
+    outcome: raw.success ? "success" : "failed",
+    shieldUnitId,
+    failureReason,
+  };
+}
 
 type DogfightResult = {
   kind: "dogfight";
@@ -12318,6 +12450,24 @@ export default function GameBoard() {
   // damage-ready → damage-rolling → damage-shown → close (confirmed). The
   // server returns the full result in one shot; the staging is purely UX.
   const [diceModal, setDiceModal] = useState<DiceModalState | null>(null);
+  const [shieldDefenseMarkers, setShieldDefenseMarkers] = useState<
+    ShieldDefenseMarker[]
+  >([]);
+  const addShieldDefenseMarker = useCallback(
+    (result: FireWeaponResult | Record<string, unknown>, key: string) => {
+      const marker = shieldDefenseMarkerFromFireResult(
+        result,
+        key,
+        game?.currentRound ?? 1,
+      );
+      if (!marker) return;
+      setShieldDefenseMarkers((prev) => [
+        ...prev.filter((existing) => existing.unitId !== marker.unitId),
+        marker,
+      ]);
+    },
+    [game?.currentRound],
+  );
   const [terrainHazardModal, setTerrainHazardModal] =
     useState<TerrainHazardModalState | null>(null);
   const [dogfightModal, setDogfightModal] = useState<DogfightModalState | null>(
@@ -12456,12 +12606,13 @@ export default function GameBoard() {
     lastSeenAiWeaponFxKeyRef.current = key;
 
     const hits = typeof resultRecord.hits === "number" ? resultRecord.hits : 0;
+    addShieldDefenseMarker(resultRecord, `ai-shield-${key}`);
     setAiWeaponFxReplay({ key, attackerUnitId, targetUnitId, weaponId, hits });
     const timeout = window.setTimeout(() => {
       setAiWeaponFxReplay((current) => (current?.key === key ? null : current));
     }, 5200);
     return () => window.clearTimeout(timeout);
-  }, [game?.aiState, game?.opponentKind]);
+  }, [addShieldDefenseMarker, game?.aiState, game?.opponentKind]);
 
   const commitAntiFighterAllocations = useCallback(async () => {
     if (
@@ -12601,6 +12752,10 @@ export default function GameBoard() {
           onSuccess: (res) => {
             firingInFlightRef.current = false;
             setUseCoordOnNext(false);
+            addShieldDefenseMarker(
+              res,
+              `player-${gameId}-${firingUnitId}-${firedWeaponId}-${shot.targetId}`,
+            );
             // Do NOT invalidate the game query here - that would refresh the
             // board (target HP, shields, destroyed flag) BEFORE the player has
             // revealed the dice. The modal close performs the refresh.
@@ -12648,7 +12803,7 @@ export default function GameBoard() {
         },
       );
     },
-    [fireWeapon, gameId],
+    [addShieldDefenseMarker, fireWeapon, gameId],
   );
 
   const commitSplitFire = useCallback(
@@ -12704,6 +12859,14 @@ export default function GameBoard() {
           },
         );
 
+        addShieldDefenseMarker(
+          firstResult,
+          `split-${gameId}-${firingUnitId}-${firedWeaponId}-${plan.firstTargetId}-0`,
+        );
+        addShieldDefenseMarker(
+          secondResult,
+          `split-${gameId}-${firingUnitId}-${firedWeaponId}-${secondTarget.id}-1`,
+        );
         setUseCoordOnNext(false);
         setFiringWeaponPicking(null);
         setSplitFirePlan(null);
@@ -12743,7 +12906,7 @@ export default function GameBoard() {
         qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
       }
     },
-    [gameId, qc, splitFireCommitting],
+    [addShieldDefenseMarker, gameId, qc, splitFireCommitting],
   );
 
   useEffect(() => {
@@ -12764,6 +12927,11 @@ export default function GameBoard() {
   const currentRoundNumber = gameData?.game?.currentRound ?? 1;
   useEffect(() => {
     setPhaseLedger({});
+  }, [currentRoundNumber]);
+  useEffect(() => {
+    setShieldDefenseMarkers((prev) =>
+      prev.filter((marker) => marker.round === currentRoundNumber),
+    );
   }, [currentRoundNumber]);
 
   // Fleet Yards: optional pre-built fleet to deploy from. Empty string =
@@ -21270,6 +21438,10 @@ export default function GameBoard() {
                     eligibleLaunchCarrierIds.has(unit.id)
                   }
                   damageControlHighlight={unitCanUseDamageControlNow(unit)}
+                  shieldDefenseOutcome={
+                    shieldDefenseMarkers.find((marker) => marker.unitId === unit.id)
+                      ?.outcome ?? null
+                  }
                 />
               );
             })}

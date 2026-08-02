@@ -2661,13 +2661,14 @@ type ManeuverToShieldResolution = {
   shieldUnitName: string;
   lineDistance: number;
   protectedDistance: number;
-  attackerRoll: number;
-  attackerCrewQuality: number;
-  attackerTotal: number;
-  shieldRoll: number;
-  shieldCrewQuality: number;
-  shieldTotal: number;
+  attackerRoll: number | null;
+  attackerCrewQuality: number | null;
+  attackerTotal: number | null;
+  shieldRoll: number | null;
+  shieldCrewQuality: number | null;
+  shieldTotal: number | null;
   success: boolean;
+  failureReason?: "line-outside" | "roll-failed";
 };
 
 async function resolveManeuverToShieldInterposition(
@@ -2693,7 +2694,7 @@ async function resolveManeuverToShieldInterposition(
     eq(gameUnitsTable.specialAction, "maneuver-to-shield"),
     eq(gameUnitsTable.isDestroyed, false),
   ));
-  const candidates: Array<{
+  const nearbyCandidates: Array<{
     unit: typeof gameUnitsTable.$inferSelect;
     model: typeof shipModelsTable.$inferSelect;
     position: BoardPoint;
@@ -2722,17 +2723,40 @@ async function resolveManeuverToShieldInterposition(
     const protectedDistance = centerDistance(sPos, tPos);
     if (protectedDistance > 5 + 1e-6) continue;
     const lineDistance = pointToSegmentDistance(sPos, aPos, tPos);
-    if (lineDistance > 1 + 1e-6) continue;
-    candidates.push({ unit: shield, model: shieldModel, position: sPos, lineDistance, protectedDistance });
+    nearbyCandidates.push({ unit: shield, model: shieldModel, position: sPos, lineDistance, protectedDistance });
   }
 
-  candidates.sort((a, b) =>
+  nearbyCandidates.sort((a, b) =>
     a.lineDistance - b.lineDistance ||
     a.protectedDistance - b.protectedDistance ||
     a.unit.id - b.unit.id,
   );
-  const shield = candidates[0] ?? null;
+  const shield = nearbyCandidates.find((candidate) => candidate.lineDistance <= 1 + 1e-6) ?? null;
   if (!shield) {
+    const nearest = nearbyCandidates[0] ?? null;
+    if (nearest) {
+      return {
+        target: null,
+        targetModel: null,
+        targetPosition: null,
+        resolution: {
+          originalTargetUnitId: originalTarget.id,
+          originalTargetName: originalTarget.name,
+          shieldUnitId: nearest.unit.id,
+          shieldUnitName: nearest.unit.name,
+          lineDistance: Number(nearest.lineDistance.toFixed(3)),
+          protectedDistance: Number(nearest.protectedDistance.toFixed(3)),
+          attackerRoll: null,
+          attackerCrewQuality: null,
+          attackerTotal: null,
+          shieldRoll: null,
+          shieldCrewQuality: null,
+          shieldTotal: null,
+          success: false,
+          failureReason: "line-outside",
+        },
+      };
+    }
     return { target: null, targetModel: null, targetPosition: null, resolution: null };
   }
 
@@ -2767,6 +2791,7 @@ async function resolveManeuverToShieldInterposition(
     shieldCrewQuality,
     shieldTotal,
     success,
+    failureReason: success ? undefined : "roll-failed",
   };
 
   return {
@@ -6653,6 +6678,7 @@ async function resolveBasicAiWeaponFire(
   fighterRecovery: DestroyedFighterRecoveryResult | null;
   winnerId: string | null;
   gameCompleted: boolean;
+  maneuverToShield: ManeuverToShieldResolution | null;
 }> {
   // Zero-hull and crewless wrecks can remain isDestroyed=false while an
   // adrift/exploding result is pending. They are no longer legal targets.
@@ -7286,6 +7312,7 @@ async function resolveBasicAiWeaponFire(
     fighterRecovery,
     winnerId,
     gameCompleted,
+    maneuverToShield,
   };
 }
 
@@ -8468,6 +8495,7 @@ async function finishActiveAiFiringWithoutShot(tx: any, game: typeof gamesTable.
           resolvedTargetName: result.target.name,
           hits: result.hits,
           remainingHits: result.remainingHits,
+          maneuverToShield: result.maneuverToShield,
           damage: result.finalDamage,
           crew: result.finalCrewLost,
           targetDestroyed: result.targetDestroyed,

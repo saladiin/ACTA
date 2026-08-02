@@ -918,6 +918,23 @@ export const FireWeaponBody = zod.object({
 export const FireWeaponResponse = zod.object({
   "weaponId": zod.number(),
   "targetUnitId": zod.number(),
+  "originalTargetUnitId": zod.number().optional().describe('Original target selected before Maneuver to Shield Them interposition. Present when the attack was resolved through the current fire endpoint.'),
+  "maneuverToShield": zod.object({
+  "originalTargetUnitId": zod.number().optional(),
+  "originalTargetName": zod.string().optional(),
+  "shieldUnitId": zod.number().optional(),
+  "shieldUnitName": zod.string().optional(),
+  "lineDistance": zod.number().optional(),
+  "protectedDistance": zod.number().optional(),
+  "attackerRoll": zod.number().nullish(),
+  "attackerCrewQuality": zod.number().nullish(),
+  "attackerTotal": zod.number().nullish(),
+  "shieldRoll": zod.number().nullish(),
+  "shieldCrewQuality": zod.number().nullish(),
+  "shieldTotal": zod.number().nullish(),
+  "success": zod.boolean().optional(),
+  "failureReason": zod.enum(['line-outside', 'roll-failed']).optional()
+}).nullish().describe('Maneuver to Shield Them interposition result. Null when no eligible or nearby shield ship was relevant to the shot.'),
   "hitThreshold": zod.number().describe('Raw die threshold for each AD after AP\/Super AP result modifiers are folded in (base hullRating \/ Beam=4+ \/ crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it\'s a separate pre-attack 1d6 check (see stealthCheck\*).'),
   "stealthCheckTarget": zod.number().nullish().describe('Defender\'s stealth value (with range\/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth).'),
   "stealthCheckRoll": zod.number().nullish().describe('Single 1d6 the attacker rolled against the defender\'s Stealth. Null when no stealth check was made.'),
