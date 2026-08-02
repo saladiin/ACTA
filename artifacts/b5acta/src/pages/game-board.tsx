@@ -3341,9 +3341,11 @@ function objectScaleToTargetInches(object: THREE.Object3D, targetInches: number)
 function LiveShieldTokenMarker({
   color = "#60a5fa",
   secondaryColor = "#dbeafe",
+  height = 4,
 }: {
   color?: string;
   secondaryColor?: string;
+  height?: number;
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const assetRevision =
@@ -3409,7 +3411,7 @@ function LiveShieldTokenMarker({
   const tokenScale = useMemo(() => objectScaleToTargetInches(cloned, 1), [cloned]);
 
   return (
-    <group ref={tokenRef} position={[0, 4, 0]} scale={[tokenScale, tokenScale, tokenScale]} raycast={() => null}>
+    <group ref={tokenRef} position={[0, height, 0]} scale={[tokenScale, tokenScale, tokenScale]} raycast={() => null}>
       <primitive object={cloned} />
       <pointLight color={color} intensity={2.75} distance={5.5} />
     </group>
@@ -6263,6 +6265,7 @@ function GameUnit3D({
     shieldDefenseOutcome !== null &&
     !hasPreview &&
     !visuallyDestroyed;
+  const stackedShieldMarkers = showShieldToken && showShieldDefenseMarker;
   const strickenTumbleTiming = useMemo(() => {
     const seed = unit.id;
     const tumbleRate = 0.5;
@@ -6529,7 +6532,7 @@ function GameUnit3D({
       {showShieldToken && (
         <Suspense fallback={null}>
           <LiveShieldCoverageRing />
-          <LiveShieldTokenMarker />
+          <LiveShieldTokenMarker height={stackedShieldMarkers ? 3.45 : 4} />
         </Suspense>
       )}
       {showShieldDefenseMarker && (
@@ -6537,6 +6540,7 @@ function GameUnit3D({
           <LiveShieldTokenMarker
             color={shieldDefenseOutcome === "success" ? "#22c55e" : "#ef4444"}
             secondaryColor={shieldDefenseOutcome === "success" ? "#bbf7d0" : "#fecaca"}
+            height={stackedShieldMarkers ? 4.65 : 4}
           />
         </Suspense>
       )}

@@ -4284,7 +4284,7 @@ const FIGHTER_FLIGHTS = [
   {
     name: "Aurora Starfury Flight",
     filename: "aurora.glb",
-    faction: "Earth Alliance",
+    faction: "Earth Alliance - Dawn of the Third Age",
     pointCost: 25,
     shipClass: "Fighter Flight",
     hull: 5,
@@ -5166,6 +5166,7 @@ async function normalizeEarthAllianceEraFactions(): Promise<void> {
     "Tiger Starfury Flight",
   ];
   const thirdAgeShips = [
+    "Aurora Starfury Flight",
     "Artemis-class Heavy Frigate (Third Age)",
     "Avenger Heavy Carrier (Third Age)",
     "Explorer Survey Ship (Third Age)",
