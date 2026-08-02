@@ -824,6 +824,7 @@ const JUMP_POINT_BASE_RADIUS_INCHES = 1.5;
 const JUMP_POINT_BORDER_FACING_GUARD_INCHES = 6;
 const JUMP_POINT_EDGE_BUFFER_INCHES = 3;
 const STANDARD_JUMP_POINT_HEADING_LIMIT_DEGREES = 45;
+const AI_MIN_HYPERSPACE_ENTRY_SCORE = -25;
 
 function jumpEngineTraitsForModel(
   model: Pick<typeof shipModelsTable.$inferSelect, "traits"> | null | undefined,
@@ -3473,7 +3474,9 @@ function findBestAiMovementEndpoint(
           : -Math.abs(targetEdgeDistance - desiredRange)
         : moved;
       const profileMoveBias = aiProfile === "standoff"
-        ? nearestEnemyDistance * 0.75
+        ? target
+          ? -Math.max(0, targetEdgeDistance - desiredRange) * 0.9
+          : 0
         : aiProfile === "brawler"
           ? moved * 0.12
           : aiProfile === "apex-predator"
@@ -3643,7 +3646,9 @@ function scoreAiMovementEndpoint(
       : -Math.abs(targetEdgeDistance - desiredRange)
     : moved;
   const profileMoveBias = aiProfile === "standoff"
-    ? nearestEnemyDistance * 0.75
+    ? target
+      ? -Math.max(0, targetEdgeDistance - desiredRange) * 0.9
+      : 0
     : aiProfile === "brawler"
       ? moved * 0.12
       : aiProfile === "apex-predator"
@@ -4076,6 +4081,7 @@ type AiHyperspaceEntryPlan = {
   score: number;
   target: AiHyperspaceTarget | null;
   creatorEnteredAndClosedPoint: boolean;
+  useful: boolean;
   breakdown: Record<string, number | string | boolean | null>;
 };
 
@@ -4487,6 +4493,14 @@ async function chooseAiHyperspaceEntryPlan(
         };
         if (findIllegalBaseOverlap(candidate, blockers)) continue;
         const targetScores = targets.map(t => {
+          const targetFootprint = {
+            id: t.unit.id,
+            ownerId: t.unit.ownerId,
+            x: t.unit.hexQ,
+            z: t.unit.hexR,
+            baseRadiusInches: rulesBaseRadius(t.unit),
+            isFighter: false,
+          };
           const distance = edgeDistance(candidate, {
             x: t.unit.hexQ,
             z: t.unit.hexR,
@@ -4494,26 +4508,56 @@ async function chooseAiHyperspaceEntryPlan(
           });
           const range = aiRangeScore(distance, engagement);
           const relativeArc = aiRelativeArcScore(t.unit, candidate, engagement);
+          const arrivalHeading = normalizeHeadingDegrees(jumpPoint.heading);
+          const effectiveArrivalHeading = normalizeHeadingDegrees(arrivalHeading + (FLIP_MODELS.has(unit.modelFilename) ? 180 : 0));
+          const headingToTarget = headingToPoint(candidate, { x: t.unit.hexQ, z: t.unit.hexR });
+          const targetFacingDelta = headingDeltaDegrees(effectiveArrivalHeading, headingToTarget);
+          const ownArc = ownArcThreatAgainstTarget(
+            candidate,
+            arrivalHeading,
+            FLIP_MODELS.has(unit.modelFilename),
+            weapons,
+            targetFootprint,
+          );
+          const ownThreatScore = ownArc.threat * 5
+            + (engagement.aiProfile === "broadside" ? ownArc.sideArcThreat * 4 : 0)
+            + (engagement.aiProfile === "jouster" ? ownArc.forwardArcThreat * 3 : 0);
+          const noImmediateThreatPenalty = ownArc.threat <= 0
+            ? (engagement.aiProfile === "standoff" ? 48 : 18)
+            : 0;
+          const facingAwayPenalty = targetFacingDelta > 100
+            ? (targetFacingDelta - 100) * 0.35
+            : 0;
+          const useful = ownArc.threat > 0
+            || (engagement.aiProfile !== "standoff" && targetFacingDelta <= 70);
           return {
             target: t,
             distance,
             range,
             relativeArc,
-            score: t.value + relativeArc.score + range.score,
+            ownArc,
+            targetFacingDelta,
+            useful,
+            ownThreatScore,
+            noImmediateThreatPenalty,
+            facingAwayPenalty,
+            score: t.value + relativeArc.score + range.score + ownThreatScore - noImmediateThreatPenalty - facingAwayPenalty,
           };
         }).sort((a, b) => b.score - a.score);
         const target = targetScores[0] ?? null;
         const distanceToTarget = target?.distance ?? centerDistance({ x, z }, { x: 0, z: 0 });
         const borderPressure = aiBorderPenalty({ x, z }, unitRadius);
         const score = (target?.score ?? 15) - borderPressure;
+        const useful = target ? target.useful : true;
         plans.push({
           jumpPoint,
           x,
           z,
-          heading: target ? headingToPoint({ x, z }, { x: target.target.unit.hexQ, z: target.target.unit.hexR }) : normalizeHeadingDegrees(jumpPoint.heading),
+          heading: normalizeHeadingDegrees(jumpPoint.heading),
           score,
           target: target?.target ?? null,
           creatorEnteredAndClosedPoint,
+          useful,
           breakdown: {
             jumpPointId: jumpPoint.id,
             reserveProfile: engagement.label,
@@ -4526,6 +4570,14 @@ async function chooseAiHyperspaceEntryPlan(
             maxWeaponRange: engagement.maxWeaponRange,
             relativeArc: target?.relativeArc.arc ?? null,
             relativeArcScore: target ? Number(target.relativeArc.score.toFixed(2)) : null,
+            postEntryUseful: useful,
+            postEntryOwnThreat: target ? Number(target.ownArc.threat.toFixed(2)) : null,
+            postEntrySideArcThreat: target ? Number(target.ownArc.sideArcThreat.toFixed(2)) : null,
+            postEntryForwardArcThreat: target ? Number(target.ownArc.forwardArcThreat.toFixed(2)) : null,
+            postEntryOwnThreatScore: target ? Number(target.ownThreatScore.toFixed(2)) : null,
+            postEntryTargetFacingDelta: target ? Number(target.targetFacingDelta.toFixed(2)) : null,
+            postEntryNoThreatPenalty: target ? Number(target.noImmediateThreatPenalty.toFixed(2)) : null,
+            postEntryFacingAwayPenalty: target ? Number(target.facingAwayPenalty.toFixed(2)) : null,
             distanceToTarget: Number(distanceToTarget.toFixed(2)),
             rangePressure: target ? Number(target.range.pressure.toFixed(2)) : null,
             tooClosePenalty: target ? Number(target.range.tooClosePenalty.toFixed(2)) : null,
@@ -4667,7 +4719,7 @@ async function performAiHyperspaceReserveActivation(
     }
 
     const entryPlan = await chooseAiHyperspaceEntryPlan(tx, game, unit, model);
-    if (entryPlan && entryPlan.score > -900) {
+    if (entryPlan && entryPlan.useful && entryPlan.score > AI_MIN_HYPERSPACE_ENTRY_SCORE) {
       const decision = aiDecision(
         "movement.hyperspace-enter-realspace",
         "movement",
@@ -4819,11 +4871,19 @@ async function performAiHyperspaceReserveActivation(
       });
       const openedUnit = updatedUnit ?? unit;
       const immediateEntryPlan = await chooseAiHyperspaceEntryPlan(tx, game, openedUnit, model, [jumpPoint]);
-      const canEnterImmediately = Boolean(immediateEntryPlan && immediateEntryPlan.score > -900);
+      const canEnterImmediately = Boolean(
+        immediateEntryPlan
+        && immediateEntryPlan.useful
+        && immediateEntryPlan.score > AI_MIN_HYPERSPACE_ENTRY_SCORE,
+      );
       const immediateEntryStatus = immediateEntryPlan ? {
         attempted: canEnterImmediately,
         score: Number(immediateEntryPlan.score.toFixed(2)),
-        reason: canEnterImmediately ? "legal-arrival-found" : "arrival-score-below-threshold",
+        reason: canEnterImmediately
+          ? "legal-useful-arrival-found"
+          : !immediateEntryPlan.useful
+            ? "arrival-not-tactically-useful"
+            : "arrival-score-below-threshold",
         scoring: immediateEntryPlan.breakdown,
       } : reserveHoldForPoint.length > 0 ? {
         attempted: false,
@@ -15327,7 +15387,6 @@ router.post("/games/:gameId/hyperspace/enter-realspace", requireAuth, async (req
   const jumpPointId = Number(raw.jumpPointId);
   const x = Number(raw.x ?? raw.hexQ);
   const z = Number(raw.z ?? raw.hexR);
-  const heading = normalizeHeadingDegrees(Number(raw.heading ?? 0));
   if (
     !Number.isInteger(gameId)
     || !Number.isInteger(unitId)
@@ -15443,11 +15502,12 @@ router.post("/games/:gameId/hyperspace/enter-realspace", requireAuth, async (req
       }
 
       const friendlyScoutAlreadyDeployed = await ownerHasFriendlyScoutOnBattlefield(tx, game.id, unit.ownerId);
+      const arrivalHeading = normalizeHeadingDegrees(jumpPoint.heading);
       const [updatedUnit] = await tx.update(gameUnitsTable).set({
         boardState: "deployed",
         hexQ: finalX,
         hexR: finalZ,
-        heading,
+        heading: arrivalHeading,
         specialAction: "hyperspace-arrival",
         hasInitiatedMoveThisActivation: true,
         inchesMovedThisActivation: 0,
@@ -15485,6 +15545,7 @@ router.post("/games/:gameId/hyperspace/enter-realspace", requireAuth, async (req
           friendlyScoutAlreadyDeployed,
           mayFireThisRound: friendlyScoutAlreadyDeployed,
           strandingGuardChecked: true,
+          arrivalHeading,
         },
       });
 

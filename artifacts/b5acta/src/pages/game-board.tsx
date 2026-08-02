@@ -19426,7 +19426,14 @@ export default function GameBoard() {
               );
               setReserveEntryPlacement((current) =>
                 current && current.unitId === activeReserveUnit.id
-                  ? { ...current, x: snapBoardCoord(x), z: snapBoardCoord(z) }
+                  ? {
+                      ...current,
+                      x: snapBoardCoord(x),
+                      z: snapBoardCoord(z),
+                      heading: reserveEntryJumpPoint
+                        ? normalizeHeadingDegrees(reserveEntryJumpPoint.heading)
+                        : current.heading,
+                    }
                   : current,
               );
               setActivationFeedback(
@@ -19676,7 +19683,14 @@ export default function GameBoard() {
               );
               setReserveEntryPlacement((current) =>
                 current && current.unitId === activeReserveUnit.id
-                  ? { ...current, x: snapBoardCoord(x), z: snapBoardCoord(z) }
+                  ? {
+                      ...current,
+                      x: snapBoardCoord(x),
+                      z: snapBoardCoord(z),
+                      heading: reserveEntryJumpPoint
+                        ? normalizeHeadingDegrees(reserveEntryJumpPoint.heading)
+                        : current.heading,
+                    }
                   : current,
               );
               return;
