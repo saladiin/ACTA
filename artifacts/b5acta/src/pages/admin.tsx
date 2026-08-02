@@ -21,6 +21,7 @@ type AdminGame = {
   challengerId: string;
   opponentId: string | null;
   opponentKind: string;
+  winnerId: string | null;
   status: string;
   currentRound: number;
   currentTurn: number;

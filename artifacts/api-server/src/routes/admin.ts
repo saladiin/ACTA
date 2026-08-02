@@ -125,6 +125,7 @@ router.get("/admin/games", requireAdmin, async (_req, res): Promise<void> => {
       challengerId: gamesTable.challengerId,
       opponentId: gamesTable.opponentId,
       opponentKind: gamesTable.opponentKind,
+      winnerId: gamesTable.winnerId,
       status: gamesTable.status,
       currentRound: gamesTable.currentRound,
       currentTurn: gamesTable.currentTurn,
