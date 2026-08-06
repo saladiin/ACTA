@@ -10,14 +10,19 @@ import type { ScoutActionResultAction } from './scoutActionResultAction';
 
 export interface ScoutActionResult {
   action: ScoutActionResultAction;
-  targetUnitId: number;
-  /** True if the 1d6 + crewQuality CQ check met cqRequired. */
+  /** Resolved target id, or null for a movement-phase declaration. */
+  targetUnitId: number | null;
+  /** True if the declaration was recorded or the 1d6 + crewQuality CQ check met cqRequired. */
   success: boolean;
-  /** 1d6 result. */
-  cqRoll: number;
-  /** cqRoll + scout's crewQuality. */
-  cqTotal: number;
-  /** Always 8 per the sheet. */
-  cqRequired: number;
+  /** 1d6 result, or null before target resolution. */
+  cqRoll: number | null;
+  /** cqRoll + scout's crewQuality, or null before target resolution. */
+  cqTotal: number | null;
+  /** Always 8 for target resolution, or null for movement-phase declaration. */
+  cqRequired: number | null;
+  /** True when this response recorded the movement-phase declaration. */
+  declared?: boolean;
+  /** True when repeating a previously resolved scout support request. */
+  alreadyResolved?: boolean;
   unit: GameUnit;
 }

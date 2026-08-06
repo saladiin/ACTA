@@ -1544,26 +1544,28 @@ components:
 
     ScoutActionInput:
       type: object
-      required: [action, targetUnitId]
+      required: [action]
       properties:
         action:
           type: string
           enum: [counter-stealth, coord]
           description: "counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons)."
         targetUnitId:
-          type: integer
-          description: "Enemy unit id to support against. Must be within 36\" of the Scout."
+          type: ["integer", "null"]
+          description: "Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted/null when declaring the support mode during movement. Must be within 36\" of the Scout."
 
     ScoutActionResult:
       type: object
       required: [action, targetUnitId, success, cqRoll, cqTotal, cqRequired, unit]
       properties:
         action:       { type: string, enum: [counter-stealth, coord] }
-        targetUnitId: { type: integer }
-        success:      { type: boolean, description: "True if the 1d6 + crewQuality CQ check met cqRequired." }
-        cqRoll:       { type: integer, description: "1d6 result." }
-        cqTotal:      { type: integer, description: "cqRoll + scout's crewQuality." }
-        cqRequired:   { type: integer, description: "Always 8 per the sheet." }
+        targetUnitId: { type: ["integer", "null"], description: "Resolved target id, or null for a movement-phase declaration." }
+        success:      { type: boolean, description: "True if the declaration was recorded or the 1d6 + crewQuality CQ check met cqRequired." }
+        cqRoll:       { type: ["integer", "null"], description: "1d6 result, or null before target resolution." }
+        cqTotal:      { type: ["integer", "null"], description: "cqRoll + scout's crewQuality, or null before target resolution." }
+        cqRequired:   { type: ["integer", "null"], description: "Always 8 for target resolution, or null for movement-phase declaration." }
+        declared:     { type: boolean, description: "True when this response recorded the movement-phase declaration." }
+        alreadyResolved: { type: boolean, description: "True when repeating a previously resolved scout support request." }
         unit:         { $ref: "#/components/schemas/GameUnit" }
 
     MoveUnitInput:

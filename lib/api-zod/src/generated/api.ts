@@ -1513,7 +1513,7 @@ export const ChooseScoutActionParams = zod.object({
 
 export const ChooseScoutActionBody = zod.object({
   "action": zod.enum(['counter-stealth', 'coord']).describe('counter-stealth = reduce target\'s Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam \/ Mini Beam \/ Energy Mine \/ Twin Linked weapons).'),
-  "targetUnitId": zod.number().describe('Enemy unit id to support against. Must be within 36\" of the Scout.')
+  "targetUnitId": zod.number().nullish().describe('Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted/null when declaring the support mode during movement. Must be within 36\" of the Scout.')
 })
 
 export const chooseScoutActionResponseUnitCarriedFightersItemTotalMin = 0;
@@ -1532,11 +1532,13 @@ export const chooseScoutActionResponseUnitCrewQualityMax = 7;
 
 export const ChooseScoutActionResponse = zod.object({
   "action": zod.enum(['counter-stealth', 'coord']),
-  "targetUnitId": zod.number(),
-  "success": zod.boolean().describe('True if the 1d6 + crewQuality CQ check met cqRequired.'),
-  "cqRoll": zod.number().describe('1d6 result.'),
-  "cqTotal": zod.number().describe('cqRoll + scout\'s crewQuality.'),
-  "cqRequired": zod.number().describe('Always 8 per the sheet.'),
+  "targetUnitId": zod.number().nullable().describe('Resolved target id, or null for a movement-phase declaration.'),
+  "success": zod.boolean().describe('True if the declaration was recorded or the 1d6 + crewQuality CQ check met cqRequired.'),
+  "cqRoll": zod.number().nullable().describe('1d6 result, or null before target resolution.'),
+  "cqTotal": zod.number().nullable().describe('cqRoll + scout\'s crewQuality, or null before target resolution.'),
+  "cqRequired": zod.number().nullable().describe('Always 8 for target resolution, or null for movement-phase declaration.'),
+  "declared": zod.boolean().optional().describe('True when this response recorded the movement-phase declaration.'),
+  "alreadyResolved": zod.boolean().optional().describe('True when repeating a previously resolved scout support request.'),
   "unit": zod.object({
   "id": zod.number(),
   "gameId": zod.number(),

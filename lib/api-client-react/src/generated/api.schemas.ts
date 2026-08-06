@@ -1161,8 +1161,8 @@ export const ScoutActionInputAction = {
 export interface ScoutActionInput {
   /** counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons). */
   action: ScoutActionInputAction;
-  /** Enemy unit id to support against. Must be within 36" of the Scout. */
-  targetUnitId: number;
+  /** Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted/null when declaring the support mode during movement. Must be within 36" of the Scout. */
+  targetUnitId?: number | null;
 }
 
 export type ScoutActionResultAction = typeof ScoutActionResultAction[keyof typeof ScoutActionResultAction];
@@ -1175,15 +1175,20 @@ export const ScoutActionResultAction = {
 
 export interface ScoutActionResult {
   action: ScoutActionResultAction;
-  targetUnitId: number;
-  /** True if the 1d6 + crewQuality CQ check met cqRequired. */
+  /** Resolved target id, or null for a movement-phase declaration. */
+  targetUnitId: number | null;
+  /** True if the declaration was recorded or the 1d6 + crewQuality CQ check met cqRequired. */
   success: boolean;
-  /** 1d6 result. */
-  cqRoll: number;
-  /** cqRoll + scout's crewQuality. */
-  cqTotal: number;
-  /** Always 8 per the sheet. */
-  cqRequired: number;
+  /** 1d6 result, or null before target resolution. */
+  cqRoll: number | null;
+  /** cqRoll + scout's crewQuality, or null before target resolution. */
+  cqTotal: number | null;
+  /** Always 8 for target resolution, or null for movement-phase declaration. */
+  cqRequired: number | null;
+  /** True when this response recorded the movement-phase declaration. */
+  declared?: boolean;
+  /** True when repeating a previously resolved scout support request. */
+  alreadyResolved?: boolean;
   unit: GameUnit;
 }
 
