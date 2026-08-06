@@ -34,6 +34,132 @@ import { ArrowRight, ChevronDown, Minus, Plus, Search } from "lucide-react";
 
 const AI_OPPONENT_ID = "ai:acta-skirmish-v0";
 
+type ArcPreviewDef = {
+  centerAngle: number;
+  halfAngle: number;
+  color: string;
+  label: string;
+};
+
+const ARC_PREVIEW_DEFS: Record<string, ArcPreviewDef> = {
+  Forward: {
+    centerAngle: Math.PI / 2,
+    halfAngle: Math.PI / 4,
+    color: "#ffb000",
+    label: "FWD",
+  },
+  Port: {
+    centerAngle: 0,
+    halfAngle: Math.PI / 4,
+    color: "rgba(0, 255, 222, 1)",
+    label: "PORT",
+  },
+  Starboard: {
+    centerAngle: Math.PI,
+    halfAngle: Math.PI / 4,
+    color: "rgba(0, 255, 222, 1)",
+    label: "STBD",
+  },
+  Aft: {
+    centerAngle: -Math.PI / 2,
+    halfAngle: Math.PI / 4,
+    color: "#ff2f4f",
+    label: "AFT",
+  },
+  "Boresight Forward": {
+    centerAngle: Math.PI / 2,
+    halfAngle: Math.PI / 24,
+    color: "#fff75a",
+    label: "BS-F",
+  },
+  "Boresight Aft": {
+    centerAngle: -Math.PI / 2,
+    halfAngle: Math.PI / 24,
+    color: "#ff7a1a",
+    label: "BS-A",
+  },
+  Turret: {
+    centerAngle: Math.PI / 2,
+    halfAngle: Math.PI,
+    color: "#b86cff",
+    label: "TUR",
+  },
+};
+
+const ARC_PREVIEW_ORDER = [
+  "Forward",
+  "Port",
+  "Starboard",
+  "Aft",
+  "Boresight Forward",
+  "Boresight Aft",
+  "Turret",
+];
+
+function canonicalFleetArc(arcName: string): string {
+  const normalized = arcName.trim().replace(/\s+/g, " ").toLowerCase();
+  switch (normalized) {
+    case "forward":
+    case "front":
+    case "fwd":
+    case "f":
+      return "Forward";
+    case "aft":
+    case "rear":
+    case "r":
+      return "Aft";
+    case "port":
+    case "p":
+      return "Port";
+    case "starboard":
+    case "stbd":
+    case "s":
+      return "Starboard";
+    case "turret":
+    case "tur":
+    case "t":
+      return "Turret";
+    case "boresight forward":
+    case "boresight fwd":
+    case "boresight front":
+    case "bs forward":
+    case "bs fwd":
+      return "Boresight Forward";
+    case "boresight aft":
+    case "boresight rear":
+    case "bs aft":
+    case "bs rear":
+      return "Boresight Aft";
+    default:
+      return arcName.trim();
+  }
+}
+
+function arcPoint(cx: number, cy: number, radius: number, angle: number) {
+  return {
+    x: cx + Math.cos(angle) * radius,
+    y: cy - Math.sin(angle) * radius,
+  };
+}
+
+function arcSectorPath(def: ArcPreviewDef, radius: number) {
+  const cx = 60;
+  const cy = 60;
+  const start = arcPoint(cx, cy, radius, def.centerAngle - def.halfAngle);
+  const end = arcPoint(cx, cy, radius, def.centerAngle + def.halfAngle);
+  const largeArc = def.halfAngle * 2 > Math.PI ? 1 : 0;
+  return [
+    `M ${cx} ${cy}`,
+    `L ${start.x.toFixed(2)} ${start.y.toFixed(2)}`,
+    `A ${radius} ${radius} 0 ${largeArc} 0 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`,
+    "Z",
+  ].join(" ");
+}
+
+function arcLabelPosition(def: ArcPreviewDef, radius: number) {
+  return arcPoint(60, 60, radius, def.centerAngle);
+}
+
 function countMapToEntries(counts: Record<number, number>) {
   return Object.entries(counts)
     .map(([shipModelId, count]) => ({
@@ -65,6 +191,131 @@ function groupWeaponsByArc(ship: ShipModel) {
     if (aTurret !== bTurret) return aTurret ? 1 : -1;
     return a.localeCompare(b);
   });
+}
+
+function ShipArcPreview({ ship }: { ship: ShipModel }) {
+  const arcs = useMemo(() => {
+    const unique = new Set<string>();
+    for (const weapon of ship.weapons ?? []) {
+      const canonical = canonicalFleetArc(weapon.arc ?? "");
+      if (ARC_PREVIEW_DEFS[canonical]) unique.add(canonical);
+    }
+    return ARC_PREVIEW_ORDER.filter((arc) => unique.has(arc));
+  }, [ship.weapons]);
+
+  if (arcs.length === 0) {
+    return (
+      <div className="rounded border border-border/70 bg-background/70 px-2 py-2 text-[10px] text-muted-foreground">
+        No weapon arcs listed.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded border border-border/70 bg-background/70 p-2">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <p className="uppercase tracking-wider text-primary/80">
+          Arc Preview
+        </p>
+        <p className="text-[9px] text-muted-foreground">top-down</p>
+      </div>
+      <svg
+        viewBox="0 0 120 120"
+        role="img"
+        aria-label={`${ship.name} weapon arc preview`}
+        className="w-full max-w-[180px] mx-auto block"
+      >
+        <defs>
+          <filter id={`arc-glow-${ship.id}`} x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="1.2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <circle
+          cx="60"
+          cy="60"
+          r="18"
+          fill="rgba(15, 23, 42, 0.78)"
+          stroke="rgba(255,255,255,0.55)"
+          strokeWidth="1.5"
+        />
+        <path
+          d="M 60 34 L 55 45 L 65 45 Z"
+          fill="rgba(255,255,255,0.85)"
+        />
+        <line
+          x1="60"
+          y1="60"
+          x2="60"
+          y2="23"
+          stroke="rgba(255,255,255,0.18)"
+          strokeWidth="1"
+          strokeDasharray="2 3"
+        />
+        {arcs
+          .filter((arc) => arc !== "Turret")
+          .map((arc) => {
+            const def = ARC_PREVIEW_DEFS[arc]!;
+            const isBoresight = arc.startsWith("Boresight");
+            const radius = isBoresight ? 52 : 44;
+            const label = arcLabelPosition(def, isBoresight ? 56 : 49);
+            return (
+              <g key={arc} filter={`url(#arc-glow-${ship.id})`}>
+                <path
+                  d={arcSectorPath(def, radius)}
+                  fill={def.color}
+                  fillOpacity={isBoresight ? 0.22 : 0.16}
+                  stroke={def.color}
+                  strokeOpacity={0.92}
+                  strokeWidth={isBoresight ? 2.2 : 1.8}
+                />
+                <text
+                  x={label.x}
+                  y={label.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={def.color}
+                  fontSize="6"
+                  fontWeight="700"
+                  letterSpacing="0.4"
+                >
+                  {def.label}
+                </text>
+              </g>
+            );
+          })}
+        {arcs.includes("Turret") && (
+          <g filter={`url(#arc-glow-${ship.id})`}>
+            <circle
+              cx="60"
+              cy="60"
+              r="31"
+              fill="none"
+              stroke={ARC_PREVIEW_DEFS.Turret.color}
+              strokeWidth="3"
+              strokeOpacity="0.9"
+              strokeDasharray="4 3"
+            />
+            <text
+              x="60"
+              y="64"
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={ARC_PREVIEW_DEFS.Turret.color}
+              fontSize="7"
+              fontWeight="800"
+              letterSpacing="0.5"
+            >
+              TUR
+            </text>
+          </g>
+        )}
+      </svg>
+    </div>
+  );
 }
 
 export default function GameFleetSelection() {
@@ -449,6 +700,7 @@ export default function GameFleetSelection() {
                             </span>
                           </div>
                         </div>
+                        <ShipArcPreview ship={ship} />
                         <div>
                           <p className="uppercase tracking-wider text-primary/80">
                             Weapons
