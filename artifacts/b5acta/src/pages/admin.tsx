@@ -5,6 +5,7 @@ import { customFetch } from "@workspace/api-client-react";
 import {
   Archive,
   CheckCircle,
+  MessageSquare,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -101,6 +102,21 @@ type AdminBugReport = {
 type AdminBugReportsResponse = {
   count: number;
   reports: AdminBugReport[];
+};
+
+type AdminLobbyChatMessage = {
+  id: number;
+  senderPlayerId: string;
+  senderName: string | null;
+  message: string;
+  createdAt: string;
+  deletedAt: string | null;
+  deletedByAdminId: string | null;
+};
+
+type AdminLobbyChatResponse = {
+  count: number;
+  messages: AdminLobbyChatMessage[];
 };
 
 function snapshotRecord(value: unknown): Record<string, unknown> | null {
@@ -318,6 +334,15 @@ export default function AdminPage() {
     enabled: adminMe.data?.isAdmin === true,
     retry: false,
   });
+  const lobbyChatQuery = useQuery({
+    queryKey: ["admin-lobby-chat"],
+    queryFn: () =>
+      customFetch<AdminLobbyChatResponse>("/api/admin/lobby-chat?limit=100", {
+        responseType: "json",
+      }),
+    enabled: adminMe.data?.isAdmin === true,
+    retry: false,
+  });
 
   const archiveGame = useMutation({
     mutationFn: (gameId: number) =>
@@ -347,6 +372,15 @@ export default function AdminPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-bug-reports"] }),
   });
 
+  const deleteLobbyChatMessage = useMutation({
+    mutationFn: (messageId: number) =>
+      customFetch(`/api/admin/lobby-chat/${messageId}`, {
+        method: "DELETE",
+        responseType: "text",
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-lobby-chat"] }),
+  });
+
   const isAdmin = adminMe.data?.isAdmin === true;
   const now = Date.now();
 
@@ -371,12 +405,14 @@ export default function AdminPage() {
               usersQuery.refetch();
               gamesQuery.refetch();
               bugReportsQuery.refetch();
+              lobbyChatQuery.refetch();
             }}
             disabled={
               !isAdmin ||
               gamesQuery.isFetching ||
               usersQuery.isFetching ||
-              bugReportsQuery.isFetching
+              bugReportsQuery.isFetching ||
+              lobbyChatQuery.isFetching
             }
             data-testid="button-admin-refresh"
           >
@@ -407,15 +443,21 @@ export default function AdminPage() {
             usersLoading={usersQuery.isLoading}
             bugReports={bugReportsQuery.data}
             bugReportsLoading={bugReportsQuery.isLoading}
+            lobbyChat={lobbyChatQuery.data}
+            lobbyChatLoading={lobbyChatQuery.isLoading}
             includeResolvedReports={includeResolvedReports}
             setIncludeResolvedReports={setIncludeResolvedReports}
             resolveBugReportId={(reportId) => resolveBugReport.mutate(reportId)}
+            deleteLobbyChatMessageId={(messageId) =>
+              deleteLobbyChatMessage.mutate(messageId)
+            }
             archiveGameId={(gameId) => archiveGame.mutate(gameId)}
             deleteGameId={(gameId) => deleteGame.mutate(gameId)}
             actionsDisabled={
               archiveGame.isPending ||
               deleteGame.isPending ||
-              resolveBugReport.isPending
+              resolveBugReport.isPending ||
+              deleteLobbyChatMessage.isPending
             }
             now={now}
           />
@@ -427,15 +469,21 @@ export default function AdminPage() {
             usersLoading={usersQuery.isLoading}
             bugReports={bugReportsQuery.data}
             bugReportsLoading={bugReportsQuery.isLoading}
+            lobbyChat={lobbyChatQuery.data}
+            lobbyChatLoading={lobbyChatQuery.isLoading}
             includeResolvedReports={includeResolvedReports}
             setIncludeResolvedReports={setIncludeResolvedReports}
             resolveBugReportId={(reportId) => resolveBugReport.mutate(reportId)}
+            deleteLobbyChatMessageId={(messageId) =>
+              deleteLobbyChatMessage.mutate(messageId)
+            }
             archiveGameId={(gameId) => archiveGame.mutate(gameId)}
             deleteGameId={(gameId) => deleteGame.mutate(gameId)}
             actionsDisabled={
               archiveGame.isPending ||
               deleteGame.isPending ||
-              resolveBugReport.isPending
+              resolveBugReport.isPending ||
+              deleteLobbyChatMessage.isPending
             }
             now={now}
           />
@@ -466,9 +514,12 @@ function AdminContent({
   usersLoading,
   bugReports,
   bugReportsLoading,
+  lobbyChat,
+  lobbyChatLoading,
   includeResolvedReports,
   setIncludeResolvedReports,
   resolveBugReportId,
+  deleteLobbyChatMessageId,
   archiveGameId,
   deleteGameId,
   actionsDisabled,
@@ -480,9 +531,12 @@ function AdminContent({
   usersLoading: boolean;
   bugReports?: AdminBugReportsResponse;
   bugReportsLoading: boolean;
+  lobbyChat?: AdminLobbyChatResponse;
+  lobbyChatLoading: boolean;
   includeResolvedReports: boolean;
   setIncludeResolvedReports: (value: boolean) => void;
   resolveBugReportId: (reportId: number) => void;
+  deleteLobbyChatMessageId: (messageId: number) => void;
   archiveGameId: (gameId: number) => void;
   deleteGameId: (gameId: number) => void;
   actionsDisabled: boolean;
@@ -615,6 +669,81 @@ function AdminContent({
                       </div>
                     )}
                   </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <MessageSquare className="h-4 w-4" />
+            Lobby Chat
+          </div>
+          {lobbyChat && (
+            <div className="font-mono text-[11px] text-muted-foreground">
+              showing {lobbyChat.messages.length} messages
+            </div>
+          )}
+        </div>
+        {lobbyChatLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : !lobbyChat || lobbyChat.messages.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
+            No lobby messages found.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {lobbyChat.messages.map((message) => (
+              <div
+                key={message.id}
+                className="rounded-md border border-border bg-card px-4 py-3"
+                data-testid={`admin-lobby-chat-message-${message.id}`}
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
+                        Message {message.id}
+                      </span>
+                      <span className="truncate text-sm font-semibold">
+                        {message.senderName ?? "Commander"}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {formatDateTime(message.createdAt)}
+                      </span>
+                    </div>
+                    <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                      Sender: <span className="text-foreground">{message.senderPlayerId}</span>
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap break-words rounded border border-border/60 bg-black/20 px-3 py-2 text-sm leading-relaxed text-foreground">
+                      {message.message}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="shrink-0 gap-2 font-mono text-xs uppercase tracking-widest"
+                    disabled={actionsDisabled}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Delete lobby message ${message.id} from ${message.senderName ?? "Commander"}?`,
+                        )
+                      ) {
+                        deleteLobbyChatMessageId(message.id);
+                      }
+                    }}
+                    data-testid={`button-admin-delete-lobby-chat-${message.id}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </Button>
                 </div>
               </div>
             ))}

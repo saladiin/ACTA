@@ -12,6 +12,7 @@ import {
   gameSpecialActionAuditLogsTable,
   bugReportsTable,
   gameChatMessagesTable,
+  lobbyChatMessagesTable,
   playersTable,
 } from "@workspace/db";
 import { getUserId, isAdminUser, requireAdmin, requireAuth } from "../lib/auth";
@@ -269,6 +270,60 @@ router.get("/admin/users", requireAdmin, async (_req, res): Promise<void> => {
     users: [...clerkAccounts, ...localOnlyAccounts],
   });
 });
+
+router.get(
+  "/admin/lobby-chat",
+  requireAdmin,
+  async (req, res): Promise<void> => {
+    const rawLimit = Number(req.query["limit"] ?? 100);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.max(1, Math.min(250, Math.trunc(rawLimit)))
+      : 100;
+    const messages = await db
+      .select()
+      .from(lobbyChatMessagesTable)
+      .where(isNull(lobbyChatMessagesTable.deletedAt))
+      .orderBy(desc(lobbyChatMessagesTable.createdAt), desc(lobbyChatMessagesTable.id))
+      .limit(limit);
+
+    res.json({
+      count: messages.length,
+      messages: messages.map((message) => ({
+        ...message,
+        createdAt: message.createdAt.toISOString(),
+        deletedAt: message.deletedAt?.toISOString() ?? null,
+      })),
+    });
+  },
+);
+
+router.delete(
+  "/admin/lobby-chat/:messageId",
+  requireAdmin,
+  async (req, res): Promise<void> => {
+    const adminId = getUserId(req);
+    const messageId = Number(req.params.messageId);
+    if (!Number.isInteger(messageId) || messageId <= 0) {
+      res.status(400).json({ error: "Invalid message id" });
+      return;
+    }
+
+    const [message] = await db
+      .update(lobbyChatMessagesTable)
+      .set({
+        deletedAt: new Date(),
+        deletedByAdminId: adminId,
+      })
+      .where(eq(lobbyChatMessagesTable.id, messageId))
+      .returning();
+
+    if (!message) {
+      res.status(404).json({ error: "Lobby chat message not found" });
+      return;
+    }
+    res.status(204).end();
+  },
+);
 
 router.get(
   "/admin/bug-reports",

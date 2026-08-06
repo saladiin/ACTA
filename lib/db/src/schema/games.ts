@@ -515,6 +515,18 @@ export const gameChatMessagesTable = pgTable("game_chat_messages", {
     .defaultNow(),
 });
 
+export const lobbyChatMessagesTable = pgTable("lobby_chat_messages", {
+  id: serial("id").primaryKey(),
+  senderPlayerId: text("sender_player_id").notNull(),
+  senderName: text("sender_name"),
+  message: text("message").notNull(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedByAdminId: text("deleted_by_admin_id"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const insertGameSchema = createInsertSchema(gamesTable).omit({
   id: true,
   status: true,
@@ -548,3 +560,4 @@ export type GameSpecialActionAuditLog =
   typeof gameSpecialActionAuditLogsTable.$inferSelect;
 export type BugReport = typeof bugReportsTable.$inferSelect;
 export type GameChatMessage = typeof gameChatMessagesTable.$inferSelect;
+export type LobbyChatMessage = typeof lobbyChatMessagesTable.$inferSelect;

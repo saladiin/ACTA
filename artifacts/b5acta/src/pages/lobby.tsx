@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser } from "@clerk/react";
 import {
+  customFetch,
   setExtraHeaders,
   useAcceptGame,
   useGetLobby,
@@ -15,11 +16,36 @@ import {
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X } from "lucide-react";
+import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X, MessageSquare, Send, ChevronDown, ChevronUp } from "lucide-react";
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 import { setDevUserId, useDevUserId } from "@/lib/dev-user";
 import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
+
+type LobbyChatMessage = {
+  id: number;
+  senderPlayerId: string;
+  senderName: string | null;
+  message: string;
+  createdAt: string;
+};
+
+type LobbyChatResponse = {
+  messages: LobbyChatMessage[];
+};
+
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err) return err;
+  return fallback;
+}
+
+function chatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
 
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, string> = {
@@ -95,6 +121,198 @@ function ChallengeFeatureBadges({ game }: { game: { hasTerrain?: boolean; hasSta
       {game.hasTerrain ? <FeatureBadge label="Terrain" /> : null}
       {game.hasStation ? <FeatureBadge label="Station" /> : null}
     </div>
+  );
+}
+
+function LobbyChatPanel({ myUserId }: { myUserId: string }) {
+  const qc = useQueryClient();
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(true);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const queryKey = ["lobby-chat"] as const;
+  const chatQuery = useQuery({
+    queryKey,
+    queryFn: () =>
+      customFetch<LobbyChatResponse>("/api/lobby/chat", {
+        responseType: "json",
+      }),
+    refetchInterval: open ? 5000 : 10000,
+  });
+  const messages = chatQuery.data?.messages ?? [];
+  const latest = messages.length > 0 ? messages[messages.length - 1] : null;
+  const sendMessage = useMutation({
+    mutationFn: (message: string) =>
+      customFetch<{ message: LobbyChatMessage }>("/api/lobby/chat", {
+        method: "POST",
+        responseType: "json",
+        body: JSON.stringify({ message }),
+      }),
+    onMutate: () => {
+      setError(null);
+    },
+    onSuccess: async (response) => {
+      setDraft("");
+      setError(null);
+      setOpen(true);
+      qc.setQueryData<LobbyChatResponse>(queryKey, (current) => {
+        const currentMessages = current?.messages ?? [];
+        return {
+          messages: [...currentMessages, response.message].slice(-50),
+        };
+      });
+      await qc.invalidateQueries({ queryKey });
+    },
+    onError: (err) => {
+      setError(apiErrorMessage(err, "Lobby chat send failed"));
+    },
+  });
+  const trimmed = draft.trim();
+  const canSend = trimmed.length > 0 && trimmed.length <= 500 && !sendMessage.isPending;
+
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length, open]);
+
+  const submit = () => {
+    if (!trimmed) {
+      setError("Type a message first.");
+      return;
+    }
+    if (trimmed.length > 500) {
+      setError("Message must be 500 characters or fewer.");
+      return;
+    }
+    if (sendMessage.isPending) return;
+    sendMessage.mutate(trimmed);
+  };
+
+  return (
+    <aside
+      className={
+        open
+          ? "fixed inset-x-0 bottom-0 z-50 border-t border-amber-500/30 bg-background/95 shadow-2xl shadow-black/60 backdrop-blur"
+          : "fixed bottom-8 right-5 z-50 rounded-t-md border border-amber-500/60 bg-black/90 shadow-2xl shadow-black/60 backdrop-blur"
+      }
+      data-testid="lobby-chat-panel"
+    >
+      <button
+        type="button"
+        className={
+          open
+            ? "flex w-full items-center justify-between gap-3 border-b border-border/70 px-4 py-2 text-left"
+            : "flex items-center justify-center gap-2 px-4 py-2"
+        }
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        data-testid="button-toggle-lobby-chat"
+      >
+        <span className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">
+          {open ? <MessageSquare className="h-4 w-4" /> : <ChevronUp className="h-3.5 w-3.5" />}
+          {open ? "Lobby Chat" : "Chat"}
+          {messages.length > 0 && (
+            <span className="rounded border border-amber-400/40 px-1.5 py-0.5 text-[10px] text-amber-200">
+              {messages.length}
+            </span>
+          )}
+        </span>
+        {open && (
+          <span className="flex min-w-0 items-center gap-3">
+            {latest ? (
+              <span className="hidden truncate text-xs text-muted-foreground sm:block">
+                {latest.senderName ?? "Commander"}: {latest.message}
+              </span>
+            ) : null}
+            <ChevronDown className="h-4 w-4" />
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="grid gap-3 p-3">
+          <div
+            ref={scrollRef}
+            className="max-h-56 overflow-y-auto rounded border border-border/70 bg-black/30 p-2"
+            data-testid="lobby-chat-messages"
+          >
+            {messages.length === 0 ? (
+              <div className="py-6 text-center text-xs text-muted-foreground">
+                {chatQuery.isError
+                  ? apiErrorMessage(chatQuery.error, "Lobby chat could not load.")
+                  : "Lobby channel is quiet."}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {messages.map((message) => {
+                  const mine = message.senderPlayerId === myUserId;
+                  const sender = message.senderName ?? "Commander";
+                  return (
+                    <div
+                      key={message.id}
+                      className={`rounded border px-2 py-1.5 text-xs ${
+                        mine
+                          ? "ml-auto max-w-[88%] border-amber-400/30 bg-amber-400/10"
+                          : "mr-auto max-w-[88%] border-border/80 bg-card/70"
+                      }`}
+                      data-testid={`lobby-chat-message-${message.id}`}
+                    >
+                      <div className="flex items-center justify-end gap-3 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                        <span>{chatTime(message.createdAt)}</span>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap break-words leading-relaxed text-foreground">
+                        <span className={mine ? "font-semibold text-amber-200" : "font-semibold text-zinc-200"}>
+                          [{sender}]:
+                        </span>{" "}
+                        {message.message}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <div>
+              <Textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value.slice(0, 500))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submit();
+                  }
+                }}
+                placeholder="Message the lobby..."
+                className="min-h-16 resize-none bg-black/30 font-mono text-xs"
+                maxLength={500}
+                data-testid="textarea-lobby-chat"
+              />
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {draft.length}/500
+                </span>
+                {error && (
+                  <span className="text-right font-mono text-[10px] text-red-400" data-testid="text-lobby-chat-error">
+                    {error}
+                  </span>
+                )}
+              </div>
+            </div>
+            <Button
+              className="h-16 gap-2 self-start font-mono text-xs uppercase tracking-widest"
+              disabled={!canSend}
+              onClick={submit}
+              data-testid="button-send-lobby-chat"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {sendMessage.isPending ? "Sending" : "Send"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -177,7 +395,7 @@ export default function Lobby() {
 
   return (
     <Layout title="Command Lobby">
-      <div className="p-6 max-w-5xl mx-auto space-y-8">
+      <div className="p-6 pb-80 max-w-5xl mx-auto space-y-8">
         {/* Profile bar */}
         {profile && (
           <div data-testid="profile-bar" className="flex items-center justify-between border border-border bg-card rounded-md px-5 py-3">
@@ -403,6 +621,7 @@ export default function Lobby() {
           )}
         </section>
       </div>
+      <LobbyChatPanel myUserId={myUserId} />
     </Layout>
   );
 }

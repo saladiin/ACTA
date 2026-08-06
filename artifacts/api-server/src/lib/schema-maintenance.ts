@@ -5533,6 +5533,25 @@ export async function ensureActaAllocationSchema(): Promise<void> {
       ON game_chat_messages (game_id, created_at, id)
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS lobby_chat_messages (
+        id serial PRIMARY KEY,
+        sender_player_id text NOT NULL,
+        sender_name text,
+        message text NOT NULL,
+        deleted_at timestamptz,
+        deleted_by_admin_id text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS lobby_chat_messages_visible_created_idx
+      ON lobby_chat_messages (deleted_at, created_at, id)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS lobby_chat_messages_sender_created_idx
+      ON lobby_chat_messages (sender_player_id, created_at, id)
+    `);
+    await pool.query(`
       UPDATE games
       SET opponent_kind = 'human'
       WHERE opponent_kind IS NULL OR opponent_kind NOT IN ('human', 'ai')

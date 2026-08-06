@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, or, and, ne } from "drizzle-orm";
-import { db, gamesTable } from "@workspace/db";
+import { desc, eq, or, and, ne, isNull } from "drizzle-orm";
+import { db, gamesTable, lobbyChatMessagesTable, playersTable } from "@workspace/db";
 import { requireAuth, getUserId } from "../lib/auth";
 import { GetLobbyResponse } from "@workspace/api-zod";
 import { AI_OPPONENT_ID } from "../lib/ai-opponent";
@@ -37,6 +37,9 @@ function toLobbyGameDto<T extends LobbyGameRow & { passwordHash: string | null }
 }
 
 const router: IRouter = Router();
+const LOBBY_CHAT_LIMIT = 50;
+const LOBBY_CHAT_MAX_LENGTH = 500;
+const LOBBY_CHAT_MIN_SEND_INTERVAL_MS = 1500;
 
 function isDevBuiltinCommander(userId: string): boolean {
   return process.env.NODE_ENV !== "production" && (userId === "test-user-1" || userId === "test-user-2");
@@ -44,6 +47,18 @@ function isDevBuiltinCommander(userId: string): boolean {
 
 function isTemporarilyArchived(game: { archiveExpiresAt: Date | null }): boolean {
   return Boolean(game.archiveExpiresAt && game.archiveExpiresAt > new Date());
+}
+
+function parseLobbyChatBody(body: unknown): { success: true; message: string } | { success: false; error: string } {
+  if (!body || typeof body !== "object") return { success: false, error: "Message is required" };
+  const raw = (body as { message?: unknown }).message;
+  if (typeof raw !== "string") return { success: false, error: "Message is required" };
+  const message = raw.trim();
+  if (!message) return { success: false, error: "Message cannot be empty" };
+  if (message.length > LOBBY_CHAT_MAX_LENGTH) {
+    return { success: false, error: `Message must be ${LOBBY_CHAT_MAX_LENGTH} characters or fewer` };
+  }
+  return { success: true, message };
 }
 
 router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
@@ -85,6 +100,55 @@ router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
     .map(toLobbyGameDto);
 
   res.json(GetLobbyResponse.parse({ pendingChallenges, activeGames, recentlyCompleted }));
+});
+
+router.get("/lobby/chat", requireAuth, async (_req, res): Promise<void> => {
+  const latest = await db
+    .select()
+    .from(lobbyChatMessagesTable)
+    .where(isNull(lobbyChatMessagesTable.deletedAt))
+    .orderBy(desc(lobbyChatMessagesTable.createdAt), desc(lobbyChatMessagesTable.id))
+    .limit(LOBBY_CHAT_LIMIT);
+
+  res.json({ messages: latest.reverse() });
+});
+
+router.post("/lobby/chat", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const body = parseLobbyChatBody(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: body.error });
+    return;
+  }
+
+  const [latestFromSender] = await db
+    .select({ createdAt: lobbyChatMessagesTable.createdAt })
+    .from(lobbyChatMessagesTable)
+    .where(eq(lobbyChatMessagesTable.senderPlayerId, userId))
+    .orderBy(desc(lobbyChatMessagesTable.createdAt), desc(lobbyChatMessagesTable.id))
+    .limit(1);
+  if (
+    latestFromSender &&
+    Date.now() - latestFromSender.createdAt.getTime() < LOBBY_CHAT_MIN_SEND_INTERVAL_MS
+  ) {
+    res.status(429).json({ error: "Give the channel a heartbeat before sending again." });
+    return;
+  }
+
+  const [player] = await db
+    .select({ username: playersTable.username })
+    .from(playersTable)
+    .where(eq(playersTable.clerkUserId, userId));
+  const [message] = await db
+    .insert(lobbyChatMessagesTable)
+    .values({
+      senderPlayerId: userId,
+      senderName: player?.username ?? null,
+      message: body.message,
+    })
+    .returning();
+
+  res.status(201).json({ message });
 });
 
 export default router;
