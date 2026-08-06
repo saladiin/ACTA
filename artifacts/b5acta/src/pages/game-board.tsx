@@ -40,13 +40,10 @@ import {
   useAttemptTelepathicDisruption,
   useLaunchShadowFighterDispersal,
   useChooseScoutAction,
-  useListFleets,
-  useListFleetShips,
   useListShipModels,
   getGetGameQueryKey,
   getListShipModelsQueryKey,
   getListTurnsQueryKey,
-  getListFleetShipsQueryKey,
   customFetch,
 } from "@workspace/api-client-react";
 import type {
@@ -105,6 +102,10 @@ import {
   type PriorityLevel,
   priorityLabel,
 } from "@/lib/fleet-allocation";
+import {
+  clearStoredFleetSelection,
+  readStoredFleetSelection,
+} from "@/lib/fleet-selection-storage";
 import {
   findBlockingLineOfSightObstacle,
   type LineOfSightBlock,
@@ -11970,7 +11971,6 @@ export default function GameBoard() {
       setDisplacedFighterConfirmPopover(null);
     }
   }, [canPlaceCurrentDisplacedFighter, stagedDisplacedFighterPlacement]);
-  const { data: fleets } = useListFleets();
   const { data: shipModels } = useListShipModels({
     query: {
       queryKey: getListShipModelsQueryKey(),
@@ -12234,7 +12234,7 @@ export default function GameBoard() {
   );
   const [selectedStagedId, setSelectedStagedId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [selectedFaction, setSelectedFaction] = useState<string>("");
+  const [selectedFaction, setSelectedFaction] = useState<string>("__all__");
   const [isDragOver, setIsDragOver] = useState(false);
   const [tapPlacementShip, setTapPlacementShip] = useState<ShipModel | null>(
     null,
@@ -12344,12 +12344,9 @@ export default function GameBoard() {
     () => [...new Set((shipModels ?? []).map((m) => m.faction))].sort(),
     [shipModels],
   );
-  const filteredModels = useMemo(
-    () =>
-      selectedFaction && selectedFaction !== "__all__"
-        ? (shipModels ?? []).filter((m) => m.faction === selectedFaction)
-        : (shipModels ?? []),
-    [shipModels, selectedFaction],
+  const filteredModels = useMemo<ShipModel[]>(
+    () => [],
+    [],
   );
   // filename → weapon arcs lookup for GameUnit3D
   const shipModelById = useMemo(() => {
@@ -12963,17 +12960,15 @@ export default function GameBoard() {
   // from the staged ships' shipModelIds). We do NOT auto-pick; the
   // player gets to choose between "Quick-load a saved fleet" and
   // "Just drag what I want onto the board."
-  const [yardsFleetId, setYardsFleetId] = useState<string>("");
-  const autoStagedFleetIdRef = useRef<string | null>(null);
-  const { data: yardsFleetShips } = useListFleetShips(
-    parseInt(yardsFleetId || "0"),
-    {
-      query: {
-        queryKey: getListFleetShipsQueryKey(parseInt(yardsFleetId || "0")),
-        enabled: !!yardsFleetId,
-      },
-    },
-  );
+  const loadedFleetSelectionKeyRef = useRef<string | null>(null);
+  const yardsFleetId = "";
+  const yardsFleetShips = useMemo<
+    Array<{ id: number; shipModel: ShipModel; name: string }> | undefined
+  >(() => undefined, []);
+  const fleets = useMemo<
+    Array<{ id: number; name: string; shipCount: number }> | null
+  >(() => null, []);
+  const setYardsFleetId = useCallback((_next: string) => {}, []);
 
   const [autoAiRunning, setAutoAiRunning] = useState(false);
   const [aiAutoRunEnabled, setAiAutoRunEnabled] = useState(false);
@@ -14606,52 +14601,32 @@ export default function GameBoard() {
       return null;
     return active;
   }, [currentStagedUnits, draggingId, selectedStagedId]);
-  const applyFleetTemplate = useCallback(
-    (template: FleetTemplate) => {
-      const roster = shipModels ?? [];
-      const chosenShips: ShipModel[] = [];
-
-      for (const entry of template.ships) {
-        const ship = roster.find((model) => model.name === entry.modelName);
-        if (!ship) continue;
-        const count = entry.count ?? 1;
-        for (let i = 0; i < count; i += 1) {
-          chosenShips.push(ship);
-        }
-      }
-
-      if (chosenShips.length === 0) return;
-      const staged = makeExpandedStagedUnits(
-        chosenShips.map((ship) => ({ ship })),
-        `template-${template.id}`,
-      );
-      setYardsFleetId("");
-      setSelectedFaction(template.faction);
-      setStagedUnits((prev) => [
-        ...prev.filter((u) => u.ownerId !== myUserId),
-        ...staged,
-      ]);
-      setSelectedStagedId(staged[0]?.id ?? null);
-      setDraggingId(null);
-      setTapPlacementShip(null);
-    },
-    [makeExpandedStagedUnits, myUserId, shipModels],
-  );
+  const applyFleetTemplate = useCallback((_template: FleetTemplate) => {}, []);
   useEffect(() => {
-    if (!yardsFleetId) {
-      autoStagedFleetIdRef.current = null;
+    if (
+      !game ||
+      game.status !== "deploying" ||
+      myDeploymentLocked ||
+      manualTerrainPending ||
+      !myUserId ||
+      !shipModels
+    ) {
       return;
     }
-    if (!yardsFleetShips || autoStagedFleetIdRef.current === yardsFleetId)
-      return;
-
-    autoStagedFleetIdRef.current = yardsFleetId;
+    const storageKey = `${game.id}:${myUserId}`;
+    if (loadedFleetSelectionKeyRef.current === storageKey) return;
+    const stored = readStoredFleetSelection(game.id, myUserId);
+    if (!stored) return;
+    const selectedShips = stored.entries.flatMap((entry) => {
+      const ship = shipModelById[entry.shipModelId];
+      if (!ship) return [];
+      return Array.from({ length: entry.count }, () => ({ ship }));
+    });
+    if (selectedShips.length === 0) return;
+    loadedFleetSelectionKeyRef.current = storageKey;
     const staged = makeExpandedStagedUnits(
-      yardsFleetShips.map((fleetShip) => ({
-        ship: fleetShip.shipModel,
-        name: fleetShip.name || fleetShip.shipModel.name,
-      })),
-      `fleet-${yardsFleetId}`,
+      selectedShips,
+      `selected-fleet-${game.id}-${myUserId}`,
     );
     setStagedUnits((prev) => [
       ...prev.filter((u) => u.ownerId !== myUserId),
@@ -14660,7 +14635,15 @@ export default function GameBoard() {
     setSelectedStagedId(staged[0]?.id ?? null);
     setDraggingId(null);
     setTapPlacementShip(null);
-  }, [yardsFleetId, yardsFleetShips, makeExpandedStagedUnits, myUserId]);
+  }, [
+    game,
+    makeExpandedStagedUnits,
+    manualTerrainPending,
+    myDeploymentLocked,
+    myUserId,
+    shipModelById,
+    shipModels,
+  ]);
   const canUseGameChat = Boolean(
     game &&
       game.opponentKind !== "ai" &&
@@ -19038,6 +19021,7 @@ export default function GameBoard() {
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+          clearStoredFleetSelection(gameId, myUserId);
           setStagedUnits((prev) => prev.filter((u) => u.ownerId !== myUserId));
           setSelectedStagedId(null);
           setTapPlacementShip(null);
@@ -22514,7 +22498,7 @@ export default function GameBoard() {
           {game.status === "deploying" && isParticipant && !myDeploymentLocked && !manualTerrainPending && (
             <div className="p-3 border-b border-border space-y-2 flex flex-col">
               <p className="text-xs font-mono text-primary uppercase tracking-widest">
-                Fleet Yards
+                Deployment
               </p>
               {!aiDeploymentControlActive &&
                 ((mySide === "challenger" && game.opponentDeployed) ||
@@ -22531,8 +22515,8 @@ export default function GameBoard() {
                 data-testid="text-deploy-hint"
               >
                 {aiDeploymentControlActive
-                  ? "Place the AI fleet on the opponent edge, then commit deployment to begin the engagement."
-                  : "Drag ships from the roster below straight onto the board, or quick-load one of your saved fleets."}
+                  ? "Place the selected AI fleet on the opponent edge, then commit deployment to begin the engagement."
+                  : "Place the ships selected for this engagement, then commit deployment when ready."}
                 {fleets && fleets.length === 0 && (
                   <>
                     {" "}
@@ -22548,6 +22532,24 @@ export default function GameBoard() {
                 )}
               </p>
 
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="w-full uppercase tracking-widest text-xs"
+              >
+                <Link
+                  to={`/games/${game.id}/fleet-selection${aiDeploymentControlActive ? "?owner=ai" : ""}`}
+                  data-testid="link-change-selected-fleet"
+                >
+                  {currentStagedUnits.length === 0
+                    ? "Select Fleet"
+                    : "Change Selected Fleet"}
+                </Link>
+              </Button>
+
+              {false && (
+              <div className="hidden">
               {/* Fleet selector */}
               {TEST_FLEET_TEMPLATES.length > 0 && (
                 <div className="space-y-1">
@@ -22732,6 +22734,8 @@ export default function GameBoard() {
                   </div>
                 ))}
               </div>
+              </div>
+              )}
               {/* Staged unit list */}
               {currentStagedUnits.length > 0 && (
                 <div className="space-y-0.5 pt-1 border-t border-border/50">

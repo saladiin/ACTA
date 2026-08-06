@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  useListFleets,
   useCreateGame,
   getListGamesQueryKey,
   getGetLobbyQueryKey,
@@ -28,7 +27,6 @@ export default function NewGame() {
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [opponentKind, setOpponentKind] = useState<"human" | "ai">("human");
   const [password, setPassword] = useState("");
-  const [selectedFleet, setSelectedFleet] = useState<string>("");
   const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>("raid");
   const [allocationPoints, setAllocationPoints] = useState("5");
   const [deploymentDepth, setDeploymentDepth] = useState<number>(12);
@@ -46,7 +44,6 @@ export default function NewGame() {
   const [crewQualityMode, setCrewQualityMode] = useState<"standard" | "custom">("standard");
   const [matchName, setMatchName] = useState("");
 
-  const { data: fleets } = useListFleets();
   const createGame = useCreateGame();
   const terrainCountOptions =
     terrainPlacement === "manual" ? [4, 6, 8] : [3, 6, 9];
@@ -83,7 +80,7 @@ export default function NewGame() {
           opponentKind,
           matchName: matchName.trim() || null,
           password: visibility === "private" ? password : null,
-          fleetId: selectedFleet ? parseInt(selectedFleet) : null,
+          fleetId: null,
           deploymentDepth,
           deploymentPreset,
           ambushPlayer:
@@ -112,7 +109,7 @@ export default function NewGame() {
         onSuccess: (game) => {
           qc.invalidateQueries({ queryKey: getListGamesQueryKey() });
           qc.invalidateQueries({ queryKey: getGetLobbyQueryKey() });
-          setLocation(`/games/${game.id}`);
+          setLocation(`/games/${game.id}/fleet-selection`);
         },
       },
     );
@@ -496,36 +493,6 @@ export default function NewGame() {
           </div>
         </section>
 
-        <section>
-          {sectionHeader(10, "Your Starting Fleet (optional)")}
-          <Select value={selectedFleet} onValueChange={setSelectedFleet}>
-            <SelectTrigger data-testid="select-fleet" className="bg-background">
-              <SelectValue placeholder="Choose your fleet now, or place ships later..." />
-            </SelectTrigger>
-            <SelectContent className="bg-card border-border">
-              {fleets?.length === 0 && <SelectItem value="none" disabled>No fleets; create one first</SelectItem>}
-              {fleets?.map((f) => (
-                <SelectItem key={f.id} value={String(f.id)}>
-                  {f.name} ({f.shipCount} ships)
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="mt-1 text-[11px] text-muted-foreground font-mono">
-            This selection is for your fleet. {opponentKind === "ai" ? "The AI fleet is assembled separately on the deployment screen." : "Your opponent chooses their own fleet when they join."}
-          </p>
-          {selectedFleet && (
-            <button
-              type="button"
-              className="mt-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider hover:text-foreground"
-              onClick={() => setSelectedFleet("")}
-              data-testid="button-clear-fleet"
-            >
-              Clear selection
-            </button>
-          )}
-        </section>
-
         {createGame.isError && (
           <p className="text-xs text-red-400 font-mono" data-testid="text-create-error">
             {(createGame.error as Error).message}
@@ -539,7 +506,7 @@ export default function NewGame() {
           onClick={handleCreate}
         >
           <Swords className="w-4 h-4" />
-          {createGame.isPending ? "Launching Engagement..." : "Launch Engagement"}
+          {createGame.isPending ? "Creating Engagement..." : "Continue to Fleet Selection"}
         </Button>
       </div>
     </Layout>

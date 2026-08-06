@@ -15,6 +15,7 @@ import SignUpPage from "@/pages/sign-up";
 import Lobby from "@/pages/lobby";
 import Fleets from "@/pages/fleets";
 import NewGame from "@/pages/new-game";
+import GameFleetSelection from "@/pages/game-fleet-selection";
 import GameBoard from "@/pages/game-board";
 import GamesList from "@/pages/games";
 import Settings from "@/pages/settings";
@@ -232,6 +233,7 @@ function AppRoutes({ clerkEnabled }: { clerkEnabled: boolean }) {
           <Route path="/lobby"><ProtectedRoute component={Lobby} /></Route>
           <Route path="/fleets"><ProtectedRoute component={Fleets} /></Route>
           <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
+          <Route path="/games/:id/fleet-selection"><ProtectedRoute component={GameFleetSelection} /></Route>
           <Route path="/games/:id"><ProtectedRoute component={GameBoard} /></Route>
           <Route path="/games"><ProtectedRoute component={GamesList} /></Route>
           {localToolingRoutesEnabled && VfxShowcase && (
