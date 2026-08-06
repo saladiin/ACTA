@@ -16,6 +16,7 @@ import {
   effectiveDamageState,
   locationFromRoll,
   findEntry,
+  findSpaceStationEntry,
   rollDice,
   deriveCritEffects,
   isDice,
@@ -510,6 +511,10 @@ function unitCountsForVictory(unit: {
     && (unit.maxCrewPoints <= 0 || unit.crewPoints > 0);
 }
 
+function stationCrewQuality(baseCrewQuality: number, station: boolean): number {
+  return station ? 4 : baseCrewQuality;
+}
+
 function comparableTraitName(raw: string): string {
   return raw
     .toLowerCase()
@@ -627,6 +632,25 @@ function effectiveTurnProfile(unit: {
     turnAngle: (baseTurnAngle + sharpBonus) * pivotMultiplier,
     turnsForbidden: baseAction === "all-power-engines" || baseAction === "run-silent" || baseAction === "all-stop" || baseAction === "initiate-jump-point",
   };
+}
+
+function shipModelIsSpaceStation(model: {
+  name?: string | null;
+  shipClass?: string | null;
+  traits?: string | null;
+}): boolean {
+  const traits = parseShipTraits(model.traits ?? "");
+  return traits.spaceStation
+    || /\bspace\s+station\b/i.test(model.name ?? "")
+    || /\bstar\s*base\b/i.test(model.name ?? "")
+    || /\bstation\b/i.test(model.shipClass ?? "");
+}
+
+function unitIsInoperableSpaceStation(
+  unit: { hullPoints: number; isDestroyed?: boolean },
+  model: { name?: string | null; shipClass?: string | null; traits?: string | null } | null,
+): boolean {
+  return !unit.isDestroyed && unit.hullPoints <= 0 && Boolean(model && shipModelIsSpaceStation(model));
 }
 
 function unitIsInHyperspace(unit: { boardState?: string | null }): boolean {
@@ -1139,21 +1163,46 @@ async function lineOfSightObstaclesForGame(
   gameId: number,
 ): Promise<LineOfSightObstacle[]> {
   const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, gameId));
-  return lineOfSightObstaclesFromTerrainConfig(game?.terrainConfig);
+  const obstacles = lineOfSightObstaclesFromTerrainConfig(game?.terrainConfig);
+  const units = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.boardState, "deployed"),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  for (const unit of units as Array<typeof gameUnitsTable.$inferSelect>) {
+    const model = await getShipModelForUnit(tx, unit);
+    if (!model || !shipModelIsSpaceStation(model)) continue;
+    obstacles.push({
+      id: `station-unit-${unit.id}`,
+      name: unit.name,
+      kind: "station",
+      effect: "blocked",
+      x: unit.hexQ,
+      z: unit.hexR,
+      radiusInches: 1,
+      blocksFromInside: false,
+    });
+  }
+  return obstacles;
 }
 
 function weaponLineOfSightBlock(
   attacker: BoardPoint,
   target: BoardPoint,
   obstacles: LineOfSightObstacle[],
+  ignoreObstacleIds: ReadonlySet<string> = new Set(),
 ): LineOfSightBlock | null {
-  return findBlockingLineOfSightObstacle(attacker, target, obstacles);
+  return findBlockingLineOfSightObstacle(
+    attacker,
+    target,
+    obstacles.filter((obstacle) => !ignoreObstacleIds.has(obstacle.id)),
+  );
 }
 
 function effectiveWeaponProfile(
   game: Pick<typeof gamesTable.$inferSelect, "currentRound">,
   attacker: Pick<typeof gameUnitsTable.$inferSelect, "shadowPointDefenseRound">,
-  attackerModel: Pick<typeof shipModelsTable.$inferSelect, "rulesProfile" | "faction">,
+  attackerModel: Pick<typeof shipModelsTable.$inferSelect, "rulesProfile" | "faction" | "name" | "shipClass" | "traits">,
   weapon: Pick<typeof weaponsTable.$inferSelect, "range" | "traits" | "arc">,
 ): {
   traits: ReturnType<typeof parseWeaponTraits>;
@@ -1162,6 +1211,14 @@ function effectiveWeaponProfile(
   shadowPointDefense: boolean;
 } {
   const printed = parseWeaponTraits(weapon.traits);
+  if (shipModelIsSpaceStation(attackerModel)) {
+    return {
+      traits: printed,
+      range: weapon.range,
+      arc: "Turret",
+      shadowPointDefense: false,
+    };
+  }
   const shadowPointDefense =
     rulesProfileForModel(attackerModel) === "shadows"
     && attacker.shadowPointDefenseRound === game.currentRound
@@ -5382,6 +5439,12 @@ async function movementActivationEligible(tx: any, unit: typeof gameUnitsTable.$
     return hyperspaceReserveMovementActivationEligible(tx, unit);
   }
   if (unit.isDestroyed || unit.hasMovedThisRound) return false;
+  const model = await getShipModelForUnit(tx, unit);
+  if (model) {
+    const traits = parseShipTraits(model.traits ?? "");
+    if (unitIsInoperableSpaceStation(unit, model)) return false;
+    if (shipModelIsSpaceStation(model) && traits.immobile) return false;
+  }
   const [game] = await tx.select({
     currentRound: gamesTable.currentRound,
   }).from(gamesTable).where(eq(gamesTable.id, unit.gameId));
@@ -5396,6 +5459,8 @@ async function firingActivationEligible(
   unit: typeof gameUnitsTable.$inferSelect,
   currentRound: number,
 ): Promise<boolean> {
+  const model = await getShipModelForUnit(tx, unit);
+  if (unitIsInoperableSpaceStation(unit, model)) return false;
   return !unitIsInHyperspace(unit)
     && !unitIsWithdrawn(unit)
     && !await unitPinnedForRound(tx, unit, currentRound)
@@ -6597,7 +6662,12 @@ async function chooseAiFirePlan(
         rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: `not-in-${weaponProfile.arc}-arc` });
         continue;
       }
-      const losBlock = weaponLineOfSightBlock(aPos, tPos, losObstacles);
+      const losBlock = weaponLineOfSightBlock(
+        aPos,
+        tPos,
+        losObstacles,
+        new Set([`station-unit-${attacker.id}`, `station-unit-${target.id}`]),
+      );
       if (losBlock) {
         rejected.push({
           weaponId: weapon.id,
@@ -6766,6 +6836,7 @@ async function resolveBasicAiWeaponFire(
   if (shipModelIsFighter(targetModel) && await fighterIsLockedInDogfight(tx, game.id, target)) {
     throw new Error("AI target fighter is locked in a dogfight and cannot be attacked by normal weapons");
   }
+  let targetIsStation = shipModelIsSpaceStation(targetModel);
 
   const attackerCritRows = await tx.select().from(unitCriticalEffectsTable)
     .where(eq(unitCriticalEffectsTable.gameUnitId, attacker.id));
@@ -6847,6 +6918,7 @@ async function resolveBasicAiWeaponFire(
   if (shieldInterposition.target && shieldInterposition.targetModel && shieldInterposition.targetPosition) {
     target = shieldInterposition.target;
     targetModel = shieldInterposition.targetModel;
+    targetIsStation = shipModelIsSpaceStation(targetModel);
     tPos = shieldInterposition.targetPosition;
     distance = fighterWeaponRangeDistance({
       id: attacker.id,
@@ -6920,7 +6992,10 @@ async function resolveBasicAiWeaponFire(
   const stealthFailWastedSlowLoading = !stealthCheckPassed && (wt.slowLoading || wt.oneShot);
 
   const interceptorAttempts: { rolls: number[]; threshold: number; success: boolean }[] = [];
-  let interceptorRemaining = targetCrippled ? 0 : Math.min(target.interceptorDiceRemaining, targetTraits.interceptors);
+  const effectiveTargetInterceptors = targetIsStation && targetCrippled
+    ? Math.floor(targetTraits.interceptors / 2)
+    : targetCrippled ? 0 : targetTraits.interceptors;
+  let interceptorRemaining = Math.min(target.interceptorDiceRemaining, effectiveTargetInterceptors);
   let interceptorThreshold = target.interceptorThresholdCurrent;
   let attackDiceAfterInterceptors = finalAttackDice;
   const interceptorsBypassed = wt.beam || wt.miniBeam || wt.massDriver || wt.energyMine;
@@ -6985,6 +7060,7 @@ async function resolveBasicAiWeaponFire(
     && targetEffectiveDamageState !== "adrift"
     && targetEffectiveDamageState !== "exploding-end-of-next"
     && target.hullPoints > 0
+    && !targetIsStation
     && (target.maxCrewPoints === 0 || target.crewPoints > 0);
   const dodgeRolls: number[] = [];
   let dodgesSuccessful = 0;
@@ -7082,10 +7158,13 @@ async function resolveBasicAiWeaponFire(
     lostTraits: string[];
   }> = [];
   for (const pending of pendingCrits) {
-    const location = locationFromRoll(pending.locationRoll);
-    const entry = findEntry(location, pending.effectRoll);
+    const location = targetIsStation ? 6 : locationFromRoll(pending.locationRoll);
+    const entry = targetIsStation
+      ? findSpaceStationEntry(pending.effectRoll)
+      : findEntry(location, pending.effectRoll);
     if (!entry) continue;
     if (
+      !targetIsStation &&
       profileIgnoresCrewCriticals(rulesProfileForModel(targetModel))
       && criticalAffectsCrew(entry)
     ) continue;
@@ -7103,12 +7182,18 @@ async function resolveBasicAiWeaponFire(
         CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)]!;
     }
     if (entry.flags.randomArcOneWeaponNoFire) {
-      randomArc =
-        CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)]!;
-      const arcWeapons = weaponsByArc.get(randomArc) ?? [];
-      if (arcWeapons.length > 0) {
+      if (targetIsStation) {
+        randomArc = "Turret";
         randomWeaponId =
-          arcWeapons[Math.floor(Math.random() * arcWeapons.length)]!.id;
+          targetWeapons[Math.floor(Math.random() * targetWeapons.length)]?.id ?? null;
+      } else {
+        randomArc =
+          CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)]!;
+        const arcWeapons = weaponsByArc.get(randomArc) ?? [];
+        if (arcWeapons.length > 0) {
+          randomWeaponId =
+            arcWeapons[Math.floor(Math.random() * arcWeapons.length)]!.id;
+        }
       }
     }
     if (entry.flags.loseTraits && targetTraitNames.length > 0) {
@@ -7183,22 +7268,26 @@ async function resolveBasicAiWeaponFire(
   let targetDestroyed = fighterOneHitDestroyed || target.isDestroyed;
   let damageTable: { overkill: number; roll: number; total: number; outcome: "adrift" | "destroyed" | "exploding-end-of-next" } | null = null;
   if (!fighterOneHitDestroyed && targetHullAfter === 0 && target.damageState === "normal" && !target.isDestroyed) {
-    const overkill = Math.max(0, finalDamage - target.hullPoints);
-    const roll = rollD6();
-    const total = roll + overkill;
-    if (total <= 6) {
-      nextDamageState = "adrift";
-      damageTable = { overkill, roll, total, outcome: "adrift" };
-    } else if (total <= 11) {
-      nextDamageState = "destroyed";
-      targetDestroyed = true;
-      damageTable = { overkill, roll, total, outcome: "destroyed" };
+    if (targetIsStation) {
+      nextDamageState = "normal";
     } else {
-      nextDamageState = "exploding-end-of-next";
-      damageTable = { overkill, roll, total, outcome: "exploding-end-of-next" };
+      const overkill = Math.max(0, finalDamage - target.hullPoints);
+      const roll = rollD6();
+      const total = roll + overkill;
+      if (total <= 6) {
+        nextDamageState = "adrift";
+        damageTable = { overkill, roll, total, outcome: "adrift" };
+      } else if (total <= 11) {
+        nextDamageState = "destroyed";
+        targetDestroyed = true;
+        damageTable = { overkill, roll, total, outcome: "destroyed" };
+      } else {
+        nextDamageState = "exploding-end-of-next";
+        damageTable = { overkill, roll, total, outcome: "exploding-end-of-next" };
+      }
     }
   }
-  if (targetHasCrewTrack && targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
+  if (!targetIsStation && targetHasCrewTrack && targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
     nextDamageState = "adrift";
   }
 
@@ -7232,8 +7321,10 @@ async function resolveBasicAiWeaponFire(
     hullPoints: targetHullAfter,
     crewPoints: targetCrewAfter,
     shieldsCurrent: targetWillBeCrippled ? 0 : shieldsCurrent,
-    interceptorDiceRemaining: targetWillBeCrippled ? 0 : interceptorRemaining,
-    interceptorThresholdCurrent: targetWillBeCrippled ? 2 : interceptorThreshold,
+    interceptorDiceRemaining: targetIsStation && targetWillBeCrippled
+      ? Math.min(Math.floor(targetTraits.interceptors / 2), interceptorRemaining)
+      : targetWillBeCrippled ? 0 : interceptorRemaining,
+    interceptorThresholdCurrent: targetWillBeCrippled && !targetIsStation ? 2 : interceptorThreshold,
     damageState: nextDamageState,
     isDestroyed: targetDestroyed,
     permanentlyCrippled,
@@ -8673,6 +8764,26 @@ async function autoRepairRedundantSystemCriticals(
   }
 }
 
+async function autoRepairSpaceStationCriticals(
+  tx: any,
+  gameId: number,
+  currentRound: number,
+): Promise<void> {
+  const survivors = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  for (const u of survivors as Array<typeof gameUnitsTable.$inferSelect>) {
+    const model = await getShipModelForUnit(tx, u);
+    if (!model || !shipModelIsSpaceStation(model)) continue;
+    await tx.delete(unitCriticalEffectsTable).where(and(
+      eq(unitCriticalEffectsTable.gameUnitId, u.id),
+      sql`${unitCriticalEffectsTable.effectKey} LIKE 'station-%'`,
+      sql`${unitCriticalEffectsTable.appliedRound} < ${currentRound}`,
+    ));
+  }
+}
+
 type SelfRepairResult = {
   unitBefore: typeof gameUnitsTable.$inferSelect;
   unitAfter: typeof gameUnitsTable.$inferSelect;
@@ -8893,6 +9004,7 @@ async function rollOverRoundAfterEndPhase(
   }
 
   await autoRepairRedundantSystemCriticals(tx, game.id, game.currentRound);
+  await autoRepairSpaceStationCriticals(tx, game.id, game.currentRound);
 
   const gameUpdate = aiStatePatch
     ? { aiState: mergeAiState(game.aiState, aiStatePatch) }
@@ -10442,13 +10554,16 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
         const requestedCQ = placement.crewQuality ?? 4;
         const modelTraits = parseShipTraits(model.traits);
         const fixedCrewQuality = fixedCrewQualityForProfile(rulesProfileForModel(model));
-        const crewQuality = fixedCrewQuality
-          ?? (isStandardCQ
-            ? 4
-            : Math.max(
-                modelTraits.flightComputer ? 4 : 1,
-                Math.min(7, Math.trunc(requestedCQ)),
-              ));
+        const crewQuality = stationCrewQuality(
+          fixedCrewQuality
+            ?? (isStandardCQ
+              ? 4
+              : Math.max(
+                  modelTraits.flightComputer ? 4 : 1,
+                  Math.min(7, Math.trunc(requestedCQ)),
+                )),
+          shipModelIsSpaceStation(model),
+        );
         const [inserted] = await tx.insert(gameUnitsTable).values({
           gameId: params.data.gameId,
           ownerId: playerUserId,
@@ -10876,6 +10991,14 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   if (unitIsInHyperspace(unit)) { res.status(400).json({ error: "Ship is in hyperspace reserves and cannot move normally" }); return; }
   if (unit.isDestroyed) { res.status(400).json({ error: "Unit is destroyed" }); return; }
   if (unit.hasMovedThisRound) { res.status(400).json({ error: "Unit has already moved this round" }); return; }
+  const moveModel = await getShipModelForUnit(db, unit);
+  if (!moveModel) { res.status(500).json({ error: "Ship model missing" }); return; }
+  if (unitIsInoperableSpaceStation(unit, moveModel)) {
+    res.status(400).json({ error: "Inoperable space stations may not take further action" }); return;
+  }
+  if (moveModel && shipModelIsSpaceStation(moveModel) && parseShipTraits(moveModel.traits).immobile) {
+    res.status(400).json({ error: "Immobile space stations do not move" }); return;
+  }
   // "All Stop": ship halts and may not turn this round. Reject any heading
   // change; position changes (½-speed coast) are still allowed because the
   // ledger/UI clamps movement to the SA's speed cap.
@@ -10903,10 +11026,6 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     randomWeaponId: r.randomWeaponId,
     lostTraits: r.lostTraits ?? [],
   })));
-  const [moveShip] = await db.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
-  if (!moveShip) { res.status(500).json({ error: "Ship record missing" }); return; }
-  const [moveModel] = await db.select().from(shipModelsTable).where(eq(shipModelsTable.id, moveShip.shipModelId));
-  if (!moveModel) { res.status(500).json({ error: "Ship model missing" }); return; }
   const moveTraits = movementTraitsForModel(moveModel, moveCrits);
   const isMovingFighter = shipModelIsFighter(moveModel);
   const currentSpeedCap = movementSpeedCap(unit, moveCrits, { ignoreCrippled: isMovingFighter });
@@ -11979,6 +12098,10 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (await unitPinnedForRound(tx, unit, game.currentRound)) {
         throw Object.assign(new Error("Unit is disrupted and may take no action this turn"), { status: 400 });
       }
+      const unitModel = await getShipModelForUnit(tx, unit);
+      if (unitIsInoperableSpaceStation(unit, unitModel)) {
+        throw Object.assign(new Error("Inoperable space stations may not take further action"), { status: 400 });
+      }
 
       const activationPhase: "movement" | "firing" = game.phase === "movement" ? "movement" : "firing";
       const segment = await activationSegmentForGame(tx, game, activationPhase);
@@ -12024,6 +12147,9 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
             throw Object.assign(new Error("Reserve ship needs Jump Engine/Advanced Jump Engine or an open friendly jump point"), { status: 400 });
           }
         } else {
+          if (unitModel && shipModelIsSpaceStation(unitModel) && parseShipTraits(unitModel.traits).immobile) {
+            throw Object.assign(new Error("Immobile space stations do not activate in the Movement Phase"), { status: 400 });
+          }
           if (unit.damageState === "adrift" || unit.damageState === "exploding-end-of-next") {
             throw Object.assign(new Error("Adrift ships drift automatically in the End Phase"), { status: 400 });
           }
@@ -13513,6 +13639,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         aPos,
         tPos,
         await lineOfSightObstaclesForGame(tx, game.id),
+        new Set([`station-unit-${attacker.id}`, `station-unit-${target.id}`]),
       );
       if (losBlock) {
         throw Object.assign(
@@ -13574,6 +13701,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const targetEffectiveDamageState = effectiveDamageState(target.damageState, targetCritRows);
       const targetCrippled = isCrippledUnit(target);
       const targetIsFighter = shipModelIsFighter(targetModel);
+      const targetIsStation = shipModelIsSpaceStation(targetModel);
 
       // ── Trait parse ──────────────────────────────────────────────────────
       // Filter the target's ship traits by any crit-lost trait names so
@@ -13812,7 +13940,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // not generate a later to-hit roll that merely "doesn't count".
       let interceptedHits = 0;
       const interceptorAttempts: { rolls: number[]; threshold: number; success: boolean }[] = [];
-      const effectiveTargetInterceptors = targetCrippled ? 0 : targetTraits.interceptors;
+      const effectiveTargetInterceptors = targetIsStation && targetCrippled
+        ? Math.floor(targetTraits.interceptors / 2)
+        : targetCrippled ? 0 : targetTraits.interceptors;
       const interceptorDiceBefore = Math.min(target.interceptorDiceRemaining, effectiveTargetInterceptors);
       const interceptorThresholdBefore = target.interceptorThresholdCurrent;
       let interceptorRemaining = interceptorDiceBefore;
@@ -13939,6 +14069,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         && targetEffectiveDamageState !== "adrift"
         && targetEffectiveDamageState !== "exploding-end-of-next"
         && target.hullPoints > 0
+        && !targetIsStation
         && (target.maxCrewPoints === 0 || target.crewPoints > 0);
       const dodgeActive =
         !stealthAndDodgeSuppressedByShield &&
@@ -14122,10 +14253,13 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const insertedIds: number[] = [];
       const insertedGrossDmg: number[] = [];
       for (const pc of pendingCrits) {
-        const loc = locationFromRoll(pc.locationRoll);
-        const entry = findEntry(loc, pc.effectRoll);
+        const loc = targetIsStation ? 6 : locationFromRoll(pc.locationRoll);
+        const entry = targetIsStation
+          ? findSpaceStationEntry(pc.effectRoll)
+          : findEntry(loc, pc.effectRoll);
         if (!entry) continue;
         if (
+          !targetIsStation &&
           profileIgnoresCrewCriticals(rulesProfileForModel(targetModel))
           && criticalAffectsCrew(entry)
         ) continue;
@@ -14148,11 +14282,17 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         // within that arc (if any). If the rolled arc is empty, the effect
         // is wasted (no weapon blocked) — matches sheet randomness.
         if (entry.flags.randomArcOneWeaponNoFire) {
-          randomArc = CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)];
-          const arcWeapons = weaponsByArc.get(randomArc) ?? [];
-          if (arcWeapons.length > 0) {
-            const w = arcWeapons[Math.floor(Math.random() * arcWeapons.length)];
-            randomWeaponId = w.id;
+          if (targetIsStation) {
+            randomArc = "Turret";
+            randomWeaponId =
+              targetWeapons[Math.floor(Math.random() * targetWeapons.length)]?.id ?? null;
+          } else {
+            randomArc = CANONICAL_ARCS[Math.floor(Math.random() * CANONICAL_ARCS.length)];
+            const arcWeapons = weaponsByArc.get(randomArc) ?? [];
+            if (arcWeapons.length > 0) {
+              const w = arcWeapons[Math.floor(Math.random() * arcWeapons.length)];
+              randomWeaponId = w.id;
+            }
           }
         }
         if (entry.flags.loseTraits && targetTraitNames.length > 0) {
@@ -14272,6 +14412,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }> = [];
 
       if (!fighterOneHitDestroyed && targetHullAfter === 0 && target.damageState === "normal" && !target.isDestroyed) {
+        if (targetIsStation) {
+          nextDamageState = "normal";
+        } else {
         const overkill = Math.max(0, finalDamage - targetHullBefore);
         const dtRoll = rollD6();
         const dtTotal = dtRoll + overkill;
@@ -14355,7 +14498,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       }
 
       // Out-of-crew → adrift (only if still alive and not already adrift/worse).
-      if (targetHasCrewTrack && targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
+      }
+      if (!targetIsStation && targetHasCrewTrack && targetCrewAfter === 0 && nextDamageState === "normal" && !targetDestroyed) {
         nextDamageState = "adrift";
       }
       const targetWillBeCrippled = isCrippledUnit({
@@ -14385,8 +14529,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           })
         : target.ancientStatusEffects;
       const persistedShieldsCurrent = targetWillBeCrippled ? 0 : shieldsCurrent;
-      const persistedInterceptorRemaining = targetWillBeCrippled ? 0 : interceptorRemaining;
-      const persistedInterceptorThreshold = targetWillBeCrippled ? 2 : interceptorThreshold;
+      const persistedInterceptorRemaining = targetIsStation && targetWillBeCrippled
+        ? Math.min(Math.floor(targetTraits.interceptors / 2), interceptorRemaining)
+        : targetWillBeCrippled ? 0 : interceptorRemaining;
+      const persistedInterceptorThreshold = targetWillBeCrippled && !targetIsStation ? 2 : interceptorThreshold;
 
       const [updatedTarget] = await tx.update(gameUnitsTable).set({
         hullPoints: targetHullAfter,
@@ -14774,6 +14920,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
 
       const { model: unitModel } = await resolveShipModelForUnit(tx, unit);
       const unitTraits = parseShipTraits(filterLostTraits(unitModel?.traits ?? "", saCrits.lostTraitNames));
+      if (unitModel && shipModelIsSpaceStation(unitModel)) {
+        throw Object.assign(new Error("Space stations never use Special Actions"), { status: 400 });
+      }
       if (unitTraits.fighter || (unitModel ? shipModelIsFighter(unitModel) : false)) {
         throw Object.assign(new Error("Fighter flights cannot declare Special Actions"), { status: 400 });
       }
@@ -15890,7 +16039,7 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
       // CQ check: 1d6 + crewQuality ≥ 8.
       const cqRoll = rollD6();
       const cqTotal = cqRoll + terrainAdjustedCrewQuality(
-        scout.crewQuality,
+        stationCrewQuality(scout.crewQuality, shipModelIsSpaceStation(scoutModel)),
         { x: scout.hexQ, z: scout.hexR },
         game.terrainConfig,
         "scout-support",
@@ -16306,6 +16455,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
       }
 
       await autoRepairRedundantSystemCriticals(tx, game.id, game.currentRound);
+      await autoRepairSpaceStationCriticals(tx, game.id, game.currentRound);
 
       // 3. Re-evaluate win condition.
       const postExplosion = await tx.select().from(gameUnitsTable)
@@ -16507,6 +16657,10 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      const unitModelForStation = await getShipModelForUnit(tx, unit);
+      if (unitModelForStation && shipModelIsSpaceStation(unitModelForStation)) {
+        throw Object.assign(new Error("Space stations never perform Damage Control"), { status: 400 });
+      }
       if (unit.hullPoints <= 0) throw Object.assign(new Error("Hulked ships cannot perform Damage Control"), { status: 400 });
       if (unit.maxCrewPoints > 0 && unit.crewPoints <= 0) {
         throw Object.assign(new Error("Crewless ships cannot perform Damage Control"), { status: 400 });

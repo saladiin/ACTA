@@ -3527,6 +3527,21 @@ function shipModelHasFighterTrait(
   );
 }
 
+function uiModelIsSpaceStation(
+  model: { name?: unknown; traits?: unknown; shipClass?: unknown } | undefined,
+): boolean {
+  const name = typeof model?.name === "string" ? model.name : "";
+  const traits = typeof model?.traits === "string" ? model.traits : "";
+  const shipClass = typeof model?.shipClass === "string" ? model.shipClass : "";
+  return Boolean(
+    model &&
+      (/\bspace\s+station\b/i.test(traits) ||
+        /\bspace[-\s]?station\b/i.test(traits) ||
+        /\bstar\s*base\b/i.test(name) ||
+        /\bstation\b/i.test(shipClass)),
+  );
+}
+
 const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
   "aurora starfury": 4,
   "aurora starfury flight": 4,
@@ -7476,7 +7491,9 @@ function arcDisplayColor(
 function weaponCriticalDisableReason(
   weapon: Pick<Weapon, "id" | "arc" | "name">,
   crits: NonNullable<GameUnit["criticals"]>,
+  model?: ShipModel,
 ): string | null {
+  const effectiveArc = uiModelIsSpaceStation(model) ? "Turret" : weapon.arc;
   for (const crit of crits) {
     const critName = crit.name || "critical";
     if (
@@ -7489,9 +7506,9 @@ function weaponCriticalDisableReason(
       (crit.effectKey === "weapons-catastrophic" ||
         crit.effectKey === "vital-weapons-control") &&
       crit.randomArc &&
-      canonicalWeaponArc(crit.randomArc) === canonicalWeaponArc(weapon.arc)
+      canonicalWeaponArc(crit.randomArc) === canonicalWeaponArc(effectiveArc)
     ) {
-      return `${canonicalWeaponArc(weapon.arc)} arc offline: ${critName}`;
+      return `${canonicalWeaponArc(effectiveArc)} arc offline: ${critName}`;
     }
   }
   return null;
@@ -7499,7 +7516,7 @@ function weaponCriticalDisableReason(
 
 function buildWeaponArcReadiness(
   unit: GameUnit,
-  _model: ShipModel | undefined,
+  model: ShipModel | undefined,
   weapons: Weapon[],
   _currentRound: number,
 ): WeaponArcReadinessMap {
@@ -7510,7 +7527,7 @@ function buildWeaponArcReadiness(
   const crits = unit.criticals ?? [];
 
   for (const weapon of weapons) {
-    const arc = canonicalWeaponArc(weapon.arc);
+    const arc = uiModelIsSpaceStation(model) ? "Turret" : canonicalWeaponArc(weapon.arc);
     if (!ARC_DEFS[arc]) continue;
     const entry = byArc.get(arc) ?? {
       total: 0,
@@ -7519,7 +7536,7 @@ function buildWeaponArcReadiness(
     };
     entry.total += 1;
     const reasons: string[] = [];
-    const critReason = weaponCriticalDisableReason(weapon, crits);
+    const critReason = weaponCriticalDisableReason(weapon, crits, model);
     if (critReason) reasons.push(critReason);
     if (reasons.length > 0) {
       entry.down += 1;
@@ -7610,14 +7627,17 @@ function weaponRangeDistanceForPreview(
 }
 
 function weaponLineOfSightBlockForPreview(
-  attacker: { hexQ: number; hexR: number },
-  target: { hexQ: number; hexR: number },
+  attacker: { id?: number; hexQ: number; hexR: number },
+  target: { id?: number; hexQ: number; hexR: number },
   obstacles: LineOfSightObstacle[],
 ): LineOfSightBlock | null {
+  const ignored = new Set<string>();
+  if (attacker.id != null) ignored.add(`station-unit-${attacker.id}`);
+  if (target.id != null) ignored.add(`station-unit-${target.id}`);
   return findBlockingLineOfSightObstacle(
     { x: attacker.hexQ, z: attacker.hexR },
     { x: target.hexQ, z: target.hexR },
-    obstacles,
+    obstacles.filter((obstacle) => !ignored.has(obstacle.id)),
   );
 }
 
@@ -21338,8 +21358,9 @@ export default function GameBoard() {
                       w,
                       game.currentRound ?? 0,
                     );
+                  const stationWeapon = uiModelIsSpaceStation(unitModel);
                   firingArc = {
-                    arc: shadowPointDefense ? "Turret" : w.arc,
+                    arc: shadowPointDefense || stationWeapon ? "Turret" : w.arc,
                     range:
                       (shadowPointDefense ? w.range / 2 : w.range) +
                       (unitIsFighter ? rulesBaseRadius(unit) : 0),
@@ -21356,8 +21377,9 @@ export default function GameBoard() {
                           w,
                           game.currentRound ?? 0,
                         );
+                      const stationWeapon = uiModelIsSpaceStation(unitModel);
                       return {
-                        arc: shadowPointDefense ? "Turret" : w.arc,
+                        arc: shadowPointDefense || stationWeapon ? "Turret" : w.arc,
                         range:
                           (shadowPointDefense ? w.range / 2 : w.range) +
                           (unitIsFighter ? rulesBaseRadius(unit) : 0),
@@ -21381,7 +21403,9 @@ export default function GameBoard() {
                 const inArc = isTargetInEffectiveWeaponArc(
                   activeTargetingPreview.attacker,
                   unit,
-                  activeTargetingPreview.weapon,
+                  uiModelIsSpaceStation(getShipModelForUnit(activeTargetingPreview.attacker))
+                    ? { arc: "Turret" }
+                    : activeTargetingPreview.weapon,
                 );
                 const losBlocked = Boolean(
                   weaponLineOfSightBlockForPreview(
@@ -24133,9 +24157,10 @@ export default function GameBoard() {
                   currentPhase === "movement" &&
                   isSelectedUnitActive &&
                   !isAdriftActive &&
-                  (() => {
+                    (() => {
                     if (isFighterUnit(selectedUnitData)) return null;
                     const modelForSA = getShipModelForUnit(selectedUnitData);
+                    const isSpaceStationForSA = uiModelIsSpaceStation(modelForSA);
                     const traitsForSA = modelForSA?.traits ?? "";
                     const rulesProfile = uiRulesProfileForModel(modelForSA);
                     const isShadowProfile = rulesProfile === "shadows";
@@ -24531,6 +24556,14 @@ export default function GameBoard() {
                         )}
                         {!actionLocked && (
                           <div className="grid grid-cols-1 gap-1">
+                            {isSpaceStationForSA && (
+                              <div
+                                className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider text-amber-300/85"
+                                data-testid="space-station-no-special-actions"
+                              >
+                                Space stations do not use Special Actions
+                              </div>
+                            )}
                             {selectedHasScoutTrait &&
                               (["counter-stealth", "coord"] as const).map(
                               (a) => {
@@ -24574,7 +24607,7 @@ export default function GameBoard() {
                                 );
                               },
                             )}
-                            {SPECIAL_ACTIONS.filter((a) =>
+                            {!isSpaceStationForSA && SPECIAL_ACTIONS.filter((a) =>
                               !a.hidden
                               && (!profileActionIds || profileActionIds.has(a.id))
                             ).map(
@@ -25465,8 +25498,10 @@ export default function GameBoard() {
               const allHandsFailed = rawSA === "all-hands-on-deck-failed";
               const cq = selectedUnitData.crewQuality;
               const allHandsBonus = allHandsActive ? 2 : 0;
+              const selectedModelForEnd = getShipModelForUnit(selectedUnitData);
+              const selectedUnitIsSpaceStation = uiModelIsSpaceStation(selectedModelForEnd);
               const traitsForSelfRepair =
-                getShipModelForUnit(selectedUnitData)?.traits ?? "";
+                selectedModelForEnd?.traits ?? "";
               const selfRepairDice = parseUiSelfRepairDice(traitsForSelfRepair);
               const selfRepairUsedThisRound =
                 (selectedUnitData.lastSelfRepairRound ?? 0) === currentRound;
@@ -25481,7 +25516,9 @@ export default function GameBoard() {
                     ? "Crewless ships cannot use Self Repair"
                     : null;
               const damageControlBlockedReason =
-                selectedUnitData.hullPoints <= 0
+                selectedUnitIsSpaceStation
+                  ? "Space stations never perform Damage Control"
+                  : selectedUnitData.hullPoints <= 0
                   ? "Hulked ships cannot perform Damage Control"
                   : (selectedUnitData.maxCrewPoints ?? 0) > 0 &&
                       (selectedUnitData.crewPoints ?? 0) <= 0

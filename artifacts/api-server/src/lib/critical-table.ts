@@ -26,6 +26,7 @@ export interface CritFlags {
   damageControlPenalty?: number;       // -X to subsequent DC d6+CQ totals (cumulative)
   noDamageControlThisRound?: boolean;  // suppresses DC entirely on the round APPLIED
   troopsLost?: number;                 // troops are a Slice C concern; logged for now
+  fighterLaunchBlocked?: boolean;      // station launch tubes blocked
 }
 
 export interface CritEntry {
@@ -144,6 +145,33 @@ export const CRITICAL_TABLE: ReadonlyArray<CritEntry> = [
     flags: { loseTraits: 2 } },
 ];
 
+export const SPACE_STATION_CRITICAL_TABLE: ReadonlyArray<CritEntry> = [
+  { effectKey: "station-reactor-fluctuation", location: 6, locationName: "Station",
+    rollMin: 1, rollMax: 1, name: "Reactor Fluctuation",
+    dmg: 0, crew: 0, effectText: "Roll 4+ before firing each weapon", repairable: true,
+    flags: { weaponsHitOn4: true } },
+  { effectKey: "station-launch-tubes-blocked", location: 6, locationName: "Station",
+    rollMin: 2, rollMax: 2, name: "Launch Tubes Blocked",
+    dmg: 1, crew: 0, effectText: "Fighters cannot launch", repairable: true,
+    flags: { fighterLaunchBlocked: true } },
+  { effectKey: "station-keeping-thrusters", location: 6, locationName: "Station",
+    rollMin: 3, rollMax: 3, name: "Station-Keeping Thrusters Damaged",
+    dmg: 1, crew: 0, effectText: "Station drifts 1 inch toward nearest planet or table edge", repairable: true,
+    flags: {} },
+  { effectKey: "station-command-control", location: 6, locationName: "Station",
+    rollMin: 4, rollMax: 4, name: "Command & Control",
+    dmg: 2, crew: 0, effectText: "Lose 1 random trait", repairable: true,
+    flags: { loseTraits: 1 } },
+  { effectKey: "station-weapon-offline", location: 6, locationName: "Station",
+    rollMin: 5, rollMax: 5, name: "Weapon System Offline",
+    dmg: 3, crew: 0, effectText: "One random weapon system cannot fire", repairable: true,
+    flags: { randomArcOneWeaponNoFire: true } },
+  { effectKey: "station-reactor-explosion", location: 6, locationName: "Station",
+    rollMin: 6, rollMax: 6, name: "Reactor Explosion",
+    dmg: { dice: 2 }, crew: 0, effectText: "Lose 2 random traits", repairable: true,
+    flags: { loseTraits: 2 } },
+];
+
 // Map the 1d6 location roll → schema location code. The sheet collapses
 // rolls 1 and 2 onto Engines; the table only contains entries with
 // location ∈ {1,3,4,5,6}.
@@ -157,6 +185,10 @@ export function locationFromRoll(d6: number): 1 | 3 | 4 | 5 | 6 {
 
 export function findEntry(location: number, effectRoll: number): CritEntry | undefined {
   return CRITICAL_TABLE.find(e => e.location === location && effectRoll >= e.rollMin && effectRoll <= e.rollMax);
+}
+
+export function findSpaceStationEntry(effectRoll: number): CritEntry | undefined {
+  return SPACE_STATION_CRITICAL_TABLE.find(e => effectRoll >= e.rollMin && effectRoll <= e.rollMax);
 }
 
 // Roll an Nd6 penalty and return the total.
@@ -239,7 +271,9 @@ export function deriveCritEffects(rows: ReadonlyArray<{
     noDamageControlThisRound: false, lostTraitNames: new Set(),
   };
   for (const row of rows) {
-    const entry = CRITICAL_TABLE.find(e => e.effectKey === row.effectKey);
+    const entry =
+      CRITICAL_TABLE.find(e => e.effectKey === row.effectKey)
+      ?? SPACE_STATION_CRITICAL_TABLE.find(e => e.effectKey === row.effectKey);
     if (!entry) continue;
     const f = entry.flags;
     if (f.speedReduce) out.speedReduce = Math.max(out.speedReduce, f.speedReduce);
