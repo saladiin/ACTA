@@ -1547,7 +1547,7 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "projectile_mesh.glb": "20260720-154500",
   "shield-token.glb": "20260731-vfx-range",
   "spitfire.glb": "20260720-210100",
-  "tethys.glb": "20260806-emissive-flash",
+  "tethys.glb": "20260806-tethys-v2",
   "test-cloud.glb": "20260730-test-cloud-v1",
   "battlecrab.glb": "20260720-214405-organic",
   "vorlon-dreadnought.glb": "20260727-convergence-beam-v1",
