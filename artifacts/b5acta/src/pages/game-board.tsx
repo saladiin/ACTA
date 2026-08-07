@@ -2436,6 +2436,13 @@ const ORGANIC_BATTLECRAB_TUNING = {
   spread: 1.15,
   normalStrength: 0.9,
 } as const;
+const TETHYS_EMISSIVE_ALTERNATOR_MODEL_FILENAMES = new Set(["tethys.glb"]);
+const TETHYS_EMISSIVE_ALTERNATOR = {
+  color: "#ef4444",
+  secondaryColor: "#503af8",
+  speed: 3,
+  intensity: 2.5,
+} as const;
 const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "cloud01-8x8.webp": "20260725-cloud01-tga",
   "cloud02-8x8.webp": "20260725-cloud02-tga",
@@ -2699,6 +2706,7 @@ function GlbModel({
   damageAnchorEffects = false,
   terrainMeshHighlight = false,
   ghostHighlight = false,
+  emissiveAlternatorActive = true,
 }: {
   url: string;
   tint: string;
@@ -2708,11 +2716,14 @@ function GlbModel({
   damageAnchorEffects?: boolean;
   terrainMeshHighlight?: boolean;
   ghostHighlight?: boolean;
+  emissiveAlternatorActive?: boolean;
 }) {
   const { scene } = useGLTF(url);
   const filenameKey = filename.toLowerCase();
   const rotatingPartConfig = ROTATING_MODEL_PARTS[filenameKey];
   const kirishiacLayeredRotation = isKirishiacModelFilename(filenameKey);
+  const useTethysEmissiveAlternator =
+    TETHYS_EMISSIVE_ALTERNATOR_MODEL_FILENAMES.has(filenameKey);
   const useSelectiveOrganicShadowMaterial =
     SELECTIVE_ORGANIC_SHADOW_MATERIAL_MODELS.has(filenameKey);
   const [organicBaseTexture, organicNormalTexture, organicRoughnessTexture] =
@@ -2729,11 +2740,15 @@ function GlbModel({
   const rotatingPartLocalAxisRef = useRef(new THREE.Vector3(0, 1, 0));
   const selectiveOrganicElapsedRef = useRef(0);
   const selectiveOrganicShaderRefs = useRef<OrganicBattlecrabShader[]>([]);
+  const tethysFlashRedMaterialsRef = useRef<THREE.MeshStandardMaterial[]>([]);
+  const tethysFlashBlueMaterialsRef = useRef<THREE.MeshStandardMaterial[]>([]);
   const { cloned, anchors, selectiveOrganicMaterials } = useMemo(() => {
     rotatingPartRef.current = null;
     kirishiacRotatingLayerRef.current = null;
     rotatingPartInitialRotationRef.current = 0;
     selectiveOrganicShaderRefs.current = [];
+    tethysFlashRedMaterialsRef.current = [];
+    tethysFlashBlueMaterialsRef.current = [];
     const anchorNodes: THREE.Object3D[] = [];
     const organicMaterials: THREE.MeshStandardMaterial[] = [];
     if (useSelectiveOrganicShadowMaterial) {
@@ -2817,6 +2832,12 @@ void main() {
       }
       const isKirishiacSpikeMaterial =
         kirishiacLayeredRotation && materialName.includes("kirishiac flame");
+      const isTethysRedFlashMaterial =
+        useTethysEmissiveAlternator && materialName.includes("red_emissive");
+      const isTethysBlueFlashMaterial =
+        useTethysEmissiveAlternator && materialName.includes("blue_emissive");
+      const isTethysFlashMaterial =
+        isTethysRedFlashMaterial || isTethysBlueFlashMaterial;
       const clonedMaterial = material?.clone
         ? material.clone()
         : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
@@ -2836,6 +2857,24 @@ void main() {
           spikeMaterial.emissiveIntensity = 6.5;
         }
         clonedMaterial.toneMapped = false;
+      } else if (isTethysFlashMaterial && "emissive" in clonedMaterial) {
+        const flashMaterial = clonedMaterial as THREE.MeshStandardMaterial;
+        const flashColor = new THREE.Color(
+          isTethysRedFlashMaterial
+            ? TETHYS_EMISSIVE_ALTERNATOR.color
+            : TETHYS_EMISSIVE_ALTERNATOR.secondaryColor,
+        );
+        if (flashMaterial.color instanceof THREE.Color) {
+          flashMaterial.color = flashColor.clone();
+        }
+        flashMaterial.emissive = flashColor;
+        flashMaterial.emissiveIntensity = 0;
+        flashMaterial.toneMapped = false;
+        if (isTethysRedFlashMaterial) {
+          tethysFlashRedMaterialsRef.current.push(flashMaterial);
+        } else {
+          tethysFlashBlueMaterialsRef.current.push(flashMaterial);
+        }
       } else if (
         (meshTintsEnabled || ghostHighlight) &&
         "emissive" in clonedMaterial
@@ -2992,6 +3031,7 @@ void main() {
     ghostHighlight,
     rotatingPartConfig,
     kirishiacLayeredRotation,
+    useTethysEmissiveAlternator,
     useSelectiveOrganicShadowMaterial,
     organicBaseTexture,
     organicNormalTexture,
@@ -3007,6 +3047,22 @@ void main() {
     [selectiveOrganicMaterials],
   );
   useFrame(({ clock }) => {
+    if (useTethysEmissiveAlternator) {
+      const redFlashOn =
+        emissiveAlternatorActive &&
+        Math.floor(clock.getElapsedTime() * TETHYS_EMISSIVE_ALTERNATOR.speed) % 2 === 0;
+      const redIntensity = redFlashOn ? TETHYS_EMISSIVE_ALTERNATOR.intensity : 0;
+      const blueIntensity =
+        emissiveAlternatorActive && !redFlashOn
+          ? TETHYS_EMISSIVE_ALTERNATOR.intensity
+          : 0;
+      for (const material of tethysFlashRedMaterialsRef.current) {
+        material.emissiveIntensity = redIntensity;
+      }
+      for (const material of tethysFlashBlueMaterialsRef.current) {
+        material.emissiveIntensity = blueIntensity;
+      }
+    }
     if (useSelectiveOrganicShadowMaterial) {
       selectiveOrganicElapsedRef.current = clock.getElapsedTime();
       for (const shader of selectiveOrganicShaderRefs.current) {
@@ -3180,6 +3236,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [SHADOWCLOAK_MODEL_FILENAME]: "20260730-shadowcloak-v2",
   [SHADOW_SCOUT_MODEL_FILENAME]: "20260728-135155",
   [SHIELD_TOKEN_MODEL_FILENAME]: "20260731-vfx-range",
+  "tethys.glb": "20260806-emissive-flash",
   [VORLON_FIGHTER_MODEL_FILENAME]: "20260728-vorlon-fighter-v1",
   [VORLON_LIGHT_CRUISER_MODEL_FILENAME]: "20260728-223454",
   [VORLON_TRANSPORT_MODEL_FILENAME]: "20260728-vorlon-transport-v1",
@@ -3216,6 +3273,7 @@ function ShipModel3D({
   damageAnchorEffects = false,
   terrainMeshHighlight = false,
   ghostHighlight = false,
+  emissiveAlternatorActive = true,
 }: {
   filename: string;
   tint: string;
@@ -3224,6 +3282,7 @@ function ShipModel3D({
   damageAnchorEffects?: boolean;
   terrainMeshHighlight?: boolean;
   ghostHighlight?: boolean;
+  emissiveAlternatorActive?: boolean;
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const assetRevision =
@@ -3261,6 +3320,7 @@ function ShipModel3D({
         damageAnchorEffects={damageAnchorEffects}
         terrainMeshHighlight={terrainMeshHighlight}
         ghostHighlight={ghostHighlight}
+        emissiveAlternatorActive={emissiveAlternatorActive}
       />
     );
   return (
@@ -4122,6 +4182,7 @@ function BoardModelVisual({
   damageAnchorEffects = false,
   terrainMeshHighlight = false,
   ghostHighlight = false,
+  emissiveAlternatorActive = true,
 }: {
   filename: string;
   tint: string;
@@ -4130,6 +4191,7 @@ function BoardModelVisual({
   damageAnchorEffects?: boolean;
   terrainMeshHighlight?: boolean;
   ghostHighlight?: boolean;
+  emissiveAlternatorActive?: boolean;
 }) {
   const fighterFilename = canonicalFighterSquadronFilename(filename);
   if (!fighterFilename) {
@@ -4144,6 +4206,7 @@ function BoardModelVisual({
         damageAnchorEffects={damageAnchorEffects}
         terrainMeshHighlight={terrainMeshHighlight}
         ghostHighlight={ghostHighlight}
+        emissiveAlternatorActive={emissiveAlternatorActive}
       />
     );
   }
@@ -4164,6 +4227,7 @@ function BoardModelVisual({
             damageAnchorEffects={false}
             terrainMeshHighlight={terrainMeshHighlight}
             ghostHighlight={ghostHighlight}
+            emissiveAlternatorActive={emissiveAlternatorActive}
           />
         </group>
       ))}
@@ -6624,6 +6688,7 @@ function GameUnit3D({
                 meshTintsEnabled={shipMeshTintsEnabled}
                 damageAnchorEffects={!hasPreview && usesAnchoredDeadMeshVisual}
                 terrainMeshHighlight={terrainMeshHighlight}
+                emissiveAlternatorActive={!visuallyDestroyed}
               />
             </Suspense>
           </ModelErrorBoundary>

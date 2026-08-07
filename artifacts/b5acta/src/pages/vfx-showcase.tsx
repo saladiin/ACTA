@@ -180,6 +180,7 @@ type SpecialStation = {
     | "mesh-projectile-salvo"
     | "railgun-projectile-test"
     | "texture-missile-salvo"
+    | "emissive-material-alternator"
     | "kirishiac-beam-test"
     | "vorlon-dreadnought-beam-test"
     | "textured-exploding-sphere";
@@ -723,6 +724,27 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           thickness: 1,
           diffuseTextureIndex: 1,
           alphaTextureIndex: 3,
+        },
+      },
+      {
+        kind: "special",
+        id: "tethys-emissive-alternator",
+        label: "Tethys Emergency Flashers",
+        note: "Updated Tethys mesh with named red/blue emissive materials alternating: red for one second, then blue for one second.",
+        effect: "emissive-material-alternator",
+        position: [8, 0],
+        modelFilename: "tethys.glb",
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#503af8",
+          speed: 3,
+          size: 0.85,
+          fade: 1,
+          intensity: 2.5,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
         },
       },
     ],
@@ -1525,6 +1547,7 @@ const SHOWCASE_MODEL_ASSET_REVISIONS: Record<string, string> = {
   "projectile_mesh.glb": "20260720-154500",
   "shield-token.glb": "20260731-vfx-range",
   "spitfire.glb": "20260720-210100",
+  "tethys.glb": "20260806-emissive-flash",
   "test-cloud.glb": "20260730-test-cloud-v1",
   "battlecrab.glb": "20260720-214405-organic",
   "vorlon-dreadnought.glb": "20260727-convergence-beam-v1",
@@ -1680,6 +1703,85 @@ function ShowcaseGlbModel({
             />
           ))
         : null}
+    </group>
+  );
+}
+
+function EmissiveMaterialAlternatorShowcase({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const filename = station.modelFilename ?? "tethys.glb";
+  const url = showcaseModelUrl(filename);
+  const { scene } = useGLTF(url);
+  const elapsedRef = useRef(0);
+  const redMaterialsRef = useRef<Array<THREE.MeshStandardMaterial>>([]);
+  const blueMaterialsRef = useRef<Array<THREE.MeshStandardMaterial>>([]);
+
+  const cloned = useMemo(() => {
+    const c = scene.clone(true);
+    const redMaterials: Array<THREE.MeshStandardMaterial> = [];
+    const blueMaterials: Array<THREE.MeshStandardMaterial> = [];
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const clonedMaterial = material?.clone
+          ? material.clone()
+          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const standard = clonedMaterial as THREE.MeshStandardMaterial;
+        const materialName = String(clonedMaterial.name ?? "").toLowerCase();
+        if (standard.emissive instanceof THREE.Color) {
+          if (materialName.includes("red_emissive")) {
+            standard.emissive = new THREE.Color("#ef4444");
+            standard.emissiveIntensity = 0;
+            redMaterials.push(standard);
+          } else if (materialName.includes("blue_emissive")) {
+            standard.emissive = new THREE.Color("#503af8");
+            standard.emissiveIntensity = 0;
+            blueMaterials.push(standard);
+          }
+        }
+        return clonedMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+    redMaterialsRef.current = redMaterials;
+    blueMaterialsRef.current = blueMaterials;
+    return c;
+  }, [scene]);
+
+  useFrame((_, delta) => {
+    if (!paused) elapsedRef.current += delta;
+    const phaseRate = clamp(tuning.speed, 0.1, 4);
+    const redActive = Math.floor(elapsedRef.current * phaseRate) % 2 === 0;
+    const activeIntensity = clamp(tuning.intensity, 0, 8);
+    const inactiveIntensity = 0;
+    for (const material of redMaterialsRef.current) {
+      material.emissive.set(tuning.color);
+      material.emissiveIntensity = redActive ? activeIntensity : inactiveIntensity;
+    }
+    for (const material of blueMaterialsRef.current) {
+      material.emissive.set(tuning.secondaryColor);
+      material.emissiveIntensity = redActive ? inactiveIntensity : activeIntensity;
+    }
+  });
+
+  const scale = useMemo(
+    () => showcaseShipScale(cloned, 2.4 * clamp(tuning.size, 0.25, 2.5)),
+    [cloned, tuning.size],
+  );
+
+  return (
+    <group position={[station.position[0], 0.2, station.position[1]]} scale={[scale, scale, scale]}>
+      <primitive object={cloned} />
     </group>
   );
 }
@@ -9411,6 +9513,15 @@ function SpecialFxStation({
       {station.effect === "mesh-projectile-salvo" ? <MeshProjectileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "railgun-projectile-test" ? <RailgunProjectileTest station={station} tuning={tuning} paused={animationPaused} /> : null}
       {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
+      {station.effect === "emissive-material-alternator" ? (
+        <Suspense fallback={null}>
+          <EmissiveMaterialAlternatorShowcase
+            station={station}
+            tuning={tuning}
+            paused={animationPaused}
+          />
+        </Suspense>
+      ) : null}
       {station.effect === "kirishiac-beam-test" ? (
         <Suspense fallback={null}>
           <KirishiacBeamFiringShowcase station={station} tuning={tuning} paused={animationPaused} />
