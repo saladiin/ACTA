@@ -1192,45 +1192,12 @@ function CubeSkybox({ urls }: { urls: [string, string, string, string, string, s
   return null;
 }
 
-const ZHADUM_BOARD_BACKDROP_TEXTURE_FILENAME = "backdrop-distant-planet-lit.png";
 const ZHADUM_BOARD_BACKDROP_MODEL_FILENAME = "backdrop-zhadum.glb";
 
 function modelUrl(filename: string): string {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const revision = MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
   return `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
-}
-
-function ZhadumPlanetBackdrop() {
-  const texture = useLoader(
-    THREE.TextureLoader,
-    boardTextureUrl(ZHADUM_BOARD_BACKDROP_TEXTURE_FILENAME),
-  );
-
-  useEffect(() => {
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.anisotropy = 8;
-    texture.needsUpdate = true;
-  }, [texture]);
-
-  return (
-    <Billboard position={[-34, 5.5, -122]} follow>
-      <mesh raycast={() => null} renderOrder={-10}>
-        <planeGeometry args={[27, 27]} />
-        <meshBasicMaterial
-          map={texture}
-          transparent
-          opacity={0.86}
-          depthWrite={false}
-          fog={false}
-          side={THREE.DoubleSide}
-          toneMapped={false}
-        />
-      </mesh>
-    </Billboard>
-  );
 }
 
 function ZhadumModelBackdrop() {
@@ -1298,7 +1265,7 @@ function ZhadumModelBackdrop() {
   }, [scene]);
 
   return (
-    <group position={[34, 4.5, -124]} rotation={[0, THREE.MathUtils.degToRad(-18), 0]}>
+    <group position={[34, 2, -155]} rotation={[0, THREE.MathUtils.degToRad(-18), 0]}>
       <primitive
         object={cloned}
         position={centerOffset}
@@ -1311,7 +1278,6 @@ function ZhadumModelBackdrop() {
 function ZhadumSkyboxBackdropElements() {
   return (
     <Suspense fallback={null}>
-      <ZhadumPlanetBackdrop />
       <ZhadumModelBackdrop />
     </Suspense>
   );
