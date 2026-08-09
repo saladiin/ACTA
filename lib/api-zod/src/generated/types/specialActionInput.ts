@@ -14,4 +14,8 @@ export interface SpecialActionInput {
      * @nullable
      */
   targetUnitId?: number | null;
+  /**
+     * For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action. Defaults to all available Troops for older clients.
+     */
+  troopsCommitted?: number;
 }

@@ -177,6 +177,48 @@ function formatTraits(traits?: string | null) {
     .join(", ") || "None";
 }
 
+function normalizeShipIdentity(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/[-_\s]+/g, " ");
+}
+
+function hasExactTrait(
+  traits: string | null | undefined,
+  expectedTrait: string,
+): boolean {
+  const expected = normalizeShipIdentity(expectedTrait);
+  return (traits ?? "")
+    .split(/[;,]/)
+    .map(normalizeShipIdentity)
+    .some((trait) => trait === expected);
+}
+
+function isFighterOrSmallCraft(ship: ShipModel): boolean {
+  const identity = [
+    ship.name,
+    ship.filename,
+    ship.traits,
+  ].map(normalizeShipIdentity).join(" ");
+  return (
+    hasExactTrait(ship.traits, "Fighter") ||
+    hasExactTrait(ship.traits, "Breaching Pod") ||
+    hasExactTrait(ship.traits, "Breeching Pod") ||
+    /\bfighter flight\b/.test(identity) ||
+    /\bbreaching pod\b/.test(identity) ||
+    /\bbreeching pod\b/.test(identity)
+  );
+}
+
+function smallCraftLabel(ship: ShipModel): string {
+  const identity = [
+    ship.name,
+    ship.traits,
+  ].map(normalizeShipIdentity).join(" ");
+  if (/\bbreaching pod\b|\bbreeching pod\b/.test(identity)) {
+    return "Fighter / Small Craft - Breaching Pod";
+  }
+  return "Fighter / Small Craft";
+}
+
 function groupWeaponsByArc(ship: ShipModel) {
   const grouped = new Map<string, NonNullable<ShipModel["weapons"]>>();
   for (const weapon of ship.weapons ?? []) {
@@ -409,12 +451,19 @@ export default function GameFleetSelection() {
       )
       .filter((ship) =>
         query
-          ? `${ship.name} ${ship.faction} ${ship.priorityLevel}`
+          ? `${ship.name} ${ship.faction} ${ship.priorityLevel} ${ship.traits} ${
+              isFighterOrSmallCraft(ship) ? "fighter small craft breaching pod" : ""
+            }`
               .toLowerCase()
               .includes(query)
           : true,
       )
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => {
+        const aSmallCraft = isFighterOrSmallCraft(a);
+        const bSmallCraft = isFighterOrSmallCraft(b);
+        if (aSmallCraft !== bSmallCraft) return aSmallCraft ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      });
   }, [search, selectedFaction, shipModels]);
 
   const selectedEntries = useMemo(
@@ -610,6 +659,7 @@ export default function GameFleetSelection() {
                 const count = shipCounts[ship.id] ?? 0;
                 const expanded = expandedShipIds.has(ship.id);
                 const arcWeapons = groupWeaponsByArc(ship);
+                const smallCraft = isFighterOrSmallCraft(ship);
                 return (
                   <div
                     key={ship.id}
@@ -620,12 +670,20 @@ export default function GameFleetSelection() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-sm font-mono text-foreground leading-tight truncate">
+                        <p
+                          className="text-sm font-mono text-foreground leading-tight truncate"
+                          title={ship.name}
+                        >
                           {ship.name}
                         </p>
                         <p className="text-[10px] font-mono text-muted-foreground truncate">
                           {ship.faction}
                         </p>
+                        {smallCraft && (
+                          <p className="mt-1 inline-flex rounded border border-cyan-400/35 bg-cyan-400/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-cyan-100">
+                            {smallCraftLabel(ship)}
+                          </p>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -778,11 +836,12 @@ export default function GameFleetSelection() {
                     className="rounded border border-border bg-background px-2 py-1.5 text-xs font-mono"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate">{ship.name}</span>
+                      <span className="truncate" title={ship.name}>{ship.name}</span>
                       <span className="text-primary">x{count}</span>
                     </div>
                     <p className="text-[10px] text-muted-foreground">
                       {ship.faction} - {priorityLabel(normalizePriorityLevel(ship.priorityLevel))}
+                      {isFighterOrSmallCraft(ship) ? ` - ${smallCraftLabel(ship)}` : ""}
                     </p>
                   </div>
                 ))

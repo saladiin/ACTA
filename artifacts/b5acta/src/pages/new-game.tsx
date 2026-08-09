@@ -17,9 +17,48 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Swords, Globe2, Lock, UserRound, Cpu } from "lucide-react";
 import { PRIORITY_LEVELS, type PriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 import type { DeploymentPreset, DeploymentSide } from "@/lib/deployment-zones";
+import brightNebulaSkyboxUrl from "@assets/skybox_1780215222009.png";
+import deepStarfieldPreviewUrl from "@assets/skybox-deep-starfield-front.png";
+import distantFieldsPreviewUrl from "@assets/skybox-distant-fields-front.jpg";
+import draziGreenPurplePreviewUrl from "@assets/skybox-drazi-green-purple-front.jpg";
+import zhadumPreviewUrl from "@assets/skybox-zhadum-front.jpg";
 
 type TerrainSelection = "none" | "asteroid-fields" | "gas-clouds" | "mixed-terrain";
 type TerrainPlacementMode = "automatic" | "manual";
+type SkyboxSelection = "none" | "bright-nebula" | "dark-forest" | "drazi-green-purple" | "distant-fields" | "zhadum";
+
+const SKYBOX_OPTIONS: Array<{
+  value: SkyboxSelection;
+  label: string;
+  previewUrl: string | null;
+}> = [
+  { value: "none", label: "None", previewUrl: null },
+  {
+    value: "bright-nebula",
+    label: "Bright Nebula",
+    previewUrl: brightNebulaSkyboxUrl,
+  },
+  {
+    value: "dark-forest",
+    label: "Deep Starfield",
+    previewUrl: deepStarfieldPreviewUrl,
+  },
+  {
+    value: "drazi-green-purple",
+    label: "Drazi Green and Purple",
+    previewUrl: draziGreenPurplePreviewUrl,
+  },
+  {
+    value: "distant-fields",
+    label: "Distant Fields",
+    previewUrl: distantFieldsPreviewUrl,
+  },
+  {
+    value: "zhadum",
+    label: "Z'ha'dum",
+    previewUrl: zhadumPreviewUrl,
+  },
+];
 
 export default function NewGame() {
   const [, setLocation] = useLocation();
@@ -36,6 +75,8 @@ export default function NewGame() {
     useState<DeploymentSide>("challenger");
   const [ambushBoxWidth, setAmbushBoxWidth] = useState<number>(16);
   const [ambushBoxDepth, setAmbushBoxDepth] = useState<number>(16);
+  const [skybox, setSkybox] =
+    useState<SkyboxSelection>("bright-nebula");
   const [terrainPlacement, setTerrainPlacement] =
     useState<TerrainPlacementMode>("automatic");
   const [terrain, setTerrain] = useState<TerrainSelection>("none");
@@ -45,6 +86,9 @@ export default function NewGame() {
   const [matchName, setMatchName] = useState("");
 
   const createGame = useCreateGame();
+  const selectedSkyboxOption =
+    SKYBOX_OPTIONS.find((option) => option.value === skybox) ??
+    SKYBOX_OPTIONS[1]!;
   const terrainCountOptions =
     terrainPlacement === "manual" ? [4, 6, 8] : [3, 6, 9];
 
@@ -89,6 +133,7 @@ export default function NewGame() {
             deploymentPreset === "ambush-center" ? ambushBoxWidth : undefined,
           ambushBoxDepth:
             deploymentPreset === "ambush-center" ? ambushBoxDepth : undefined,
+          skybox,
           terrainPlacement:
             terrain !== "none" ? terrainPlacement : undefined,
           terrain,
@@ -370,7 +415,39 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(7, "Terrain")}
+          {sectionHeader(7, "Skybox")}
+          <Select
+            value={skybox}
+            onValueChange={(value) => setSkybox(value as SkyboxSelection)}
+          >
+            <SelectTrigger data-testid="select-skybox" className="bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              {SKYBOX_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div
+            className="mt-3 aspect-[2/1] w-full max-w-64 overflow-hidden rounded border border-border bg-black"
+            data-testid="preview-skybox"
+          >
+            {selectedSkyboxOption.previewUrl ? (
+              <img
+                src={selectedSkyboxOption.previewUrl}
+                alt={`${selectedSkyboxOption.label} skybox preview`}
+                className="h-full w-full object-cover"
+              />
+            ) : null}
+          </div>
+        </section>
+
+        <section>
+          {sectionHeader(8, "Terrain")}
           <div className="mb-3">
             <div className="mb-2 text-[11px] text-muted-foreground font-mono uppercase tracking-wider">
               Placement
@@ -441,7 +518,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(8, "Stations")}
+          {sectionHeader(9, "Stations")}
           <Select
             value={stations}
             onValueChange={(value) =>
@@ -462,7 +539,7 @@ export default function NewGame() {
         </section>
 
         <section>
-          {sectionHeader(9, "Crew Quality")}
+          {sectionHeader(10, "Crew Quality")}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"

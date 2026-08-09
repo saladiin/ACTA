@@ -524,11 +524,12 @@ Current app:
 - Board currently appears empty space only.
 - No terrain entities/hazards.
 - No stations-specific damage/targets behavior.
-- Troop values exist on models but are not copied to game units or used in boarding.
-- No boarding action route observed.
+- Troop values are copied to mutable game-unit troop state.
+- Ship-launched boarding via `Launch Breaching Pods and Shuttles!` exists as an initial slice, with chosen troop commitment and End Phase ship-boarding resolution.
+- Breaching Pod flights, station boarding, counterattacks/recapture, and dedicated boarding dice modal presentation remain partial or unimplemented.
 
 Audit:
-- Advanced rules are essentially unimplemented except traits that overlap core combat.
+- Advanced rules are partial; terrain/station/boarding behavior should remain opt-in and verified against primary 2e sources before expansion.
 
 ## Current Implementation Summary
 

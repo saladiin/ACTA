@@ -25,4 +25,5 @@ export const SpecialActionInputAction = {
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',
   regenerate: 'regenerate',
+  'launch-breaching-pods-and-shuttles': 'launch-breaching-pods-and-shuttles',
 } as const;

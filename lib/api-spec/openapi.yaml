@@ -918,7 +918,7 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, opponentKind, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, createdAt, updatedAt]
+      required: [id, challengerId, opponentKind, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, skybox, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
@@ -943,6 +943,7 @@ components:
         pointLimit:   { type: integer, description: "Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility." }
         priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient], description: "Scenario Priority Level used for ACTA Fleet Allocation Point costs." }
         allocationPoints: { type: integer, minimum: 1, description: "Fleet Allocation Points available to each commander." }
+        skybox: { type: string, enum: [none, bright-nebula, dark-forest, drazi-green-purple, distant-fields, zhadum], description: "Engagement-specific board backdrop. Existing games default to bright-nebula." }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
         hasTerrain:   { type: boolean, description: "True if this engagement includes generated terrain/scenery." }
@@ -981,6 +982,7 @@ components:
         ambushPlayer: { type: string, enum: [challenger, opponent], description: "For ambush-center deployment, which player deploys in the center box." }
         ambushBoxWidth: { type: number, minimum: 6, maximum: 40, description: "For ambush-center deployment, center box width in inches." }
         ambushBoxDepth: { type: number, minimum: 6, maximum: 56, description: "For ambush-center deployment, center box depth in inches." }
+        skybox: { type: string, enum: [none, bright-nebula, dark-forest, drazi-green-purple, distant-fields, zhadum], default: bright-nebula, description: "Board backdrop selected for this engagement." }
         terrainPlacement: { type: string, enum: [automatic, manual], description: "automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment." }
         terrain: { type: string, enum: [none, asteroid-fields, gas-clouds, mixed-terrain], description: "Optional terrain package for this engagement." }
         terrainCount: { type: integer, enum: [3, 4, 6, 8, 9], description: "Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8." }

@@ -4280,6 +4280,52 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
   },
 ];
 
+const BREACHING_POD_MODEL_FILENAME = "breaching-pod.glb";
+
+function breachingPodFlight({
+  name,
+  faction,
+  hull,
+  speed,
+  dodge,
+  flightCount,
+  stealth,
+  aliases = [],
+}: {
+  name: string;
+  faction: string;
+  hull: number;
+  speed: number;
+  dodge: number;
+  flightCount: number;
+  stealth?: number;
+  aliases?: string[];
+}) {
+  const traits = [
+    "Breaching Pod",
+    `Dodge ${dodge}+`,
+    stealth ? `Stealth +${stealth}` : null,
+  ].filter(Boolean).join("; ");
+  return {
+    name,
+    filename: BREACHING_POD_MODEL_FILENAME,
+    faction,
+    pointCost: 25,
+    shipClass: "Breaching Pod Flight",
+    hull,
+    troops: 1,
+    speed,
+    traits,
+    weaponRange: 0,
+    weaponDamage: 0,
+    description:
+      `${faction} Breaching Pod flight; a Patrol-wing purchase deploys as ${flightCount} flight${flightCount === 1 ? "" : "s"}`,
+    aliases: [name, ...aliases],
+    weapons: [],
+    sharedMesh: true,
+  };
+}
+
 const FIGHTER_FLIGHTS = [
   {
     name: "Aurora Starfury Flight",
@@ -4628,6 +4674,115 @@ const FIGHTER_FLIGHTS = [
       },
     ],
   },
+  breachingPodFlight({
+    name: "Earth Alliance Breaching Pod Flight (Early Years)",
+    faction: "Earth Alliance - Early Years",
+    hull: 5,
+    speed: 6,
+    dodge: 4,
+    flightCount: 4,
+    aliases: ["Earth Alliance Breaching Pod Wing (Early Years)"],
+  }),
+  breachingPodFlight({
+    name: "Earth Alliance Breaching Pod Flight (Third Age)",
+    faction: "Earth Alliance - Dawn of the Third Age",
+    hull: 5,
+    speed: 6,
+    dodge: 4,
+    flightCount: 4,
+    aliases: ["Earth Alliance Breaching Pod Wing (Third Age)"],
+  }),
+  breachingPodFlight({
+    name: "Earth Alliance Breaching Pod Flight (Crusade Era)",
+    faction: "Earth Alliance - Crusade Era",
+    hull: 5,
+    speed: 6,
+    dodge: 4,
+    flightCount: 4,
+    aliases: ["Earth Alliance Breaching Pod Wing (Crusade Era)"],
+  }),
+  breachingPodFlight({
+    name: "Dilgar Breaching Pod Flight",
+    faction: "Dilgar Imperium",
+    hull: 6,
+    speed: 6,
+    dodge: 5,
+    flightCount: 4,
+    aliases: ["Dilgar Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Minbari Breaching Pod Flight",
+    faction: "Minbari Federation",
+    hull: 5,
+    speed: 8,
+    dodge: 5,
+    stealth: 4,
+    flightCount: 4,
+    aliases: ["Minbari Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Narn Breaching Pod Flight",
+    faction: "Narn Regime",
+    hull: 6,
+    speed: 6,
+    dodge: 5,
+    flightCount: 4,
+    aliases: ["Narn Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Centauri Breaching Pod Flight",
+    faction: "Centauri Republic",
+    hull: 5,
+    speed: 6,
+    dodge: 4,
+    flightCount: 4,
+    aliases: ["Centauri Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Brakiri Breaching Pod Flight",
+    faction: "Brakiri Syndicracy",
+    hull: 5,
+    speed: 6,
+    dodge: 4,
+    flightCount: 4,
+    aliases: ["Brakiri Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Drazi Breaching Pod Flight",
+    faction: "Drazi Freehold",
+    hull: 6,
+    speed: 6,
+    dodge: 5,
+    flightCount: 4,
+    aliases: ["Drazi Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Gaim Breaching Pod Flight",
+    faction: "Gaim Intelligence",
+    hull: 5,
+    speed: 8,
+    dodge: 5,
+    flightCount: 4,
+    aliases: ["Gaim Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Raiders Breaching Pod Flight",
+    faction: "Raiders",
+    hull: 5,
+    speed: 6,
+    dodge: 5,
+    flightCount: 5,
+    aliases: ["Raiders Breaching Pod Wing", "Raider Breaching Pod Flight", "Raider Breaching Pod Wing"],
+  }),
+  breachingPodFlight({
+    name: "Atas'da Breaching Pod Flight",
+    faction: "Drakh",
+    hull: 6,
+    speed: 6,
+    dodge: 5,
+    flightCount: 4,
+    aliases: ["Atas'da Breaching Pod Wing", "Drakh Breaching Pod Flight", "Drakh Breaching Pod Wing"],
+  }),
 ];
 
 type CsvShipSeed = {
@@ -5279,6 +5434,10 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS skybox text NOT NULL DEFAULT 'bright-nebula'
+    `);
+    await pool.query(`
+      ALTER TABLE games
       ADD COLUMN IF NOT EXISTS opponent_kind text NOT NULL DEFAULT 'human'
     `);
     await pool.query(`
@@ -5324,6 +5483,30 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       ALTER TABLE game_units
       ADD COLUMN IF NOT EXISTS carried_fighters jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS troop_points integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS max_troop_points integer NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS captured_by_owner_id text
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS captured_round integer
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS surrendered_to_owner_id text
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS surrendered_round integer
     `);
     await pool.query(`
       ALTER TABLE game_units
@@ -5404,6 +5587,39 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS game_jump_points_creator_idx
       ON game_jump_points (creator_unit_id, game_id)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_boarding_actions (
+        id serial PRIMARY KEY,
+        game_id integer NOT NULL,
+        round integer NOT NULL,
+        target_unit_id integer NOT NULL,
+        attacker_owner_id text NOT NULL,
+        source_unit_id integer,
+        source_flight_unit_id integer,
+        troops_committed integer NOT NULL DEFAULT 0,
+        troops_remaining integer NOT NULL DEFAULT 0,
+        delivery_type text NOT NULL DEFAULT 'ship',
+        status text NOT NULL DEFAULT 'pending',
+        created_phase text NOT NULL DEFAULT 'movement',
+        resolved_round integer,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS game_boarding_actions_game_target_idx
+      ON game_boarding_actions (game_id, target_unit_id, status)
+    `);
+    await pool.query(`
+      UPDATE game_units gu
+      SET
+        troop_points = COALESCE(sm.troops, 0),
+        max_troop_points = COALESCE(sm.troops, 0)
+      FROM ships s
+      JOIN ship_models sm ON sm.id = s.ship_model_id
+      WHERE gu.ship_id = s.id
+        AND gu.max_troop_points = 0
+        AND COALESCE(sm.troops, 0) > 0
     `);
     await pool.query(`
       ALTER TABLE game_jump_points
@@ -5801,7 +6017,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
               priority_level = 'patrol',
               ship_class = $5,
               hull = $6,
-              troops = 0,
+              troops = $17,
               damage = NULL,
               damage_threshold = NULL,
               hull_rating = $6,
@@ -5821,7 +6037,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
               weapon_range = $9,
               weapon_damage = $10,
               description = $11
-            WHERE lower(filename) = lower($2)
+            WHERE (lower(filename) = lower($2) AND $18::boolean = false)
               OR lower(name) = ANY($12::text[])
             RETURNING id
           ),
@@ -5835,7 +6051,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             )
             SELECT
               $1, $2, $3, $4, 'patrol', $5,
-              $6, 0, NULL, NULL, $6, NULL,
+              $6, $17, NULL, NULL, $6, NULL,
               NULL, $7, 0, 360, 'N/A', $14,
               $15, $16, $8, NULL, 1, $13,
               $9, $10, $11
@@ -5864,6 +6080,8 @@ export async function ensureActaAllocationSchema(): Promise<void> {
           "shield" in fighter ? fighter.shield : 0,
           "shieldMax" in fighter ? fighter.shieldMax : 0,
           "shieldRegenRate" in fighter ? fighter.shieldRegenRate : 0,
+          "troops" in fighter ? fighter.troops : 0,
+          "sharedMesh" in fighter ? fighter.sharedMesh === true : false,
         ],
       );
 

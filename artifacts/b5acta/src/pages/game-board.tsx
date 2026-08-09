@@ -68,7 +68,6 @@ import {
   useUiArcColorScheme,
   useUiAttackPhasePulseOpacity,
   useUiAttackPhasePulseStrength,
-  useUiBoardBackgroundMode,
   useUiBoardGrid,
   useUiBoardOpacity,
   useUiControlMode,
@@ -123,7 +122,33 @@ import {
   type TerrainKind,
   type TerrainObject,
 } from "@/lib/terrain";
-import skyboxUrl from "@assets/skybox_1780215222009.png";
+import brightNebulaSkyboxUrl from "@assets/skybox_1780215222009.png";
+import deepStarfieldBackUrl from "@assets/skybox-deep-starfield-back.png";
+import deepStarfieldBottomUrl from "@assets/skybox-deep-starfield-bottom.png";
+import deepStarfieldFrontUrl from "@assets/skybox-deep-starfield-front.png";
+import deepStarfieldLeftUrl from "@assets/skybox-deep-starfield-left.png";
+import deepStarfieldRightUrl from "@assets/skybox-deep-starfield-right.png";
+import deepStarfieldTopUrl from "@assets/skybox-deep-starfield-top.png";
+import distantFieldsBackUrl from "@assets/skybox-distant-fields-back.jpg";
+import distantFieldsBottomUrl from "@assets/skybox-distant-fields-bottom.jpg";
+import distantFieldsFrontUrl from "@assets/skybox-distant-fields-front.jpg";
+import distantFieldsLeftUrl from "@assets/skybox-distant-fields-left.jpg";
+import distantFieldsRightUrl from "@assets/skybox-distant-fields-right.jpg";
+import distantFieldsTopUrl from "@assets/skybox-distant-fields-top.jpg";
+import draziGreenPurpleBackUrl from "@assets/skybox-drazi-green-purple-back.jpg";
+import draziGreenPurpleBottomUrl from "@assets/skybox-drazi-green-purple-bottom.jpg";
+import draziGreenPurpleFrontUrl from "@assets/skybox-drazi-green-purple-front.jpg";
+import draziGreenPurpleLeftUrl from "@assets/skybox-drazi-green-purple-left.jpg";
+import draziGreenPurpleRightUrl from "@assets/skybox-drazi-green-purple-right.jpg";
+import draziGreenPurpleTopUrl from "@assets/skybox-drazi-green-purple-top.jpg";
+import zhadumBackUrl from "@assets/skybox-zhadum-back.jpg";
+import zhadumBottomUrl from "@assets/skybox-zhadum-bottom.jpg";
+import zhadumFrontUrl from "@assets/skybox-zhadum-front.jpg";
+import zhadumLeftUrl from "@assets/skybox-zhadum-left.jpg";
+import zhadumRightUrl from "@assets/skybox-zhadum-right.jpg";
+import zhadumTopUrl from "@assets/skybox-zhadum-top.jpg";
+import boardingPartySilhouetteUrl from "@assets/boarding-party-silhouette.png";
+import damageControlWrenchUrl from "@assets/damage-control-wrench.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -168,7 +193,6 @@ import {
   XCircle,
   Crosshair,
   Move,
-  Zap,
   Flag,
   PanelRightClose,
   PanelRightOpen,
@@ -192,8 +216,41 @@ import {
   Lock,
   Unlock,
   Maximize2,
+  UserRound,
 } from "lucide-react";
 
+const DEEP_STARFIELD_CUBE_URLS: [string, string, string, string, string, string] = [
+  deepStarfieldRightUrl,
+  deepStarfieldLeftUrl,
+  deepStarfieldTopUrl,
+  deepStarfieldBottomUrl,
+  deepStarfieldFrontUrl,
+  deepStarfieldBackUrl,
+];
+const DRAZI_GREEN_PURPLE_CUBE_URLS: [string, string, string, string, string, string] = [
+  draziGreenPurpleRightUrl,
+  draziGreenPurpleLeftUrl,
+  draziGreenPurpleTopUrl,
+  draziGreenPurpleBottomUrl,
+  draziGreenPurpleFrontUrl,
+  draziGreenPurpleBackUrl,
+];
+const DISTANT_FIELDS_CUBE_URLS: [string, string, string, string, string, string] = [
+  distantFieldsRightUrl,
+  distantFieldsLeftUrl,
+  distantFieldsTopUrl,
+  distantFieldsBottomUrl,
+  distantFieldsFrontUrl,
+  distantFieldsBackUrl,
+];
+const ZHADUM_CUBE_URLS: [string, string, string, string, string, string] = [
+  zhadumRightUrl,
+  zhadumLeftUrl,
+  zhadumTopUrl,
+  zhadumBottomUrl,
+  zhadumFrontUrl,
+  zhadumBackUrl,
+];
 // Storage convention: `hexQ` / `hexR` columns hold WORLD INCHES (the field
 // names are historical). Render coordinates are 1:1 with storage, so this
 // is an identity mapping kept as a single function so we can audit every
@@ -853,6 +910,10 @@ function aiFiringSummaryStorageKey(gameId: number): string {
   return `b5acta:ai-firing-summary:${gameId}`;
 }
 
+function boardingResultStorageKey(gameId: number): string {
+  return `b5acta:boarding-result:${gameId}`;
+}
+
 function readAiDiagnostics(raw: unknown): AiDiagnostics {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const state = raw as Record<string, unknown>;
@@ -1006,6 +1067,7 @@ function AiDiagnosticsPanel({
 function battleLogSourceLabel(source: BattleLogEntry["source"]): string {
   if (source === "firing") return "Fire";
   if (source === "anti-fighter") return "AF";
+  if (source === "boarding") return "Boarding";
   if (source === "special") return "SA";
   return "Move";
 }
@@ -1113,6 +1175,146 @@ function Skybox({ url }: { url: string }) {
     };
   }, [texture, scene]);
   return null;
+}
+
+function CubeSkybox({ urls }: { urls: [string, string, string, string, string, string] }) {
+  const texture = useMemo(() => new THREE.CubeTextureLoader().load(urls), [urls]);
+  const { scene } = useThree();
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const prev = scene.background;
+    scene.background = texture;
+    return () => {
+      scene.background = prev;
+      texture.dispose();
+    };
+  }, [texture, scene]);
+  return null;
+}
+
+const ZHADUM_BOARD_BACKDROP_TEXTURE_FILENAME = "backdrop-distant-planet-lit.png";
+const ZHADUM_BOARD_BACKDROP_MODEL_FILENAME = "backdrop-zhadum.glb";
+
+function modelUrl(filename: string): string {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const revision = MODEL_ASSET_REVISIONS[filename.toLowerCase()] ?? APP_BUILD_SHA;
+  return `${basePath}/api/models/${filename}?v=${encodeURIComponent(revision)}`;
+}
+
+function ZhadumPlanetBackdrop() {
+  const texture = useLoader(
+    THREE.TextureLoader,
+    boardTextureUrl(ZHADUM_BOARD_BACKDROP_TEXTURE_FILENAME),
+  );
+
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+  }, [texture]);
+
+  return (
+    <Billboard position={[-34, 5.5, -122]} follow>
+      <mesh raycast={() => null} renderOrder={-10}>
+        <planeGeometry args={[27, 27]} />
+        <meshBasicMaterial
+          map={texture}
+          transparent
+          opacity={0.86}
+          depthWrite={false}
+          fog={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+    </Billboard>
+  );
+}
+
+function ZhadumModelBackdrop() {
+  const { scene } = useGLTF(modelUrl(ZHADUM_BOARD_BACKDROP_MODEL_FILENAME));
+
+  const { cloned, scale, centerOffset } = useMemo(() => {
+    const c = scene.clone(true);
+    c.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.raycast = () => null;
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
+        const source = material as
+          | (THREE.Material & {
+              alphaMap?: THREE.Texture | null;
+              color?: THREE.Color;
+              map?: THREE.Texture | null;
+              vertexColors?: boolean;
+            })
+          | undefined;
+        const color = source?.color instanceof THREE.Color
+          ? source.color.clone().multiplyScalar(0.42).lerp(new THREE.Color("#7c4b38"), 0.18)
+          : new THREE.Color("#4b2f2a");
+        const backdropMaterial = new THREE.MeshBasicMaterial({
+          alphaMap: null,
+          color,
+          depthWrite: true,
+          fog: false,
+          map: source?.map ?? null,
+          opacity: 1,
+          side: THREE.DoubleSide,
+          toneMapped: false,
+          transparent: false,
+          vertexColors: source?.vertexColors === true,
+        });
+        backdropMaterial.polygonOffset = true;
+        backdropMaterial.polygonOffsetFactor = 1;
+        backdropMaterial.polygonOffsetUnits = 1;
+        const adjustable = backdropMaterial as THREE.Material & {
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
+        if (adjustable.emissive instanceof THREE.Color) {
+          adjustable.emissive = new THREE.Color("#000000");
+          adjustable.emissiveIntensity = 0;
+        }
+        return backdropMaterial;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+    });
+
+    const box = new THREE.Box3().setFromObject(c);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    return {
+      cloned: c,
+      scale: objectScaleToTargetInches(c, 26),
+      centerOffset: center.multiplyScalar(-1),
+    };
+  }, [scene]);
+
+  return (
+    <group position={[34, 4.5, -124]} rotation={[0, THREE.MathUtils.degToRad(-18), 0]}>
+      <primitive
+        object={cloned}
+        position={centerOffset}
+        scale={[scale, scale, scale]}
+      />
+    </group>
+  );
+}
+
+function ZhadumSkyboxBackdropElements() {
+  return (
+    <Suspense fallback={null}>
+      <ZhadumPlanetBackdrop />
+      <ZhadumModelBackdrop />
+    </Suspense>
+  );
 }
 
 function SpaceGrid({
@@ -1995,6 +2197,7 @@ const RAIDER_CARRIER_MODEL_FILENAME = "raider-carrier.glb";
 const RAIDER_DELTA_MODEL_FILENAME = "raider-delta.glb";
 const RAIDER_FREIGHTER_MODEL_FILENAME = "raider-freighter.glb";
 const RAIDER_NOVA_MODEL_FILENAME = "raider-nova.glb";
+const BREACHING_POD_MODEL_FILENAME = "breaching-pod.glb";
 const NOVA_STARFURY_MODEL_FILENAME = "nova-starfury.glb";
 const SHADOWCLOAK_MODEL_FILENAME = "shadowcloak.glb";
 const SHADOW_SCOUT_MODEL_FILENAME = "shadow-scout.glb";
@@ -2173,6 +2376,7 @@ const MODEL_SCALE_MULTIPLIERS: Record<string, number> = {
   "frazi.glb": 0.165,
   "spitfire.glb": 0.165,
   [RAIDER_DELTA_MODEL_FILENAME]: 0.165,
+  [BREACHING_POD_MODEL_FILENAME]: 0.165,
   [VORLON_FIGHTER_MODEL_FILENAME]: 0.165,
 };
 const MODEL_ABSOLUTE_SCALES: Record<string, number> = {
@@ -2240,7 +2444,7 @@ const FIGHTER_SQUADRON_CANONICAL_FILENAMES: Record<string, string> = {
   "vorlon fighter wing": VORLON_FIGHTER_MODEL_FILENAME,
 };
 const FIGHTER_IDENTITY_PATTERN =
-  /\b(?:aurora|nova[-\s]+star\s?fury|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire|delta[-\s]?v|raider[-\s]?delta|zephyr|vorlon\s+fighter)\b/i;
+  /\b(?:aurora|nova[-\s]+star\s?fury|thunderbolt|tiger|black[-\s]?omega|nial|flyer|sentri|frazi|spitfire|delta[-\s]?v|raider[-\s]?delta|zephyr|vorlon\s+fighter|breaching\s+pod|breeching\s+pod|atas'?da)\b/i;
 const FIGHTER_SQUADRON_OFFSETS: Array<{ x: number; z: number; yaw: number }> = [
   { x: 0, z: 0.24, yaw: 0 },
   { x: -0.3, z: -0.22, yaw: 0.12 },
@@ -2463,6 +2667,7 @@ const BOARD_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "weapon-offline-arc.png": "20260730-weapon-arc-offline-v1",
   "jump-trajectory-arc.jpg": "20260801-jump-trajectory-v1",
   "jump-no-entry-arc.jpg": "20260801-jump-no-entry-v1",
+  "backdrop-distant-planet-lit.png": "20260808-zhadum-board-backdrop-v1",
 };
 const DEFAULT_BOARD_SMOKE_TUNING: BoardSmokeTuning = {
   color: "#f8fafc",
@@ -3201,6 +3406,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   "vorlon-dreadnought.glb": "20260727-heavy-cruiser-v1",
   "black-omega.glb": "20260721-192023",
   "bintak.glb": "20260724-221703",
+  "backdrop-zhadum.glb": "20260808-zhadum-board-backdrop-v1",
   [ORGANIC_BATTLECRAB_MODEL_FILENAME]: "20260720-214405-organic",
   [CENTURION_MODEL_FILENAME]: "20260730-centurion-v1",
   [CORPORATE_FREIGHTER_MODEL_FILENAME]: "20260730-corporate-freighter-v1",
@@ -3232,6 +3438,7 @@ const MODEL_ASSET_REVISIONS: Record<string, string> = {
   [RAIDER_DELTA_MODEL_FILENAME]: "20260728-212845",
   [RAIDER_FREIGHTER_MODEL_FILENAME]: "20260730-freighter-v2",
   [RAIDER_NOVA_MODEL_FILENAME]: "20260728-221344",
+  [BREACHING_POD_MODEL_FILENAME]: "20260809-breaching-pod-v1",
   "rongoth.glb": "20260724-193659",
   [SHADOWCLOAK_MODEL_FILENAME]: "20260730-shadowcloak-v2",
   [SHADOW_SCOUT_MODEL_FILENAME]: "20260728-135155",
@@ -3397,6 +3604,111 @@ function objectScaleToTargetInches(object: THREE.Object3D, targetInches: number)
   box.getSize(size);
   const largest = Math.max(size.x, size.y, size.z, 0.001);
   return targetInches / largest;
+}
+
+function BoardingPartyBaseMarker({
+  friendlyCount,
+  counterCount,
+  baseRadius,
+}: {
+  friendlyCount: number;
+  counterCount: number;
+  baseRadius: number;
+}) {
+  const iconTexture = useLoader(THREE.TextureLoader, boardingPartySilhouetteUrl);
+  const markerScale = Math.max(0.68, Math.min(1.08, baseRadius / 0.8));
+  const lineColor = "#f8fafc";
+  const glowColor = "#f43f5e";
+  const hasFriendly = friendlyCount > 0;
+  const hasCounter = counterCount > 0;
+
+  useEffect(() => {
+    iconTexture.colorSpace = THREE.SRGBColorSpace;
+    iconTexture.anisotropy = 4;
+    iconTexture.needsUpdate = true;
+  }, [iconTexture]);
+
+  return (
+    <CameraFacingGroup
+      position={[0, 0.24, 0]}
+      scale={[markerScale, markerScale, markerScale]}
+    >
+      <mesh position={[-0.16, -0.02, 0]} renderOrder={24}>
+        <planeGeometry args={[0.5, 0.44]} />
+        <meshBasicMaterial
+          alphaTest={0.08}
+          color={lineColor}
+          map={iconTexture}
+          transparent
+          opacity={0.98}
+          depthTest={false}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      {hasFriendly && (
+        <Text
+          position={[0.28, -0.03, 0]}
+          fontSize={0.24}
+          color="#22c55e"
+          anchorX="left"
+          anchorY="middle"
+          outlineWidth={0.035}
+          outlineColor="#020617"
+          renderOrder={25}
+        >
+          {friendlyCount}
+        </Text>
+      )}
+      {hasCounter && (
+        <Text
+          position={[hasFriendly ? 0.56 : 0.28, -0.03, 0]}
+          fontSize={0.24}
+          color={glowColor}
+          anchorX="left"
+          anchorY="middle"
+          outlineWidth={0.035}
+          outlineColor="#020617"
+          renderOrder={25}
+        >
+          {counterCount}
+        </Text>
+      )}
+    </CameraFacingGroup>
+  );
+}
+
+function DamageControlBaseMarker({ baseRadius }: { baseRadius: number }) {
+  const iconTexture = useLoader(THREE.TextureLoader, damageControlWrenchUrl);
+  const markerSize = Math.max(0.3, Math.min(0.72, baseRadius * 0.9));
+
+  useEffect(() => {
+    iconTexture.colorSpace = THREE.SRGBColorSpace;
+    iconTexture.anisotropy = 4;
+    iconTexture.needsUpdate = true;
+  }, [iconTexture]);
+
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0.052, 0]}
+      renderOrder={10}
+    >
+      <planeGeometry args={[markerSize, markerSize]} />
+      <meshBasicMaterial
+        alphaTest={0.08}
+        color="#000000"
+        map={iconTexture}
+        transparent
+        opacity={0.96}
+        depthTest={false}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+        toneMapped={false}
+      />
+    </mesh>
+  );
 }
 
 function LiveShieldTokenMarker({
@@ -3588,6 +3900,17 @@ function shipModelHasFighterTrait(
   );
 }
 
+function shipModelIsBreachingPod(
+  model: FighterIdentityModel | undefined,
+): boolean {
+  const identity = [model?.name, model?.filename, model?.shipClass, model?.traits]
+    .filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    )
+    .join(" ");
+  return /\bbre[ae]ching\s+pod\b/i.test(identity);
+}
+
 function uiModelIsSpaceStation(
   model: { name?: unknown; traits?: unknown; shipClass?: unknown } | undefined,
 ): boolean {
@@ -3659,6 +3982,24 @@ const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
   "shadow spitfire": 2,
   "spitfire": 2,
   "spitfire flight": 2,
+  "earth alliance breaching pod flight early years": 4,
+  "earth alliance breaching pod flight (early years)": 4,
+  "earth alliance breaching pod flight third age": 4,
+  "earth alliance breaching pod flight (third age)": 4,
+  "earth alliance breaching pod flight crusade era": 4,
+  "earth alliance breaching pod flight (crusade era)": 4,
+  "dilgar breaching pod flight": 4,
+  "minbari breaching pod flight": 4,
+  "narn breaching pod flight": 4,
+  "centauri breaching pod flight": 4,
+  "brakiri breaching pod flight": 4,
+  "drazi breaching pod flight": 4,
+  "gaim breaching pod flight": 4,
+  "raiders breaching pod flight": 5,
+  "raider breaching pod flight": 5,
+  "atas'da breaching pod flight": 4,
+  "atasda breaching pod flight": 4,
+  "drakh breaching pod flight": 4,
   "tethys cutter": 2,
   "tethys class cutter": 2,
   "tethys class laser boat": 2,
@@ -3931,6 +4272,7 @@ function carriedFighterDeployCenterRadius(
 }
 
 const BASE_CONTACT_EPSILON = 0.05;
+const BREACHING_POD_CONTACT_EPSILON = 0.2;
 const DOGFIGHT_CONTACT_GAP_EPSILON = 0.05;
 const DOGFIGHT_CONTACT_OVERLAP_EPSILON = 0.02;
 
@@ -6143,6 +6485,7 @@ function GameUnit3D({
   dogfightLocked = false,
   jumpPointContactEligible = false,
   shieldDefenseOutcome = null,
+  boardingTroops = { friendly: 0, counter: 0 },
   arcColorScheme = "classic",
   healthBarFacesCamera = false,
   shipMeshTintsEnabled = true,
@@ -6172,6 +6515,7 @@ function GameUnit3D({
     damageState?: string | null;
     baseRadiusInches?: number | null;
     specialAction?: string | null;
+    capturedByOwnerId?: string | null;
   };
   isSelected: boolean;
   onClick: () => void;
@@ -6204,13 +6548,20 @@ function GameUnit3D({
   dogfightLocked?: boolean;
   jumpPointContactEligible?: boolean;
   shieldDefenseOutcome?: "success" | "failed" | null;
+  boardingTroops?: { friendly: number; counter: number };
 }) {
   const [bx, , bz] = hexToWorld(unit.hexQ, unit.hexR);
   const isMine = unit.ownerId === myUserId;
   const arcSide = isMine ? "friendly" : "enemy";
   const sideColor = isMine ? "#34eb52" : "#ff0004";
+  const capturedVisuallyIntact =
+    Boolean(unit.capturedByOwnerId) && !unit.isDestroyed && unit.hullPoints > 0;
+  const capturedArcColor = capturedVisuallyIntact
+    ? capturedShipArcColor(arcColorScheme)
+    : null;
   const destroyedGrey = "#7f8794";
-  const visuallyDestroyed = !unitIsCombatEffective(unit);
+  const visuallyDestroyed =
+    !capturedVisuallyIntact && !unitIsCombatEffective(unit);
   const targetEligible = targetingPreview === "eligible" && !visuallyDestroyed;
   const targetIneligible = targetingPreview === "ineligible" && !visuallyDestroyed;
   const launchHighlighted = launchHighlight && !visuallyDestroyed;
@@ -6222,9 +6573,7 @@ function GameUnit3D({
       ? "#7dd3fc"
       : targetIneligible
         ? "#334155"
-    : phaseViable
-      ? sideColor
-      : "#ffffff";
+        : capturedArcColor ?? (phaseViable ? sideColor : "#ffffff");
   const selectionColor = visuallyDestroyed ? "#8a93a1" : "#f59e0b";
   const modelTint = visuallyDestroyed ? "#6b7280" : lightBlueHighlight ? "#93c5fd" : sideColor;
   const baseColor = targetIneligible ? "#030712" : "#000000";
@@ -6234,6 +6583,8 @@ function GameUnit3D({
       ? "#7dd3fc"
       : targetIneligible
         ? "#1e293b"
+        : capturedArcColor
+          ? capturedArcColor
         : "#94a3b8";
   const hpPct =
     unit.maxHullPoints > 0
@@ -6480,6 +6831,7 @@ function GameUnit3D({
             muted={visuallyDestroyed || targetIneligible}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            colorOverride={capturedArcColor ?? undefined}
           />
         </group>
       )}
@@ -6493,23 +6845,35 @@ function GameUnit3D({
           depthWrite={!hasPreview && !targetIneligible}
         />
       </mesh>
+      {(boardingTroops.friendly > 0 || boardingTroops.counter > 0) &&
+        !hasPreview &&
+        !visuallyDestroyed && (
+        <BoardingPartyBaseMarker
+          friendlyCount={boardingTroops.friendly}
+          counterCount={boardingTroops.counter}
+          baseRadius={baseRadius}
+        />
+      )}
       {damageControlHighlight && !hasPreview && (
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0.026, 0]}
-          renderOrder={7}
-        >
-          <circleGeometry args={[Math.max(0.05, baseRadius * 0.88), 48]} />
-          <meshBasicMaterial
-            ref={damageControlDiskMaterialRef}
-            color="#ffffff"
-            transparent
-            opacity={0.24}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
+        <>
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.026, 0]}
+            renderOrder={7}
+          >
+            <circleGeometry args={[Math.max(0.05, baseRadius * 0.88), 48]} />
+            <meshBasicMaterial
+              ref={damageControlDiskMaterialRef}
+              color="#ffffff"
+              transparent
+              opacity={0.24}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <DamageControlBaseMarker baseRadius={baseRadius} />
+        </>
       )}
       {dogfightLocked && isFighter && !hasPreview && !visuallyDestroyed && (
         <mesh
@@ -6647,6 +7011,7 @@ function GameUnit3D({
             muted={visuallyDestroyed}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            colorOverride={capturedArcColor ?? undefined}
             arcReadiness={weaponArcReadiness}
           />
         </group>
@@ -6660,6 +7025,7 @@ function GameUnit3D({
             flip={FLIP_MODELS.has(unit.modelFilename)}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            colorOverride={capturedArcColor ?? undefined}
             outlineOnly={weaponArcProjectionOutlineOnly}
             readiness={weaponArcReadiness[canonicalWeaponArc(firingArc.arc)]}
           />
@@ -6672,6 +7038,7 @@ function GameUnit3D({
             flip={FLIP_MODELS.has(unit.modelFilename)}
             arcColorScheme={arcColorScheme}
             arcSide={arcSide}
+            colorOverride={capturedArcColor ?? undefined}
             arcReadiness={weaponArcReadiness}
           />
         </group>
@@ -6729,6 +7096,7 @@ function GameUnit3D({
               muted={visuallyDestroyed}
               arcColorScheme={arcColorScheme}
               arcSide={arcSide}
+              colorOverride={capturedArcColor ?? undefined}
             />
           </group>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
@@ -6797,6 +7165,7 @@ function GameUnit3D({
                 muted={visuallyDestroyed}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
+                colorOverride={capturedArcColor ?? undefined}
                 arcReadiness={weaponArcReadiness}
               />
             </group>
@@ -6809,6 +7178,7 @@ function GameUnit3D({
                 flip={FLIP_MODELS.has(unit.modelFilename)}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
+                colorOverride={capturedArcColor ?? undefined}
                 outlineOnly={weaponArcProjectionOutlineOnly}
                 readiness={weaponArcReadiness[canonicalWeaponArc(firingArc.arc)]}
               />
@@ -6821,6 +7191,7 @@ function GameUnit3D({
                 flip={FLIP_MODELS.has(unit.modelFilename)}
                 arcColorScheme={arcColorScheme}
                 arcSide={arcSide}
+                colorOverride={capturedArcColor ?? undefined}
                 arcReadiness={weaponArcReadiness}
               />
             </group>
@@ -7554,6 +7925,10 @@ function arcDisplayColor(
   return ARC_DEFS[canonicalArc]?.color ?? "#ffffff";
 }
 
+function capturedShipArcColor(scheme: UiArcColorScheme): string {
+  return scheme === "side" ? "#facc15" : "#ffffff";
+}
+
 function weaponCriticalDisableReason(
   weapon: Pick<Weapon, "id" | "arc" | "name">,
   crits: NonNullable<GameUnit["criticals"]>,
@@ -7969,6 +8344,7 @@ function BaseOrientationDisplay({
   muted = false,
   arcColorScheme = "classic",
   arcSide = null,
+  colorOverride,
 }: {
   flip?: boolean;
   opacityScale?: number;
@@ -7976,6 +8352,7 @@ function BaseOrientationDisplay({
   muted?: boolean;
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
+  colorOverride?: string;
 }) {
   return (
     <>
@@ -7985,7 +8362,7 @@ function BaseOrientationDisplay({
         const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
         const isBoresight = arc.startsWith("Boresight");
         const mutedOpacity = isBoresight ? 0.24 : 0.34;
-        const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+        const color = colorOverride ?? arcDisplayColor(arc, arcColorScheme, arcSide);
         return (
           <ArcSector
             key={arc}
@@ -8134,6 +8511,7 @@ function WeaponRangeProjectionDisplay({
   flip,
   arcColorScheme = "classic",
   arcSide = null,
+  colorOverride,
   outlineOnly = false,
   arcReadiness = {},
 }: {
@@ -8141,6 +8519,7 @@ function WeaponRangeProjectionDisplay({
   flip: boolean;
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
+  colorOverride?: string;
   outlineOnly?: boolean;
   arcReadiness?: WeaponArcReadinessMap;
 }) {
@@ -8164,6 +8543,7 @@ function WeaponRangeProjectionDisplay({
           flip={flip}
           arcColorScheme={arcColorScheme}
           arcSide={arcSide}
+          colorOverride={colorOverride}
           outlineOnly={outlineOnly}
           readiness={arcReadiness[item.arc]}
         />
@@ -8194,6 +8574,7 @@ function WeaponArcDisplay({
   muted = false,
   arcColorScheme = "classic",
   arcSide = null,
+  colorOverride,
   arcReadiness = {},
 }: {
   weapons: Pick<Weapon, "arc">[];
@@ -8202,6 +8583,7 @@ function WeaponArcDisplay({
   muted?: boolean;
   arcColorScheme?: UiArcColorScheme;
   arcSide?: "friendly" | "enemy" | null;
+  colorOverride?: string;
   arcReadiness?: WeaponArcReadinessMap;
 }) {
   const uniqueArcs = useMemo(
@@ -8215,7 +8597,7 @@ function WeaponArcDisplay({
         const def = ARC_DEFS[arc];
         if (!def) return null;
         const centerAngle = flip ? def.centerAngle + Math.PI : def.centerAngle;
-        const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+        const color = colorOverride ?? arcDisplayColor(arc, arcColorScheme, arcSide);
         const readiness = arcReadiness[arc];
         const offline = readiness?.status === "offline";
         const degraded = readiness?.status === "degraded";
@@ -8269,7 +8651,7 @@ function WeaponArcDisplay({
         const lbl = ARC_LABELS[arc];
         const def = ARC_DEFS[arc];
         if (!lbl || !def) return null;
-        const color = arcDisplayColor(arc, arcColorScheme, arcSide);
+        const color = colorOverride ?? arcDisplayColor(arc, arcColorScheme, arcSide);
         const readiness = arcReadiness[arc];
         const offline = readiness?.status === "offline";
         const degraded = readiness?.status === "degraded";
@@ -8314,7 +8696,7 @@ function WeaponArcDisplay({
               ? "#8a93a1"
               : turretDegraded
                 ? "#f59e0b"
-                : arcDisplayColor("Turret", arcColorScheme, arcSide);
+                : colorOverride ?? arcDisplayColor("Turret", arcColorScheme, arcSide);
           const turretLabel = turretOffline
             ? "TUR OFF"
             : turretDegraded && turretReadiness
@@ -8634,6 +9016,8 @@ type MovePlan =
   | { kind: "fighter-free"; x: number; z: number; heading: number }
   | null;
 
+type FighterContactWarning = "dogfight" | "boarding" | null;
+
 type MovementGesture =
   | { kind: "forward" }
   | { kind: "fighter-free" }
@@ -8717,6 +9101,29 @@ type SpecialActionAuditLogEntry = {
   payload: Record<string, unknown>;
   createdAt: string;
 };
+type ActiveBoardingActionEntry = {
+  id: number;
+  gameId: number;
+  round: number;
+  targetUnitId: number;
+  attackerOwnerId: string;
+  sourceUnitId: number | null;
+  sourceFlightUnitId: number | null;
+  troopsCommitted: number;
+  troopsRemaining: number;
+  deliveryType: string;
+  status: "pending" | "fighting" | "unopposed" | string;
+  createdPhase: string;
+  resolvedRound: number | null;
+  createdAt: string;
+};
+type ActiveBoardingActionsResponse = {
+  gameId: number;
+  count: number;
+  actions: ActiveBoardingActionEntry[];
+};
+const ACTIVE_BOARDING_STATUSES = new Set(["pending", "fighting", "unopposed", "captured"]);
+const COUNTER_BOARDING_TARGET_STATUSES = new Set(["fighting", "unopposed", "captured"]);
 type AuditLogResponse<T> = {
   gameId: number;
   count: number;
@@ -8724,7 +9131,7 @@ type AuditLogResponse<T> = {
 };
 type BattleLogEntry = {
   id: string;
-  source: "movement" | "firing" | "special" | "anti-fighter";
+  source: "movement" | "firing" | "special" | "anti-fighter" | "boarding";
   round: number;
   phase: string;
   actorKind: string;
@@ -9201,6 +9608,71 @@ function unitContactsJumpPointBase(
 
 function unitIsOffBoard(unit: { boardState?: string | null }): boolean {
   return unit.boardState === "hyperspace" || unit.boardState === "withdrawn";
+}
+
+function boardingTargetEligibilityForPreview({
+  attacker,
+  target,
+  targetModel,
+  targetIsFighter,
+  activeBoardingActions = [],
+}: {
+  attacker: GameUnit;
+  target: GameUnit;
+  targetModel?: ShipModel;
+  targetIsFighter: boolean;
+  activeBoardingActions?: ActiveBoardingActionEntry[];
+}): { eligible: boolean; reason: string | null } {
+  if ((attacker.troopPoints ?? 0) <= 0) {
+    return { eligible: false, reason: "This ship has no Troops available to commit." };
+  }
+  if (target.ownerId === attacker.ownerId) {
+    const enemyBoardersAboard = activeBoardingActions.some(
+      (action) =>
+        action.targetUnitId === target.id &&
+        action.attackerOwnerId !== attacker.ownerId &&
+        COUNTER_BOARDING_TARGET_STATUSES.has(action.status) &&
+        action.troopsRemaining > 0,
+    );
+    if (!enemyBoardersAboard) {
+      return {
+        eligible: false,
+        reason: "Counter-boarding requires enemy boarders aboard the friendly target.",
+      };
+    }
+  }
+  if (!unitIsCombatEffective(target) || unitIsOffBoard(target)) {
+    return { eligible: false, reason: "Boarding target is not an eligible deployed ship." };
+  }
+  if (targetIsFighter) {
+    return { eligible: false, reason: "Boarding actions target enemy ships, not fighter flights." };
+  }
+  if (!targetModel) {
+    return { eligible: false, reason: "Target ship model missing." };
+  }
+  if (uiModelIsSpaceStation(targetModel)) {
+    return { eligible: false, reason: "Ship-launched boarding against stations is not implemented yet." };
+  }
+  if (uiRulesProfileForModel(targetModel) !== "standard") {
+    return { eligible: false, reason: "This target cannot be boarded." };
+  }
+  const edgeDistance =
+    Math.hypot(target.hexQ - attacker.hexQ, target.hexR - attacker.hexR) -
+    rulesBaseRadius(attacker) -
+    rulesBaseRadius(target);
+  if (edgeDistance > 4 + 1e-6) {
+    return {
+      eligible: false,
+      reason: `Boarding target out of range (${edgeDistance.toFixed(1)}" > 4").`,
+    };
+  }
+  if ((target.inchesMovedThisActivation ?? 0) > Math.floor((target.speed ?? 0) / 2)) {
+    return {
+      eligible: false,
+      reason: "Boarding target moved more than half Speed this turn.",
+    };
+  }
+  return { eligible: true, reason: null };
 }
 
 function uiJumpEngineTraits(traits: string | null | undefined): {
@@ -9994,7 +10466,7 @@ function FighterMovementPlanner({
   unit,
   plan,
   remainingMove,
-  dogfightWarning = false,
+  contactWarning = null,
 }: {
   unit: {
     hexQ: number;
@@ -10004,24 +10476,35 @@ function FighterMovementPlanner({
   };
   plan: MovePlan;
   remainingMove: number;
-  dogfightWarning?: boolean;
+  contactWarning?: FighterContactWarning;
 }) {
   const [x, , z] = hexToWorld(unit.hexQ, unit.hexR);
   const baseRadius = rulesBaseRadius(unit);
   const planned = plan?.kind === "fighter-free" ? plan : null;
+  const hasContactWarning = contactWarning !== null;
   const [pulse, setPulse] = useState(0);
   useFrame(({ clock }) => {
-    if (!dogfightWarning) {
+    if (!hasContactWarning) {
       if (pulse !== 0) setPulse(0);
       return;
     }
     setPulse((Math.sin(clock.elapsedTime * 8) + 1) / 2);
   });
-  const radiusColor = dogfightWarning ? "#a855f7" : "#22d3ee";
-  const ringColor = dogfightWarning ? "#e879f9" : "#67e8f9";
-  const fillOpacity = dogfightWarning ? 0.12 + pulse * 0.12 : 0.075;
-  const ringOpacity = dogfightWarning ? 0.58 + pulse * 0.38 : 0.72;
-  const emissiveIntensity = dogfightWarning ? 0.75 + pulse * 1.35 : 0;
+  const radiusColor =
+    contactWarning === "dogfight"
+      ? "#a855f7"
+      : contactWarning === "boarding"
+        ? "#facc15"
+        : "#22d3ee";
+  const ringColor =
+    contactWarning === "dogfight"
+      ? "#e879f9"
+      : contactWarning === "boarding"
+        ? "#fde047"
+        : "#67e8f9";
+  const fillOpacity = hasContactWarning ? 0.12 + pulse * 0.12 : 0.075;
+  const ringOpacity = hasContactWarning ? 0.58 + pulse * 0.38 : 0.72;
+  const emissiveIntensity = hasContactWarning ? 0.75 + pulse * 1.35 : 0;
   return (
     <group position={[x, 0, z]}>
       <mesh
@@ -10090,6 +10573,40 @@ function FighterMovementPlanner({
               depthWrite={false}
             />
           </mesh>
+          {hasContactWarning && (
+            <mesh
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, 0.048, 0]}
+              renderOrder={6}
+            >
+              <circleGeometry args={[baseRadius + 0.34, 72]} />
+              <meshBasicMaterial
+                color={contactWarning === "boarding" ? "#facc15" : "#a855f7"}
+                transparent
+                opacity={
+                  contactWarning === "boarding"
+                    ? 0.14 + pulse * 0.12
+                    : 0.12 + pulse * 0.12
+                }
+                depthWrite={false}
+              />
+            </mesh>
+          )}
+          {hasContactWarning && (
+            <mesh
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, 0.055, 0]}
+              renderOrder={7}
+            >
+              <ringGeometry args={[baseRadius + 0.16, baseRadius + 0.34, 64]} />
+              <meshBasicMaterial
+                color={contactWarning === "boarding" ? "#fde047" : "#d946ef"}
+                transparent
+                opacity={0.76 + pulse * 0.2}
+                depthWrite={false}
+              />
+            </mesh>
+          )}
         </group>
       )}
     </group>
@@ -11845,7 +12362,6 @@ export default function GameBoard() {
   const [boardGridEnabled] = useUiBoardGrid();
   const [attackPulseOpacity] = useUiAttackPhasePulseOpacity();
   const [attackPulseStrength] = useUiAttackPhasePulseStrength();
-  const [boardBackgroundMode] = useUiBoardBackgroundMode();
   const [weaponArcProjectionEnabled] = useUiWeaponArcProjection();
   const [weaponArcProjectionStyle] = useUiWeaponArcProjectionStyle();
   const [isoCameraControlsEnabled] = useUiIsoCameraControls();
@@ -11903,6 +12419,13 @@ export default function GameBoard() {
     staleTime: 60_000,
   });
   const game = gameData?.game;
+  const skyboxSelection = game?.skybox ?? "bright-nebula";
+  const selectedPanoramaSkyboxUrl =
+    skyboxSelection === "none"
+      ? null
+      : skyboxSelection === "dark-forest"
+        ? null
+        : brightNebulaSkyboxUrl;
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
   const jumpPoints = gameData?.jumpPoints ?? [];
@@ -12273,7 +12796,15 @@ export default function GameBoard() {
     useState<{ x: number; y: number } | null>(null);
   // Targeted Special Actions need a board target picker before sending.
   const [specialActionTargetPicking, setSpecialActionTargetPicking] =
-    useState<"concentrate-fire" | "track-that-target" | "cause-confusion" | null>(null);
+    useState<"concentrate-fire" | "track-that-target" | "cause-confusion" | "launch-breaching-pods-and-shuttles" | null>(null);
+  const [boardingCommitDialog, setBoardingCommitDialog] = useState<{
+    attackerUnitId: number;
+    attackerName: string;
+    targetUnitId: number;
+    targetName: string;
+    troopsAvailable: number;
+    troopsCommitted: number;
+  } | null>(null);
 
   // Staging / fleet yards
   const threeRef = useRef<{
@@ -12565,6 +13096,8 @@ export default function GameBoard() {
   const [dogfightTargetPicking, setDogfightTargetPicking] = useState(false);
   const [selfRepairModal, setSelfRepairModal] =
     useState<SelfRepairModalState | null>(null);
+  const [boardingResultModal, setBoardingResultModal] =
+    useState<SpecialActionAuditLogEntry | null>(null);
   const [skippedSelfRepairPromptKeys, setSkippedSelfRepairPromptKeys] =
     useState<Set<string>>(() => new Set());
   const [aiWeaponFxReplay, setAiWeaponFxReplay] =
@@ -12795,6 +13328,7 @@ export default function GameBoard() {
   const [moveConfirmPopover, setMoveConfirmPopover] = useState<{
     x: number;
     y: number;
+    confirmEndActivation?: boolean;
   } | null>(null);
   const [endPhaseLaunchPrompt, setEndPhaseLaunchPrompt] = useState<{
     key: string;
@@ -13126,9 +13660,93 @@ export default function GameBoard() {
   const unitsWithFighterFlags = useMemo(
     () =>
       units
-        .filter((unit) => !displacedFighterUnitIds.has(unit.id))
+        .filter(
+          (unit) =>
+            !displacedFighterUnitIds.has(unit.id) && !unitIsOffBoard(unit),
+        )
         .map((unit) => ({ ...unit, isFighter: isFighterUnit(unit) })),
     [displacedFighterUnitIds, isFighterUnit, units],
+  );
+  const breachingPodCanLatchTarget = useCallback(
+    (
+      podUnit: BoardUnit,
+      candidate: UiBaseFootprint,
+      other: BoardUnit & { isFighter: boolean },
+    ): boolean => {
+      const podModel = getShipModelForUnit(podUnit);
+      const isPod =
+        shipModelIsBreachingPod(podModel) ||
+        shipModelIsBreachingPod({
+          name: podUnit.name,
+          filename: podUnit.modelFilename,
+        });
+      const troopsAvailable = Math.max(
+        0,
+        podUnit.troopPoints ?? 0,
+        podUnit.maxTroopPoints ?? 0,
+        isPod ? 1 : 0,
+      );
+      if (!isPod || troopsAvailable <= 0) return false;
+      if (
+        other.id === podUnit.id ||
+        other.ownerId === podUnit.ownerId ||
+        other.isDestroyed ||
+        unitIsOffBoard(other) ||
+        other.hullPoints <= 0 ||
+        other.isFighter
+      ) {
+        return false;
+      }
+      const otherModel = getShipModelForUnit(other);
+      if (!otherModel || uiModelIsSpaceStation(otherModel)) return false;
+      if (uiRulesProfileForModel(otherModel) !== "standard") return false;
+      return (
+        uiBaseFootprintEdgeDistance(candidate, {
+          id: other.id,
+          x: other.hexQ,
+          z: other.hexR,
+          isFighter: other.isFighter,
+          baseRadiusInches: other.baseRadiusInches,
+        }) <= BREACHING_POD_CONTACT_EPSILON
+      );
+    },
+    [getShipModelForUnit],
+  );
+  const snapBreachingPodToLatchEdge = useCallback(
+    (
+      podUnit: BoardUnit,
+      candidate: UiBaseFootprint,
+    ): UiBaseFootprint => {
+      const target = unitsWithFighterFlags.find((other) =>
+        breachingPodCanLatchTarget(podUnit, candidate, other),
+      );
+      if (!target) return candidate;
+      const podRadius = rulesBaseRadius(candidate);
+      const targetRadius = rulesBaseRadius(target);
+      const desiredDistance = podRadius + targetRadius + 0.02;
+      let dx = candidate.x - target.hexQ;
+      let dz = candidate.z - target.hexR;
+      let length = Math.hypot(dx, dz);
+      if (length <= 1e-6) {
+        dx = podUnit.hexQ - target.hexQ;
+        dz = podUnit.hexR - target.hexR;
+        length = Math.hypot(dx, dz);
+      }
+      if (length <= 1e-6) {
+        const headingRad = (podUnit.heading * Math.PI) / 180;
+        dx = Math.sin(headingRad);
+        dz = Math.cos(headingRad);
+        length = 1;
+      }
+      const snapped = {
+        ...candidate,
+        x: target.hexQ + (dx / length) * desiredDistance,
+        z: target.hexR + (dz / length) * desiredDistance,
+      };
+      const [x, z] = clampBaseCenterInsideBoard(snapped.x, snapped.z, snapped);
+      return { ...snapped, x, z };
+    },
+    [breachingPodCanLatchTarget, unitsWithFighterFlags],
   );
   const pendingShadowDispersalCarrier = useMemo(
     () =>
@@ -15986,6 +16604,13 @@ export default function GameBoard() {
   const selectedUnitIsFighter = selectedUnitData
     ? isFighterUnit(selectedUnitData)
     : false;
+  const selectedUnitIsBreachingPod = selectedUnitData
+    ? shipModelIsBreachingPod(getShipModelForUnit(selectedUnitData)) ||
+      shipModelIsBreachingPod({
+        name: selectedUnitData.name,
+        filename: selectedUnitData.modelFilename,
+      })
+    : false;
   const selectedFighterLockedInDogfight = Boolean(
     selectedUnitData &&
       selectedUnitIsFighter &&
@@ -16017,13 +16642,16 @@ export default function GameBoard() {
         }
         [x, z] = clampBaseCenterInsideBoard(x, z, unit);
       }
-      const candidate: UiBaseFootprint = {
+      let candidate: UiBaseFootprint = {
         id: unit.id,
         x,
         z,
         isFighter: true,
         baseRadiusInches: unit.baseRadiusInches,
       };
+      candidate = snapBreachingPodToLatchEdge(unit, candidate);
+      x = candidate.x;
+      z = candidate.z;
       const illegalOverlap = unitsWithFighterFlags.some((other) => {
         if (other.isDestroyed) return false;
         return uiBaseFootprintsIllegallyOverlap(candidate, {
@@ -16048,7 +16676,13 @@ export default function GameBoard() {
         heading: Math.round(((heading % 360) + 360) % 360),
       };
     },
-    [dogfightingFighterUnitIds, getLedger, selectedSaCaps, unitsWithFighterFlags],
+    [
+      dogfightingFighterUnitIds,
+      getLedger,
+      selectedSaCaps,
+      snapBreachingPodToLatchEdge,
+      unitsWithFighterFlags,
+    ],
   );
 
   const currentPhase: "initiative" | "movement" | "firing" | "end" =
@@ -16201,6 +16835,47 @@ export default function GameBoard() {
     isFighterUnit,
     movePlan,
     selectedUnitData,
+  ]);
+  const plannedBreachingPodBoardingContact = useMemo(() => {
+    if (
+      currentPhase !== "movement" ||
+      !selectedUnitData ||
+      !selectedUnitIsBreachingPod ||
+      movePlan?.kind !== "fighter-free"
+    ) {
+      return false;
+    }
+    const selectedPodModel = getShipModelForUnit(selectedUnitData);
+    const troopsAvailable = Math.max(
+      0,
+      selectedUnitData.troopPoints ?? 0,
+      selectedUnitData.maxTroopPoints ?? 0,
+      shipModelIsBreachingPod(selectedPodModel) ? 1 : 0,
+    );
+    if (troopsAvailable <= 0) return false;
+    const probe = {
+      hexQ: movePlan.x,
+      hexR: movePlan.z,
+      baseRadiusInches: selectedUnitData.baseRadiusInches,
+    };
+    const candidate: UiBaseFootprint = {
+      id: selectedUnitData.id,
+      x: probe.hexQ,
+      z: probe.hexR,
+      isFighter: true,
+      baseRadiusInches: probe.baseRadiusInches,
+    };
+    return unitsWithFighterFlags.some((other) => {
+      return breachingPodCanLatchTarget(selectedUnitData, candidate, other);
+    });
+  }, [
+    breachingPodCanLatchTarget,
+    currentPhase,
+    getShipModelForUnit,
+    movePlan,
+    selectedUnitData,
+    selectedUnitIsBreachingPod,
+    unitsWithFighterFlags,
   ]);
   const isMyEndPhaseWindow =
     game?.status === "active" &&
@@ -17133,6 +17808,36 @@ export default function GameBoard() {
     enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
     refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
+  const { data: activeBoardingData } = useQuery<ActiveBoardingActionsResponse>({
+    queryKey: ["active-boarding-actions", gameId],
+    queryFn: () =>
+      customFetch<ActiveBoardingActionsResponse>(
+        `/api/games/${gameId}/boarding-actions`,
+      ),
+    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
+    refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
+  });
+  const boardingTroopsByTargetId = useMemo(() => {
+    const byTarget = new Map<number, { friendly: number; counter: number }>();
+    for (const action of activeBoardingData?.actions ?? []) {
+      const count =
+        action.status === "pending"
+          ? action.troopsCommitted
+          : action.troopsRemaining;
+      if (count <= 0) continue;
+      const current = byTarget.get(action.targetUnitId) ?? {
+        friendly: 0,
+        counter: 0,
+      };
+      if (action.attackerOwnerId === myUserId) {
+        current.friendly += count;
+      } else {
+        current.counter += count;
+      }
+      byTarget.set(action.targetUnitId, current);
+    }
+    return byTarget;
+  }, [activeBoardingData?.actions, myUserId]);
   const battleLogEntries = useMemo<BattleLogEntry[]>(() => {
     const entries: BattleLogEntry[] = [
       ...(movementAuditData?.logs ?? []).map((log) => ({
@@ -17148,7 +17853,10 @@ export default function GameBoard() {
       ...(specialActionAuditData?.logs ?? []).map((log) => ({
         id: `special-${log.id}`,
         source:
-          log.action === "anti-fighter"
+          log.action === "boarding-resolution" ||
+          log.action === "boarding-sabotage"
+            ? ("boarding" as const)
+            : log.action === "anti-fighter"
             ? ("anti-fighter" as const)
             : ("special" as const),
         round: log.round,
@@ -17182,6 +17890,55 @@ export default function GameBoard() {
     movementAuditData?.logs,
     specialActionAuditData?.logs,
   ]);
+  const boardingAuditLogs = useMemo(() => {
+    const logs = specialActionAuditData?.logs ?? [];
+    return logs
+      .filter(
+        (log) =>
+          log.action === "boarding-resolution" ||
+          log.action === "boarding-sabotage",
+      )
+      .sort((a, b) => {
+        const timeDelta =
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        return timeDelta !== 0 ? timeDelta : b.id - a.id;
+      });
+  }, [specialActionAuditData?.logs]);
+  useEffect(() => {
+    if (boardingResultModal || boardingAuditLogs.length === 0) return;
+    let acknowledged = new Set<string>();
+    try {
+      const raw = window.sessionStorage.getItem(boardingResultStorageKey(gameId));
+      acknowledged = new Set((raw ?? "").split(",").filter(Boolean));
+    } catch {
+      // If session storage is unavailable, still show the result.
+    }
+    const nextLog = boardingAuditLogs.find(
+      (log) => !acknowledged.has(String(log.id)),
+    );
+    if (nextLog) {
+      setActivationFeedback(`Boarding resolved: ${nextLog.summary}`);
+      setBoardingResultModal(nextLog);
+    }
+  }, [boardingAuditLogs, boardingResultModal, gameId, setActivationFeedback]);
+  const acknowledgeBoardingResult = useCallback(() => {
+    if (boardingResultModal) {
+      try {
+        const key = boardingResultStorageKey(gameId);
+        const existing = new Set(
+          (window.sessionStorage.getItem(key) ?? "").split(",").filter(Boolean),
+        );
+        existing.add(String(boardingResultModal.id));
+        window.sessionStorage.setItem(
+          key,
+          [...existing].join(","),
+        );
+      } catch {
+        // Non-fatal; the modal can still close.
+      }
+    }
+    setBoardingResultModal(null);
+  }, [boardingResultModal, gameId]);
   const lastOpponentAttackSummary = useMemo(() => {
     if (!game || currentPhase !== "firing") return null;
     const logs = attackAuditData?.logs ?? [];
@@ -17479,6 +18236,30 @@ export default function GameBoard() {
     getWeaponsForUnit,
     myUserId,
     splitFirePlan,
+    unitsWithFighterFlags,
+  ]);
+  const activeBoardingTargetPreview = useMemo(() => {
+    if (
+      game?.status !== "active" ||
+      !isMyActivation ||
+      currentPhase !== "movement" ||
+      specialActionTargetPicking !== "launch-breaching-pods-and-shuttles" ||
+      activeUnitId === null
+    ) {
+      return null;
+    }
+    const attacker = unitsWithFighterFlags.find((u) => u.id === activeUnitId);
+    if (!attacker || attacker.ownerId !== myUserId || !unitIsCombatEffective(attacker)) {
+      return null;
+    }
+    return { attacker };
+  }, [
+    activeUnitId,
+    currentPhase,
+    game?.status,
+    isMyActivation,
+    myUserId,
+    specialActionTargetPicking,
     unitsWithFighterFlags,
   ]);
   const minMoveGate = useMemo(() => {
@@ -17961,13 +18742,46 @@ export default function GameBoard() {
       currentPhase === "movement" &&
       specialActionTargetPicking &&
       hasActiveUnit &&
-      unit.ownerId !== myUserId
+      unit.id !== activeUnitId
     ) {
       const attackerUnitId = activeUnitId!;
       const targetId = unit.id;
       const action = specialActionTargetPicking;
+      if (action !== "launch-breaching-pods-and-shuttles" && unit.ownerId === myUserId) {
+        setActivationFeedback("This Special Action cannot target your own ship.");
+        return;
+      }
       if (action === "track-that-target" && isFighterUnit(unit)) {
         setActivationFeedback("Track That Target nominates an enemy ship, not a fighter flight.");
+        return;
+      }
+      if (action === "launch-breaching-pods-and-shuttles") {
+        const attacker = units.find((candidate) => candidate.id === attackerUnitId);
+        const troopsAvailable = Math.max(0, attacker?.troopPoints ?? 0);
+        if (!attacker || troopsAvailable <= 0) {
+          setActivationFeedback("This ship has no Troops available to commit.");
+          return;
+        }
+        const eligibility = boardingTargetEligibilityForPreview({
+          attacker,
+          target: unit,
+          targetModel: getShipModelForUnit(unit),
+          targetIsFighter: isFighterUnit(unit),
+          activeBoardingActions: activeBoardingData?.actions ?? [],
+        });
+        if (!eligibility.eligible) {
+          setActivationFeedback(eligibility.reason ?? "This is not a legal boarding target.");
+          return;
+        }
+        setSpecialActionTargetPicking(null);
+        setBoardingCommitDialog({
+          attackerUnitId,
+          attackerName: attacker.name,
+          targetUnitId: targetId,
+          targetName: unit.name,
+          troopsAvailable,
+          troopsCommitted: troopsAvailable,
+        });
         return;
       }
       setSpecialActionTargetPicking(null);
@@ -18576,9 +19390,46 @@ export default function GameBoard() {
     movePlan,
   ]);
 
+  const handleRequestEndActivationFromMovePopover = useCallback(() => {
+    if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
+    if (
+      hasActiveUnit &&
+      currentPhase === "movement" &&
+      movePlan &&
+      canConfirmMovePlan
+    ) {
+      const popoverPosition = moveConfirmPopover;
+      setActivationFeedback("Committing staged movement before ending activation...");
+      commitMovePlan(() => {
+        if (popoverPosition) {
+          setMoveConfirmPopover({
+            ...popoverPosition,
+            confirmEndActivation: true,
+          });
+          return;
+        }
+        setEndActivationConfirmOpen(true);
+      });
+      return;
+    }
+    setMoveConfirmPopover((prev) =>
+      prev ? { ...prev, confirmEndActivation: true } : prev,
+    );
+  }, [
+    canConfirmMovePlan,
+    canPassPhase,
+    commitMovePlan,
+    currentPhase,
+    endActivation.isPending,
+    hasActiveUnit,
+    movePlan,
+    moveConfirmPopover,
+  ]);
+
   const handleConfirmEndActivation = useCallback(() => {
     if ((!hasActiveUnit && !canPassPhase) || endActivation.isPending) return;
     setEndActivationConfirmOpen(false);
+    setMoveConfirmPopover(null);
     endActivation.mutate(
       { gameId },
       {
@@ -19450,6 +20301,7 @@ export default function GameBoard() {
             setMoveConfirmPopover({
               x: Math.max(8, Math.min(rect.width - width - 8, e.clientX - rect.left)),
               y: Math.max(8, Math.min(rect.height - height - 8, e.clientY - rect.top)),
+              confirmEndActivation: false,
             });
           }}
           onPointerDown={(e) => {
@@ -21137,9 +21989,25 @@ export default function GameBoard() {
           )}
           <Canvas camera={{ position: [0, 40, 50], fov: 45 }} shadows>
             <CameraCapture refs={threeRef} />
-            {boardBackgroundMode === "skybox" ? (
+            {skyboxSelection === "dark-forest" ? (
               <Suspense fallback={null}>
-                <Skybox url={skyboxUrl} />
+                <CubeSkybox urls={DEEP_STARFIELD_CUBE_URLS} />
+              </Suspense>
+            ) : skyboxSelection === "drazi-green-purple" ? (
+              <Suspense fallback={null}>
+                <CubeSkybox urls={DRAZI_GREEN_PURPLE_CUBE_URLS} />
+              </Suspense>
+            ) : skyboxSelection === "distant-fields" ? (
+              <Suspense fallback={null}>
+                <CubeSkybox urls={DISTANT_FIELDS_CUBE_URLS} />
+              </Suspense>
+            ) : skyboxSelection === "zhadum" ? (
+              <Suspense fallback={null}>
+                <CubeSkybox urls={ZHADUM_CUBE_URLS} />
+              </Suspense>
+            ) : selectedPanoramaSkyboxUrl ? (
+              <Suspense fallback={null}>
+                <Skybox url={selectedPanoramaSkyboxUrl} />
               </Suspense>
             ) : (
               <color attach="background" args={["#000000"]} />
@@ -21151,12 +22019,23 @@ export default function GameBoard() {
               castShadow
             />
             <pointLight position={[0, 10, 0]} intensity={0.5} color="#f59e0b" />
+            {skyboxSelection === "zhadum" && <ZhadumSkyboxBackdropElements />}
             {/* Fog tinted a very dark warm tone so distant ships fade into the
                 nebula backdrop instead of a mismatched cold grey-black. */}
             <fog
               attach="fog"
               args={[
-                boardBackgroundMode === "black" ? "#000000" : "#0a0503",
+                skyboxSelection === "none"
+                  ? "#000000"
+                  : skyboxSelection === "drazi-green-purple"
+                    ? "#08110b"
+                  : skyboxSelection === "distant-fields"
+                    ? "#100708"
+                  : skyboxSelection === "zhadum"
+                    ? "#06030a"
+                  : skyboxSelection === "dark-forest"
+                    ? "#020106"
+                    : "#0a0503",
                 60,
                 110,
               ]}
@@ -21468,6 +22347,20 @@ export default function GameBoard() {
                     ? "eligible"
                     : "ineligible";
               }
+              if (
+                activeBoardingTargetPreview &&
+                unit.id !== activeBoardingTargetPreview.attacker.id &&
+                unitIsCombatEffective(unit)
+              ) {
+                const eligibility = boardingTargetEligibilityForPreview({
+                  attacker: activeBoardingTargetPreview.attacker,
+                  target: unit,
+                  targetModel: unitModel,
+                  targetIsFighter: unitIsFighter,
+                  activeBoardingActions: activeBoardingData?.actions ?? [],
+                });
+                targetingPreview = eligibility.eligible ? "eligible" : "ineligible";
+              }
               let visualAttackTurn: { key: string; targetHeading: number } | null = null;
               const visualAttackPhases = new Set<DiceModalPhase>([
                 "attack-rolling",
@@ -21549,6 +22442,12 @@ export default function GameBoard() {
                     visibleShieldDefenseMarkers.find((marker) => marker.unitId === unit.id)
                       ?.outcome ?? null
                   }
+                  boardingTroops={
+                    boardingTroopsByTargetId.get(unit.id) ?? {
+                      friendly: 0,
+                      counter: 0,
+                    }
+                  }
                 />
               );
             })}
@@ -21591,7 +22490,13 @@ export default function GameBoard() {
                       unit={selectedUnitData}
                       plan={movePlan}
                       remainingMove={selectedRemainingMove}
-                      dogfightWarning={plannedFighterDogfightContact}
+                      contactWarning={
+                        plannedBreachingPodBoardingContact
+                          ? "boarding"
+                          : plannedFighterDogfightContact
+                            ? "dogfight"
+                            : null
+                      }
                     />
                   );
                 }
@@ -22019,16 +22924,45 @@ export default function GameBoard() {
                 </div>
               )}
               {canEndActivationFromPcMovePopover && (
-                <button
-                  type="button"
-                  title="End activation"
-                  aria-label="End activation"
-                  onClick={handleRequestEndActivation}
-                  className="flex h-7 w-full items-center justify-center rounded border border-cyan-300/55 bg-cyan-300/10 px-2 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.18)] transition-colors hover:bg-cyan-300/20"
-                  data-testid="button-pc-popover-end-activation"
-                >
-                  End Activation
-                </button>
+                moveConfirmPopover.confirmEndActivation ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Confirm end activation"
+                      aria-label="Confirm end activation"
+                      onClick={handleConfirmEndActivation}
+                      className="flex h-8 min-w-0 flex-1 items-center justify-center rounded border border-amber-300/80 bg-amber-300 px-3 font-mono text-[9px] font-black uppercase tracking-[0.16em] text-black shadow-[0_0_12px_rgba(251,191,36,0.24)] transition-colors hover:bg-amber-200"
+                      data-testid="button-pc-popover-confirm-end-activation"
+                    >
+                      End
+                    </button>
+                    <button
+                      type="button"
+                      title="Cancel end activation"
+                      aria-label="Cancel end activation"
+                      onClick={() =>
+                        setMoveConfirmPopover((prev) =>
+                          prev ? { ...prev, confirmEndActivation: false } : prev,
+                        )
+                      }
+                      className="flex h-8 w-8 items-center justify-center rounded border border-red-300/70 bg-red-400/15 text-red-100 shadow-[0_0_12px_rgba(248,113,113,0.18)] transition-colors hover:bg-red-400/25"
+                      data-testid="button-pc-popover-cancel-end-activation"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    title="End activation"
+                    aria-label="End activation"
+                    onClick={handleRequestEndActivationFromMovePopover}
+                    className="flex h-7 w-full items-center justify-center rounded border border-cyan-300/55 bg-cyan-300/10 px-2 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.18)] transition-colors hover:bg-cyan-300/20"
+                    data-testid="button-pc-popover-end-activation"
+                  >
+                    End Activation
+                  </button>
+                )
               )}
             </div>
           )}
@@ -23426,14 +24360,19 @@ export default function GameBoard() {
                     {selectedUnitData.hullPoints}/
                     {selectedUnitData.maxHullPoints}
                   </span>
-                  <span className="flex items-center gap-1">
-                    <Zap className="w-3 h-3 text-amber-400" />
-                    {selectedUnitData.weaponDamage} dmg
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Crosshair className="w-3 h-3 text-blue-400" />r
-                    {selectedUnitData.weaponRange}
-                  </span>
+                  {(selectedUnitData.maxCrewPoints ?? 0) > 0 && (
+                    <span className="flex items-center gap-1">
+                      <UserRound
+                        className={`w-3 h-3 ${
+                          selectedUnitData.isSkeletonCrew
+                            ? "text-orange-300"
+                            : "text-blue-300"
+                        }`}
+                      />
+                      {selectedUnitData.crewPoints}/
+                      {selectedUnitData.maxCrewPoints}
+                    </span>
+                  )}
                 </div>
                 {pcHoverHintsEnabled && selectedShipTraitList.length > 0 && (
                   <div
@@ -23455,20 +24394,6 @@ export default function GameBoard() {
                 {/* Slice C: crew + damage-state badges. Crippled/Skeleton are
                     server-derived; damageState exposes adrift / delayed-boom. */}
                 <div className="flex gap-1.5 text-[10px] font-mono mt-1 flex-wrap">
-                  {(selectedUnitData.maxCrewPoints ?? 0) > 0 && (
-                    <span
-                      data-testid="badge-crew"
-                      className={`px-1.5 py-0.5 rounded border ${
-                        selectedUnitData.isSkeletonCrew
-                          ? "border-red-500/60 text-red-300 bg-red-500/10"
-                          : "border-border text-muted-foreground"
-                      }`}
-                      title="Crew"
-                    >
-                      CREW {selectedUnitData.crewPoints}/
-                      {selectedUnitData.maxCrewPoints}
-                    </span>
-                  )}
                   {selectedUnitData.isCrippled &&
                     !isFighterUnit(selectedUnitData) && (
                       <span
@@ -23513,9 +24438,6 @@ export default function GameBoard() {
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Hex: {selectedUnitData.hexQ},{selectedUnitData.hexR}
-                </p>
                 {selectedMovementBlockedNotice && (
                   <div
                     className="mt-2 rounded border border-amber-500/45 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-amber-200"
@@ -24262,7 +25184,8 @@ export default function GameBoard() {
                         | "initiate-jump-point"
                         | "all-hands-on-deck"
                         | "scramble"
-                        | "regenerate";
+                        | "regenerate"
+                        | "launch-breaching-pods-and-shuttles";
                       label: string;
                       cq: number | null;
                       hint: string;
@@ -24371,6 +25294,13 @@ export default function GameBoard() {
                         label: "Scramble! Scramble!",
                         cq: 7,
                         hint: "Launch +2 fighter flights in End Phase",
+                      },
+                      {
+                        id: "launch-breaching-pods-and-shuttles",
+                        label: "Launch Breaching Pods and Shuttles!",
+                        cq: null,
+                        hint: "Board enemies, or counter-board friendly ships with enemy boarders within 4\"",
+                        hidden: isFighterUnit(selectedUnitData),
                       },
                       {
                         id: "regenerate",
@@ -24685,6 +25615,7 @@ export default function GameBoard() {
                                   | "concentrate-fire"
                                   | "track-that-target"
                                   | "cause-confusion"
+                                  | "launch-breaching-pods-and-shuttles"
                                   | null =
                                   a.id === "concentrate-fire"
                                     ? "concentrate-fire"
@@ -24692,7 +25623,9 @@ export default function GameBoard() {
                                       ? "track-that-target"
                                       : a.id === "cause-confusion"
                                         ? "cause-confusion"
-                                        : null;
+                                        : a.id === "launch-breaching-pods-and-shuttles"
+                                          ? "launch-breaching-pods-and-shuttles"
+                                          : null;
                                 const needsTarget = targetAction !== null;
                                 const picking =
                                   specialActionTargetPicking === a.id;
@@ -24718,6 +25651,10 @@ export default function GameBoard() {
                                   a.id === "run-silent" &&
                                   selectedUnitData.shadowManeuverMode ===
                                     "sweep";
+                                const lacksBoardingTroops =
+                                  a.id ===
+                                    "launch-breaching-pods-and-shuttles" &&
+                                  (selectedUnitData.troopPoints ?? 0) <= 0;
                                 const adriftMovementBlocked =
                                   hasAdriftStatus &&
                                   ADRIFT_FORBIDDEN_SPECIAL_ACTION_IDS.has(a.id);
@@ -24729,7 +25666,8 @@ export default function GameBoard() {
                                   !!noSAReason ||
                                   adriftMovementBlocked ||
                                   needsAllStopPrereq ||
-                                  conflictsWithShadowSweep;
+                                  conflictsWithShadowSweep ||
+                                  lacksBoardingTroops;
                                 return (
                                   <button
                                     key={a.id}
@@ -24813,7 +25751,9 @@ export default function GameBoard() {
                                           : adriftMovementBlocked
                                             ? "Adrift status forbids movement-control actions"
                                           : conflictsWithShadowSweep
-                                            ? "Unavailable in Shadow sweep mode"
+                                          ? "Unavailable in Shadow sweep mode"
+                                          : lacksBoardingTroops
+                                            ? "No Troops available to commit"
                                           : a.hint}
                                     </div>
                                   </button>
@@ -24937,6 +25877,13 @@ export default function GameBoard() {
                     ]);
                     const attackerModel = getShipModelForUnit(attacker);
                     const attackerTraits = attackerModel?.traits ?? "";
+                    const attackerIsBreachingPod =
+                      shipModelIsBreachingPod(attackerModel) ||
+                      shipModelIsBreachingPod({
+                        name: attacker.name,
+                        filename: attacker.modelFilename,
+                        traits: attackerTraits,
+                      });
                     const attackerRulesProfile =
                       uiRulesProfileForModel(attackerModel);
                     const psychicCrew = isFighterUnit(attacker)
@@ -25151,9 +26098,21 @@ export default function GameBoard() {
                           Weapons · {attacker.name}
                         </div>
                         {weapons.length === 0 && (
-                          <p className="text-xs text-muted-foreground font-mono italic">
-                            No weapons.
-                          </p>
+                          attackerIsBreachingPod ? (
+                            <div
+                              className="rounded border border-amber-300/45 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-amber-100"
+                              data-testid="breaching-pod-firing-note"
+                            >
+                              Breaching Pods do not make weapon attacks. Move
+                              into base contact with an enemy ship during
+                              Fighter Movement, then end activation to commit
+                              its Troop to boarding.
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground font-mono italic">
+                              No weapons.
+                            </p>
+                          )
                         )}
                         {splitFirePlan &&
                           splitFirePlan.attackerUnitId === attacker.id && (
@@ -26511,6 +27470,194 @@ export default function GameBoard() {
         </div>
       )}
 
+      <Dialog
+        open={boardingCommitDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setBoardingCommitDialog(null);
+        }}
+      >
+        <DialogContent
+          className="border-amber-500/45 bg-black/95 text-amber-100 sm:max-w-md"
+          data-testid="boarding-commit-dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm uppercase tracking-[0.18em] text-amber-200">
+              Commit Boarding Troops
+            </DialogTitle>
+            <DialogDescription className="font-mono text-xs text-amber-100/70">
+              Select how many Troops leave the ship to board the target. Troops
+              committed to boarding do not return to the parent ship.
+            </DialogDescription>
+          </DialogHeader>
+          {boardingCommitDialog && (
+            <div className="space-y-3 font-mono text-xs">
+              <div className="rounded border border-amber-500/25 bg-amber-500/10 p-2">
+                <div className="text-amber-300/80">Source</div>
+                <div className="text-sm font-bold text-amber-100">
+                  {boardingCommitDialog.attackerName}
+                </div>
+                <div className="mt-1 text-amber-300/80">Target</div>
+                <div className="text-sm font-bold text-amber-100">
+                  {boardingCommitDialog.targetName}
+                </div>
+              </div>
+              <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 w-9 border-amber-500/45 bg-black/50 p-0 text-amber-200"
+                  onClick={() =>
+                    setBoardingCommitDialog((current) =>
+                      current
+                        ? {
+                            ...current,
+                            troopsCommitted: Math.max(
+                              1,
+                              current.troopsCommitted - 1,
+                            ),
+                          }
+                        : current,
+                    )
+                  }
+                  disabled={boardingCommitDialog.troopsCommitted <= 1}
+                  data-testid="boarding-commit-minus"
+                >
+                  -
+                </Button>
+                <label className="space-y-1">
+                  <span className="block text-[10px] uppercase tracking-wider text-amber-300/75">
+                    Troops committed
+                  </span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={boardingCommitDialog.troopsAvailable}
+                    value={boardingCommitDialog.troopsCommitted}
+                    onChange={(event) => {
+                      const next = Math.trunc(Number(event.target.value));
+                      setBoardingCommitDialog((current) =>
+                        current
+                          ? {
+                              ...current,
+                              troopsCommitted: clampNumber(
+                                Number.isFinite(next) ? next : 1,
+                                1,
+                                current.troopsAvailable,
+                              ),
+                            }
+                          : current,
+                      );
+                    }}
+                    className="border-amber-500/45 bg-black/70 text-center font-mono text-lg font-bold text-amber-100"
+                    data-testid="boarding-commit-troops-input"
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 w-9 border-amber-500/45 bg-black/50 p-0 text-amber-200"
+                  onClick={() =>
+                    setBoardingCommitDialog((current) =>
+                      current
+                        ? {
+                            ...current,
+                            troopsCommitted: Math.min(
+                              current.troopsAvailable,
+                              current.troopsCommitted + 1,
+                            ),
+                          }
+                        : current,
+                    )
+                  }
+                  disabled={
+                    boardingCommitDialog.troopsCommitted >=
+                    boardingCommitDialog.troopsAvailable
+                  }
+                  data-testid="boarding-commit-plus"
+                >
+                  +
+                </Button>
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-amber-300/65">
+                Available Troops: {boardingCommitDialog.troopsAvailable}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-slate-600 bg-slate-950 font-mono text-xs uppercase tracking-widest text-slate-100 hover:bg-slate-800"
+              onClick={() => setBoardingCommitDialog(null)}
+              disabled={chooseSpecialAction.isPending}
+              data-testid="boarding-commit-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-amber-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-amber-200"
+              disabled={!boardingCommitDialog || chooseSpecialAction.isPending}
+              onClick={() => {
+                if (!boardingCommitDialog) return;
+                const payload = boardingCommitDialog;
+                chooseSpecialAction.mutate(
+                  {
+                    gameId,
+                    unitId: payload.attackerUnitId,
+                    data: {
+                      action: "launch-breaching-pods-and-shuttles",
+                      targetUnitId: payload.targetUnitId,
+                      troopsCommitted: payload.troopsCommitted,
+                    },
+                  },
+                  {
+                    onSuccess: (res) => {
+                      setBoardingCommitDialog(null);
+                      setSpecialActionFeedback({
+                        action: res.action,
+                        success: res.success,
+                        cqRoll: res.cqRoll ?? null,
+                        cqTotal: res.cqTotal ?? null,
+                        cqRequired: res.cqRequired ?? null,
+                      });
+                      mergeUpdatedUnitIntoGame(res.unit);
+                      qc.invalidateQueries({
+                        queryKey: getGetGameQueryKey(gameId),
+                      });
+                      qc.invalidateQueries({
+                        queryKey: getListTurnsQueryKey(gameId),
+                      });
+                      qc.invalidateQueries({
+                        queryKey: ["active-boarding-actions", gameId],
+                      });
+                      qc.invalidateQueries({
+                        queryKey: ["special-action-audit-log", gameId],
+                      });
+                    },
+                    onError: (err: any) => {
+                      setSpecialActionFeedback({
+                        action: "launch-breaching-pods-and-shuttles",
+                        success: false,
+                        cqRoll: null,
+                        cqTotal: null,
+                        cqRequired: null,
+                      });
+                      setActivationFeedback(
+                        cleanApiErrorMessage(err, "Boarding action failed"),
+                      );
+                    },
+                  },
+                );
+              }}
+              data-testid="boarding-commit-confirm"
+            >
+              Commit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ShipStatusInspectorDialog
         open={inspectorUnitData !== null}
         onOpenChange={(open) => {
@@ -26576,6 +27723,12 @@ export default function GameBoard() {
           }}
         />
       )}
+      {boardingResultModal && (
+        <BoardingResultModal
+          log={boardingResultModal}
+          onClose={acknowledgeBoardingResult}
+        />
+      )}
       {selfRepairModal && (
         <SelfRepairDiceModal
           modal={selfRepairModal}
@@ -26595,6 +27748,275 @@ export default function GameBoard() {
 // Dice roll modal — plays a brief shuffle animation, then reveals the server's
 // authoritative attack rolls / hits / damage / crits.
 // ─────────────────────────────────────────────────────────────────────────────
+function BoardingResultModal({
+  log,
+  onClose,
+}: {
+  log: SpecialActionAuditLogEntry;
+  onClose: () => void;
+}) {
+  const payload = log.payload ?? {};
+  const rounds = Array.isArray(payload.rounds)
+    ? payload.rounds.filter(
+        (round): round is {
+          breachingPod?: { rolls?: number[]; kills?: number };
+          defender?: { rolls?: number[]; kills?: number };
+          attacker?: { rolls?: number[]; kills?: number };
+          enemy?: { rolls?: number[]; kills?: number };
+          counter?: { rolls?: number[]; kills?: number };
+        } => Boolean(round && typeof round === "object"),
+      )
+    : [];
+  const sabotageRolls = Array.isArray(payload.rolls)
+    ? payload.rolls.filter(
+        (entry): entry is { roll: number; effect?: string } =>
+          Boolean(
+            entry &&
+              typeof entry === "object" &&
+              typeof (entry as Record<string, unknown>).roll === "number",
+          ),
+      )
+    : [];
+  const attackerBefore =
+    typeof payload.attackerTroopsBefore === "number"
+      ? payload.attackerTroopsBefore
+      : typeof payload.counterTroopsBefore === "number"
+        ? payload.counterTroopsBefore
+      : null;
+  const attackerAfter =
+    typeof payload.attackerTroopsAfter === "number"
+      ? payload.attackerTroopsAfter
+      : typeof payload.counterTroopsAfter === "number"
+        ? payload.counterTroopsAfter
+      : null;
+  const defenderBefore =
+    typeof payload.defenderEffectiveBefore === "number"
+      ? payload.defenderEffectiveBefore
+      : typeof payload.defenderTroopsBefore === "number"
+        ? payload.defenderTroopsBefore
+        : typeof payload.enemyTroopsBefore === "number"
+          ? payload.enemyTroopsBefore
+        : null;
+  const defenderAfter =
+    typeof payload.defenderTroopsAfter === "number"
+      ? payload.defenderTroopsAfter
+      : typeof payload.enemyTroopsAfter === "number"
+        ? payload.enemyTroopsAfter
+      : null;
+  const counterBoarding = payload.rulesPath === "boarding-counterattack";
+  const moved = typeof payload.moved === "number" ? payload.moved : null;
+  const maxAllowed =
+    typeof payload.maxAllowed === "number" ? payload.maxAllowed : null;
+  const hullDamage =
+    typeof payload.hullDamage === "number" ? payload.hullDamage : null;
+  const crewLost =
+    typeof payload.crewLost === "number" ? payload.crewLost : null;
+  const captured = payload.captured === true;
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-xl flex-col gap-0 overflow-hidden border-amber-300/70 bg-black/95 p-0 font-mono text-amber-50 shadow-[0_0_45px_rgba(251,191,36,0.24)]"
+        data-testid="dialog-boarding-result"
+      >
+        <DialogHeader className="shrink-0 border-b border-amber-300/25 px-4 py-4 pr-12 text-left">
+          <DialogTitle className="text-sm uppercase tracking-[0.18em] text-amber-200">
+            Boarding Results
+          </DialogTitle>
+          <DialogDescription className="mt-1 text-[11px] text-amber-100/65">
+            Round {log.round} -{" "}
+            {log.action === "boarding-sabotage"
+              ? "Unopposed boarders"
+              : "Boarding combat"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+          <div className="rounded border border-amber-300/25 bg-amber-300/5 px-3 py-3">
+            <p className="text-sm leading-relaxed text-amber-50">
+              {log.summary}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] uppercase tracking-wider text-slate-300">
+              {attackerBefore !== null && (
+                <Badge variant="outline" className="border-amber-300/35 text-amber-100">
+                  {counterBoarding ? "Counter-boarders" : "Attackers"} {attackerBefore}
+                  {attackerAfter !== null ? ` -> ${attackerAfter}` : ""}
+                </Badge>
+              )}
+              {defenderBefore !== null && (
+                <Badge variant="outline" className="border-cyan-300/35 text-cyan-100">
+                  {counterBoarding ? "Enemy boarders" : "Defenders"} {defenderBefore}
+                  {defenderAfter !== null ? ` -> ${defenderAfter}` : ""}
+                </Badge>
+              )}
+              {hullDamage !== null && (
+                <Badge variant="outline" className="border-red-300/35 text-red-100">
+                  Hull damage {hullDamage}
+                </Badge>
+              )}
+              {crewLost !== null && (
+                <Badge variant="outline" className="border-sky-300/35 text-sky-100">
+                  Crew lost {crewLost}
+                </Badge>
+              )}
+              {captured && (
+                <Badge variant="outline" className="border-green-300/50 bg-green-400/10 text-green-100">
+                  Captured
+                </Badge>
+              )}
+            </div>
+          </div>
+
+          {moved !== null && maxAllowed !== null && (
+            <div className="mt-3 rounded border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+              Target moved {moved.toFixed(1)}", exceeding the boarding limit of{" "}
+              {maxAllowed}".
+            </div>
+          )}
+
+          {rounds.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {rounds.map((round, index) => {
+                const groups = [
+                  round.breachingPod
+                    ? {
+                        key: "breaching-pod",
+                        label: "Breaching Pods strike first",
+                        group: round.breachingPod,
+                        toneClass: "text-amber-200",
+                      }
+                    : null,
+                  round.enemy
+                    ? {
+                        key: "enemy",
+                        label: "Enemy boarders fire first",
+                        group: round.enemy,
+                        toneClass: "text-cyan-200",
+                      }
+                    : round.defender
+                      ? {
+                          key: "defender",
+                          label: round.breachingPod
+                            ? "Defenders strike after pods"
+                            : "Defenders fire first",
+                          group: round.defender,
+                          toneClass: "text-cyan-200",
+                        }
+                      : null,
+                  round.counter
+                    ? {
+                        key: "counter",
+                        label: "Counter-boarders strike back",
+                        group: round.counter,
+                        toneClass: "text-amber-200",
+                      }
+                    : round.attacker
+                      ? {
+                          key: "attacker",
+                          label: "Ship boarders strike back",
+                          group: round.attacker,
+                          toneClass: "text-amber-200",
+                        }
+                      : null,
+                ].filter(
+                  (entry): entry is {
+                    key: string;
+                    label: string;
+                    group: { rolls?: number[]; kills?: number };
+                    toneClass: string;
+                  } => Boolean(entry),
+                );
+                return (
+                  <div
+                    key={index}
+                    className="rounded border border-slate-600/60 bg-slate-950/60 px-3 py-2"
+                  >
+                    <div className="mb-2 text-[10px] uppercase tracking-widest text-slate-400">
+                      Boarding exchange {index + 1}
+                    </div>
+                    <div className="space-y-2">
+                      {groups.map(({ key, label, group, toneClass }) => {
+                        const rolls = Array.isArray(group.rolls)
+                          ? group.rolls
+                          : [];
+                        const kills =
+                          typeof group.kills === "number" ? group.kills : 0;
+                        return (
+                          <div key={`${index}-${key}`}>
+                            <div className={`mb-1 text-[10px] uppercase tracking-wider ${toneClass}`}>
+                              {label} - {kills} kill
+                              {kills === 1 ? "" : "s"}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {rolls.length > 0 ? (
+                                rolls.map((roll, rollIndex) => (
+                                  <DiceFace
+                                    key={`boarding-${key}-${index}-${rollIndex}`}
+                                    value={roll}
+                                    rolling={false}
+                                    tone={roll >= 5 ? "solid" : "default"}
+                                  />
+                                ))
+                              ) : (
+                                <span className="text-[11px] text-slate-500">
+                                  No dice rolled.
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {sabotageRolls.length > 0 && (
+            <div className="mt-3 rounded border border-red-300/25 bg-red-500/5 px-3 py-2">
+              <div className="mb-2 text-[10px] uppercase tracking-widest text-red-200">
+                Unopposed boarding rolls
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {sabotageRolls.map((entry, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <DiceFace
+                      value={entry.roll}
+                      rolling={false}
+                      tone={
+                        entry.roll === 1
+                          ? "bulkhead"
+                          : entry.roll === 6
+                            ? "crit"
+                            : "solid"
+                      }
+                    />
+                    <span className="max-w-[12rem] text-[10px] text-slate-300">
+                      {entry.effect ?? "effect"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="shrink-0 border-t border-amber-300/25 bg-black/95 px-4 py-3">
+          <Button
+            type="button"
+            onClick={onClose}
+            className="w-full bg-amber-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-amber-200"
+            data-testid="button-close-boarding-result"
+          >
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DiceFace({
   value,
   rolling,

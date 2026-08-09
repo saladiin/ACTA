@@ -68,6 +68,8 @@ export interface GameInput {
      * @maximum 56
      */
   ambushBoxDepth?: number;
+  /** Board backdrop selected for this engagement. */
+  skybox?: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
   /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
   terrainPlacement?: GameInputTerrainPlacement;
   /** Optional terrain package for this engagement. */

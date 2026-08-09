@@ -270,6 +270,8 @@ export interface Game {
      * @minimum 1
      */
   allocationPoints: number;
+  /** Engagement-specific board backdrop. Existing games default to bright-nebula. */
+  skybox: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
@@ -491,6 +493,8 @@ export interface GameInput {
      * @maximum 56
      */
   ambushBoxDepth?: number;
+  /** Board backdrop selected for this engagement. */
+  skybox?: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
   /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
   terrainPlacement?: GameInputTerrainPlacement;
   /** Optional terrain package for this engagement. */
@@ -654,6 +658,18 @@ export interface GameUnit {
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
   maxCrewPoints: number;
+  /** Current boarding Troops aboard the ship. */
+  troopPoints?: number;
+  /** Printed boarding Troops copied from the ship model at deploy. */
+  maxTroopPoints?: number;
+  /** Player id that captured this ship by boarding, if any. */
+  capturedByOwnerId?: string | null;
+  /** Round this ship was captured by boarding, if any. */
+  capturedRound?: number | null;
+  /** Player id this ship surrendered to, if any. */
+  surrenderedToOwnerId?: string | null;
+  /** Round this ship surrendered, if any. */
+  surrenderedRound?: number | null;
   /** Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback. */
   crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
@@ -1065,6 +1081,7 @@ export const SpecialActionInputAction = {
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',
   regenerate: 'regenerate',
+  'launch-breaching-pods-and-shuttles': 'launch-breaching-pods-and-shuttles',
 } as const;
 
 export interface SpecialActionInput {
@@ -1074,6 +1091,10 @@ export interface SpecialActionInput {
      * @nullable
      */
   targetUnitId?: number | null;
+  /**
+     * For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action. Defaults to all available Troops for older clients.
+     */
+  troopsCommitted?: number;
 }
 
 export type ShadowManeuverInputMode = typeof ShadowManeuverInputMode[keyof typeof ShadowManeuverInputMode];

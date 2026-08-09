@@ -8,7 +8,6 @@ export type UiControlMode =
   | "mode-e"
   | "mode-f";
 export type UiArcColorScheme = "classic" | "side";
-export type UiBoardBackgroundMode = "skybox" | "black";
 export type UiShipStatusDisplayMode = "bar" | "text";
 export type UiWeaponArcProjectionStyle = "filled" | "outline";
 
@@ -23,7 +22,6 @@ const ATTACK_PHASE_PULSE_OPACITY_STORAGE_KEY =
   "b5acta.ui.attackPhasePulseOpacity";
 const ATTACK_PHASE_PULSE_STRENGTH_STORAGE_KEY =
   "b5acta.ui.attackPhasePulseStrength";
-const BOARD_BACKGROUND_MODE_STORAGE_KEY = "b5acta.ui.boardBackgroundMode";
 const WEAPON_ARC_PROJECTION_STORAGE_KEY = "b5acta.ui.weaponArcProjection";
 const WEAPON_ARC_PROJECTION_STYLE_STORAGE_KEY =
   "b5acta.ui.weaponArcProjectionStyle";
@@ -98,14 +96,6 @@ function readAttackPhasePulseStrength(): number {
   return Number.isFinite(raw)
     ? Math.max(0, Math.min(100, Math.round(raw)))
     : 35;
-}
-
-function readBoardBackgroundMode(): UiBoardBackgroundMode {
-  if (typeof window === "undefined") return "skybox";
-  return window.localStorage.getItem(BOARD_BACKGROUND_MODE_STORAGE_KEY) ===
-    "black"
-    ? "black"
-    : "skybox";
 }
 
 function readWeaponArcProjectionEnabled(): boolean {
@@ -373,33 +363,6 @@ export function useUiAttackPhasePulseStrength(): [
   }, []);
 
   return [strength, setStrength];
-}
-
-export function useUiBoardBackgroundMode(): [
-  UiBoardBackgroundMode,
-  (mode: UiBoardBackgroundMode) => void,
-] {
-  const [mode, setModeState] = useState<UiBoardBackgroundMode>(() =>
-    readBoardBackgroundMode(),
-  );
-
-  useEffect(() => {
-    const sync = () => setModeState(readBoardBackgroundMode());
-    window.addEventListener("storage", sync);
-    window.addEventListener(SETTINGS_CHANGED_EVENT, sync);
-    return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener(SETTINGS_CHANGED_EVENT, sync);
-    };
-  }, []);
-
-  const setMode = useCallback((nextMode: UiBoardBackgroundMode) => {
-    window.localStorage.setItem(BOARD_BACKGROUND_MODE_STORAGE_KEY, nextMode);
-    setModeState(nextMode);
-    window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT));
-  }, []);
-
-  return [mode, setMode];
 }
 
 export function useUiWeaponArcProjection(): [

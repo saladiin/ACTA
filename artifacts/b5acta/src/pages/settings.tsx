@@ -2,7 +2,6 @@ import {
   Camera,
   Crosshair,
   Gamepad2,
-  Image,
   Palette,
   PanelLeft,
   PanelRight,
@@ -20,7 +19,6 @@ import {
   useUiArcColorScheme,
   useUiAttackPhasePulseOpacity,
   useUiAttackPhasePulseStrength,
-  useUiBoardBackgroundMode,
   useUiBoardGrid,
   useUiBoardOpacity,
   useUiControlMode,
@@ -31,7 +29,6 @@ import {
   useUiWeaponArcProjection,
   useUiWeaponArcProjectionStyle,
   type UiArcColorScheme,
-  type UiBoardBackgroundMode,
   type UiControlMode,
   type UiShipStatusDisplayMode,
   type UiWeaponArcProjectionStyle,
@@ -115,26 +112,6 @@ const ARC_COLOR_SCHEMES: Array<{
   },
 ];
 
-const BOARD_BACKGROUND_MODES: Array<{
-  id: UiBoardBackgroundMode;
-  name: string;
-  summary: string;
-  swatch: string;
-}> = [
-  {
-    id: "skybox",
-    name: "Skybox",
-    summary: "Use the current deep-space background image.",
-    swatch: "linear-gradient(135deg, #120816, #2f1f5f 42%, #07111f)",
-  },
-  {
-    id: "black",
-    name: "Pure black",
-    summary: "Remove the image backdrop for maximum board visibility.",
-    swatch: "#000000",
-  },
-];
-
 const SHIP_STATUS_DISPLAY_MODES: Array<{
   id: UiShipStatusDisplayMode;
   name: string;
@@ -182,8 +159,6 @@ export default function Settings() {
     useUiAttackPhasePulseOpacity();
   const [attackPulseStrength, setAttackPulseStrength] =
     useUiAttackPhasePulseStrength();
-  const [boardBackgroundMode, setBoardBackgroundMode] =
-    useUiBoardBackgroundMode();
   const [weaponArcProjectionEnabled, setWeaponArcProjectionEnabled] =
     useUiWeaponArcProjection();
   const [weaponArcProjectionStyle, setWeaponArcProjectionStyle] =
@@ -315,60 +290,6 @@ export default function Settings() {
               </div>
               <p className="mt-3 text-sm text-muted-foreground">
                 {scheme.summary}
-              </p>
-            </Label>
-          ))}
-        </RadioGroup>
-
-        <section className="mt-3 border-t border-border pt-5">
-          <div className="flex items-center gap-3">
-            <Image className="h-5 w-5 text-primary" />
-            <div>
-              <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
-                Board Background
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Stored on this device.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <RadioGroup
-          value={boardBackgroundMode}
-          onValueChange={(value) =>
-            setBoardBackgroundMode(value as UiBoardBackgroundMode)
-          }
-          className="grid gap-3 md:grid-cols-2"
-          data-testid="ui-board-background-radio-group"
-        >
-          {BOARD_BACKGROUND_MODES.map((mode) => (
-            <Label
-              key={mode.id}
-              htmlFor={`board-background-${mode.id}`}
-              className={`block cursor-pointer rounded border p-4 transition-colors ${
-                boardBackgroundMode === mode.id
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border bg-card/65 text-muted-foreground hover:border-primary/50 hover:bg-card"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem
-                    id={`board-background-${mode.id}`}
-                    value={mode.id}
-                  />
-                  <span className="font-mono text-sm font-bold uppercase tracking-widest">
-                    {mode.name}
-                  </span>
-                </div>
-                <span
-                  className="h-9 w-14 rounded-sm border border-black/70"
-                  style={{ background: mode.swatch }}
-                />
-              </div>
-              <p className="mt-3 text-sm text-muted-foreground">
-                {mode.summary}
               </p>
             </Label>
           ))}

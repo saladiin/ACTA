@@ -52,6 +52,18 @@ export interface GameUnit {
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
   maxCrewPoints: number;
+  /** Current boarding Troops aboard the ship. */
+  troopPoints?: number;
+  /** Printed boarding Troops copied from the ship model at deploy. */
+  maxTroopPoints?: number;
+  /** Player id that captured this ship by boarding, if any. */
+  capturedByOwnerId?: string | null;
+  /** Round this ship was captured by boarding, if any. */
+  capturedRound?: number | null;
+  /** Player id this ship surrendered to, if any. */
+  surrenderedToOwnerId?: string | null;
+  /** Round this ship surrendered, if any. */
+  surrenderedRound?: number | null;
   /** Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback. */
   crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */

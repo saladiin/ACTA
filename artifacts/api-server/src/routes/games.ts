@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, gameBoardingActionsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
 import { requireAuth, getUserId, isAdminUser } from "../lib/auth";
 import {
   parseShipTraits,
@@ -90,6 +90,15 @@ import {
   specialActionAllowedForProfile,
   unitIsPinned,
 } from "../lib/ancient-rules";
+import {
+  ACTIVE_BOARDING_STATUSES,
+  COUNTER_BOARDING_TARGET_STATUSES,
+  boardingImmuneProfile,
+  breachingPodTroopsAvailable,
+  effectiveBoardingTroopsFromCount,
+  resolveBoardingCombat,
+  resolveCounterBoardingCombat,
+} from "../lib/boarding-rules";
 import {
   CreateGameBody,
   GetGameParams,
@@ -193,6 +202,12 @@ function unitAuditState(unit: typeof gameUnitsTable.$inferSelect): Record<string
     maxHullPoints: unit.maxHullPoints,
     crewPoints: unit.crewPoints,
     maxCrewPoints: unit.maxCrewPoints,
+    troopPoints: unit.troopPoints,
+    maxTroopPoints: unit.maxTroopPoints,
+    capturedByOwnerId: unit.capturedByOwnerId,
+    capturedRound: unit.capturedRound,
+    surrenderedToOwnerId: unit.surrenderedToOwnerId,
+    surrenderedRound: unit.surrenderedRound,
     shieldsCurrent: unit.shieldsCurrent,
     interceptorDiceRemaining: unit.interceptorDiceRemaining,
     interceptorThresholdCurrent: unit.interceptorThresholdCurrent,
@@ -425,6 +440,12 @@ function criticalAffectsCrew(entry: NonNullable<ReturnType<typeof findEntry>>): 
     || troopsLost
     || /\bcrew\b/i.test(entry.effectKey)
     || /\btroops?\b/i.test(entry.effectKey);
+}
+
+function criticalTroopsLost(entry: NonNullable<ReturnType<typeof findEntry>>): number {
+  return typeof entry.flags.troopsLost === "number"
+    ? Math.max(0, entry.flags.troopsLost)
+    : 0;
 }
 
 function normalizeSlowLoadingCooldowns(raw: unknown, currentRound: number): SlowLoadingCooldowns {
@@ -2139,7 +2160,19 @@ function shipModelIsFighter(model: {
   return parseShipTraits(model.traits ?? "").fighter
     || /\bfighter\b/i.test(model.shipClass ?? "")
     || /fighter flight/i.test(model.name ?? "")
-    || /\b(?:aurora|nova[-\s]+star\s?fury|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer|spitfire|shadow\s+fighter|delta[-\s]?v|raider[-\s]?delta|zephyr)\b/i.test(identity);
+    || /\b(?:aurora|nova[-\s]+star\s?fury|thunderbolt|tiger|black[-\s]?omega|nial|sentri|frazi|flyer|spitfire|shadow\s+fighter|delta[-\s]?v|raider[-\s]?delta|zephyr|breaching\s+pod|breeching\s+pod|atas'?da)\b/i.test(identity);
+}
+
+function shipModelIsBreachingPod(model: {
+  name?: string | null;
+  filename?: string | null;
+  shipClass?: string | null;
+  traits?: string | null;
+}): boolean {
+  const identity = [model.name, model.filename, model.shipClass, model.traits]
+    .filter(Boolean)
+    .join(" ");
+  return /\bbre[ae]ching\s+pod\b/i.test(identity);
 }
 
 const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
@@ -2192,6 +2225,24 @@ const MULTI_UNIT_PURCHASE_COUNTS: Record<string, number> = {
   "shadow spitfire": 2,
   "spitfire": 2,
   "spitfire flight": 2,
+  "earth alliance breaching pod flight early years": 4,
+  "earth alliance breaching pod flight (early years)": 4,
+  "earth alliance breaching pod flight third age": 4,
+  "earth alliance breaching pod flight (third age)": 4,
+  "earth alliance breaching pod flight crusade era": 4,
+  "earth alliance breaching pod flight (crusade era)": 4,
+  "dilgar breaching pod flight": 4,
+  "minbari breaching pod flight": 4,
+  "narn breaching pod flight": 4,
+  "centauri breaching pod flight": 4,
+  "brakiri breaching pod flight": 4,
+  "drazi breaching pod flight": 4,
+  "gaim breaching pod flight": 4,
+  "raiders breaching pod flight": 5,
+  "raider breaching pod flight": 5,
+  "atas'da breaching pod flight": 4,
+  "atasda breaching pod flight": 4,
+  "drakh breaching pod flight": 4,
   "tethys cutter": 2,
   "tethys class cutter": 2,
   "tethys class laser boat": 2,
@@ -2679,6 +2730,7 @@ async function resolveDestroyedFighterRecovery(
 
 const STANDARD_BASE_RADIUS_INCHES = 0.8;
 const BASE_CONTACT_EPSILON = 0.05;
+const BREACHING_POD_CONTACT_EPSILON = 0.2;
 const DOGFIGHT_CONTACT_GAP_EPSILON = 0.05;
 const DOGFIGHT_CONTACT_OVERLAP_EPSILON = 0.02;
 const DOGFIGHT_SUPPORT_RANGE_INCHES = 0.25;
@@ -3115,6 +3167,7 @@ async function findLegalDisplacedFighterSpot(
   const liveUnits = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
   ));
   const blockers: UnitFootprint[] = [];
   for (const other of liveUnits as Array<typeof gameUnitsTable.$inferSelect>) {
@@ -3204,9 +3257,9 @@ async function resolveReadyAiFighterDisplacement(
       eq(gameUnitsTable.id, entry.unitId),
       eq(gameUnitsTable.gameId, game.id),
     ));
-    if (!fighter || fighter.isDestroyed) {
+    if (!fighter || fighter.isDestroyed || unitIsWithdrawn(fighter) || unitIsInHyperspace(fighter)) {
       nextEntries = nextEntries.filter((item) => item.unitId !== entry.unitId);
-      removed.push({ unitId: entry.unitId, reason: "missing-or-destroyed" });
+      removed.push({ unitId: entry.unitId, reason: "missing-destroyed-or-off-board" });
       continue;
     }
     const model = await getShipModelForUnit(tx, fighter);
@@ -5151,6 +5204,8 @@ async function autoDeployAiOpponent(gameId: number): Promise<typeof gamesTable.$
       interceptorThresholdCurrent: 2,
       crewPoints: model.crew ?? 0,
       maxCrewPoints: model.crew ?? 0,
+      troopPoints: model.troops ?? 0,
+      maxTroopPoints: model.troops ?? 0,
       crewThreshold: model.crewThreshold ?? (model.crew ? Math.ceil(model.crew / 2) : 0),
       damageState: "normal",
       carriedFighters: carriedFightersFromSmallCraft(model.smallCraft, models),
@@ -5181,6 +5236,10 @@ async function applyInitiativeRoll(
   const isChallenger = rollerId === game.challengerId;
   const isOpponent = rollerId === game.opponentId;
   if (!isChallenger && !isOpponent) throw Object.assign(new Error("Not a participant"), { status: 403 });
+
+  if (game.phase === "initiative" && game.currentRound > 1) {
+    await resolveStrandedBreachingPodsAtRoundStart(tx, game);
+  }
 
   const alreadyRolled = isChallenger
     ? game.initiativeChallengerRoll !== null
@@ -5977,6 +6036,131 @@ async function activateAiUnitForPhase(
   return row;
 }
 
+async function performAiCounterBoardingIfAvailable(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  unit: typeof gameUnitsTable.$inferSelect,
+  unitModel: typeof shipModelsTable.$inferSelect,
+  unitTraits: ReturnType<typeof movementTraitsForModel>,
+): Promise<typeof gamesTable.$inferSelect | null> {
+  const availableTroops = Math.max(0, unit.troopPoints ?? 0);
+  if (
+    availableTroops <= 0 ||
+    unit.specialAction ||
+    unit.scoutAction ||
+    unit.hasMovedThisRound ||
+    unit.hasInitiatedMoveThisActivation ||
+    unitTraits.fighter ||
+    shipModelIsFighter(unitModel) ||
+    shipModelIsSpaceStation(unitModel) ||
+    skeletonPenaltiesApply(unit, unitTraits) ||
+    !specialActionAllowedForProfile(rulesProfileForModel(unitModel), "launch-breaching-pods-and-shuttles")
+  ) {
+    return null;
+  }
+
+  const friendlyTargets = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.ownerId, AI_OPPONENT_ID),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const candidates: Array<{
+    target: typeof gameUnitsTable.$inferSelect;
+    enemyRows: Array<typeof gameBoardingActionsTable.$inferSelect>;
+    distance: number;
+    enemyTroops: number;
+  }> = [];
+  for (const target of friendlyTargets as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (target.id === unit.id || unitIsInHyperspace(target)) continue;
+    const enemyRows = await activeEnemyBoardingRowsForTarget(tx, game.id, target.id, AI_OPPONENT_ID);
+    if (enemyRows.length === 0) continue;
+    const targetModel = await getShipModelForUnit(tx, target);
+    if (!targetModel || shipModelIsFighter(targetModel) || shipModelIsSpaceStation(targetModel) || boardingImmuneProfile(targetModel)) continue;
+    const distance = edgeDistance(
+      { x: unit.hexQ, z: unit.hexR, baseRadiusInches: rulesBaseRadius(unit) },
+      { x: target.hexQ, z: target.hexR, baseRadiusInches: rulesBaseRadius(target) },
+    );
+    if (distance > 4 + 1e-6) continue;
+    if (target.inchesMovedThisActivation > Math.floor(target.speed / 2)) continue;
+    candidates.push({
+      target,
+      enemyRows,
+      distance,
+      enemyTroops: enemyRows.reduce((sum, row) => sum + Math.max(0, row.troopsRemaining), 0),
+    });
+  }
+  candidates.sort((a, b) => b.enemyTroops - a.enemyTroops || a.distance - b.distance || a.target.id - b.target.id);
+  const chosen = candidates[0] ?? null;
+  if (!chosen) return null;
+
+  const [updatedUnit] = await tx.update(gameUnitsTable).set({
+    specialAction: "launch-breaching-pods-and-shuttles",
+    specialActionTargetId: chosen.target.id,
+    troopPoints: Math.max(0, availableTroops - availableTroops),
+  }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+  await tx.insert(gameBoardingActionsTable).values({
+    gameId: game.id,
+    round: game.currentRound,
+    targetUnitId: chosen.target.id,
+    attackerOwnerId: AI_OPPONENT_ID,
+    sourceUnitId: unit.id,
+    sourceFlightUnitId: null,
+    troopsCommitted: availableTroops,
+    troopsRemaining: availableTroops,
+    deliveryType: "counterattack",
+    status: "pending",
+    createdPhase: "movement",
+    resolvedRound: null,
+  });
+  await recordSpecialActionAuditLog(tx, {
+    game,
+    actorKind: "ai",
+    actorPlayerId: AI_OPPONENT_ID,
+    unitBefore: unit,
+    unitAfter: updatedUnit ?? unit,
+    action: "launch-breaching-pods-and-shuttles",
+    storedAction: "launch-breaching-pods-and-shuttles",
+    success: true,
+    cqRequired: null,
+    cqRoll: null,
+    cqTotal: null,
+    targetUnitId: chosen.target.id,
+    targetUnit: chosen.target,
+    summary: `AI committed ${availableTroops} Troop(s) from ${unit.name} to counter-board ${chosen.target.name}.`,
+    payload: {
+      rulesPath: "ai-counter-boarding",
+      targetUnitId: chosen.target.id,
+      targetName: chosen.target.name,
+      distance: Number(chosen.distance.toFixed(2)),
+      enemyBoardingActionIds: chosen.enemyRows.map(row => row.id),
+      enemyTroops: chosen.enemyTroops,
+      troopsCommitted: availableTroops,
+    },
+  });
+  const decision = aiDecision(
+    "movement.counter-board",
+    "movement",
+    `AI committed ${availableTroops} Troop(s) from ${unit.name} to counter-board ${chosen.target.name}.`,
+    {
+      chosenAction: "counter-board",
+      targetId: chosen.target.id,
+      targetName: chosen.target.name,
+      distance: Number(chosen.distance.toFixed(2)),
+      enemyTroops: chosen.enemyTroops,
+      troopsCommitted: availableTroops,
+    },
+    unit,
+  );
+  return finishAiActivation(tx, game, updatedUnit ?? unit, "movement", withAiDecisionLog(
+    game.aiState,
+    aiState("acted", "movement.counter-board", {
+      message: `AI committed ${availableTroops} Troop(s) from ${unit.name} to counter-board ${chosen.target.name}.`,
+      unitIds: [unit.id, chosen.target.id],
+    }),
+    decision,
+  ));
+}
+
 async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): Promise<typeof gamesTable.$inferSelect> {
   if (!game.activeUnitId) return activateAiUnitForPhase(tx, game, "movement");
   const [unit] = await tx.select().from(gameUnitsTable).where(and(
@@ -6001,6 +6185,8 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
   if (!model) throw new Error("AI active movement unit ship model missing");
   const traits = movementTraitsForModel(model, crits);
   const speedCap = movementSpeedCap(unit, crits);
+  const counterBoardingRow = await performAiCounterBoardingIfAvailable(tx, game, unit, model, traits);
+  if (counterBoardingRow) return counterBoardingRow;
   const turnProfile = effectiveTurnProfile(unit, traits);
   const minMove = traits.superManeuverable ? 0 : speedCap > 0 ? Math.max(1, Math.ceil(effectiveBaseSpeed(unit, crits) / 2)) : 0;
   const novaBroadsideBias = isNovaDreadnought(model, unit);
@@ -6549,9 +6735,22 @@ async function chooseAiFirePlan(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.ownerId, game.challengerId),
     eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
     sql`${gameUnitsTable.hullPoints} > 0`,
     sql`(${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`,
   ));
+  const protectedBoardingRows = await tx.select({
+    targetUnitId: gameBoardingActionsTable.targetUnitId,
+  }).from(gameBoardingActionsTable).where(and(
+    eq(gameBoardingActionsTable.gameId, game.id),
+    eq(gameBoardingActionsTable.round, game.currentRound),
+    inArray(gameBoardingActionsTable.status, [...ACTIVE_BOARDING_STATUSES]),
+  ));
+  const boardingProtectedTargetIds = new Set(
+    protectedBoardingRows.map((row: { targetUnitId: number }) => row.targetUnitId),
+  );
+  const legalTargets = (targets as Array<typeof gameUnitsTable.$inferSelect>)
+    .filter(target => !boardingProtectedTargetIds.has(target.id));
   const aPos = hexToWorld(attacker.hexQ, attacker.hexR);
   if (attackerIsFighter) {
     const attackerFootprint: UnitFootprint = {
@@ -6563,7 +6762,7 @@ async function chooseAiFirePlan(
       isFighter: true,
     };
     const enemyFighterFootprints: UnitFootprint[] = [];
-    for (const target of targets as Array<typeof gameUnitsTable.$inferSelect>) {
+    for (const target of legalTargets) {
       const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
       if (!targetShip) continue;
       const [targetModel] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip.shipModelId));
@@ -6621,7 +6820,7 @@ async function chooseAiFirePlan(
       }
     }
 
-    for (const target of targets as Array<typeof gameUnitsTable.$inferSelect>) {
+    for (const target of legalTargets) {
       const [targetShip] = await tx.select().from(shipsTable).where(eq(shipsTable.id, target.shipId));
       if (!targetShip) {
         rejected.push({ weaponId: weapon.id, weaponName: weapon.name, targetId: target.id, targetName: target.name, reason: "target-ship-record-missing" });
@@ -7133,6 +7332,7 @@ async function resolveBasicAiWeaponFire(
     damageAfterGeg = Math.max(damageAfterGeg, target.hullPoints);
     crewAfterGeg = 0;
   }
+  let totalTroopsLost = 0;
   const targetWeapons = await tx.select().from(weaponsTable)
     .where(eq(weaponsTable.shipModelId, targetModel.id));
   const weaponsByArc = new Map<string, typeof targetWeapons>();
@@ -7153,6 +7353,7 @@ async function resolveBasicAiWeaponFire(
     effectRoll: number;
     damageApplied: number;
     crewApplied: number;
+    troopsLost: number;
     randomArc: string | null;
     randomWeaponId: number | null;
     lostTraits: string[];
@@ -7174,6 +7375,8 @@ async function resolveBasicAiWeaponFire(
     const crewApplied = targetHasCrewTrack
       ? (isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew) * mult
       : 0;
+    const troopsLost = criticalTroopsLost(entry);
+    totalTroopsLost += troopsLost;
     let randomArc: string | null = null;
     let randomWeaponId: number | null = null;
     const lostTraits: string[] = [];
@@ -7230,6 +7433,7 @@ async function resolveBasicAiWeaponFire(
       effectRoll: pending.effectRoll,
       damageApplied,
       crewApplied,
+      troopsLost,
       randomArc,
       randomWeaponId,
       lostTraits,
@@ -7264,6 +7468,7 @@ async function resolveBasicAiWeaponFire(
   const targetCrewAfter = targetHasCrewTrack
     ? Math.max(0, target.crewPoints - finalCrewLost)
     : target.crewPoints;
+  const targetTroopsAfter = Math.max(0, target.troopPoints - totalTroopsLost);
   let nextDamageState = fighterOneHitDestroyed ? "destroyed" : target.damageState;
   let targetDestroyed = fighterOneHitDestroyed || target.isDestroyed;
   let damageTable: { overkill: number; roll: number; total: number; outcome: "adrift" | "destroyed" | "exploding-end-of-next" } | null = null;
@@ -7320,6 +7525,7 @@ async function resolveBasicAiWeaponFire(
   const [updatedTarget] = await tx.update(gameUnitsTable).set({
     hullPoints: targetHullAfter,
     crewPoints: targetCrewAfter,
+    troopPoints: targetTroopsAfter,
     shieldsCurrent: targetWillBeCrippled ? 0 : shieldsCurrent,
     interceptorDiceRemaining: targetIsStation && targetWillBeCrippled
       ? Math.min(Math.floor(targetTraits.interceptors / 2), interceptorRemaining)
@@ -8437,6 +8643,7 @@ async function advanceAfterAntiFighter(
   const baseAiState = game.aiState && typeof game.aiState === "object" && !Array.isArray(game.aiState)
     ? game.aiState as Record<string, unknown>
     : {};
+  await createBreachingPodContactBoardingActions(tx, game);
   const nextAiState: Record<string, unknown> = {
     ...baseAiState,
     lastAntiFighter: lastResult,
@@ -8453,6 +8660,7 @@ async function advanceAfterAntiFighter(
     return row;
   }
 
+  await resolveBoardingAtStartOfEndPhase(tx, game);
   const [row] = await tx.update(gamesTable).set({
     aiState: nextAiState,
     phase: "end",
@@ -8883,6 +9091,657 @@ function formatSelfRepairSummary(repairs: SelfRepairResult[]): string {
     .join("; ");
 }
 
+function effectiveBoardingTroops(
+  unit: typeof gameUnitsTable.$inferSelect,
+  traits: ReturnType<typeof parseShipTraits>,
+): number {
+  return effectiveBoardingTroopsFromCount(unit.troopPoints, skeletonPenaltiesApply(unit, traits));
+}
+
+async function resolveBreachingPodContactBoardingForUnit(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  pod: typeof gameUnitsTable.$inferSelect,
+  actorPlayerId: string | null,
+): Promise<typeof gameUnitsTable.$inferSelect | null> {
+  if (pod.isDestroyed || unitIsInHyperspace(pod) || unitIsWithdrawn(pod)) return null;
+  const podModel = await getShipModelForUnit(tx, pod);
+  if (!podModel || !shipModelIsBreachingPod(podModel)) return null;
+  const troopsCommitted = breachingPodTroopsAvailable(pod, podModel);
+  if (troopsCommitted <= 0) return null;
+
+  const existingRows = await tx.select().from(gameBoardingActionsTable).where(and(
+    eq(gameBoardingActionsTable.gameId, game.id),
+    eq(gameBoardingActionsTable.sourceFlightUnitId, pod.id),
+    inArray(gameBoardingActionsTable.status, [...ACTIVE_BOARDING_STATUSES]),
+  ));
+  if (existingRows.length > 0) return null;
+
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+  ));
+  const podFootprint = {
+    x: pod.hexQ,
+    z: pod.hexR,
+    baseRadiusInches: rulesBaseRadius(pod),
+  };
+  let target: typeof gameUnitsTable.$inferSelect | null = null;
+  let targetDistance = Number.POSITIVE_INFINITY;
+  for (const row of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (row.id === pod.id || row.ownerId === pod.ownerId) continue;
+    if (row.hullPoints <= 0) continue;
+    const targetModel = await getShipModelForUnit(tx, row);
+    if (!targetModel || shipModelIsFighter(targetModel)) continue;
+    // Station boarding uses a separate Powers & Principalities table and is
+    // intentionally left for that station-specific implementation slice.
+    if (shipModelIsSpaceStation(targetModel)) continue;
+    if (boardingImmuneProfile(targetModel)) continue;
+    const distance = edgeDistance(podFootprint, {
+      x: row.hexQ,
+      z: row.hexR,
+      baseRadiusInches: rulesBaseRadius(row),
+    });
+    if (distance <= BREACHING_POD_CONTACT_EPSILON && distance < targetDistance) {
+      target = row;
+      targetDistance = distance;
+    }
+  }
+  if (!target) return null;
+
+  await tx.insert(gameBoardingActionsTable).values({
+    gameId: game.id,
+    round: game.currentRound,
+    targetUnitId: target.id,
+    attackerOwnerId: pod.ownerId,
+    sourceUnitId: pod.launchedFromUnitId ?? null,
+    sourceFlightUnitId: pod.id,
+    troopsCommitted,
+    troopsRemaining: troopsCommitted,
+    deliveryType: "breaching-pod",
+    status: "pending",
+    createdPhase: game.phase,
+    resolvedRound: null,
+  });
+
+  const [spentPod] = await tx.update(gameUnitsTable).set({
+    boardState: "withdrawn",
+    troopPoints: 0,
+    hasMovedThisRound: true,
+    hasFiredThisRound: true,
+  }).where(eq(gameUnitsTable.id, pod.id)).returning();
+  const unitAfter = spentPod ?? {
+    ...pod,
+    boardState: "withdrawn",
+    troopPoints: 0,
+    hasMovedThisRound: true,
+    hasFiredThisRound: true,
+  };
+
+  await recordSpecialActionAuditLog(tx, {
+    game,
+    actorKind: actorPlayerId === AI_OPPONENT_ID ? "ai" : "player",
+    actorPlayerId: actorPlayerId ?? pod.ownerId,
+    unitBefore: pod,
+    unitAfter,
+    action: "breaching-pod-boarding",
+    storedAction: "breaching-pod-boarding",
+    success: true,
+    cqRequired: null,
+    cqRoll: null,
+    cqTotal: null,
+    targetUnitId: target.id,
+    targetUnit: target,
+    summary: `${pod.name} latched onto ${target.name} and committed ${troopsCommitted} Troop(s) to boarding.`,
+    payload: {
+      rulesPath: "breaching-pod-contact-boarding",
+      deliveryType: "breaching-pod",
+      sourceFlightUnitId: pod.id,
+      sourceUnitId: pod.launchedFromUnitId ?? null,
+      targetUnitId: target.id,
+      troopsCommitted,
+      contactDistance: Number(targetDistance.toFixed(3)),
+      stationBoardingDeferred: false,
+    },
+  });
+
+  return unitAfter;
+}
+
+async function createBreachingPodContactBoardingActions(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<number> {
+  const rows = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+  ));
+  let created = 0;
+  for (const row of rows as Array<typeof gameUnitsTable.$inferSelect>) {
+    const result = await resolveBreachingPodContactBoardingForUnit(
+      tx,
+      game,
+      row,
+      row.ownerId,
+    );
+    if (result) created += 1;
+  }
+  return created;
+}
+
+async function resolveStrandedBreachingPodsAtRoundStart(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<void> {
+  const activeNonPendingRows = await tx.select({ id: gameBoardingActionsTable.id })
+    .from(gameBoardingActionsTable)
+    .where(and(
+      eq(gameBoardingActionsTable.gameId, game.id),
+      inArray(gameBoardingActionsTable.status, ["fighting", "unopposed", "captured"]),
+    ))
+    .limit(1);
+  const endPhaseGame = { ...game, phase: "end" };
+  const created = await createBreachingPodContactBoardingActions(tx, endPhaseGame);
+  if (created <= 0 || activeNonPendingRows.length > 0) return;
+  await resolveBoardingAtStartOfEndPhase(tx, endPhaseGame);
+}
+
+async function activeEnemyBoardingRowsForTarget(
+  tx: any,
+  gameId: number,
+  targetUnitId: number,
+  friendlyOwnerId: string,
+): Promise<Array<typeof gameBoardingActionsTable.$inferSelect>> {
+  const rows = await tx.select().from(gameBoardingActionsTable).where(and(
+    eq(gameBoardingActionsTable.gameId, gameId),
+    eq(gameBoardingActionsTable.targetUnitId, targetUnitId),
+    inArray(gameBoardingActionsTable.status, [...COUNTER_BOARDING_TARGET_STATUSES]),
+  ));
+  return (rows as Array<typeof gameBoardingActionsTable.$inferSelect>)
+    .filter(row => row.attackerOwnerId !== friendlyOwnerId && Math.max(0, row.troopsRemaining) > 0);
+}
+
+async function resolveCounterBoardingAtStartOfEndPhase(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  endPhaseGame: typeof gamesTable.$inferSelect,
+): Promise<void> {
+  const counterRows = await tx.select().from(gameBoardingActionsTable).where(and(
+    eq(gameBoardingActionsTable.gameId, game.id),
+    eq(gameBoardingActionsTable.round, game.currentRound),
+    eq(gameBoardingActionsTable.deliveryType, "counterattack"),
+    eq(gameBoardingActionsTable.status, "pending"),
+  ));
+  const rowsByTarget = new Map<number, Array<typeof gameBoardingActionsTable.$inferSelect>>();
+  for (const row of counterRows as Array<typeof gameBoardingActionsTable.$inferSelect>) {
+    const list = rowsByTarget.get(row.targetUnitId) ?? [];
+    list.push(row);
+    rowsByTarget.set(row.targetUnitId, list);
+  }
+
+  for (const [targetUnitId, rows] of rowsByTarget.entries()) {
+    const [target] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, targetUnitId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
+    if (!target || target.isDestroyed || rows.some(row => row.attackerOwnerId !== target.ownerId)) {
+      for (const row of rows) {
+        await tx.update(gameBoardingActionsTable).set({
+          status: "failed",
+          troopsRemaining: 0,
+          resolvedRound: game.currentRound,
+        }).where(eq(gameBoardingActionsTable.id, row.id));
+      }
+      continue;
+    }
+
+    const enemyRows = await activeEnemyBoardingRowsForTarget(tx, game.id, target.id, target.ownerId);
+    if (enemyRows.length === 0) {
+      for (const row of rows) {
+        await tx.update(gameBoardingActionsTable).set({
+          status: "failed",
+          troopsRemaining: 0,
+          resolvedRound: game.currentRound,
+        }).where(eq(gameBoardingActionsTable.id, row.id));
+      }
+      await recordSpecialActionAuditLog(tx, {
+        game: endPhaseGame,
+        actorKind: "system",
+        actorPlayerId: rows[0]?.attackerOwnerId ?? null,
+        unitBefore: target,
+        unitAfter: target,
+        action: "boarding-resolution",
+        storedAction: "boarding-resolution",
+        success: false,
+        cqRequired: null,
+        cqRoll: null,
+        cqTotal: null,
+        targetUnitId: target.id,
+        targetUnit: target,
+        summary: `${target.name} had no enemy boarders aboard for counter-boarding.`,
+        payload: {
+          rulesPath: "boarding-counterattack-no-enemy-boarders",
+          boardingActionIds: rows.map(row => row.id),
+        },
+      });
+      continue;
+    }
+
+    const counterCombat = resolveCounterBoardingCombat({
+      counterTroops: rows.reduce((sum, row) => sum + Math.max(0, row.troopsRemaining), 0),
+      enemyTroops: enemyRows.reduce((sum, row) => sum + Math.max(0, row.troopsRemaining), 0),
+    }, rollD6);
+    const counterTroops = counterCombat.counterTroopsAfter;
+    const enemyTroops = counterCombat.enemyTroopsAfter;
+    const counterTroopsBefore = counterCombat.counterTroopsBefore;
+    const enemyTroopsBefore = counterCombat.enemyTroopsBefore;
+    const rounds = counterCombat.rounds;
+    const counterWins = counterCombat.counterWins;
+    let remainingEnemy = enemyTroops;
+    for (const row of enemyRows) {
+      const nextRemaining = counterWins
+        ? 0
+        : Math.min(Math.max(0, row.troopsRemaining), remainingEnemy);
+      remainingEnemy = Math.max(0, remainingEnemy - nextRemaining);
+      await tx.update(gameBoardingActionsTable).set({
+        troopsRemaining: nextRemaining,
+        status: counterWins ? "removed" : row.status,
+        resolvedRound: counterWins ? game.currentRound : row.resolvedRound,
+      }).where(eq(gameBoardingActionsTable.id, row.id));
+    }
+
+    for (const row of rows) {
+      await tx.update(gameBoardingActionsTable).set({
+        troopsRemaining: 0,
+        status: counterWins ? "removed" : "failed",
+        resolvedRound: game.currentRound,
+      }).where(eq(gameBoardingActionsTable.id, row.id));
+    }
+
+    const [targetAfter] = counterWins
+      ? await tx.update(gameUnitsTable).set({
+          troopPoints: Math.max(0, target.troopPoints ?? 0) + counterTroops,
+          capturedByOwnerId: null,
+          capturedRound: null,
+        }).where(eq(gameUnitsTable.id, target.id)).returning()
+      : [target];
+
+    await recordSpecialActionAuditLog(tx, {
+      game: endPhaseGame,
+      actorKind: "system",
+      actorPlayerId: rows[0]?.attackerOwnerId ?? null,
+      unitBefore: target,
+      unitAfter: targetAfter ?? target,
+      action: "boarding-resolution",
+      storedAction: "boarding-resolution",
+      success: counterWins,
+      cqRequired: null,
+      cqRoll: null,
+      cqTotal: null,
+      targetUnitId: target.id,
+      targetUnit: target,
+      summary: counterWins
+        ? `${target.name} counter-boarders eliminated enemy troops aboard; ${counterTroops} Troop(s) remain to secure the ship.`
+        : `${target.name} counter-boarding failed; ${enemyTroops} enemy Troop(s) remain aboard.`,
+      payload: {
+        rulesPath: "boarding-counterattack",
+        counterBoardingActionIds: rows.map(row => row.id),
+        enemyBoardingActionIds: enemyRows.map(row => row.id),
+        counterTroopsBefore,
+        counterTroopsAfter: counterTroops,
+        enemyTroopsBefore,
+        enemyTroopsAfter: enemyTroops,
+        counterWins,
+        rounds,
+      },
+    });
+  }
+}
+
+async function resolveBoardingAtStartOfEndPhase(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<void> {
+  const endPhaseGame = { ...game, phase: "end" };
+
+  await resolveCounterBoardingAtStartOfEndPhase(tx, game, endPhaseGame);
+
+  const unopposedRows = await tx.select().from(gameBoardingActionsTable).where(and(
+    eq(gameBoardingActionsTable.gameId, game.id),
+    eq(gameBoardingActionsTable.status, "unopposed"),
+    sql`${gameBoardingActionsTable.resolvedRound} < ${game.currentRound}`,
+  ));
+  for (const row of unopposedRows as Array<typeof gameBoardingActionsTable.$inferSelect>) {
+    if (row.troopsRemaining <= 0) {
+      await tx.update(gameBoardingActionsTable)
+        .set({ status: "removed", resolvedRound: game.currentRound })
+        .where(eq(gameBoardingActionsTable.id, row.id));
+      continue;
+    }
+    const [target] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, row.targetUnitId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
+    if (!target || target.isDestroyed) {
+      await tx.update(gameBoardingActionsTable)
+        .set({ status: "removed", resolvedRound: game.currentRound })
+        .where(eq(gameBoardingActionsTable.id, row.id));
+      continue;
+    }
+    if (target.capturedByOwnerId || (target.maxCrewPoints > 0 && target.crewPoints <= 0)) {
+      await tx.update(gameBoardingActionsTable)
+        .set({ status: "removed", resolvedRound: game.currentRound })
+        .where(eq(gameBoardingActionsTable.id, row.id));
+      continue;
+    }
+    const targetModel = await getShipModelForUnit(tx, target);
+    if (!targetModel || shipModelIsSpaceStation(targetModel) || boardingImmuneProfile(targetModel)) {
+      await tx.update(gameBoardingActionsTable)
+        .set({ status: "removed", resolvedRound: game.currentRound })
+        .where(eq(gameBoardingActionsTable.id, row.id));
+      continue;
+    }
+
+    let troopsRemaining = row.troopsRemaining;
+    let hullDamage = 0;
+    let crewLost = 0;
+    const rolls: Array<{ roll: number; effect: string }> = [];
+    for (let i = 0; i < row.troopsRemaining; i += 1) {
+      const roll = rollD6();
+      if (roll === 1) {
+        troopsRemaining = Math.max(0, troopsRemaining - 1);
+        rolls.push({ roll, effect: "boarding-party-killed" });
+      } else if (roll >= 2 && roll <= 5) {
+        crewLost += roll;
+        rolls.push({ roll, effect: `crew-${roll}` });
+      } else {
+        const locationRoll = rollD6();
+        const effectRoll = rollD6();
+        const location = locationFromRoll(locationRoll);
+        const entry = findEntry(location, effectRoll);
+        if (entry) {
+          const damageApplied = isDice(entry.dmg) ? rollDice(entry.dmg.dice) : entry.dmg;
+          const crewApplied = target.maxCrewPoints > 0
+            ? isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew
+            : 0;
+          await tx.insert(unitCriticalEffectsTable).values({
+            gameUnitId: target.id,
+            effectKey: entry.effectKey,
+            location,
+            name: entry.name,
+            damageApplied,
+            crewApplied,
+            randomArc: null,
+            randomWeaponId: null,
+            lostTraits: [],
+            appliedRound: game.currentRound,
+            repairable: entry.repairable,
+          });
+          hullDamage += damageApplied;
+          crewLost += crewApplied;
+          rolls.push({ roll, effect: `critical-${locationRoll}-${effectRoll}-${entry.effectKey}` });
+        } else {
+          rolls.push({ roll, effect: `critical-${locationRoll}-${effectRoll}-no-entry` });
+        }
+      }
+    }
+
+    const hullAfter = Math.max(0, target.hullPoints - hullDamage);
+    const crewAfter = target.maxCrewPoints > 0
+      ? Math.max(0, target.crewPoints - crewLost)
+      : target.crewPoints;
+    let nextDamageState = target.damageState;
+    let targetDestroyed = target.isDestroyed;
+    let damageTable: { overkill: number; roll: number; total: number; outcome: "adrift" | "destroyed" | "exploding-end-of-next" } | null = null;
+    if (hullAfter === 0 && target.damageState === "normal" && !target.isDestroyed) {
+      const overkill = Math.max(0, hullDamage - target.hullPoints);
+      const roll = rollD6();
+      const total = roll + overkill;
+      if (total <= 6) {
+        nextDamageState = "adrift";
+        damageTable = { overkill, roll, total, outcome: "adrift" };
+      } else if (total <= 11) {
+        nextDamageState = "destroyed";
+        targetDestroyed = true;
+        damageTable = { overkill, roll, total, outcome: "destroyed" };
+      } else {
+        nextDamageState = "exploding-end-of-next";
+        damageTable = { overkill, roll, total, outcome: "exploding-end-of-next" };
+      }
+    }
+    const captured = target.maxCrewPoints > 0 && crewAfter === 0 && !targetDestroyed;
+    if (captured && nextDamageState === "normal") nextDamageState = "adrift";
+    const targetWillBeCrippled = isCrippledUnit({
+      ...target,
+      hullPoints: hullAfter,
+      isDestroyed: targetDestroyed,
+    });
+    const [targetAfter] = await tx.update(gameUnitsTable).set({
+      hullPoints: hullAfter,
+      crewPoints: crewAfter,
+      troopPoints: Math.max(0, target.troopPoints),
+      shieldsCurrent: targetWillBeCrippled ? 0 : target.shieldsCurrent,
+      interceptorDiceRemaining: targetWillBeCrippled ? 0 : target.interceptorDiceRemaining,
+      interceptorThresholdCurrent: targetWillBeCrippled ? 2 : target.interceptorThresholdCurrent,
+      damageState: nextDamageState,
+      isDestroyed: targetDestroyed,
+      capturedByOwnerId: captured ? row.attackerOwnerId : target.capturedByOwnerId,
+      capturedRound: captured ? game.currentRound : target.capturedRound,
+    }).where(eq(gameUnitsTable.id, target.id)).returning();
+
+    await tx.update(gameBoardingActionsTable).set({
+      troopsRemaining,
+      status: captured ? "captured" : troopsRemaining <= 0 ? "removed" : "unopposed",
+      resolvedRound: game.currentRound,
+    }).where(eq(gameBoardingActionsTable.id, row.id));
+
+    await recordSpecialActionAuditLog(tx, {
+      game: endPhaseGame,
+      actorKind: "system",
+      actorPlayerId: row.attackerOwnerId,
+      unitBefore: target,
+      unitAfter: targetAfter ?? target,
+      action: "boarding-sabotage",
+      storedAction: "boarding-sabotage",
+      success: true,
+      cqRequired: null,
+      cqRoll: null,
+      cqTotal: null,
+      targetUnitId: target.id,
+      targetUnit: target,
+      summary: captured
+        ? `${target.name} was captured by boarding troops.`
+        : `Boarders aboard ${target.name} caused ${hullDamage} damage and ${crewLost} crew loss.`,
+      payload: {
+        rulesPath: "boarding-unopposed-sabotage",
+        boardingActionId: row.id,
+        rolls,
+        troopsBefore: row.troopsRemaining,
+        troopsAfter: troopsRemaining,
+        hullDamage,
+        crewLost,
+        captured,
+        damageTable,
+      },
+    });
+  }
+
+  await createBreachingPodContactBoardingActions(tx, endPhaseGame);
+
+  const pendingRows = await tx.select().from(gameBoardingActionsTable).where(and(
+    eq(gameBoardingActionsTable.gameId, game.id),
+    eq(gameBoardingActionsTable.round, game.currentRound),
+    eq(gameBoardingActionsTable.status, "pending"),
+  ));
+  const rowsByTarget = new Map<number, Array<typeof gameBoardingActionsTable.$inferSelect>>();
+  for (const row of pendingRows as Array<typeof gameBoardingActionsTable.$inferSelect>) {
+    if (row.deliveryType === "counterattack") continue;
+    const list = rowsByTarget.get(row.targetUnitId) ?? [];
+    list.push(row);
+    rowsByTarget.set(row.targetUnitId, list);
+  }
+
+  for (const [targetUnitId, rows] of rowsByTarget.entries()) {
+    const [target] = await tx.select().from(gameUnitsTable).where(and(
+      eq(gameUnitsTable.id, targetUnitId),
+      eq(gameUnitsTable.gameId, game.id),
+    ));
+    if (!target || target.isDestroyed || target.hullPoints <= 0) {
+      for (const row of rows) {
+        await tx.update(gameBoardingActionsTable).set({
+          status: "failed",
+          troopsRemaining: 0,
+          resolvedRound: game.currentRound,
+        }).where(eq(gameBoardingActionsTable.id, row.id));
+      }
+      continue;
+    }
+    const targetModel = await getShipModelForUnit(tx, target);
+    if (!targetModel || shipModelIsSpaceStation(targetModel) || boardingImmuneProfile(targetModel)) {
+      for (const row of rows) {
+        await tx.update(gameBoardingActionsTable).set({
+          status: "failed",
+          troopsRemaining: 0,
+          resolvedRound: game.currentRound,
+        }).where(eq(gameBoardingActionsTable.id, row.id));
+      }
+      continue;
+    }
+    const targetMovedTooFast = target.inchesMovedThisActivation > Math.floor(target.speed / 2);
+    if (targetMovedTooFast) {
+      for (const row of rows) {
+        await tx.update(gameBoardingActionsTable).set({
+          status: "failed",
+          resolvedRound: game.currentRound,
+        }).where(eq(gameBoardingActionsTable.id, row.id));
+      }
+      await recordSpecialActionAuditLog(tx, {
+        game: endPhaseGame,
+        actorKind: "system",
+        actorPlayerId: null,
+        unitBefore: target,
+        unitAfter: target,
+        action: "boarding-resolution",
+        storedAction: "boarding-resolution",
+        success: false,
+        cqRequired: null,
+        cqRoll: null,
+        cqTotal: null,
+        targetUnitId: target.id,
+        targetUnit: target,
+        summary: `${target.name} evaded boarding by moving more than half Speed.`,
+        payload: {
+          rulesPath: "boarding-target-speed-check",
+          boardingActionIds: rows.map(row => row.id),
+          moved: target.inchesMovedThisActivation,
+          maxAllowed: Math.floor(target.speed / 2),
+        },
+      });
+      continue;
+    }
+
+    const targetCritRows = await tx.select().from(unitCriticalEffectsTable)
+      .where(eq(unitCriticalEffectsTable.gameUnitId, target.id));
+    const targetCrits = deriveCritEffects(targetCritRows.map((r: {
+      effectKey: string | null;
+      randomArc: string | null;
+      randomWeaponId: number | null;
+      lostTraits: string[] | null;
+    }) => ({
+      effectKey: r.effectKey,
+      randomArc: r.randomArc,
+      randomWeaponId: r.randomWeaponId,
+      lostTraits: r.lostTraits ?? [],
+    })));
+    const targetTraits = parseShipTraits(filterLostTraits(targetModel.traits, targetCrits.lostTraitNames));
+    const defenders = effectiveBoardingTroops(target, targetTraits);
+    const podRows = rows.filter(row => row.deliveryType === "breaching-pod");
+    const shipRows = rows.filter(row => row.deliveryType !== "breaching-pod");
+    const podAttackers = podRows.reduce((sum, row) => sum + Math.max(0, row.troopsRemaining), 0);
+    const shipAttackers = shipRows.reduce((sum, row) => sum + Math.max(0, row.troopsRemaining), 0);
+    const defenderTroopsBefore = target.troopPoints;
+    const boardingCombat = resolveBoardingCombat({
+      defenderTroops: defenders,
+      shipAttackers,
+      podAttackers,
+    }, rollD6);
+    const defenderEffectiveBefore = boardingCombat.defenderTroopsBefore;
+    const podAttackerTroopsBefore = boardingCombat.podAttackerTroopsBefore;
+    const shipAttackerTroopsBefore = boardingCombat.shipAttackerTroopsBefore;
+    const attackerTroopsBefore = boardingCombat.attackerTroopsBefore;
+    const podAttackersAfter = boardingCombat.podAttackerTroopsAfter;
+    const shipAttackersAfter = boardingCombat.shipAttackerTroopsAfter;
+    const attackers = boardingCombat.attackerTroopsAfter;
+    const defenderWins = boardingCombat.defenderWins;
+    const attackerWins = boardingCombat.attackerWins;
+    const defenderTroopsLost = boardingCombat.defenderTroopsLost;
+    const rounds = boardingCombat.rounds;
+    const targetTroopsAfter = attackerWins ? 0 : Math.max(0, defenderTroopsBefore - defenderTroopsLost);
+    const [targetAfter] = await tx.update(gameUnitsTable).set({
+      troopPoints: targetTroopsAfter,
+    }).where(eq(gameUnitsTable.id, target.id)).returning();
+
+    let remainingPodAttackers = podAttackersAfter;
+    let remainingShipAttackers = shipAttackersAfter;
+    for (const row of rows) {
+      const allocationPool = row.deliveryType === "breaching-pod"
+        ? remainingPodAttackers
+        : remainingShipAttackers;
+      const rowRemaining = attackerWins
+        ? Math.min(row.troopsRemaining, allocationPool)
+        : 0;
+      if (row.deliveryType === "breaching-pod") {
+        remainingPodAttackers = Math.max(0, remainingPodAttackers - rowRemaining);
+      } else {
+        remainingShipAttackers = Math.max(0, remainingShipAttackers - rowRemaining);
+      }
+      await tx.update(gameBoardingActionsTable).set({
+        troopsRemaining: rowRemaining,
+        status: attackerWins ? "unopposed" : "failed",
+        resolvedRound: game.currentRound,
+      }).where(eq(gameBoardingActionsTable.id, row.id));
+    }
+
+    await recordSpecialActionAuditLog(tx, {
+      game: endPhaseGame,
+      actorKind: "system",
+      actorPlayerId: rows[0]?.attackerOwnerId ?? null,
+      unitBefore: target,
+      unitAfter: targetAfter ?? target,
+      action: "boarding-resolution",
+      storedAction: "boarding-resolution",
+      success: attackerWins,
+      cqRequired: null,
+      cqRoll: null,
+      cqTotal: null,
+      targetUnitId: target.id,
+      targetUnit: target,
+      summary: attackerWins
+        ? `Boarders defeated ${target.name}'s defenders; ${attackers} Troop(s) remain aboard.`
+        : `${target.name}'s defenders repelled the boarding action.`,
+      payload: {
+        rulesPath: "boarding-end-phase-combat",
+        boardingActionIds: rows.map(row => row.id),
+        defenderTroopsBefore,
+        defenderEffectiveBefore,
+        defenderTroopsAfter: targetTroopsAfter,
+        defenderTroopsLost,
+        attackerTroopsBefore,
+        attackerTroopsAfter: attackers,
+        podAttackerTroopsBefore,
+        podAttackerTroopsAfter: podAttackersAfter,
+        shipAttackerTroopsBefore,
+        shipAttackerTroopsAfter: shipAttackersAfter,
+        rounds,
+        defenderWins,
+        attackerWins,
+      },
+    });
+  }
+}
+
 async function rollOverRoundAfterEndPhase(
   tx: any,
   game: typeof gamesTable.$inferSelect,
@@ -9198,6 +10057,14 @@ function createStationConfig(selection: "none" | "enabled"): Record<string, unkn
   };
 }
 
+type SkyboxSelection = "none" | "bright-nebula" | "dark-forest" | "drazi-green-purple" | "distant-fields" | "zhadum";
+
+function normalizeSkyboxSelection(value: unknown): SkyboxSelection {
+  return value === "none" || value === "dark-forest" || value === "drazi-green-purple" || value === "distant-fields" || value === "zhadum"
+    ? value
+    : "bright-nebula";
+}
+
 router.get("/games", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
   const games = await db
@@ -9277,6 +10144,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
         );
   const stationSelection = normalizeStationSelection(parsed.data.stations);
   const stationConfig = createStationConfig(stationSelection);
+  const skybox = normalizeSkyboxSelection(parsed.data.skybox);
   // crewQualityMode: belt-and-braces validation. Zod schema already restricts
   // to the enum, but if a future codegen drift relaxes the type we still want
   // to reject anything outside the two known modes rather than silently
@@ -9302,6 +10170,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     pointLimit: allocationPoints * 100,
     priorityLevel,
     allocationPoints,
+    skybox,
     visibility,
     passwordHash,
     deploymentDepth,
@@ -9817,6 +10686,40 @@ router.get("/games/:gameId/special-action-audit-log", requireAuth, async (req, r
     .orderBy(desc(gameSpecialActionAuditLogsTable.createdAt), desc(gameSpecialActionAuditLogsTable.id))
     .limit(limit);
   res.json({ gameId: params.data.gameId, count: rows.length, logs: rows });
+});
+
+router.get("/games/:gameId/boarding-actions", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [game] = await db
+    .select()
+    .from(gamesTable)
+    .where(eq(gamesTable.id, params.data.gameId));
+  if (!game) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+  const canView = await canReadPrivateGameState(game, userId);
+  if (!canView) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+
+  const rows = await db
+    .select()
+    .from(gameBoardingActionsTable)
+    .where(and(
+      eq(gameBoardingActionsTable.gameId, params.data.gameId),
+      inArray(gameBoardingActionsTable.status, [...ACTIVE_BOARDING_STATUSES]),
+    ))
+    .orderBy(gameBoardingActionsTable.id);
+
+  res.json({ gameId: params.data.gameId, count: rows.length, actions: rows });
 });
 
 router.post("/games/:gameId/accept", requireAuth, async (req, res): Promise<void> => {
@@ -10595,6 +11498,8 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           // damage-table logic in Slice C.
           crewPoints: model.crew ?? 0,
           maxCrewPoints: model.crew ?? 0,
+          troopPoints: model.troops ?? 0,
+          maxTroopPoints: model.troops ?? 0,
           crewThreshold: model.crewThreshold ?? (model.crew ? Math.ceil(model.crew / 2) : 0),
           damageState: "normal",
           carriedFighters: predeployedFighterLinks.has(index)
@@ -11118,6 +12023,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   const otherUnits = await db.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, params.data.gameId),
     eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
   ));
   const otherFootprints: UnitFootprint[] = [];
   const otherUnitsById = new Map<number, typeof gameUnitsTable.$inferSelect>();
@@ -11541,6 +12447,7 @@ router.post("/games/:gameId/units/:unitId/shadow-fighter-dispersal", requireAuth
         .where(eq(shipsTable.id, carrier.shipId));
       if (!carrierShip) throw Object.assign(new Error("Carrier ship record missing"), { status: 500 });
       const fighterTraits = parseShipTraits(fighterModel.traits);
+      const launchedTroops = Math.max(0, fighterModel.troops ?? 0);
       const fighterUnits: Array<typeof gameUnitsTable.$inferSelect> = [];
       for (let index = 0; index < placements.length; index += 1) {
         const placement = placementFootprints[index]!;
@@ -11575,6 +12482,8 @@ router.post("/games/:gameId/units/:unitId/shadow-fighter-dispersal", requireAuth
           interceptorThresholdCurrent: 2,
           crewPoints: 0,
           maxCrewPoints: 0,
+          troopPoints: launchedTroops,
+          maxTroopPoints: launchedTroops,
           crewThreshold: 0,
           damageState: "normal",
           carriedFighters: [],
@@ -11693,6 +12602,7 @@ router.post("/games/:gameId/units/:unitId/launch-fighter", requireAuth, async (r
         name: fighterModel.name,
       }).returning();
       const fighterTraits = parseShipTraits(fighterModel.traits);
+      const launchedTroops = Math.max(0, fighterModel.troops ?? 0);
       const [fighter] = await tx.insert(gameUnitsTable).values({
         gameId,
         ownerId: userId,
@@ -11719,6 +12629,8 @@ router.post("/games/:gameId/units/:unitId/launch-fighter", requireAuth, async (r
         interceptorThresholdCurrent: 2,
         crewPoints: fighterModel.crew ?? 0,
         maxCrewPoints: fighterModel.crew ?? 0,
+        troopPoints: launchedTroops,
+        maxTroopPoints: launchedTroops,
         crewThreshold: fighterModel.crewThreshold ?? (fighterModel.crew ? Math.ceil(fighterModel.crew / 2) : 0),
         damageState: "normal",
         carriedFighters: [],
@@ -11946,7 +12858,7 @@ router.post("/games/:gameId/displaced-fighters/:unitId/place", requireAuth, asyn
         eq(gameUnitsTable.id, entry.unitId),
         eq(gameUnitsTable.gameId, game.id),
       ));
-      if (!fighter || fighter.isDestroyed) {
+      if (!fighter || fighter.isDestroyed || unitIsWithdrawn(fighter) || unitIsInHyperspace(fighter)) {
         const nextEntries = displacement.entries.filter((item) => item.unitId !== entry.unitId);
         const nextState = nextEntries.length > 0 ? { ...displacement, entries: nextEntries } : null;
         const [updatedGame] = await tx.update(gamesTable)
@@ -11990,6 +12902,7 @@ router.post("/games/:gameId/displaced-fighters/:unitId/place", requireAuth, asyn
       const liveUnits = await tx.select().from(gameUnitsTable).where(and(
         eq(gameUnitsTable.gameId, game.id),
         eq(gameUnitsTable.isDestroyed, false),
+        eq(gameUnitsTable.boardState, "deployed"),
       ));
       const blockers: UnitFootprint[] = [];
       for (const other of liveUnits as Array<typeof gameUnitsTable.$inferSelect>) {
@@ -12573,6 +13486,7 @@ router.post("/games/:gameId/pass-firing", requireAuth, async (req, res): Promise
         const ownedRows = pid === null ? rows : rows.filter(row => row.ownerId === pid);
         const eligibleRows: Array<typeof gameUnitsTable.$inferSelect> = [];
         for (const row of ownedRows) {
+          if (unitIsInHyperspace(row) || unitIsWithdrawn(row)) continue;
           if (!(await unitPinnedForRound(tx, row, game.currentRound))) {
             eligibleRows.push(row);
           }
@@ -13060,6 +13974,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
           eq(gameUnitsTable.ownerId, pid),
           eq(gameUnitsTable.isDestroyed, false),
           eq(gameUnitsTable.hasFiredThisRound, false),
+          eq(gameUnitsTable.boardState, "deployed"),
           sql`${gameUnitsTable.hullPoints} > 0 AND (${gameUnitsTable.maxCrewPoints} = 0 OR ${gameUnitsTable.crewPoints} > 0)`,
         ));
         return rows.length;
@@ -13080,6 +13995,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
       // End-pass latches reset on every entry so a fresh round starts clean.
       const enterEndPhase = async () => {
         const initiativeId = game.initiativeWinnerId ?? game.challengerId;
+        await resolveBoardingAtStartOfEndPhase(tx, game);
         nextPhase = "end";
         nextActivePlayerId = initiativeId;
         await tx.update(gamesTable).set({
@@ -13118,6 +14034,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
           }).where(eq(gamesTable.id, game.id)).returning();
           return completed;
         }
+        await createBreachingPodContactBoardingActions(tx, postAntiFighterGame);
         const firingSegment = await activationSegmentFor(true);
         const firstFiringPlayer = firingSegment
           ? await firstEligibleByInitiative(true, firingSegment)
@@ -13518,6 +14435,15 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (initialTarget.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
       if (unitIsInHyperspace(initialTarget)) throw Object.assign(new Error("Target is in hyperspace reserves"), { status: 400 });
       if (initialTarget.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+      const protectedBoardingRows = await tx.select().from(gameBoardingActionsTable).where(and(
+        eq(gameBoardingActionsTable.gameId, game.id),
+        eq(gameBoardingActionsTable.targetUnitId, initialTarget.id),
+        eq(gameBoardingActionsTable.round, game.currentRound),
+        inArray(gameBoardingActionsTable.status, [...ACTIVE_BOARDING_STATUSES]),
+      ));
+      if (protectedBoardingRows.length > 0) {
+        throw Object.assign(new Error("Target is under a boarding action and cannot be attacked this Attack Phase"), { status: 400 });
+      }
       let target = initialTarget;
       let resolvedTargetUnitId = targetUnitId;
 
@@ -14223,7 +15149,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         id: number; gameUnitId: number;
         location: number; locationRoll: number; effectRoll: number;
         effectKey: string; name: string;
-        damageApplied: number; crewApplied: number;
+        damageApplied: number; crewApplied: number; troopsLost: number;
         randomArc: string | null; randomWeaponId: number | null;
         lostTraits: string[];
         appliedRound: number; repairable: boolean;
@@ -14244,6 +15170,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const currentRound = game.currentRound;
       const targetHasCrewTrack = target.maxCrewPoints > 0;
       if (!targetHasCrewTrack) crewAfterGeg = 0;
+      let totalTroopsLost = 0;
       // Track gross crit damage so we can later scale the per-crit
       // `damageApplied` to the net amount that actually reached hull
       // (after Adaptive Armour + Blast Doors) for combat-log accuracy.
@@ -14269,6 +15196,8 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         const crewApplied = targetHasCrewTrack
           ? (isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew) * mult
           : 0;
+        const troopsLost = criticalTroopsLost(entry);
+        totalTroopsLost += troopsLost;
         let randomArc: string | null = null;
         let randomWeaponId: number | null = null;
         const lostTraits: string[] = [];
@@ -14324,7 +15253,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           id: inserted.id, gameUnitId: inserted.gameUnitId,
           location: loc, locationRoll: pc.locationRoll, effectRoll: pc.effectRoll,
           effectKey: entry.effectKey, name: entry.name,
-          damageApplied: dmgApplied, crewApplied,
+          damageApplied: dmgApplied, crewApplied, troopsLost,
           randomArc, randomWeaponId, lostTraits,
           appliedRound: currentRound, repairable: entry.repairable,
         });
@@ -14394,6 +15323,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const targetCrewAfter = targetHasCrewTrack
         ? Math.max(0, targetCrewBefore - finalCrewLost)
         : targetCrewBefore;
+      const targetTroopsAfter = Math.max(0, target.troopPoints - totalTroopsLost);
 
       // ── Damage table (Slice C) ───────────────────────────────────────────
       // Fired when this attack drops hull to 0 from a still-living state.
@@ -14537,6 +15467,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const [updatedTarget] = await tx.update(gameUnitsTable).set({
         hullPoints: targetHullAfter,
         crewPoints: targetCrewAfter,
+        troopPoints: targetTroopsAfter,
         shieldsCurrent: persistedShieldsCurrent,
         // Persist the post-attack interceptor state so the next attack
         // this turn sees the burned dice / raised threshold.
@@ -14829,7 +15760,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
   const body = ChooseSpecialActionBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const { gameId, unitId } = params.data;
-  const { action, targetUnitId } = body.data;
+  const { action, targetUnitId, troopsCommitted } = body.data;
 
   // CQ thresholds. null = automatic (always succeeds).
   const cqRequiredByAction: Record<string, number | null> = {
@@ -14849,6 +15780,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "all-hands-on-deck": 9,
     "scramble": 7,
     "regenerate": 9,
+    "launch-breaching-pods-and-shuttles": null,
   };
   // All Special Actions — including All Hands on Deck — are declared in
   // the Movement Phase during a ship's activation. All Hands on Deck's
@@ -14965,6 +15897,8 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       let storedTarget: number | null = null;
       let nominatedTarget: typeof gameUnitsTable.$inferSelect | null = null;
       let nominatedTargetAfter: typeof gameUnitsTable.$inferSelect | null = null;
+      let committedBoardingTroops = 0;
+      let boardingDeliveryType = "ship";
       let causeConfusionResolution: {
         targetActionBefore: string;
         attackerPsychicCrew: number;
@@ -14982,6 +15916,67 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
         if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot target your own ship"), { status: 400 });
         if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        storedTarget = targetUnitId;
+        nominatedTarget = tgt;
+      }
+      if (action === "launch-breaching-pods-and-shuttles") {
+        if (targetUnitId == null) throw Object.assign(new Error("Launch Breaching Pods and Shuttles requires a target"), { status: 400 });
+        if ((unit.troopPoints ?? 0) <= 0) {
+          throw Object.assign(new Error("This ship has no Troops available to commit"), { status: 400 });
+        }
+        const availableTroops = Math.max(0, unit.troopPoints ?? 0);
+        committedBoardingTroops = troopsCommitted ?? availableTroops;
+        if (!Number.isInteger(committedBoardingTroops) || committedBoardingTroops < 1) {
+          throw Object.assign(new Error("Boarding must commit at least 1 Troop"), { status: 400 });
+        }
+        if (committedBoardingTroops > availableTroops) {
+          throw Object.assign(new Error(`Cannot commit ${committedBoardingTroops} Troop(s); only ${availableTroops} available`), { status: 400 });
+        }
+        const [tgt] = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.id, targetUnitId), eq(gameUnitsTable.gameId, gameId),
+        ));
+        if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
+        if (tgt.id === unit.id) throw Object.assign(new Error("A ship cannot counter-board itself"), { status: 400 });
+        const counterBoarding = tgt.ownerId === userId;
+        if (counterBoarding) {
+          const enemyBoarders = await activeEnemyBoardingRowsForTarget(tx, game.id, tgt.id, userId);
+          if (enemyBoarders.length === 0) {
+            throw Object.assign(new Error("Counter-boarding requires enemy boarders aboard the friendly target"), { status: 400 });
+          }
+          boardingDeliveryType = "counterattack";
+        }
+        if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        if (unitIsInHyperspace(tgt)) throw Object.assign(new Error("Target is in hyperspace reserves"), { status: 400 });
+        const targetModel = await getShipModelForUnit(tx, tgt);
+        if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
+        if (shipModelIsFighter(targetModel)) {
+          throw Object.assign(new Error("Boarding actions target enemy ships, not fighter flights"), { status: 400 });
+        }
+        if (shipModelIsSpaceStation(targetModel)) {
+          throw Object.assign(new Error("Ship-launched boarding against stations is not implemented yet; use Breaching Pods in a later slice"), { status: 400 });
+        }
+        if (boardingImmuneProfile(targetModel)) {
+          throw Object.assign(new Error("This target cannot be boarded"), { status: 400 });
+        }
+        const distance = edgeDistance(
+          { x: unit.hexQ, z: unit.hexR, baseRadiusInches: rulesBaseRadius(unit) },
+          { x: tgt.hexQ, z: tgt.hexR, baseRadiusInches: rulesBaseRadius(tgt) },
+        );
+        if (distance > 4 + 1e-6) {
+          throw Object.assign(new Error(`Boarding target out of range (${distance.toFixed(1)}\" > 4\")`), { status: 400 });
+        }
+        if (tgt.inchesMovedThisActivation > Math.floor(tgt.speed / 2)) {
+          throw Object.assign(new Error("Boarding target moved more than half Speed this turn"), { status: 400 });
+        }
+        const existingRows = await tx.select().from(gameBoardingActionsTable).where(and(
+          eq(gameBoardingActionsTable.gameId, game.id),
+          eq(gameBoardingActionsTable.round, game.currentRound),
+          eq(gameBoardingActionsTable.sourceUnitId, unit.id),
+          inArray(gameBoardingActionsTable.status, [...ACTIVE_BOARDING_STATUSES]),
+        ));
+        if (existingRows.length > 0) {
+          throw Object.assign(new Error("This ship already committed a boarding action this round"), { status: 400 });
+        }
         storedTarget = targetUnitId;
         nominatedTarget = tgt;
       }
@@ -15138,7 +16133,26 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         specialActionTargetId: success ? storedTarget : null,
         allStopReady: nextAllStopReady,
         oneWeaponThisRound: nextOneWeapon,
+        troopPoints: success && action === "launch-breaching-pods-and-shuttles"
+          ? Math.max(0, unit.troopPoints - committedBoardingTroops)
+          : unit.troopPoints,
       }).where(eq(gameUnitsTable.id, unit.id)).returning();
+      if (success && action === "launch-breaching-pods-and-shuttles" && storedTarget !== null) {
+        await tx.insert(gameBoardingActionsTable).values({
+          gameId: game.id,
+          round: game.currentRound,
+          targetUnitId: storedTarget,
+          attackerOwnerId: userId,
+          sourceUnitId: unit.id,
+          sourceFlightUnitId: null,
+          troopsCommitted: committedBoardingTroops,
+          troopsRemaining: committedBoardingTroops,
+          deliveryType: boardingDeliveryType,
+          status: "pending",
+          createdPhase: "movement",
+          resolvedRound: null,
+        });
+      }
       await recordSpecialActionAuditLog(tx, {
         game,
         actorKind: "player",
@@ -15155,6 +16169,10 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         targetUnit: nominatedTarget,
         summary: action === "cause-confusion" && causeConfusionResolution
           ? `${unit.name} ${success ? "caused confusion on" : "failed to confuse"} ${nominatedTarget?.name ?? "target"} (${causeConfusionResolution.attackerTotal} vs ${causeConfusionResolution.targetTotal}).`
+          : action === "launch-breaching-pods-and-shuttles"
+            ? boardingDeliveryType === "counterattack"
+              ? `${unit.name} committed ${committedBoardingTroops} Troop(s) to counter-board ${nominatedTarget?.name ?? "target"}.`
+              : `${unit.name} committed ${committedBoardingTroops} Troop(s) to board ${nominatedTarget?.name ?? "target"}.`
           : action === "maneuver-to-shield"
             ? `${unit.name} prepared to shield nearby friendly ships.`
             : `${unit.name} ${success ? "passed" : "failed"} ${action}${cqRequired !== null && cqTotal !== null ? ` (${cqTotal} vs ${cqRequired})` : ""}.`,
@@ -15165,6 +16183,15 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
           allStopReadyAfter: nextAllStopReady,
           oneWeaponBefore: unit.oneWeaponThisRound,
           oneWeaponAfter: nextOneWeapon,
+          boarding: action === "launch-breaching-pods-and-shuttles"
+            ? {
+                targetUnitId: storedTarget,
+                troopsAvailableBefore: unit.troopPoints,
+                troopsCommitted: committedBoardingTroops,
+                troopsRemainingOnSource: Math.max(0, unit.troopPoints - committedBoardingTroops),
+                deliveryType: boardingDeliveryType,
+              }
+            : null,
           causeConfusion: causeConfusionResolution
             ? {
                 ...causeConfusionResolution,
@@ -16312,6 +17339,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
       const isChallenger = userId === game.challengerId;
       const isOpponent = userId === game.opponentId;
       if (!isChallenger && !isOpponent) throw Object.assign(new Error("Not a participant"), { status: 403 });
+      await resolveBoardingAtStartOfEndPhase(tx, game);
 
       const cPassed = isChallenger ? true : game.endPhaseChallengerPassed;
       const oPassed = isOpponent ? true : game.endPhaseOpponentPassed;

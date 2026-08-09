@@ -105,6 +105,8 @@ export const gamesTable = pgTable("games", {
   pointLimit: integer("point_limit").notNull().default(500),
   priorityLevel: text("priority_level").notNull().default("raid"),
   allocationPoints: integer("allocation_points").notNull().default(5),
+  // Engagement-specific visual backdrop, shared by both commanders.
+  skybox: text("skybox").notNull().default("bright-nebula"),
   // "public" — anyone in the lobby can join. "private" — must supply the
   // matching password (stored as scrypt hash in passwordHash).
   visibility: text("visibility").notNull().default("public"),
@@ -237,6 +239,16 @@ export const gameUnitsTable = pgTable("game_units", {
   // crewPoints hits 0 the ship is adrift.
   crewPoints: integer("crew_points").notNull().default(0),
   maxCrewPoints: integer("max_crew_points").notNull().default(0),
+  // Boarding Troops aboard the ship. Printed model Troops are copied here at
+  // deployment, then reduced by troop-loss criticals and boarding commitments.
+  troopPoints: integer("troop_points").notNull().default(0),
+  maxTroopPoints: integer("max_troop_points").notNull().default(0),
+  // Capture/surrender state is tracked separately from ownerId so activation,
+  // perspective, and historical audit logs remain stable.
+  capturedByOwnerId: text("captured_by_owner_id"),
+  capturedRound: integer("captured_round"),
+  surrenderedToOwnerId: text("surrendered_to_owner_id"),
+  surrenderedRound: integer("surrendered_round"),
   // Printed Crew threshold from the ship sheet. When current crewPoints is at
   // or below this value, the ship has Skeleton Crew. 0 means "use fallback" or
   // "ship has no crew track".
@@ -406,6 +418,25 @@ export const gameJumpPointsTable = pgTable("game_jump_points", {
     .defaultNow(),
 });
 
+export const gameBoardingActionsTable = pgTable("game_boarding_actions", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  round: integer("round").notNull(),
+  targetUnitId: integer("target_unit_id").notNull(),
+  attackerOwnerId: text("attacker_owner_id").notNull(),
+  sourceUnitId: integer("source_unit_id"),
+  sourceFlightUnitId: integer("source_flight_unit_id"),
+  troopsCommitted: integer("troops_committed").notNull().default(0),
+  troopsRemaining: integer("troops_remaining").notNull().default(0),
+  deliveryType: text("delivery_type").notNull().default("ship"),
+  status: text("status").notNull().default("pending"),
+  createdPhase: text("created_phase").notNull().default("movement"),
+  resolvedRound: integer("resolved_round"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const turnsTable = pgTable("turns", {
   id: serial("id").primaryKey(),
   gameId: integer("game_id").notNull(),
@@ -558,6 +589,8 @@ export type GameMovementAuditLog =
   typeof gameMovementAuditLogsTable.$inferSelect;
 export type GameSpecialActionAuditLog =
   typeof gameSpecialActionAuditLogsTable.$inferSelect;
+export type GameBoardingAction =
+  typeof gameBoardingActionsTable.$inferSelect;
 export type BugReport = typeof bugReportsTable.$inferSelect;
 export type GameChatMessage = typeof gameChatMessagesTable.$inferSelect;
 export type LobbyChatMessage = typeof lobbyChatMessagesTable.$inferSelect;

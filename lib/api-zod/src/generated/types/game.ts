@@ -69,6 +69,8 @@ export interface Game {
      * @minimum 1
      */
   allocationPoints: number;
+  /** Engagement-specific board backdrop. Existing games default to bright-nebula. */
+  skybox: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
