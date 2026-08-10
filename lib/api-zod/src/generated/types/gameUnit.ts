@@ -108,6 +108,8 @@ export interface GameUnit {
   oneWeaponThisRound?: boolean;
   /** Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover. */
   firedWeaponIds: number[];
+  /** Stable one-shot weapon keys spent for the rest of the battle. */
+  spentOneShotWeaponKeys?: string[];
   /** Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets. */
   splitFireFirstTargetByWeapon?: GameUnitSplitFireFirstTargetByWeapon;
   /** Slow-Loading weapon cooldowns keyed by weapon id. Value is the first round in which that weapon may fire again. */

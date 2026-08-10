@@ -9504,6 +9504,19 @@ function weaponFingerprint(weapon: Weapon) {
   };
 }
 
+function normalizeOneShotWeaponKeyPart(value: string | number | null | undefined): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function oneShotWeaponKey(weapon: Pick<Weapon, "name" | "arc" | "range" | "attackDice">): string {
+  return [
+    normalizeOneShotWeaponKeyPart(weapon.name),
+    normalizeOneShotWeaponKeyPart(weapon.arc),
+    normalizeOneShotWeaponKeyPart(weapon.range),
+    normalizeOneShotWeaponKeyPart(weapon.attackDice),
+  ].join("|");
+}
+
 function splitFireBlockedReason(
   weapon: Weapon,
   useScoutCoordination: boolean,
@@ -15508,6 +15521,7 @@ export default function GameBoard() {
       inchesMovedThisActivation: 0,
       oneWeaponThisRound: false,
       firedWeaponIds: [],
+      spentOneShotWeaponKeys: [],
       splitFireFirstTargetByWeapon: {},
       slowLoadingWeaponCooldowns: {},
       hitByUnitIdsThisRound: [],
@@ -26354,6 +26368,14 @@ export default function GameBoard() {
                         )}
                         {weapons.map((w) => {
                           const fired = firedSet.has(w.id);
+                          const oneShot = /\bone[-\s]?shot\b/i.test(
+                            w.traits ?? "",
+                          );
+                          const oneShotSpent =
+                            oneShot &&
+                            (attacker.spentOneShotWeaponKeys ?? []).includes(
+                              oneShotWeaponKey(w),
+                            );
                           const skeletonBlocked =
                             skeletonFiringLimited &&
                             !fired &&
@@ -26402,6 +26424,7 @@ export default function GameBoard() {
                           const unavailable =
                             attackerLockedInDogfight ||
                             fired ||
+                            oneShotSpent ||
                             slowLoadingCooling ||
                             skeletonBlocked ||
                             crippledArcBlocked ||
@@ -26506,6 +26529,11 @@ export default function GameBoard() {
                                 {fired && (
                                   <div className="text-[10px] text-red-200 mt-1 uppercase tracking-wider">
                                     Already fired
+                                  </div>
+                                )}
+                                {oneShotSpent && (
+                                  <div className="text-[10px] text-red-200 mt-1 uppercase tracking-wider">
+                                    One-Shot spent
                                   </div>
                                 )}
                                 {slowLoadingCooling && (

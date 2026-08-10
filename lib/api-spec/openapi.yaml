@@ -1147,6 +1147,10 @@ components:
           type: array
           items: { type: integer }
           description: "Weapon ids that have already fired during the current firing activation. Reset on each /activate-unit call and on round rollover."
+        spentOneShotWeaponKeys:
+          type: array
+          items: { type: string }
+          description: "Stable one-shot weapon keys spent for the rest of the battle."
         splitFireFirstTargetByWeapon:
           type: object
           additionalProperties: { type: integer }

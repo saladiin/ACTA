@@ -5562,6 +5562,10 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS spent_one_shot_weapon_keys jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
       ADD COLUMN IF NOT EXISTS board_state text NOT NULL DEFAULT 'deployed'
     `);
     await pool.query(`

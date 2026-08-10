@@ -231,6 +231,7 @@ function unitAuditState(unit: typeof gameUnitsTable.$inferSelect): Record<string
     hasMovedThisRound: unit.hasMovedThisRound,
     hasFiredThisRound: unit.hasFiredThisRound,
     firedWeaponIds: unit.firedWeaponIds,
+    spentOneShotWeaponKeys: unit.spentOneShotWeaponKeys,
     slowLoadingWeaponCooldowns: unit.slowLoadingWeaponCooldowns,
     baseRadiusInches: unit.baseRadiusInches,
     boardState: unit.boardState,
@@ -466,6 +467,26 @@ function normalizeSlowLoadingCooldowns(raw: unknown, currentRound: number): Slow
     }
   }
   return out;
+}
+
+function normalizeSpentOneShotWeaponKeys(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(new Set(raw
+    .map(value => typeof value === "string" ? value.trim().toLowerCase() : "")
+    .filter(Boolean)));
+}
+
+function normalizeOneShotWeaponKeyPart(value: string | number | null | undefined): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function oneShotWeaponKey(weapon: Pick<typeof weaponsTable.$inferSelect, "name" | "arc" | "range" | "attackDice">): string {
+  return [
+    normalizeOneShotWeaponKeyPart(weapon.name),
+    normalizeOneShotWeaponKeyPart(weapon.arc),
+    normalizeOneShotWeaponKeyPart(weapon.range),
+    normalizeOneShotWeaponKeyPart(weapon.attackDice),
+  ].join("|");
 }
 
 // ── Password hashing (scrypt) ────────────────────────────────────────────────
@@ -6713,6 +6734,7 @@ async function chooseAiFirePlan(
   if (baseAction === "run-silent" || attacker.specialAction === "regenerate") return null;
 
   const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
+  const spentOneShotWeaponKeys = new Set(normalizeSpentOneShotWeaponKeys(attacker.spentOneShotWeaponKeys));
   const usedWeaponIds = Array.from(new Set([...alreadyFired, ...attemptedWeaponIds]));
   if ((baseAction === "blast-doors" || baseAction === "all-stop-pivot" || attacker.oneWeaponThisRound) && usedWeaponIds.length >= 1) {
     return null;
@@ -6820,6 +6842,10 @@ async function chooseAiFirePlan(
       weapon,
     );
     const wt = weaponProfile.traits;
+    if (wt.oneShot && spentOneShotWeaponKeys.has(oneShotWeaponKey(weapon))) {
+      rejected.push({ weaponId: weapon.id, weaponName: weapon.name, reason: "one-shot-spent" });
+      continue;
+    }
     if (wt.slowLoading) {
       const readyRound = normalizeSlowLoadingCooldowns(attacker.slowLoadingWeaponCooldowns, game.currentRound)[String(weapon.id)] ?? 0;
       if (game.currentRound < readyRound) {
@@ -7550,6 +7576,10 @@ async function resolveBasicAiWeaponFire(
 
   const alreadyFired = (attacker.firedWeaponIds ?? []) as number[];
   if (!stealthFailWastedSlowLoading) {
+    const spentOneShotWeaponKeys = normalizeSpentOneShotWeaponKeys(attacker.spentOneShotWeaponKeys);
+    const nextSpentOneShotWeaponKeys = wt.oneShot
+      ? Array.from(new Set([...spentOneShotWeaponKeys, oneShotWeaponKey(weapon)]))
+      : spentOneShotWeaponKeys;
     const nextSlowLoadingCooldowns = wt.slowLoading
       ? {
           ...normalizeSlowLoadingCooldowns(attacker.slowLoadingWeaponCooldowns, game.currentRound),
@@ -7558,6 +7588,7 @@ async function resolveBasicAiWeaponFire(
       : attacker.slowLoadingWeaponCooldowns;
     await tx.update(gameUnitsTable).set({
       firedWeaponIds: [...alreadyFired, weapon.id],
+      spentOneShotWeaponKeys: nextSpentOneShotWeaponKeys,
       slowLoadingWeaponCooldowns: nextSlowLoadingCooldowns,
     }).where(eq(gameUnitsTable.id, attacker.id));
   }
@@ -14833,6 +14864,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // Adaptive Armour / Stealth / Interceptors / etc. drop out when a
       // power-feedback/implosion/etc. crit nuked them.
       const wt = weaponProfile.traits;
+      const oneShotKey = oneShotWeaponKey(weapon);
+      if (wt.oneShot && normalizeSpentOneShotWeaponKeys(attacker.spentOneShotWeaponKeys).includes(oneShotKey)) {
+        throw Object.assign(new Error("One-Shot weapon has already been fired"), { status: 400 });
+      }
       if (splitFire) {
         if (useScoutCoordination) {
           throw Object.assign(new Error("Scout Coordination cannot be used with split fire"), { status: 400 });
@@ -15688,6 +15723,10 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       // power was held, not loosed). All other stealth failures still
       // consume the shot — the gun went off, it just hit nothing.
       if (!stealthFailWastedSlowLoading) {
+        const spentOneShotWeaponKeys = normalizeSpentOneShotWeaponKeys(attacker.spentOneShotWeaponKeys);
+        const nextSpentOneShotWeaponKeys = wt.oneShot
+          ? Array.from(new Set([...spentOneShotWeaponKeys, oneShotKey]))
+          : spentOneShotWeaponKeys;
         const nextSlowLoadingCooldowns = wt.slowLoading
           ? {
               ...normalizeSlowLoadingCooldowns(attacker.slowLoadingWeaponCooldowns, game.currentRound),
@@ -15712,6 +15751,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           .set({
             firedWeaponIds: nextFiredWeaponIds,
             splitFireFirstTargetByWeapon: nextSplitFireTargets,
+            spentOneShotWeaponKeys: nextSpentOneShotWeaponKeys,
             slowLoadingWeaponCooldowns: nextSlowLoadingCooldowns,
           })
           .where(eq(gameUnitsTable.id, attacker.id));

@@ -372,6 +372,13 @@ export const gameUnitsTable = pgTable("game_units", {
     .$type<number[]>()
     .notNull()
     .default([]),
+  // One-Shot weapons are spent for the rest of the battle after a successful
+  // firing attempt. Store stable weapon keys rather than raw weapon ids so
+  // seed maintenance can renumber weapons without re-enabling spent ordnance.
+  spentOneShotWeaponKeys: jsonb("spent_one_shot_weapon_keys")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   splitFireFirstTargetByWeapon: jsonb("split_fire_first_target_by_weapon")
     .$type<Record<string, number>>()
     .notNull()
