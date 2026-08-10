@@ -33,4 +33,6 @@ export interface GameDetail {
   units: GameUnit[];
   turns: Turn[];
   jumpPoints?: GameJumpPoint[];
+  observers: Array<{ userId: string; name?: string | null }>;
+  viewerRole: 'challenger' | 'opponent' | 'observer' | 'admin-observer' | 'eligible-observer' | 'open-guest';
 }

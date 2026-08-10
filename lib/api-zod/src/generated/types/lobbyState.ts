@@ -10,5 +10,6 @@ import type { Game } from './game';
 export interface LobbyState {
   pendingChallenges: Game[];
   activeGames: Game[];
+  observableGames: Game[];
   recentlyCompleted: Game[];
 }

@@ -28,6 +28,8 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
+  /** Allow up to two authenticated observers after deployment. */
+  allowObservers?: boolean;
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
   /**

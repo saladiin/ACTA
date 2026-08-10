@@ -5438,6 +5438,10 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS allow_observers boolean NOT NULL DEFAULT false
+    `);
+    await pool.query(`
+      ALTER TABLE games
       ADD COLUMN IF NOT EXISTS opponent_kind text NOT NULL DEFAULT 'human'
     `);
     await pool.query(`
@@ -5747,6 +5751,18 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS game_chat_messages_game_created_idx
       ON game_chat_messages (game_id, created_at, id)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_observers (
+        id serial PRIMARY KEY,
+        game_id integer NOT NULL,
+        user_id text NOT NULL,
+        joined_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS game_observers_game_user_idx
+      ON game_observers (game_id, user_id)
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS lobby_chat_messages (

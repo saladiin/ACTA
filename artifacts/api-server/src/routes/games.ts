@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, gameBoardingActionsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, gameBoardingActionsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, gameObserversTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
 import { requireAuth, getUserId, isAdminUser } from "../lib/auth";
 import {
   parseShipTraits,
@@ -130,6 +130,13 @@ import {
   DeployFleetResponse,
   ListTurnsResponse,
 } from "@workspace/api-zod";
+import {
+  resolveGameViewerRole,
+  observerSeatAvailable,
+  viewerRoleCanReadPublicHistory,
+  viewerRoleHasFullGameState,
+  type GameViewerRole,
+} from "../lib/game-observer-access";
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -10065,19 +10072,54 @@ function isDevAiCommander(game: typeof gamesTable.$inferSelect, userId: string):
   return isDevBuiltinCommander(userId) && game.opponentKind === "ai" && game.opponentId === AI_OPPONENT_ID && userId !== game.challengerId;
 }
 
-async function canReadGameState(game: typeof gamesTable.$inferSelect, userId: string): Promise<boolean> {
-  return game.status === "open" ||
-    game.challengerId === userId ||
-    game.opponentId === userId ||
-    isDevAiCommander(game, userId) ||
-    await isAdminUser(userId);
+async function observerMembershipExists(gameId: number, userId: string): Promise<boolean> {
+  const [membership] = await db
+    .select({ id: gameObserversTable.id })
+    .from(gameObserversTable)
+    .where(and(
+      eq(gameObserversTable.gameId, gameId),
+      eq(gameObserversTable.userId, userId),
+    ))
+    .limit(1);
+  return Boolean(membership);
 }
 
-async function canReadPrivateGameState(game: typeof gamesTable.$inferSelect, userId: string): Promise<boolean> {
-  return game.challengerId === userId ||
-    game.opponentId === userId ||
-    isDevAiCommander(game, userId) ||
-    await isAdminUser(userId);
+async function gameObserverDtos(gameId: number): Promise<Array<{ userId: string; name: string | null }>> {
+  const memberships = await db
+    .select()
+    .from(gameObserversTable)
+    .where(eq(gameObserversTable.gameId, gameId))
+    .orderBy(gameObserversTable.joinedAt, gameObserversTable.id);
+  if (memberships.length === 0) return [];
+  const profiles = await db
+    .select({ userId: playersTable.clerkUserId, name: playersTable.username })
+    .from(playersTable)
+    .where(inArray(playersTable.clerkUserId, memberships.map(row => row.userId)));
+  const nameByUserId = new Map(profiles.map(profile => [profile.userId, profile.name]));
+  return memberships.map(row => ({
+    userId: row.userId,
+    name: nameByUserId.get(row.userId) ?? null,
+  }));
+}
+
+async function gameViewerRole(
+  game: typeof gamesTable.$inferSelect,
+  userId: string,
+): Promise<GameViewerRole | null> {
+  const [isAdmin, isObserverMember] = await Promise.all([
+    isAdminUser(userId),
+    observerMembershipExists(game.id, userId),
+  ]);
+  return resolveGameViewerRole(game, userId, {
+    isAdmin,
+    isObserverMember,
+    controlsAiOpponent: isDevAiCommander(game, userId),
+  });
+}
+
+async function canReadPublicGameHistory(game: typeof gamesTable.$inferSelect, userId: string): Promise<boolean> {
+  const role = await gameViewerRole(game, userId);
+  return Boolean(role && viewerRoleCanReadPublicHistory(role));
 }
 
 function canDeployAiOpponentForAlpha(game: typeof gamesTable.$inferSelect, userId: string): boolean {
@@ -10225,6 +10267,7 @@ router.post("/games", requireAuth, async (req, res): Promise<void> => {
     skybox,
     visibility,
     passwordHash,
+    allowObservers: parsed.data.allowObservers ?? false,
     deploymentDepth,
     deploymentConfig,
     terrainConfig,
@@ -10286,12 +10329,25 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView = await canReadGameState(game, userId);
-  if (!canView) {
+  const viewerRole = await gameViewerRole(game, userId);
+  if (!viewerRole) {
     res.status(404).json({ error: "Game not found" });
     return;
   }
+  if (!viewerRoleHasFullGameState(viewerRole)) {
+    const metadataGame = toGameDto({ ...game, aiState: {} });
+    res.json(GetGameResponse.parse({
+      game: metadataGame,
+      units: [],
+      turns: [],
+      jumpPoints: [],
+      observers: [],
+      viewerRole,
+    }));
+    return;
+  }
   const units = await db.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
+  const observers = await gameObserverDtos(game.id);
   const turns = await db.select().from(turnsTable).where(eq(turnsTable.gameId, params.data.gameId)).orderBy(turnsTable.turnNumber);
   const jumpPoints = await db.select().from(gameJumpPointsTable).where(and(
     eq(gameJumpPointsTable.gameId, params.data.gameId),
@@ -10335,7 +10391,91 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
       isSkeletonCrew: isSkeletonCrewUnit(u),
     };
   });
-  res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns, jumpPoints }));
+  res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns, jumpPoints, observers, viewerRole }));
+});
+
+router.post("/games/:gameId/observe", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  try {
+    await db.transaction(async tx => {
+      await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
+      const [game] = await tx.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+      if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
+      if (game.challengerId === userId || game.opponentId === userId || isDevAiCommander(game, userId)) {
+        throw Object.assign(new Error("Players already have full access to this engagement."), { status: 400 });
+      }
+      if (!game.allowObservers || (game.status !== "active" && game.status !== "completed")) {
+        throw Object.assign(new Error("This engagement is not open to observers."), { status: 403 });
+      }
+      if (game.passwordHash) {
+        const password = typeof req.body?.password === "string" ? req.body.password : "";
+        if (!password || !verifyPassword(password, game.passwordHash)) {
+          throw Object.assign(new Error("Incorrect engagement password."), { status: 403 });
+        }
+      }
+      const existing = await tx.select({ id: gameObserversTable.id })
+        .from(gameObserversTable)
+        .where(and(eq(gameObserversTable.gameId, game.id), eq(gameObserversTable.userId, userId)))
+        .limit(1);
+      if (existing.length > 0) return;
+      const occupied = await tx.select({ id: gameObserversTable.id })
+        .from(gameObserversTable)
+        .where(eq(gameObserversTable.gameId, game.id));
+      if (!observerSeatAvailable(occupied.length, false)) {
+        throw Object.assign(new Error("This engagement already has two observers."), { status: 409 });
+      }
+      await tx.insert(gameObserversTable).values({ gameId: game.id, userId });
+    });
+    res.json({ viewerRole: "observer" });
+  } catch (error) {
+    const err = error as { status?: number; message?: string };
+    res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
+  }
+});
+
+router.delete("/games/:gameId/observers/:observerUserId", requireAuth, async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const params = GetGameParams.safeParse({ gameId: req.params.gameId });
+  if (!params.success || typeof req.params.observerUserId !== "string") {
+    res.status(400).json({ error: "Invalid observer removal request." });
+    return;
+  }
+  const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
+  if (!game || (game.challengerId !== userId && game.opponentId !== userId && !isDevAiCommander(game, userId))) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+  await db.delete(gameObserversTable).where(and(
+    eq(gameObserversTable.gameId, game.id),
+    eq(gameObserversTable.userId, req.params.observerUserId),
+  ));
+  res.status(204).end();
+});
+
+// Observer membership is a server-enforced read-only capability. This guard
+// sits ahead of every remaining mutation route, including chat and dev tools.
+router.use("/games/:gameId", requireAuth, async (req, res, next): Promise<void> => {
+  if (req.method === "GET" || req.path.endsWith("/chat")) {
+    next();
+    return;
+  }
+  const gameId = Number(req.params.gameId);
+  if (!Number.isInteger(gameId)) {
+    next();
+    return;
+  }
+  const userId = getUserId(req);
+  if (await observerMembershipExists(gameId, userId)) {
+    res.status(403).json({ error: "Observers cannot issue game commands." });
+    return;
+  }
+  next();
 });
 
 router.get("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> => {
@@ -10349,7 +10489,7 @@ router.get("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> =
   try {
     const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
     if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
-    const canChat = game.opponentKind !== "ai" && await canReadPrivateGameState(game, userId);
+    const canChat = await canReadPublicGameHistory(game, userId);
     if (!canChat) throw Object.assign(new Error("Game not found"), { status: 404 });
 
     const latest = await db
@@ -10381,13 +10521,19 @@ router.post("/games/:gameId/chat", requireAuth, async (req, res): Promise<void> 
   try {
     const [game] = await db.select().from(gamesTable).where(eq(gamesTable.id, params.data.gameId));
     if (!game) throw Object.assign(new Error("Game not found"), { status: 404 });
-    const canChat = game.opponentKind !== "ai" && (game.challengerId === userId || game.opponentId === userId);
+    const canChat = await canReadPublicGameHistory(game, userId);
     if (!canChat) throw Object.assign(new Error("Game not found"), { status: 404 });
 
-    const senderName =
+    let senderName =
       userId === game.challengerId ? game.challengerName :
       userId === game.opponentId ? game.opponentName :
       null;
+    if (!senderName) {
+      const [profile] = await db.select({ username: playersTable.username })
+        .from(playersTable)
+        .where(eq(playersTable.clerkUserId, userId));
+      senderName = profile?.username ?? "Observer";
+    }
     const [message] = await db.insert(gameChatMessagesTable).values({
       gameId: game.id,
       senderPlayerId: userId,
@@ -10657,7 +10803,7 @@ router.get("/games/:gameId/attack-audit-log", requireAuth, async (req, res): Pro
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView = await canReadPrivateGameState(game, userId);
+  const canView = await canReadPublicGameHistory(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -10690,7 +10836,7 @@ router.get("/games/:gameId/movement-audit-log", requireAuth, async (req, res): P
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView = await canReadPrivateGameState(game, userId);
+  const canView = await canReadPublicGameHistory(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -10723,7 +10869,7 @@ router.get("/games/:gameId/special-action-audit-log", requireAuth, async (req, r
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView = await canReadPrivateGameState(game, userId);
+  const canView = await canReadPublicGameHistory(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -10756,7 +10902,7 @@ router.get("/games/:gameId/boarding-actions", requireAuth, async (req, res): Pro
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const canView = await canReadPrivateGameState(game, userId);
+  const canView = await canReadPublicGameHistory(game, userId);
   if (!canView) {
     res.status(404).json({ error: "Game not found" });
     return;
@@ -11088,6 +11234,7 @@ router.post("/games/:gameId/surrender", requireAuth, async (req, res): Promise<v
       }
       await tx.delete(gameUnitsTable).where(eq(gameUnitsTable.gameId, params.data.gameId));
       await tx.delete(turnsTable).where(eq(turnsTable.gameId, params.data.gameId));
+      await tx.delete(gameObserversTable).where(eq(gameObserversTable.gameId, params.data.gameId));
       await tx.delete(gamesTable).where(eq(gamesTable.id, params.data.gameId));
     });
     res.status(204).end();

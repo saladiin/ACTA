@@ -275,6 +275,8 @@ export interface Game {
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
+  /** Host-controlled opt-in for authenticated observers. */
+  allowObservers: boolean;
   /** True if this engagement includes generated terrain/scenery. */
   hasTerrain?: boolean;
   /** True if this engagement has station play enabled. */
@@ -453,6 +455,8 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
+  /** Allow up to two authenticated observers after deployment. */
+  allowObservers?: boolean;
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
   /**
@@ -766,6 +770,13 @@ export interface GameDetail {
   units: GameUnit[];
   turns: Turn[];
   jumpPoints?: GameJumpPoint[];
+  observers: GameObserverSummary[];
+  viewerRole: 'challenger' | 'opponent' | 'observer' | 'admin-observer' | 'eligible-observer' | 'open-guest';
+}
+
+export interface GameObserverSummary {
+  userId: string;
+  name?: string | null;
 }
 
 export interface GameJumpPoint {
@@ -1250,6 +1261,7 @@ export interface TurnInput {
 export interface LobbyState {
   pendingChallenges: Game[];
   activeGames: Game[];
+  observableGames: Game[];
   recentlyCompleted: Game[];
 }
 

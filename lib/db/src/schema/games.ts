@@ -111,6 +111,7 @@ export const gamesTable = pgTable("games", {
   // matching password (stored as scrypt hash in passwordHash).
   visibility: text("visibility").notNull().default("public"),
   passwordHash: text("password_hash"),
+  allowObservers: boolean("allow_observers").notNull().default(false),
   // Depth of each player's deployment zone in inches, measured inward from
   // their short edge of the 48"×72" board. Constrained to 4..30 (creation
   // is validated server-side). Dev mode bypasses this on the client.
@@ -542,6 +543,15 @@ export const gameChatMessagesTable = pgTable("game_chat_messages", {
   senderName: text("sender_name"),
   message: text("message").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const gameObserversTable = pgTable("game_observers", {
+  id: serial("id").primaryKey(),
+  gameId: integer("game_id").notNull(),
+  userId: text("user_id").notNull(),
+  joinedAt: timestamp("joined_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 });

@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X, MessageSquare, Send, ChevronDown, ChevronUp } from "lucide-react";
+import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X, MessageSquare, Send, ChevronDown, ChevronUp, Eye } from "lucide-react";
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 import { setDevUserId, useDevUserId } from "@/lib/dev-user";
 import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
@@ -327,6 +327,14 @@ export default function Lobby() {
   const qc = useQueryClient();
   const updateProfile = useUpdateMyProfile();
   const acceptGame = useAcceptGame();
+  const observeGame = useMutation({
+    mutationFn: ({ gameId, data }: { gameId: number; data?: { password?: string | null } }) =>
+      customFetch<{ viewerRole: "observer" }>(`/api/games/${gameId}/observe`, {
+        method: "POST",
+        body: JSON.stringify(data ?? {}),
+        responseType: "json",
+      }),
+  });
   const myUserId = temporaryUsernameAuthEnabled
     ? getTemporaryUserId() ?? ""
     : import.meta.env.DEV ? devUserId : (user?.id ?? "");
@@ -392,6 +400,22 @@ export default function Lobby() {
 
   const otherDevUserId = devUserId === "test-user-1" ? "test-user-2" : "test-user-1";
   const otherDevLabel = otherDevUserId === "test-user-1" ? "P1" : "P2";
+
+  const observeFromLobby = (game: { id: number; hasPassword?: boolean }) => {
+    if (game.hasPassword) {
+      setLocation(`/games/${game.id}`);
+      return;
+    }
+    observeGame.mutate(
+      { gameId: game.id, data: {} },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getGetLobbyQueryKey() });
+          setLocation(`/games/${game.id}`);
+        },
+      },
+    );
+  };
 
   return (
     <Layout title="Command Lobby">
@@ -587,6 +611,61 @@ export default function Lobby() {
                 </Link>
               ))}
             </div>
+          )}
+        </section>
+
+        {/* Games whose host explicitly enabled passive observation. */}
+        <section>
+          <h2 className="flex items-center gap-2 text-xs font-mono tracking-[0.3em] uppercase text-muted-foreground mb-3">
+            <Eye className="w-3.5 h-3.5 text-cyan-300" /> Observer Access
+          </h2>
+          {isLoading ? (
+            <Skeleton className="h-14 w-full" />
+          ) : lobby?.observableGames?.length === 0 ? (
+            <div className="border border-dashed border-border rounded-md py-6 text-center text-muted-foreground text-sm">
+              No engagements open to observers
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {lobby?.observableGames?.map(game => (
+                <div
+                  key={game.id}
+                  data-testid={`card-observable-${game.id}`}
+                  className="flex items-center justify-between gap-3 border border-cyan-400/20 bg-cyan-400/5 rounded-md px-4 py-3"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Eye className="w-4 h-4 shrink-0 text-cyan-300" />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold">
+                        {game.challengerName ?? "Challenger"} vs {game.opponentName ?? "Opponent"}
+                      </div>
+                      {game.matchName ? <div className="truncate text-xs text-muted-foreground">{game.matchName}</div> : null}
+                      <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                        {game.hasPassword ? "Password required" : "Open observation"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <StatusBadge status={game.status} />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 px-3 text-[10px] uppercase tracking-widest border-cyan-400/35 text-cyan-200"
+                      disabled={observeGame.isPending}
+                      onClick={() => observeFromLobby(game)}
+                      data-testid={`button-observe-game-${game.id}`}
+                    >
+                      <Eye className="h-3.5 w-3.5" /> Observe
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {observeGame.isError && (
+            <p className="mt-2 text-[11px] text-red-400 font-mono">
+              {(observeGame.error as Error).message}
+            </p>
           )}
         </section>
 

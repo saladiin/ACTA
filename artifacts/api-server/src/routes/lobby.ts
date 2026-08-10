@@ -99,7 +99,20 @@ router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
     .slice(-5)
     .map(toLobbyGameDto);
 
-  res.json(GetLobbyResponse.parse({ pendingChallenges, activeGames, recentlyCompleted }));
+  const myGameIds = new Set(myGames.map(game => game.id));
+  const observableGames = (await db
+    .select()
+    .from(gamesTable)
+    .where(and(
+      eq(gamesTable.allowObservers, true),
+      or(eq(gamesTable.status, "active"), eq(gamesTable.status, "completed")),
+    ))
+    .orderBy(desc(gamesTable.updatedAt)))
+    .filter(game => !myGameIds.has(game.id) && !isTemporarilyArchived(game))
+    .slice(0, 20)
+    .map(toLobbyGameDto);
+
+  res.json(GetLobbyResponse.parse({ pendingChallenges, activeGames, observableGames, recentlyCompleted }));
 });
 
 router.get("/lobby/chat", requireAuth, async (_req, res): Promise<void> => {

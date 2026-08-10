@@ -234,6 +234,53 @@ paths:
         "404":
           description: Not found
 
+  /games/{gameId}/observe:
+    post:
+      operationId: observeGame
+      tags: [games]
+      summary: Join an active or completed engagement as a read-only observer
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ObserveGameInput"
+      responses:
+        "200":
+          description: Observer access granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObserveGameResult"
+        "403":
+          description: Observation is disabled or the password is invalid
+        "409":
+          description: The two-observer limit has been reached
+
+  /games/{gameId}/observers/{observerUserId}:
+    delete:
+      operationId: removeGameObserver
+      tags: [games]
+      summary: Remove an observer from an engagement (players only)
+      parameters:
+        - name: gameId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: observerUserId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Observer removed }
+        "404": { description: Game or observer not found }
+
   /games/{gameId}/accept:
     post:
       operationId: acceptGame
@@ -918,7 +965,7 @@ components:
 
     Game:
       type: object
-      required: [id, challengerId, opponentKind, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, skybox, createdAt, updatedAt]
+      required: [id, challengerId, opponentKind, status, currentTurn, currentRound, phase, pointLimit, priorityLevel, allocationPoints, skybox, allowObservers, createdAt, updatedAt]
       properties:
         id:           { type: integer }
         challengerId: { type: string }
@@ -946,6 +993,7 @@ components:
         skybox: { type: string, enum: [none, bright-nebula, dark-forest, drazi-green-purple, distant-fields, zhadum], description: "Engagement-specific board backdrop. Existing games default to bright-nebula." }
         visibility:   { type: string, enum: [public, private] }
         hasPassword:  { type: boolean, description: "True if this engagement is gated by a password (does not expose the password itself)." }
+        allowObservers: { type: boolean, description: "Host-controlled opt-in allowing authenticated non-participants to observe active or completed play." }
         hasTerrain:   { type: boolean, description: "True if this engagement includes generated terrain/scenery." }
         hasStation:   { type: boolean, description: "True if this engagement has station play enabled." }
         deploymentDepth: { type: integer, minimum: 4, maximum: 30, description: "Depth in inches of each player's deployment zone, measured inward from their short edge of the 48\"×72\" board." }
@@ -973,6 +1021,7 @@ components:
         priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
         allocationPoints: { type: integer, minimum: 1, maximum: 99 }
         visibility: { type: string, enum: [public, private], description: "public = anyone may join from the lobby; private = password-gated." }
+        allowObservers: { type: boolean, default: false, description: "Allow authenticated non-participants to observe after deployment." }
         opponentKind: { type: string, enum: [human, ai], default: human, description: "Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation." }
         matchName:  { type: ["string", "null"], maxLength: 80, description: "Optional title or desired match conditions shown beneath the host commander's name." }
         password:   { type: ["string", "null"], description: "Required when visibility=private. Stored hashed; required again on accept." }
@@ -994,6 +1043,17 @@ components:
       type: object
       properties:
         password: { type: ["string", "null"], description: "Required if the engagement is private." }
+
+    ObserveGameInput:
+      type: object
+      properties:
+        password: { type: ["string", "null"], description: "Required to observe a private engagement." }
+
+    ObserveGameResult:
+      type: object
+      required: [viewerRole]
+      properties:
+        viewerRole: { type: string, enum: [observer] }
 
     GameUnit:
       type: object
@@ -1120,11 +1180,26 @@ components:
 
     GameDetail:
       type: object
-      required: [game, units, turns]
+      required: [game, units, turns, observers, viewerRole]
       properties:
         game:  { $ref: "#/components/schemas/Game" }
         units: { type: array, items: { $ref: "#/components/schemas/GameUnit" } }
         turns: { type: array, items: { $ref: "#/components/schemas/Turn" } }
+        observers:
+          type: array
+          maxItems: 2
+          items: { $ref: "#/components/schemas/GameObserverSummary" }
+        viewerRole:
+          type: string
+          enum: [challenger, opponent, observer, admin-observer, eligible-observer, open-guest]
+          description: "The authenticated viewer's authority for this response. Eligible observers receive metadata only until POST /observe succeeds."
+
+    GameObserverSummary:
+      type: object
+      required: [userId]
+      properties:
+        userId: { type: string }
+        name: { type: ["string", "null"] }
 
     ShipPlacement:
       type: object
@@ -1634,13 +1709,17 @@ components:
 
     LobbyState:
       type: object
-      required: [pendingChallenges, activeGames, recentlyCompleted]
+      required: [pendingChallenges, activeGames, observableGames, recentlyCompleted]
       properties:
         pendingChallenges:
           type: array
           items:
             $ref: "#/components/schemas/Game"
         activeGames:
+          type: array
+          items:
+            $ref: "#/components/schemas/Game"
+        observableGames:
           type: array
           items:
             $ref: "#/components/schemas/Game"

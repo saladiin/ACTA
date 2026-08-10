@@ -13,6 +13,7 @@ import type {
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Swords, Globe2, Lock, UserRound, Cpu } from "lucide-react";
 import { PRIORITY_LEVELS, type PriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
@@ -64,6 +65,7 @@ export default function NewGame() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
   const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [allowObservers, setAllowObservers] = useState(false);
   const [opponentKind, setOpponentKind] = useState<"human" | "ai">("human");
   const [password, setPassword] = useState("");
   const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>("raid");
@@ -121,6 +123,7 @@ export default function NewGame() {
           priorityLevel,
           allocationPoints: fap,
           visibility,
+          allowObservers,
           opponentKind,
           matchName: matchName.trim() || null,
           password: visibility === "private" ? password : null,
@@ -269,6 +272,21 @@ export default function NewGame() {
               Listed in the public lobby; any commander may accept.
             </p>
           )}
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-md border border-border bg-card/40 px-3 py-3">
+            <Checkbox
+              checked={allowObservers}
+              onCheckedChange={(checked) => setAllowObservers(checked === true)}
+              data-testid="checkbox-allow-observers"
+              aria-label="Allow observers"
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-sm font-medium">Allow observers</span>
+              <span className="mt-0.5 block text-[11px] font-mono text-muted-foreground">
+                Authenticated spectators may watch after both fleets deploy. Private games still require the password.
+              </span>
+            </span>
+          </label>
         </section>
 
         <section>

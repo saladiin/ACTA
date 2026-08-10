@@ -12385,6 +12385,7 @@ export default function GameBoard() {
     staleTime: 60_000,
   });
   const game = gameData?.game;
+  const viewerRole = gameData?.viewerRole;
   const skyboxSelection = game?.skybox ?? "bright-nebula";
   const selectedPanoramaSkyboxUrl =
     skyboxSelection === "none"
@@ -12395,6 +12396,7 @@ export default function GameBoard() {
   const units = gameData?.units ?? [];
   const turns = gameData?.turns ?? [];
   const jumpPoints = gameData?.jumpPoints ?? [];
+  const observers = gameData?.observers ?? [];
   const [hoveredUnitId, setHoveredUnitId] = useState<number | null>(null);
   const [inspectedUnitId, setInspectedUnitId] = useState<number | null>(null);
   const [hoveredStagedUnitId, setHoveredStagedUnitId] = useState<string | null>(null);
@@ -12429,7 +12431,27 @@ export default function GameBoard() {
   const isChallenger = game?.challengerId === myUserId;
   const isOpponent = game?.opponentId === myUserId;
   const isParticipant = Boolean(isChallenger || isOpponent);
-  const isAdminObserver = Boolean(game && adminMe?.isAdmin && !isParticipant);
+  const isAdminObserver = Boolean(
+    viewerRole === "admin-observer" ||
+      (!viewerRole && game && adminMe?.isAdmin && !isParticipant),
+  );
+  const isGameObserver = viewerRole === "observer";
+  const isEligibleObserver = viewerRole === "eligible-observer";
+  const isReadOnlyObserver = isAdminObserver || isGameObserver;
+  const isObserverView = isReadOnlyObserver || isEligibleObserver;
+  // Observers have no player-relative "friendly" side of their own. Give
+  // them a stable presentation instead: challenger is green, opponent is red.
+  // This affects visuals and roster grouping only; action authorization still
+  // uses the observer's real user id through `myUserId`.
+  const viewFriendlyOwnerId = isReadOnlyObserver
+    ? (game?.challengerId ?? myUserId)
+    : myUserId;
+  const viewFriendlyFleetLabel = isReadOnlyObserver
+    ? `${game?.challengerName ?? "Challenger"} Fleet`
+    : "My Fleet";
+  const viewEnemyFleetLabel = isReadOnlyObserver
+    ? `${game?.opponentName ?? "Opponent"} Fleet`
+    : "Enemy Fleet";
   const aiFiringSummary = useMemo(
     () => readAiFiringSummary(game?.aiState),
     [game?.aiState],
@@ -12534,6 +12556,25 @@ export default function GameBoard() {
     },
   });
   const acceptGame = useAcceptGame();
+  const observeGame = useMutation({
+    mutationFn: ({ gameId: requestedGameId, data }: { gameId: number; data?: { password?: string | null } }) =>
+      customFetch<{ viewerRole: "observer" }>(`/api/games/${requestedGameId}/observe`, {
+        method: "POST",
+        body: JSON.stringify(data ?? {}),
+        responseType: "json",
+      }),
+  });
+  const removeObserver = useMutation({
+    mutationFn: (observerUserId: string) =>
+      customFetch<void>(
+        `/api/games/${gameId}/observers/${encodeURIComponent(observerUserId)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+      qc.invalidateQueries({ queryKey: ["gameChat", gameId] });
+    },
+  });
   const declineGame = useDeclineGame();
   const deployFleet = useDeployFleet();
   const submitTurn = useSubmitTurn();
@@ -12844,6 +12885,7 @@ export default function GameBoard() {
   // Password an accepter types to join a private engagement (only shown when
   // the open challenge has hasPassword=true).
   const [joinPassword, setJoinPassword] = useState("");
+  const [observerPassword, setObserverPassword] = useState("");
 
   useEffect(() => {
     if (!selectedStagedId) return;
@@ -13544,7 +13586,7 @@ export default function GameBoard() {
   }, [aiAutoRunEnabled]);
   const runAiUntilHuman = useCallback(
     async (respectToggle = false) => {
-      if (!game || autoAiRunning || isAdminObserver) return;
+      if (!game || autoAiRunning || isObserverView) return;
       setAutoAiRunning(true);
       setAutoAiError(null);
       let lastSignature = aiProgressSignature(game);
@@ -13583,10 +13625,10 @@ export default function GameBoard() {
         setAutoAiRunning(false);
       }
     },
-    [autoAiRunning, game, gameId, isAdminObserver, myUserId, qc, runAiStep],
+    [autoAiRunning, game, gameId, isObserverView, myUserId, qc, runAiStep],
   );
   useEffect(() => {
-    if (!game || isAdminObserver || game.opponentKind !== "ai" || game.status !== "active") {
+    if (!game || isObserverView || game.opponentKind !== "ai" || game.status !== "active") {
       setAiAutoRunEnabled(false);
       return;
     }
@@ -13604,7 +13646,7 @@ export default function GameBoard() {
     aiAutoRunEnabled,
     autoAiRunning,
     game,
-    isAdminObserver,
+    isObserverView,
     myUserId,
     acknowledgedAiFiringSummaryId,
     runAiStep.isPending,
@@ -15295,10 +15337,9 @@ export default function GameBoard() {
   ]);
   const canUseGameChat = Boolean(
     game &&
-      game.opponentKind !== "ai" &&
-      (isParticipant || isAdminObserver),
+      (isParticipant || isReadOnlyObserver),
   );
-  const canSendGameChat = Boolean(canUseGameChat && isParticipant);
+  const canSendGameChat = canUseGameChat;
   const gameChatQueryKey = useMemo(
     () => ["gameChat", gameId] as const,
     [gameId],
@@ -17749,7 +17790,7 @@ export default function GameBoard() {
       customFetch<AttackAuditLogResponse>(
         `/api/games/${gameId}/attack-audit-log?limit=80`,
       ),
-    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
+    enabled: !!gameId && !isEligibleObserver && (game?.status === "active" || game?.status === "completed"),
     refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const { data: movementAuditData } = useQuery<
@@ -17760,7 +17801,7 @@ export default function GameBoard() {
       customFetch<AuditLogResponse<MovementAuditLogEntry>>(
         `/api/games/${gameId}/movement-audit-log?limit=80`,
       ),
-    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
+    enabled: !!gameId && !isEligibleObserver && (game?.status === "active" || game?.status === "completed"),
     refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const { data: specialActionAuditData } = useQuery<
@@ -17771,7 +17812,7 @@ export default function GameBoard() {
       customFetch<AuditLogResponse<SpecialActionAuditLogEntry>>(
         `/api/games/${gameId}/special-action-audit-log?limit=80`,
       ),
-    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
+    enabled: !!gameId && !isEligibleObserver && (game?.status === "active" || game?.status === "completed"),
     refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const { data: activeBoardingData } = useQuery<ActiveBoardingActionsResponse>({
@@ -17780,7 +17821,7 @@ export default function GameBoard() {
       customFetch<ActiveBoardingActionsResponse>(
         `/api/games/${gameId}/boarding-actions`,
       ),
-    enabled: !!gameId && (game?.status === "active" || game?.status === "completed"),
+    enabled: !!gameId && !isEligibleObserver && (game?.status === "active" || game?.status === "completed"),
     refetchInterval: game?.status === "active" ? POLL_INTERVAL_MS : false,
   });
   const boardingTroopsByTargetId = useMemo(() => {
@@ -19991,7 +20032,7 @@ export default function GameBoard() {
       >
         <MessageCircle className="h-4 w-4 text-primary" />
         <span className="flex-1 text-xs font-mono font-bold uppercase tracking-widest text-primary">
-          Opponent Chat
+          Engagement Chat
         </span>
         {chatMessages.length > 0 && (
           <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-mono">
@@ -20069,7 +20110,7 @@ export default function GameBoard() {
               maxLength={500}
               rows={2}
               placeholder={
-                isAdminObserver ? "Read-only observer mode" : "Message opponent..."
+                "Message players and observers..."
               }
               className="min-h-14 resize-none font-mono text-xs"
               disabled={!canSendGameChat}
@@ -22370,7 +22411,7 @@ export default function GameBoard() {
                   onClick={() => handleUnitClick(unit.id)}
                   onCameraFocus={() => handleUnitFocus(unit.id)}
                   onHoverChange={handleUnitHoverChange}
-                  myUserId={myUserId}
+                  myUserId={viewFriendlyOwnerId}
                   weapons={weaponsForUnit}
                   dragOffset={
                     unit.id === selectedUnit ? selectedDragOffset : null
@@ -23266,7 +23307,7 @@ export default function GameBoard() {
               {game.status}{" "}
               {game.status === "active" && `— Round ${game.currentRound}`}
             </div>
-            {isAdminObserver && (
+            {isReadOnlyObserver && (
               <div
                 className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-cyan-400/45 bg-cyan-400/10 text-cyan-200"
                 data-testid="hud-admin-observer"
@@ -23319,7 +23360,13 @@ export default function GameBoard() {
             )}
             {game.winnerId && (
               <div className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-yellow-500/40 bg-yellow-500/10 text-yellow-400">
-                {game.winnerId === myUserId ? "Victory" : "Defeated"}
+                {isReadOnlyObserver
+                  ? game.winnerId === game.challengerId
+                    ? `${game.challengerName ?? "Challenger"} Victorious`
+                    : `${game.opponentName ?? "Opponent"} Victorious`
+                  : game.winnerId === myUserId
+                    ? "Victory"
+                    : "Defeated"}
               </div>
             )}
           </div>
@@ -23408,28 +23455,129 @@ export default function GameBoard() {
           )}
 
           {/* ── DEPLOYED — WAITING FOR OPPONENT ── */}
-          <AiDiagnosticsPanel
-            game={game}
-            onToggleAuto={() => {
-              setAutoAiError(null);
-              setAiAutoRunEnabled((enabled) => !enabled);
-            }}
-            isRunning={runAiStep.isPending}
-            autoEnabled={aiAutoRunEnabled}
-            readOnly={isAdminObserver}
-          />
+          {!isGameObserver && !isEligibleObserver && (
+            <AiDiagnosticsPanel
+              game={game}
+              onToggleAuto={() => {
+                setAutoAiError(null);
+                setAiAutoRunEnabled((enabled) => !enabled);
+              }}
+              isRunning={runAiStep.isPending}
+              autoEnabled={aiAutoRunEnabled}
+              readOnly={isAdminObserver}
+            />
+          )}
 
-          {isAdminObserver && (
+          {isReadOnlyObserver && (
             <div
               className="border-b border-cyan-400/25 bg-cyan-400/10 px-4 py-3"
-              data-testid="panel-admin-observer"
+              data-testid="panel-observer"
             >
               <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-cyan-200">
                 Silent Observer
               </p>
               <p className="mt-1 text-[10px] font-mono leading-snug text-cyan-100/75">
-                Read-only admin view. Game actions and chat sending are disabled.
+                Read-only view. Camera controls, unit inspection, battle results, chat, and local modal dismissal remain available.
               </p>
+            </div>
+          )}
+
+          {isEligibleObserver && (
+            <div
+              className="border-b border-cyan-400/25 bg-cyan-400/10 px-4 py-4 space-y-3"
+              data-testid="panel-observer-join"
+            >
+              <div>
+                <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-cyan-200">
+                  Observer Access
+                </p>
+                <p className="mt-1 text-[10px] font-mono leading-snug text-cyan-100/75">
+                  Watch {game.challengerName ?? "Challenger"} vs {game.opponentName ?? "Opponent"} in read-only mode.
+                </p>
+              </div>
+              {game.hasPassword && (
+                <Input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Engagement password"
+                  value={observerPassword}
+                  onChange={(event) => setObserverPassword(event.target.value)}
+                  className="h-8 bg-background text-xs"
+                  data-testid="input-observer-password"
+                />
+              )}
+              <Button
+                size="sm"
+                className="w-full gap-1.5 uppercase tracking-wider text-xs"
+                disabled={observeGame.isPending || (game.hasPassword && observerPassword.length === 0)}
+                onClick={() => observeGame.mutate(
+                  {
+                    gameId,
+                    data: game.hasPassword ? { password: observerPassword } : {},
+                  },
+                  {
+                    onSuccess: () => qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) }),
+                  },
+                )}
+                data-testid="button-observe-match"
+              >
+                Observe Match
+              </Button>
+              {observeGame.isError && (
+                <p className="text-[10px] font-mono text-red-300">
+                  {(observeGame.error as Error).message}
+                </p>
+              )}
+            </div>
+          )}
+
+          {isParticipant && game.allowObservers && (
+            <div
+              className="border-b border-border px-4 py-3 space-y-2"
+              data-testid="panel-observer-management"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Observers
+                </p>
+                <Badge variant="outline" className="font-mono text-[9px]">
+                  {observers.length}/2
+                </Badge>
+              </div>
+              {observers.length === 0 ? (
+                <p className="text-[10px] font-mono text-muted-foreground">
+                  No observers connected.
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  {observers.map(observer => (
+                    <div
+                      key={observer.userId}
+                      className="flex items-center justify-between gap-2 rounded border border-border bg-background/45 px-2 py-1.5"
+                    >
+                      <span className="min-w-0 truncate text-[10px] font-mono text-foreground">
+                        {observer.name ?? "Observer"}
+                      </span>
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-red-500/35 text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                        onClick={() => removeObserver.mutate(observer.userId)}
+                        disabled={removeObserver.isPending}
+                        title={`Remove ${observer.name ?? "observer"}`}
+                        aria-label={`Remove ${observer.name ?? "observer"}`}
+                        data-testid={`button-remove-observer-${observer.userId}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {removeObserver.isError && (
+                <p className="text-[10px] font-mono text-red-300">
+                  {(removeObserver.error as Error).message}
+                </p>
+              )}
             </div>
           )}
 
@@ -24021,7 +24169,7 @@ export default function GameBoard() {
           )}
 
           {/* Open challenge — any non-challenger can claim it; challenger can withdraw it. */}
-          {game.status === "open" && !isChallenger && !isAdminObserver && (
+          {game.status === "open" && !isChallenger && !isReadOnlyObserver && (
             <div className="p-4 border-b border-border space-y-2">
               <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">
                 {game.visibility === "private"
@@ -24935,11 +25083,15 @@ export default function GameBoard() {
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate">{unit.name}</span>
                             <span className="shrink-0 opacity-80">
-                              {unit.ownerId === myUserId
-                                ? activeReserveUnit?.id === unit.id
-                                  ? "Active"
-                                  : "Yours"
-                                : "Enemy"}
+                              {isReadOnlyObserver
+                                ? unit.ownerId === game.challengerId
+                                  ? (game.challengerName ?? "Challenger")
+                                  : (game.opponentName ?? "Opponent")
+                                : unit.ownerId === myUserId
+                                  ? activeReserveUnit?.id === unit.id
+                                    ? "Active"
+                                    : "Yours"
+                                  : "Enemy"}
                             </span>
                           </div>
                           {unit.ownerId === myUserId && currentPhase === "movement" && (
@@ -25008,7 +25160,7 @@ export default function GameBoard() {
                     )}
                   </div>
                 </div>
-                <Button
+                {isParticipant && <Button
                   size="sm"
                   data-testid="button-end-activation"
                   className="w-full gap-1.5 uppercase tracking-widest text-xs font-bold"
@@ -25023,8 +25175,8 @@ export default function GameBoard() {
                     : canPassPhase
                       ? "Pass Phase (N)"
                       : "End Activation (N)"}
-                </Button>
-                {currentPhase === "firing" && (
+                </Button>}
+                {isParticipant && currentPhase === "firing" && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -25051,7 +25203,7 @@ export default function GameBoard() {
                       : passAllFiringLabel}
                   </Button>
                 )}
-                <Button
+                {isParticipant && <Button
                   size="sm"
                   variant="outline"
                   data-testid="button-open-bug-rescue"
@@ -25065,7 +25217,7 @@ export default function GameBoard() {
                 >
                   <AlertTriangle className="w-3.5 h-3.5" />
                   Report Bug / Step Rescue
-                </Button>
+                </Button>}
                 {minMoveGate.blocked && (
                   <p
                     data-testid="text-min-move-gate"
@@ -26781,26 +26933,33 @@ export default function GameBoard() {
           <div className="flex-1 overflow-hidden flex flex-col border-b border-border">
             <div className="px-4 pt-3 pb-2 border-b border-border flex items-center justify-between">
               <p className="text-xs font-mono text-red-400 uppercase tracking-wider">
-                Enemy Fleet
+                {viewEnemyFleetLabel}
               </p>
               <span className="text-[10px] font-mono text-muted-foreground">
                 {
                   units.filter(
-                    (u) => u.ownerId !== myUserId && unitIsCombatEffective(u),
+                    (u) =>
+                      u.ownerId !== viewFriendlyOwnerId &&
+                      unitIsCombatEffective(u),
                   ).length
                 }
-                /{units.filter((u) => u.ownerId !== myUserId).length}
+                /
+                {
+                  units.filter((u) => u.ownerId !== viewFriendlyOwnerId)
+                    .length
+                }
               </span>
             </div>
             <ScrollArea className="flex-1 px-4 py-2">
-              {units.filter((u) => u.ownerId !== myUserId).length === 0 ? (
+              {units.filter((u) => u.ownerId !== viewFriendlyOwnerId).length ===
+              0 ? (
                 <p className="text-xs text-muted-foreground py-4 text-center">
                   No enemy contacts
                 </p>
               ) : (
                 <div className="space-y-1">
                   {units
-                    .filter((u) => u.ownerId !== myUserId)
+                    .filter((u) => u.ownerId !== viewFriendlyOwnerId)
                     .map((unit) => {
                       const selected = selectedUnit === unit.id;
                       const combatEffective = unitIsCombatEffective(unit);
@@ -26831,26 +26990,33 @@ export default function GameBoard() {
           <div>
             <div className="px-4 pt-3 pb-2 flex items-center justify-between">
               <p className="text-xs font-mono text-green-400 uppercase tracking-wider">
-                My Fleet
+                {viewFriendlyFleetLabel}
               </p>
               <span className="text-[10px] font-mono text-muted-foreground">
                 {
                   units.filter(
-                    (u) => u.ownerId === myUserId && unitIsCombatEffective(u),
+                    (u) =>
+                      u.ownerId === viewFriendlyOwnerId &&
+                      unitIsCombatEffective(u),
                   ).length
                 }
-                /{units.filter((u) => u.ownerId === myUserId).length}
+                /
+                {
+                  units.filter((u) => u.ownerId === viewFriendlyOwnerId)
+                    .length
+                }
               </span>
             </div>
             <ScrollArea className="h-32 px-4 pb-3">
               <div className="space-y-1">
-                {units.filter((u) => u.ownerId === myUserId).length === 0 ? (
+                {units.filter((u) => u.ownerId === viewFriendlyOwnerId).length ===
+                0 ? (
                   <p className="text-xs text-muted-foreground py-2 text-center">
                     No units deployed
                   </p>
                 ) : (
                   units
-                    .filter((u) => u.ownerId === myUserId)
+                    .filter((u) => u.ownerId === viewFriendlyOwnerId)
                     .map((unit) => {
                       const selected = selectedUnit === unit.id;
                       const active = activeUnitId === unit.id;
@@ -27635,7 +27801,7 @@ export default function GameBoard() {
         unit={inspectorUnitData}
         model={inspectorShipModel}
         weapons={inspectorUnitWeapons}
-        myUserId={myUserId}
+        myUserId={viewFriendlyOwnerId}
         currentRound={currentRoundNumber}
         isFighter={inspectorUnitIsFighter}
         dogfightLocked={inspectorUnitDogfightLocked}

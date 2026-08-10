@@ -74,6 +74,8 @@ export interface Game {
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
+  /** Host-controlled opt-in for authenticated observers. */
+  allowObservers: boolean;
   /** True if this engagement includes generated terrain/scenery. */
   hasTerrain?: boolean;
   /** True if this engagement has station play enabled. */

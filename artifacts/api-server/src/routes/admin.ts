@@ -12,6 +12,7 @@ import {
   gameSpecialActionAuditLogsTable,
   bugReportsTable,
   gameChatMessagesTable,
+  gameObserversTable,
   lobbyChatMessagesTable,
   playersTable,
 } from "@workspace/db";
@@ -89,6 +90,9 @@ async function deleteGameCascade(gameId: number): Promise<void> {
     await tx
       .delete(gameChatMessagesTable)
       .where(eq(gameChatMessagesTable.gameId, gameId));
+    await tx
+      .delete(gameObserversTable)
+      .where(eq(gameObserversTable.gameId, gameId));
     await tx.delete(turnsTable).where(eq(turnsTable.gameId, gameId));
 
     const unitRows = await tx

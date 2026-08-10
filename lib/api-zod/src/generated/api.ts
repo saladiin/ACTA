@@ -270,6 +270,7 @@ export const CreateGameBody = zod.object({
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "allocationPoints": zod.number().min(1).max(createGameBodyAllocationPointsMax),
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
+  "allowObservers": zod.boolean().default(false).describe('Allow up to two authenticated observers after deployment.'),
   "opponentKind": zod.enum(['human', 'ai']).default(createGameBodyOpponentKindDefault).describe('Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation.'),
   "matchName": zod.string().max(createGameBodyMatchNameMax).nullish().describe('Optional title or desired match conditions shown beneath the host commander\'s name.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
@@ -344,6 +345,7 @@ export const GetGameResponse = zod.object({
   "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean(),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
@@ -483,7 +485,12 @@ export const GetGameResponse = zod.object({
   "shockWaveResolved": zod.boolean(),
   "vfxPreset": zod.record(zod.string(), zod.unknown()),
   "createdAt": zod.coerce.date()
-})).optional()
+})).optional(),
+  "observers": zod.array(zod.object({
+    "userId": zod.string(),
+    "name": zod.string().nullish()
+  })).max(2),
+  "viewerRole": zod.enum(['challenger', 'opponent', 'observer', 'admin-observer', 'eligible-observer', 'open-guest'])
 })
 
 
@@ -2889,7 +2896,7 @@ export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMax = 30;
 
 
 
-export const GetLobbyResponse = zod.object({
+const GetLobbyResponseBase = zod.object({
   "pendingChallenges": zod.array(zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -3007,6 +3014,10 @@ export const GetLobbyResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))
+})
+
+export const GetLobbyResponse = GetLobbyResponseBase.extend({
+  "observableGames": GetLobbyResponseBase.shape.activeGames,
 })
 
 
