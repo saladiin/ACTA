@@ -29253,8 +29253,8 @@ function DiceRollModal({
         {/* Attack dice (revealed during/after rolling). Beam-trait dice that
             "exploded" (rolled 4+ and spawned another die) get a glowing
             orange ring + EXPL tag so the player can spot Beam chains at a
-            glance. Twin-Linked / Concentrate Fire re-rolls get a subtler
-            cyan tag. */}
+            glance. Twin-Linked, Concentrate Fire, and Scout Coordination
+            re-rolls get a subtler cyan tag. */}
         {attackVisible && (
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
@@ -29268,13 +29268,25 @@ function DiceRollModal({
                   {(result?.beamExplosions ?? 0) === 1 ? "" : "s"}
                 </span>
               )}
+              {!attackRolling && result?.scoutCoordApplied && (
+                <span
+                  className="ml-2 text-cyan-300"
+                  data-testid="badge-scout-coordination"
+                >
+                  Scout coordination: {(result.scoutCoordRerolls ?? 0) > 0
+                    ? `${result.scoutCoordRerolls} reroll${result.scoutCoordRerolls === 1 ? "" : "s"}`
+                    : "no misses to reroll"}
+                </span>
+              )}
             </p>
             <div className="flex flex-wrap gap-2" data-testid="attack-dice">
               {rolls.map((r, i) => {
                 const kind = rollKinds[i] ?? "normal";
                 const exploded = kind === "explosion";
                 const reroll =
-                  kind === "twin-reroll" || kind === "concentrate-reroll";
+                  kind === "twin-reroll" ||
+                  kind === "concentrate-reroll" ||
+                  kind === "scout-coord-reroll";
                 const hit =
                   !attackRolling &&
                   rawHitThreshold !== undefined &&
