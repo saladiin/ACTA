@@ -76,6 +76,7 @@ import {
   cumulativeAsteroidAttackDice,
   resolveAsteroidAttack,
 } from "../lib/asteroid-hazards";
+import { forcedMovementEndpointBeforeOverlap } from "../lib/forced-movement";
 import {
   activeAncientStatusEffects,
   appendAncientStatusEffect,
@@ -9742,6 +9743,54 @@ async function resolveBoardingAtStartOfEndPhase(
   }
 }
 
+async function planAdriftDriftEndpoint(
+  tx: any,
+  gameId: number,
+  unit: typeof gameUnitsTable.$inferSelect,
+  driftDistance: number,
+  forward: { x: number; z: number },
+) {
+  const intendedDriftTo = {
+    x: Math.round(unit.hexQ + forward.x * driftDistance),
+    z: Math.round(unit.hexR + forward.z * driftDistance),
+  };
+  const currentBlockers = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, gameId),
+    eq(gameUnitsTable.isDestroyed, false),
+    eq(gameUnitsTable.boardState, "deployed"),
+  ));
+  const endpoint = forcedMovementEndpointBeforeOverlap({
+    moving: {
+      id: unit.id,
+      x: unit.hexQ,
+      z: unit.hexR,
+      baseRadiusInches: rulesBaseRadius(unit),
+    },
+    desired: intendedDriftTo,
+    blockers: currentBlockers.map((other: typeof gameUnitsTable.$inferSelect) => ({
+      id: other.id,
+      x: other.hexQ,
+      z: other.hexR,
+      baseRadiusInches: rulesBaseRadius(other),
+    })),
+    overlapEpsilon: BASE_CONTACT_EPSILON,
+  });
+  const driftTo = {
+    hexQ: snapBoardCoord(endpoint.x),
+    hexR: snapBoardCoord(endpoint.z),
+  };
+  return {
+    driftTo,
+    intendedDriftTo,
+    actualDriftDistance: centerDistance(
+      { x: unit.hexQ, z: unit.hexR },
+      { x: driftTo.hexQ, z: driftTo.hexR },
+    ),
+    shortened: endpoint.shortened,
+    blockedByUnitIds: endpoint.blockedByUnitIds,
+  };
+}
+
 async function rollOverRoundAfterEndPhase(
   tx: any,
   game: typeof gamesTable.$inferSelect,
@@ -9769,10 +9818,8 @@ async function rollOverRoundAfterEndPhase(
     })));
     const driftDistance = Math.floor(effectiveBaseSpeed(u, crits) / 2);
     const forward = headingForwardVec(u);
-    const driftTo = {
-      hexQ: Math.round(u.hexQ + forward.x * driftDistance),
-      hexR: Math.round(u.hexR + forward.z * driftDistance),
-    };
+    const driftPlan = await planAdriftDriftEndpoint(tx, game.id, u, driftDistance, forward);
+    const { driftTo, intendedDriftTo, actualDriftDistance } = driftPlan;
     const [driftedUnit] = await tx.update(gameUnitsTable)
       .set({
         hexQ: driftTo.hexQ,
@@ -9793,7 +9840,7 @@ async function rollOverRoundAfterEndPhase(
     if (driftedUnit) {
       const driftModel = await getShipModelForUnit(tx, u);
       const asteroidResult = driftModel
-        ? await applyAsteroidMovementHazards(tx, game, u, driftedUnit, driftModel, driftDistance, {
+        ? await applyAsteroidMovementHazards(tx, game, u, driftedUnit, driftModel, actualDriftDistance, {
             automaticFailure: true,
             reusePriorActivation: false,
           })
@@ -9806,13 +9853,18 @@ async function rollOverRoundAfterEndPhase(
         unitBefore: u,
         unitAfter: finalDriftedUnit,
         movementKind: "adrift-drift",
-        summary: `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
+        summary: driftPlan.shortened
+          ? `${u.name} drifted ${actualDriftDistance.toFixed(1)}" before contacting another base during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
+          : `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
         payload: {
           rulesPath: "end-phase-adrift-drift",
           effectiveState: state,
           driftDistance,
+          actualDriftDistance,
           forward,
           driftTo,
+          intendedDriftTo,
+          overlapBlockedByUnitIds: driftPlan.blockedByUnitIds,
           critEffects: (critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>)
             .map(r => ({ id: r.id, effectKey: r.effectKey, name: r.name })),
           asteroidHazards: asteroidResult.hazards,
@@ -17382,10 +17434,8 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         })));
         const driftDistance = Math.floor(effectiveBaseSpeed(u, crits) / 2);
         const forward = headingForwardVec(u);
-        const driftTo = {
-          hexQ: Math.round(u.hexQ + forward.x * driftDistance),
-          hexR: Math.round(u.hexR + forward.z * driftDistance),
-        };
+        const driftPlan = await planAdriftDriftEndpoint(tx, game.id, u, driftDistance, forward);
+        const { driftTo, intendedDriftTo, actualDriftDistance } = driftPlan;
         const [driftedUnit] = await tx.update(gameUnitsTable)
           .set({
             hexQ: driftTo.hexQ,
@@ -17406,7 +17456,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         if (driftedUnit) {
           const driftModel = await getShipModelForUnit(tx, u);
           const asteroidResult = driftModel
-            ? await applyAsteroidMovementHazards(tx, game, u, driftedUnit, driftModel, driftDistance, {
+            ? await applyAsteroidMovementHazards(tx, game, u, driftedUnit, driftModel, actualDriftDistance, {
                 automaticFailure: true,
                 reusePriorActivation: false,
               })
@@ -17419,13 +17469,18 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
             unitBefore: u,
             unitAfter: finalDriftedUnit,
             movementKind: "adrift-drift",
-            summary: `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
+            summary: driftPlan.shortened
+              ? `${u.name} drifted ${actualDriftDistance.toFixed(1)}" before contacting another base during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
+              : `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
             payload: {
               rulesPath: "end-phase-adrift-drift",
               effectiveState: state,
               driftDistance,
+              actualDriftDistance,
               forward,
               driftTo,
+              intendedDriftTo,
+              overlapBlockedByUnitIds: driftPlan.blockedByUnitIds,
               critEffects: (critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>)
                 .map(r => ({ id: r.id, effectKey: r.effectKey, name: r.name })),
               asteroidHazards: asteroidResult.hazards,
