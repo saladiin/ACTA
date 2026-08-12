@@ -78,6 +78,10 @@ import {
 } from "../lib/asteroid-hazards";
 import { forcedMovementEndpointBeforeOverlap } from "../lib/forced-movement";
 import {
+  effectiveMovementTurnLimit,
+  lumberingForwardMovementAllowed,
+} from "../lib/movement-rules";
+import {
   activeAncientStatusEffects,
   appendAncientStatusEffect,
   fixedCrewQualityForProfile,
@@ -653,7 +657,7 @@ function effectiveTurnProfile(unit: {
   isDestroyed?: boolean;
   specialAction: string | null;
   shadowManeuverMode?: string | null;
-}, traits?: { superManeuverable?: boolean }, options: { ignoreCrippled?: boolean } = {}): { maxTurns: number; turnAngle: number; turnsForbidden: boolean } {
+}, traits: { superManeuverable?: boolean; lumbering?: boolean } = {}, options: { ignoreCrippled?: boolean } = {}): { maxTurns: number; turnAngle: number; turnsForbidden: boolean } {
   const baseAction = (unit.specialAction ?? "").replace(/-failed$/, "");
   const crippled = !options.ignoreCrippled && isCrippledUnit(unit);
   const baseTurns = traits?.superManeuverable && !crippled
@@ -672,13 +676,13 @@ function effectiveTurnProfile(unit: {
   const pivotMultiplier = baseAction === "all-stop-pivot" ? 2 : 1;
   if (unit.shadowManeuverMode === "sweep") {
     return {
-      maxTurns: 1,
+      maxTurns: effectiveMovementTurnLimit(1, traits),
       turnAngle: 90,
       turnsForbidden: false,
     };
   }
   return {
-    maxTurns: baseTurns + (isComeAboutExtra ? 1 : 0),
+    maxTurns: effectiveMovementTurnLimit(baseTurns + (isComeAboutExtra ? 1 : 0), traits),
     turnAngle: (baseTurnAngle + sharpBonus) * pivotMultiplier,
     turnsForbidden: baseAction === "all-power-engines" || baseAction === "run-silent" || baseAction === "all-stop" || baseAction === "initiate-jump-point",
   };
@@ -728,7 +732,7 @@ function turnDistanceRequirement(
     shadowManeuverMode?: string | null;
   },
   crits: { speedReduce: number },
-  traits: { agile?: boolean; superManeuverable?: boolean },
+  traits: { agile?: boolean; superManeuverable?: boolean; lumbering?: boolean },
   turnsMadeThisActivation: number,
 ): number {
   if (unit.shadowManeuverMode === "sweep") return 0;
@@ -3823,7 +3827,7 @@ function scoreAiMovementEndpoint(
 function buildLegalAiMovementPlans(
   unit: typeof gameUnitsTable.$inferSelect,
   crits: { speedReduce: number },
-  traits: { agile?: boolean; superManeuverable?: boolean },
+  traits: { agile?: boolean; superManeuverable?: boolean; lumbering?: boolean },
   speedCap: number,
   minMove: number,
   turnProfile: { maxTurns: number; turnAngle: number; turnsForbidden: boolean },
@@ -3870,11 +3874,16 @@ function buildLegalAiMovementPlans(
         let heading = start.heading;
         let moved = 0;
         let distanceSinceLastTurn = 0;
+        let turnsMade = unit.turnsMadeThisActivation;
         let valid = true;
         const steps: AiManeuverStep[] = [];
 
         for (let index = 0; index < distances.length; index++) {
           const distance = distances[index] ?? 0;
+          if (!lumberingForwardMovementAllowed(traits, turnsMade, distance)) {
+            valid = false;
+            break;
+          }
           if (distance > 0) {
             const headingRad = (heading * Math.PI) / 180;
             const from = { x, z };
@@ -3904,6 +3913,7 @@ function buildLegalAiMovementPlans(
             const fromHeading = heading;
             heading = normalizeHeadingDegrees(heading + turnDelta);
             distanceSinceLastTurn = 0;
+            turnsMade += 1;
             steps.push({ kind: "turn", delta: turnDelta, fromHeading, toHeading: heading, afterMoved: moved });
           }
         }
@@ -12192,6 +12202,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
   }
 
   const distanceEpsilon = isMovingFighter ? 0.02 : 1e-6;
+  if (!lumberingForwardMovementAllowed(moveTraits, unit.turnsMadeThisActivation, requestedStepInches)) {
+    res.status(400).json({ error: "Lumbering ships may not move forward after turning" });
+    return;
+  }
   if (unit.inchesMovedThisActivation + requestedStepInches > currentSpeedCap + distanceEpsilon) {
     res.status(400).json({
       error: `Ship may move at most ${currentSpeedCap}" this activation (would move ${unit.inchesMovedThisActivation + requestedStepInches}")`,

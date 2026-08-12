@@ -362,7 +362,7 @@ function traitHint(trait: string): string {
     "jump engine":
       "Scenario and jump-point capability. It usually matters when jump points are in play.",
     lumbering:
-      "Poor maneuverability. The ship cannot use some sharp-turn movement options.",
+      "May make only one turn and cannot move forward after making that turn.",
     "mini beam":
       "A lighter beam weapon. It follows beam-style restrictions with smaller output.",
     "one shot": "Can fire only once. After that shot, the weapon is spent.",
@@ -9879,10 +9879,12 @@ function effectiveUiTurnAngle(unit: {
 function parseUiMovementTraits(raw: string | null | undefined): {
   agile: boolean;
   superManeuverable: boolean;
+  lumbering: boolean;
 } {
   const text = raw ?? "";
   return {
     agile: /\bagile\b/i.test(text),
+    lumbering: /\blumbering\b/i.test(text),
     superManeuverable:
       /\bsuper[-\s]?maneuverable\b/i.test(text) ||
       /\bsuper[-\s]?manoeuvrable\b/i.test(text) ||
@@ -9894,7 +9896,7 @@ function parseUiMovementTraits(raw: string | null | undefined): {
 function uiMovementTraitsForModel(
   model: ShipModel | undefined,
   unit: { isCrippled?: boolean },
-): { agile: boolean; superManeuverable: boolean } {
+): { agile: boolean; superManeuverable: boolean; lumbering: boolean } {
   const raw = parseUiMovementTraits(model?.traits ?? "");
   const fighter = shipModelHasFighterTrait(model);
   return {
@@ -15920,7 +15922,9 @@ export default function GameBoard() {
         : isAllPower
           ? Math.floor(baseSpeed * 1.5)
           : baseSpeed;
-    const maxTurns = baseTurns + (isComeAboutExtra ? 1 : 0);
+    const maxTurns = movementTraits.lumbering
+      ? Math.min(1, baseTurns + (isComeAboutExtra ? 1 : 0))
+      : baseTurns + (isComeAboutExtra ? 1 : 0);
     const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
     const led = getLedger(u.id);
     let toHexQ = u.hexQ,
@@ -15990,6 +15994,13 @@ export default function GameBoard() {
       newHeading = Math.round(((movePlan.heading % 360) + 360) % 360);
       distanceCommitted = requestedDistance;
     } else if (movePlan.kind === "forward") {
+      if (movementTraits.lumbering && led.turns > 0) {
+        setActivationFeedback(
+          "Move rejected: Lumbering ships cannot move forward after turning.",
+        );
+        setMovePlan(null);
+        return;
+      }
       const v = headingForwardVec(u);
       const requestedDistance = Math.min(
         speedCap - led.distance,
@@ -16288,7 +16299,9 @@ export default function GameBoard() {
       const isComeAboutExtra = u.specialAction === "come-about-extra-turn"; // success-only
       const isComeAboutSharp = comeAboutSharpBonusAvailable(u.specialAction); // success-only and unspent
       // Come About (extra-turn variant): +1 extra turn this activation.
-      const maxTurns = baseTurns + (isComeAboutExtra ? 1 : 0);
+      const maxTurns = movementTraits.lumbering
+        ? Math.min(1, baseTurns + (isComeAboutExtra ? 1 : 0))
+        : baseTurns + (isComeAboutExtra ? 1 : 0);
       // No turns allowed under All Power to Engines, Run Silent, or All Stop.
       // All Stop and Pivot doubles turn rate but allows turns.
       const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
@@ -16323,7 +16336,9 @@ export default function GameBoard() {
           : isAllPower
             ? Math.floor(baseSpeed * 1.5)
             : baseSpeed;
-      const remainingMove = Math.max(0, speedCap - led.distance);
+      const remainingMove = movementTraits.lumbering && led.turns > 0
+        ? 0
+        : Math.max(0, speedCap - led.distance);
       if (e.key === "e" || e.key === "E" || e.key === "q" || e.key === "Q") {
         e.preventDefault();
         // Allow refining an in-progress turn plan even if `canTurn` is false,
@@ -16477,9 +16492,12 @@ export default function GameBoard() {
     const baseSpeed = effectiveUiSpeed(
       shipModelHasFighterTrait(movementModel) ? { ...u, isCrippled: false } : u,
     );
-    const maxTurns =
+    const uncappedMaxTurns =
       (isSuperManeuverable ? 999 : effectiveUiTurns(u)) +
       (isComeAboutExtra ? 1 : 0);
+    const maxTurns = movementTraits.lumbering
+      ? Math.min(1, uncappedMaxTurns)
+      : uncappedMaxTurns;
     // Keep in sync with the keyboard handler's turnsForbidden — All Stop
     // forbids turning per the sheet ("ship halts; may not turn").
     const turnsForbidden = isAllPower || isRunSilent || isAllStop || isInitiateJumpPoint;
@@ -16490,19 +16508,26 @@ export default function GameBoard() {
         : isAllPower
           ? Math.floor(baseSpeed * 1.5)
           : baseSpeed;
-    return { speedCap, maxTurns, turnsForbidden, isAllStopPivot };
+    return {
+      speedCap,
+      maxTurns,
+      turnsForbidden,
+      isAllStopPivot,
+      lumbering: movementTraits.lumbering,
+    };
   }, [selectedUnitData, shipModels]);
 
   // Selected-ship remaining inches this phase + drag offset for the forward
   // preview / ship slide-along-axis. Uses SA-adjusted speed cap so the drag
   // clamp can't bypass Run Silent / All Stop / All Power restrictions.
-  const selectedRemainingMove =
-    selectedUnitData && selectedSaCaps
-      ? Math.max(
+  const selectedRemainingMove = selectedUnitData && selectedSaCaps
+    ? selectedSaCaps.lumbering && getLedger(selectedUnitData.id).turns > 0
+      ? 0
+      : Math.max(
           0,
           selectedSaCaps.speedCap - getLedger(selectedUnitData.id).distance,
         )
-      : 0;
+    : 0;
   const selectedMovementUi = useMemo(() => {
     if (!selectedUnitData || !selectedSaCaps) return null;
     const u = selectedUnitData;
