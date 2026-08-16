@@ -1458,6 +1458,30 @@ const RONGOTH_WEAPONS = [
   },
 ];
 
+const ROTHAN_WEAPONS = [
+  {
+    name: "Heavy Plasma Cannon",
+    arc: "Forward",
+    range: 12,
+    attackDice: 6,
+    traits: "Armor Piercing; Double Damage",
+  },
+  {
+    name: "Light Plasma Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 6,
+    traits: "Armor Piercing",
+  },
+  {
+    name: "Light Ion Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 4,
+    traits: "Twin-Linked",
+  },
+];
+
 const THENTUS_WEAPONS = [
   {
     name: "Burst Beam",
@@ -1551,6 +1575,37 @@ const TLOTH_WEAPONS = [
     arc: "Aft",
     range: 8,
     attackDice: 4,
+    traits: "",
+  },
+];
+
+const TRANN_WEAPONS = [
+  {
+    name: "Light Pulse Cannon",
+    arc: "Forward",
+    range: 8,
+    attackDice: 10,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Aft",
+    range: 8,
+    attackDice: 10,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Port",
+    range: 8,
+    attackDice: 10,
+    traits: "",
+  },
+  {
+    name: "Light Pulse Cannon",
+    arc: "Starboard",
+    range: 8,
+    attackDice: 10,
     traits: "",
   },
 ];
@@ -4161,6 +4216,69 @@ const SHIP_MAINTENANCE_SEEDS: ShipMaintenanceSeed[] = [
     weapons: RONGOTH_WEAPONS,
   },
   {
+    name: "Rothan-class Plasma Destroyer",
+    aliases: [
+      "Rothan-class Plasma Destroyer",
+      "Rothan Plasma Destroyer",
+      "Rothan",
+    ],
+    filename: "rongoth.glb",
+    faction: "Narn Regime",
+    pointCost: 150,
+    priorityLevel: "skirmish",
+    shipClass: "Plasma Destroyer",
+    hull: 5,
+    troops: 5,
+    damage: 24,
+    damageThreshold: 6,
+    hullRating: 5,
+    crew: 32,
+    crewThreshold: 8,
+    speed: 8,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Anti-Fighter 2",
+    smallCraft: null,
+    weaponRange: 12,
+    weaponDamage: 6,
+    description:
+      "Narn Regime Rothan-class Rongoth variant retaining the original plasma armament",
+    weapons: ROTHAN_WEAPONS,
+  },
+  {
+    name: "T'Rann-class Heavy Carrier",
+    aliases: [
+      "T'Rann-class Heavy Carrier",
+      "T'Rann Heavy Carrier",
+      "Trann-class Heavy Carrier",
+      "Trann Heavy Carrier",
+    ],
+    filename: "tloth.glb",
+    faction: "Narn Regime",
+    pointCost: 200,
+    priorityLevel: "raid",
+    shipClass: "Heavy Carrier",
+    hull: 5,
+    troops: 0,
+    damage: 74,
+    damageThreshold: 15,
+    hullRating: 5,
+    crew: 90,
+    crewThreshold: 21,
+    speed: 8,
+    turns: 1,
+    turnAngle: 45,
+    crewQuality: "Regular",
+    traits: "Carrier 2; Jump Engine; Lumbering",
+    smallCraft: "Frazi (8)",
+    weaponRange: 8,
+    weaponDamage: 10,
+    description:
+      "Narn Regime T'Rann-class T'Loth carrier conversion with eight Frazi flights",
+    weapons: TRANN_WEAPONS,
+  },
+  {
     name: "Lordship",
     aliases: ["Lordship", "The Lordship", "Kirishiac Lordship"],
     filename: "kirishiac.glb",
@@ -5215,12 +5333,58 @@ async function removeStaleOracleBaseRows(): Promise<void> {
   }
 }
 
+async function removeStaleGquanBaseRows(): Promise<void> {
+  const result = await pool.query<{ deleted_count: number }>(
+    `
+      WITH canonical AS (
+        SELECT id
+        FROM ship_models
+        WHERE lower(name) = lower('G''Quan Heavy Cruiser')
+        ORDER BY id
+        LIMIT 1
+      ),
+      stale AS (
+        SELECT id
+        FROM ship_models
+        WHERE lower(name) IN ('g''quan cruiser', 'gquan cruiser')
+          AND EXISTS (SELECT 1 FROM canonical)
+      ),
+      reassigned_ships AS (
+        UPDATE ships
+        SET ship_model_id = (SELECT id FROM canonical)
+        WHERE ship_model_id IN (SELECT id FROM stale)
+        RETURNING id
+      ),
+      deleted_weapons AS (
+        DELETE FROM weapons
+        WHERE ship_model_id IN (SELECT id FROM stale)
+        RETURNING id
+      ),
+      deleted_models AS (
+        DELETE FROM ship_models
+        WHERE id IN (SELECT id FROM stale)
+        RETURNING id
+      )
+      SELECT count(*)::int AS deleted_count FROM deleted_models
+    `,
+  );
+
+  const deletedCount = result.rows[0]?.deleted_count ?? 0;
+  if (deletedCount > 0) {
+    logger.info(
+      { deletedCount },
+      "Removed stale duplicate G'Quan Cruiser ship-model rows",
+    );
+  }
+}
+
 async function removeDuplicateCanonicalShipRows(): Promise<void> {
   const duplicateProneShipNames = [
     "Avioki Heavy Cruiser",
     "Avenger Heavy Carrier",
     "G'Quan Heavy Cruiser",
     "Shadow Battlecrab",
+    "T'Loth Assault Cruiser",
     "Tethys-class Cutter",
     "Tinashi Warship",
   ];
@@ -6384,8 +6548,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             weapon_range = 30,
             weapon_damage = 4,
             description = 'Narn Regime G''Quan heavy cruiser with heavy lasers, energy mines, and broadside batteries'
-          WHERE lower(filename) IN ('gquan.obj', 'gquan.glb')
-            OR lower(name) IN ('g''quan cruiser', 'g''quan heavy cruiser', 'gquan cruiser', 'gquan heavy cruiser')
+          WHERE lower(name) IN ('g''quan heavy cruiser', 'gquan heavy cruiser')
           RETURNING id
         ),
         inserted AS (
@@ -6520,8 +6683,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
             weapon_range = 12,
             weapon_damage = 6,
             description = 'Narn Regime T''Loth assault cruiser, a rugged troop-carrier with plasma cannon and pulse batteries'
-          WHERE lower(filename) IN ('tloth.glb', 't-loth.glb', 't_loth.glb')
-            OR lower(name) IN ('t''loth', 'tloth', 't''loth assault cruiser', 'tloth assault cruiser')
+          WHERE lower(name) IN ('t''loth', 'tloth', 't''loth assault cruiser', 'tloth assault cruiser')
           RETURNING id
         ),
         inserted AS (
@@ -7318,6 +7480,7 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     }
 
     await normalizeEarthAllianceEraFactions();
+    await removeStaleGquanBaseRows();
     await removeDuplicateCanonicalShipRows();
 
     // Ancient race identity and thresholds are authoritative data, not
