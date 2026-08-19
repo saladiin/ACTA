@@ -77,6 +77,7 @@ import {
   resolveAsteroidAttack,
 } from "../lib/asteroid-hazards";
 import { forcedMovementEndpointBeforeOverlap } from "../lib/forced-movement";
+import { mastersOfDestructionCriticalMultiplier } from "../lib/dilgar-rules";
 import {
   effectiveMovementTurnLimit,
   lumberingForwardMovementAllowed,
@@ -7340,7 +7341,11 @@ async function resolveBasicAiWeaponFire(
   const attackTableRolls: number[] = [];
   const attackTableModifiedRolls: number[] = [];
   const criticalRolls: number[] = [];
-  const pendingCrits: Array<{ locationRoll: number; effectRoll: number }> = [];
+  const pendingCrits: Array<{
+    locationRoll: number;
+    effectRoll: number;
+    damageMultiplier: number;
+  }> = [];
   let bulkheadHits = 0;
   let solidHits = 0;
   let criticalHits = 0;
@@ -7352,16 +7357,26 @@ async function resolveBasicAiWeaponFire(
     if (tableRoll === 1) {
       bulkheadHits++;
       totalDamage += bulkheadFloor;
+    } else if (tableRoll >= 6 && !wt.energyMine) {
+      const criticalDamageMultiplier = mastersOfDestructionCriticalMultiplier({
+        attackerFaction: attackerModel.faction,
+        weaponName: weapon.name,
+        defaultMultiplier: mult,
+      });
+      criticalHits++;
+      const locationRoll = rollD6();
+      const effectRoll = rollD6();
+      pendingCrits.push({
+        locationRoll,
+        effectRoll,
+        damageMultiplier: criticalDamageMultiplier,
+      });
+      criticalRolls.push(effectRoll);
+      totalDamage += criticalDamageMultiplier;
+      totalCrewLost += criticalDamageMultiplier;
     } else {
-      if (tableRoll >= 6 && !wt.energyMine) {
-        criticalHits++;
-        const locationRoll = rollD6();
-        const effectRoll = rollD6();
-        pendingCrits.push({ locationRoll, effectRoll });
-        criticalRolls.push(effectRoll);
-      } else {
-        solidHits++;
-      }
+      // Energy Mine critical results count as solid hits.
+      solidHits++;
       totalDamage += mult;
       totalCrewLost += mult;
     }
@@ -7415,9 +7430,9 @@ async function resolveBasicAiWeaponFire(
     ) continue;
     const damageApplied = (
       isDice(entry.dmg) ? rollDice(entry.dmg.dice) : entry.dmg
-    ) * mult;
+    ) * pending.damageMultiplier;
     const crewApplied = targetHasCrewTrack
-      ? (isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew) * mult
+      ? (isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew) * pending.damageMultiplier
       : 0;
     const troopsLost = criticalTroopsLost(entry);
     totalTroopsLost += troopsLost;
@@ -15343,7 +15358,11 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       const criticalRolls: number[] = [];
       // Pending crits: each gets a location/effect roll after the loop so
       // we can resolve dice penalties + persist rows in one batch.
-      type PendingCrit = { locationRoll: number; effectRoll: number };
+      type PendingCrit = {
+        locationRoll: number;
+        effectRoll: number;
+        damageMultiplier: number;
+      };
       const pendingCrits: PendingCrit[] = [];
       let bulkheadHits = 0;
       let solidHits = 0;
@@ -15366,15 +15385,26 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
           if (wt.energyMine) {
             // Energy Mine: no criticals; counts as Solid.
             solidHits++;
+            totalDamage += mult;
+            totalCrewLost += mult;
           } else {
             criticalHits++;
+            const criticalDamageMultiplier = mastersOfDestructionCriticalMultiplier({
+              attackerFaction: attackerModel.faction,
+              weaponName: weapon.name,
+              defaultMultiplier: mult,
+            });
             const locRoll = rollD6();
             const effRoll = rollD6();
-            pendingCrits.push({ locationRoll: locRoll, effectRoll: effRoll });
+            pendingCrits.push({
+              locationRoll: locRoll,
+              effectRoll: effRoll,
+              damageMultiplier: criticalDamageMultiplier,
+            });
             criticalRolls.push(effRoll);
+            totalDamage += criticalDamageMultiplier;
+            totalCrewLost += criticalDamageMultiplier;
           }
-          totalDamage += 1 * mult;
-          totalCrewLost += 1 * mult;
         }
       }
 
@@ -15440,9 +15470,9 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         ) continue;
         const dmgApplied = (
           isDice(entry.dmg) ? rollDice(entry.dmg.dice) : entry.dmg
-        ) * mult;
+        ) * pc.damageMultiplier;
         const crewApplied = targetHasCrewTrack
-          ? (isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew) * mult
+          ? (isDice(entry.crew) ? rollDice(entry.crew.dice) : entry.crew) * pc.damageMultiplier
           : 0;
         const troopsLost = criticalTroopsLost(entry);
         totalTroopsLost += troopsLost;
