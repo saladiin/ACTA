@@ -43,7 +43,8 @@
 - The `/shadow-lobby` alternate lobby reuses the live lobby, profile, challenge,
   operation, observer, and chat data. Its static organic dividers use the Shadow
   Battlecrab flesh base texture without the ship material animation; the normal
-  lobby remains unchanged.
+  lobby remains unchanged. The alternate lobby is development-only and is not
+  routed or linked in production.
 - Authenticated pages now send a lightweight presence heartbeat while visible.
   Both lobby variants list active callsigns only; no email, provider identity,
   or current engagement is exposed. Presence expires after 90 seconds.

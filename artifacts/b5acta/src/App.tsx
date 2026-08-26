@@ -237,7 +237,9 @@ function AppRoutes({ clerkEnabled }: { clerkEnabled: boolean }) {
             {temporaryUsernameAuthEnabled ? <Redirect to="/sign-in" /> : <SignUpPage />}
           </Route>
           <Route path="/lobby"><ProtectedRoute component={Lobby} /></Route>
-          <Route path="/shadow-lobby"><ProtectedRoute component={ShadowLobby} /></Route>
+          {localToolingRoutesEnabled && (
+            <Route path="/shadow-lobby"><ProtectedRoute component={ShadowLobby} /></Route>
+          )}
           {localToolingRoutesEnabled && CampaignBattle && (
             <Route path="/campaign/:campaignId/battles/:battleId">
               <Suspense fallback={null}>

@@ -188,10 +188,12 @@ export function Layout({
                 <LayoutDashboard className="w-4 h-4" />
                 <span className="text-sm font-medium tracking-wide uppercase">Lobby</span>
               </Link>
-              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/shadow-lobby" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                <Orbit className="w-4 h-4" />
-                <span className="text-sm font-medium tracking-wide uppercase">Shadow Lobby</span>
-              </Link>
+              {showLocalToolingNav && (
+                <Link onClick={() => mobileChrome && setNavOpen(false)} href="/shadow-lobby" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                  <Orbit className="w-4 h-4" />
+                  <span className="text-sm font-medium tracking-wide uppercase">Shadow Lobby</span>
+                </Link>
+              )}
               {showLocalToolingNav && (
                 <Link onClick={() => mobileChrome && setNavOpen(false)} href="/campaign" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                   <Map className="w-4 h-4" />
