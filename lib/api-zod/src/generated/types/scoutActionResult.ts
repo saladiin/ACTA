@@ -10,15 +10,27 @@ import type { ScoutActionResultAction } from './scoutActionResultAction';
 
 export interface ScoutActionResult {
   action: ScoutActionResultAction;
-  /** Resolved target id, or null for a movement-phase declaration. */
+  /**
+     * Resolved target id, or null for a movement-phase declaration.
+     * @nullable
+     */
   targetUnitId: number | null;
   /** True if the declaration was recorded or the 1d6 + crewQuality CQ check met cqRequired. */
   success: boolean;
-  /** 1d6 result, or null before target resolution. */
+  /**
+     * 1d6 result, or null before target resolution.
+     * @nullable
+     */
   cqRoll: number | null;
-  /** cqRoll + scout's crewQuality, or null before target resolution. */
+  /**
+     * cqRoll + scout's crewQuality, or null before target resolution.
+     * @nullable
+     */
   cqTotal: number | null;
-  /** Always 8 for target resolution, or null for movement-phase declaration. */
+  /**
+     * Always 8 for target resolution, or null for movement-phase declaration.
+     * @nullable
+     */
   cqRequired: number | null;
   /** True when this response recorded the movement-phase declaration. */
   declared?: boolean;

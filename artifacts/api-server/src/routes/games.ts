@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, and, or, isNull, sql, inArray, desc } from "drizzle-orm";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, gameBoardingActionsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, gameObserversTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
+import { db, gamesTable, gameUnitsTable, gameJumpPointsTable, gameBoardingActionsTable, turnsTable, fleetsTable, shipsTable, shipModelsTable, playersTable, weaponsTable, unitCriticalEffectsTable, gameAttackAuditLogsTable, gameMovementAuditLogsTable, gameSpecialActionAuditLogsTable, bugReportsTable, gameChatMessagesTable, gameObserversTable, campaignBattleShipAssignmentsTable, JUMP_POINT_VFX_PRESET, type CarriedFighterInventoryItem } from "@workspace/db";
 import { requireAuth, getUserId, isAdminUser } from "../lib/auth";
 import {
   parseShipTraits,
@@ -105,6 +105,28 @@ import {
   resolveBoardingCombat,
   resolveCounterBoardingCombat,
 } from "../lib/boarding-rules";
+import {
+  STAND_DOWN_RANGE_INCHES,
+  STAND_DOWN_RECOVERY_TARGET,
+  standDownContributorEligible,
+  standDownOpposedCheck,
+  standDownPressureSufficient,
+  standDownPressureTotal,
+  standDownRecoverySucceeds,
+  type StandDownUnit,
+} from "../lib/stand-down-rules";
+import {
+  PLAY_AREA_BOUNDS,
+  defaultWithdrawalPolicy,
+  departureConsequenceForEdge,
+  firstFootprintBoundaryCrossing,
+  footprintInsidePlayArea,
+  normalVictoryPoints,
+  tacticalWithdrawalVictoryPoints,
+  type DepartureConsequence,
+  type PlayAreaEdge,
+  type WithdrawalPolicy,
+} from "../lib/play-area-exit-rules";
 import {
   CreateGameBody,
   GetGameParams,
@@ -240,6 +262,10 @@ function unitAuditState(unit: typeof gameUnitsTable.$inferSelect): Record<string
     slowLoadingWeaponCooldowns: unit.slowLoadingWeaponCooldowns,
     baseRadiusInches: unit.baseRadiusInches,
     boardState: unit.boardState,
+    departureReason: unit.departureReason,
+    departureEdge: unit.departureEdge,
+    departureRound: unit.departureRound,
+    departureConsequence: unit.departureConsequence,
     modelFilename: unit.modelFilename,
   };
 }
@@ -293,7 +319,7 @@ async function recordMovementAuditLog(
     actorPlayerId: string | null;
     unitBefore: typeof gameUnitsTable.$inferSelect;
     unitAfter: typeof gameUnitsTable.$inferSelect;
-    movementKind: "move" | "turn" | "move-and-turn" | "all-stop" | "adrift-drift" | "fighter-launch" | "fighter-recovery" | "forced-hold" | "hyperspace-arrival" | "hyperspace-withdrawal";
+    movementKind: "move" | "turn" | "move-and-turn" | "all-stop" | "adrift-drift" | "fighter-launch" | "fighter-recovery" | "forced-hold" | "hyperspace-arrival" | "hyperspace-withdrawal" | "edge-withdrawal";
     summary: string;
     payload: Record<string, unknown>;
   },
@@ -559,9 +585,11 @@ function unitCountsForVictory(unit: {
   maxCrewPoints: number;
   isDestroyed?: boolean;
   boardState?: string | null;
+  surrenderedToOwnerId?: string | null;
 }): boolean {
   return !unit.isDestroyed
     && !unitIsWithdrawn(unit)
+    && !unit.surrenderedToOwnerId
     && unit.hullPoints > 0
     && (unit.maxCrewPoints <= 0 || unit.crewPoints > 0);
 }
@@ -778,11 +806,66 @@ function snapBoardCoord(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-const BOARD_MIN_X = -24;
-const BOARD_MAX_X = 24;
-const BOARD_MIN_Z = -36;
-const BOARD_MAX_Z = 36;
+const BOARD_MIN_X = PLAY_AREA_BOUNDS.minX;
+const BOARD_MAX_X = PLAY_AREA_BOUNDS.maxX;
+const BOARD_MIN_Z = PLAY_AREA_BOUNDS.minZ;
+const BOARD_MAX_Z = PLAY_AREA_BOUNDS.maxZ;
 const AI_EDGE_RECOVERY_BUFFER_INCHES = 6;
+
+const PLAY_AREA_EDGES = new Set<PlayAreaEdge>(["port", "starboard", "north", "south"]);
+
+function parsePlayAreaEdges(value: unknown): PlayAreaEdge[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((edge): edge is PlayAreaEdge => typeof edge === "string" && PLAY_AREA_EDGES.has(edge as PlayAreaEdge));
+}
+
+function withdrawalPolicyForGame(game: typeof gamesTable.$inferSelect): WithdrawalPolicy {
+  const playerIds = [game.challengerId, game.opponentId].filter((id): id is string => Boolean(id));
+  const policy = defaultWithdrawalPolicy(playerIds);
+  const deploymentConfig = normalizeDeploymentConfig(game.deploymentConfig, game.deploymentDepth);
+  if (deploymentConfig.preset === "standard-long-edge") {
+    policy.neutralEdges = ["north", "south"];
+    policy.safeEdgesByOwner[game.challengerId] = ["port"];
+    if (game.opponentId) policy.safeEdgesByOwner[game.opponentId] = ["starboard"];
+  }
+  const raw = isPlainRecord(game.withdrawalConfig) ? game.withdrawalConfig : null;
+  if (!raw) {
+    const scenarioKey = String(game.campaignScenarioKey ?? "").trim().toLowerCase();
+    if (scenarioKey === "invasion" && game.opponentId) {
+      policy.forbiddenOwners = [game.opponentId];
+    }
+    if (scenarioKey === "flee-to-jump-gate") policy.jumpConsequence = "objective-exit";
+    if (["blockade", "convoy-duty", "flee-to-jump-gate"].includes(scenarioKey)) {
+      policy.holdingGround = false;
+    }
+    return policy;
+  }
+
+  if (typeof raw.enabled === "boolean") policy.enabled = raw.enabled;
+  if (typeof raw.holdingGround === "boolean") policy.holdingGround = raw.holdingGround;
+  if (Array.isArray(raw.forbiddenOwners)) {
+    policy.forbiddenOwners = raw.forbiddenOwners
+      .filter((id): id is string => typeof id === "string" && playerIds.includes(id));
+  }
+  policy.neutralEdges = parsePlayAreaEdges(raw.neutralEdges);
+  policy.forbiddenEdges = parsePlayAreaEdges(raw.forbiddenEdges);
+  if (
+    raw.jumpConsequence === "tactical-withdrawal"
+    || raw.jumpConsequence === "full-victory-points"
+    || raw.jumpConsequence === "objective-exit"
+  ) policy.jumpConsequence = raw.jumpConsequence;
+  if (isPlainRecord(raw.safeEdgesByOwner)) {
+    for (const playerId of playerIds) {
+      policy.safeEdgesByOwner[playerId] = parsePlayAreaEdges(raw.safeEdgesByOwner[playerId]);
+    }
+  }
+  if (isPlainRecord(raw.objectiveEdgesByOwner)) {
+    for (const playerId of playerIds) {
+      policy.objectiveEdgesByOwner[playerId] = parsePlayAreaEdges(raw.objectiveEdgesByOwner[playerId]);
+    }
+  }
+  return policy;
+}
 
 function boardEdgeClearance(point: { x: number; z: number }): number {
   return Math.min(
@@ -2798,6 +2881,48 @@ function edgeDistance(
   return Math.max(0, centerDistance(a, b) - rulesBaseRadius(a) - rulesBaseRadius(b));
 }
 
+function standDownFactionModifier(unit: { faction?: string | null }): number {
+  return String(unit.faction ?? "").toLowerCase().includes("drazi") ? 1 : 0;
+}
+
+function standDownAuditPayload(
+  payload: unknown,
+): { targetUnitId: number; involvedUnitIds: number[] } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const detail = (payload as Record<string, unknown>).standDown;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const targetUnitId = Number((detail as Record<string, unknown>).targetUnitId);
+  const involved = (detail as Record<string, unknown>).involvedUnitIds;
+  if (!Number.isInteger(targetUnitId) || !Array.isArray(involved)) return null;
+  return {
+    targetUnitId,
+    involvedUnitIds: involved
+      .map(Number)
+      .filter(Number.isInteger),
+  };
+}
+
+async function shipIsStandDownContributorAgainstTarget(
+  tx: any,
+  gameId: number,
+  round: number,
+  attackerUnitId: number,
+  targetUnitId: number,
+): Promise<boolean> {
+  const declarations = await tx.select({
+    payload: gameSpecialActionAuditLogsTable.payload,
+  }).from(gameSpecialActionAuditLogsTable).where(and(
+    eq(gameSpecialActionAuditLogsTable.gameId, gameId),
+    eq(gameSpecialActionAuditLogsTable.round, round),
+    eq(gameSpecialActionAuditLogsTable.action, "stand-down-and-prepare-to-be-boarded"),
+  ));
+  return declarations.some((declaration: { payload: unknown }) => {
+    const detail = standDownAuditPayload(declaration.payload);
+    return detail?.targetUnitId === targetUnitId
+      && detail.involvedUnitIds.includes(attackerUnitId);
+  });
+}
+
 type ManeuverToShieldResolution = {
   originalTargetUnitId: number;
   originalTargetName: string;
@@ -2848,6 +2973,7 @@ async function resolveManeuverToShieldInterposition(
 
   for (const shield of shieldRows as Array<typeof gameUnitsTable.$inferSelect>) {
     if (shield.id === originalTarget.id || shield.id === attacker.id) continue;
+    if (shield.surrenderedToOwnerId) continue;
     if (shield.hullPoints <= 0) continue;
     if (shield.maxCrewPoints > 0 && shield.crewPoints <= 0) continue;
     const shieldModel = await getShipModelForUnit(tx, shield);
@@ -5448,6 +5574,234 @@ async function getShipModelForUnit(tx: any, unit: typeof gameUnitsTable.$inferSe
   return (await resolveShipModelForUnit(tx, unit)).model;
 }
 
+type VictoryScoreSnapshot = {
+  challenger: number;
+  opponent: number;
+  holdingGroundOwnerId: string | null;
+};
+
+function opposingOwnerId(game: typeof gamesTable.$inferSelect, ownerId: string): string | null {
+  if (ownerId === game.challengerId) return game.opponentId;
+  if (ownerId === game.opponentId) return game.challengerId;
+  return null;
+}
+
+async function calculateVictoryScores(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  includeHoldingGround = false,
+): Promise<VictoryScoreSnapshot> {
+  const units: Array<typeof gameUnitsTable.$inferSelect> = await tx
+    .select()
+    .from(gameUnitsTable)
+    .where(eq(gameUnitsTable.gameId, game.id));
+  const scoreByOwner = new Map<string, number>([
+    [game.challengerId, 0],
+    ...(game.opponentId ? [[game.opponentId, 0] as [string, number]] : []),
+  ]);
+
+  for (const unit of units) {
+    const model = await getShipModelForUnit(tx, unit);
+    if (!model) continue;
+    // Carrier-launched flights are already included in the carrier's value.
+    if (unit.launchedFromUnitId !== null) continue;
+    const normalValue = shipModelIsFighter(model)
+      ? 1
+      : normalVictoryPoints(model.priorityLevel, game.priorityLevel);
+    let beneficiaryId: string | null = opposingOwnerId(game, unit.ownerId);
+    let awarded = 0;
+
+    if (unit.capturedByOwnerId) {
+      beneficiaryId = unit.capturedByOwnerId;
+      awarded = normalValue * 2;
+    } else if (unit.surrenderedToOwnerId) {
+      beneficiaryId = unit.surrenderedToOwnerId;
+      awarded = normalValue * 2;
+    } else if (
+      unit.isDestroyed
+      || unit.damageState === "destroyed"
+      || (unit.maxCrewPoints > 0 && unit.crewPoints <= 0)
+    ) {
+      awarded = normalValue;
+    } else if (unit.boardState === "withdrawn") {
+      const consequence = unit.departureConsequence
+        ?? (unit.specialAction === "hyperspace-withdrawal" ? "tactical-withdrawal" : null);
+      if (consequence === "full-victory-points") awarded = normalValue;
+      else if (consequence === "tactical-withdrawal") awarded = tacticalWithdrawalVictoryPoints(normalValue);
+    } else if (shipModelIsSpaceStation(model) && isCrippledUnit(unit)) {
+      awarded = Math.ceil(normalValue / 2);
+    } else if (isCrippledUnit(unit) || isSkeletonCrewUnit(unit)) {
+      awarded = tacticalWithdrawalVictoryPoints(normalValue);
+    }
+
+    if (beneficiaryId && scoreByOwner.has(beneficiaryId) && awarded > 0) {
+      scoreByOwner.set(beneficiaryId, (scoreByOwner.get(beneficiaryId) ?? 0) + awarded);
+    }
+  }
+
+  let holdingGroundOwnerId: string | null = null;
+  const policy = withdrawalPolicyForGame(game);
+  if (includeHoldingGround && policy.holdingGround && game.opponentId) {
+    const deployedOwners = new Set(
+      units
+        .filter(unit => unit.boardState === "deployed" && unitCountsForVictory(unit))
+        .map(unit => unit.ownerId),
+    );
+    if (deployedOwners.has(game.challengerId) && !deployedOwners.has(game.opponentId)) {
+      holdingGroundOwnerId = game.challengerId;
+    } else if (deployedOwners.has(game.opponentId) && !deployedOwners.has(game.challengerId)) {
+      holdingGroundOwnerId = game.opponentId;
+    }
+    if (holdingGroundOwnerId) {
+      scoreByOwner.set(holdingGroundOwnerId, (scoreByOwner.get(holdingGroundOwnerId) ?? 0) + 5);
+    }
+  }
+
+  return {
+    challenger: scoreByOwner.get(game.challengerId) ?? 0,
+    opponent: game.opponentId ? scoreByOwner.get(game.opponentId) ?? 0 : 0,
+    holdingGroundOwnerId,
+  };
+}
+
+async function refreshVictoryScores(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+  includeHoldingGround = false,
+): Promise<{ game: typeof gamesTable.$inferSelect; scores: VictoryScoreSnapshot }> {
+  const scores = await calculateVictoryScores(tx, game, includeHoldingGround);
+  const [updated] = await tx.update(gamesTable).set({
+    challengerVictoryPoints: scores.challenger,
+    opponentVictoryPoints: scores.opponent,
+  }).where(eq(gamesTable.id, game.id)).returning();
+  return { game: updated ?? game, scores };
+}
+
+async function completeGameIfFleetGone(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<typeof gamesTable.$inferSelect> {
+  const units = await tx.select().from(gameUnitsTable).where(eq(gameUnitsTable.gameId, game.id));
+  let challengerAlive = 0;
+  let opponentAlive = 0;
+  for (const unit of units as Array<typeof gameUnitsTable.$inferSelect>) {
+    if (!unitCountsForVictory(unit)) continue;
+    if (unit.ownerId === game.challengerId) challengerAlive++;
+    else if (unit.ownerId === game.opponentId) opponentAlive++;
+  }
+  const fleetGone = challengerAlive === 0 || opponentAlive === 0;
+  const refreshed = await refreshVictoryScores(tx, game, fleetGone);
+  if (!fleetGone || !game.opponentId) return refreshed.game;
+
+  const winnerId = refreshed.scores.challenger > refreshed.scores.opponent
+    ? game.challengerId
+    : refreshed.scores.opponent > refreshed.scores.challenger
+      ? game.opponentId
+      : null;
+  const [completed] = await tx.update(gamesTable).set({
+    status: "completed",
+    winnerId,
+    activePlayerId: null,
+    activeUnitId: null,
+  }).where(eq(gamesTable.id, game.id)).returning();
+  return completed ?? refreshed.game;
+}
+
+async function standDownUnitForRow(
+  tx: any,
+  unit: typeof gameUnitsTable.$inferSelect,
+): Promise<StandDownUnit> {
+  const model = await getShipModelForUnit(tx, unit);
+  return {
+    id: unit.id,
+    ownerId: unit.ownerId,
+    hullPoints: unit.hullPoints,
+    maxHullPoints: unit.maxHullPoints,
+    crewPoints: unit.crewPoints,
+    maxCrewPoints: unit.maxCrewPoints,
+    x: unit.hexQ,
+    z: unit.hexR,
+    baseRadiusInches: rulesBaseRadius(unit),
+    boardState: unit.boardState,
+    damageState: unit.damageState,
+    isDestroyed: unit.isDestroyed,
+    isFighter: model ? shipModelIsFighter(model) : false,
+    isSpaceStation: model ? shipModelIsSpaceStation(model) : false,
+    surrenderedToOwnerId: unit.surrenderedToOwnerId,
+    capturedByOwnerId: unit.capturedByOwnerId,
+  };
+}
+
+async function resolveStandDownRecoveryAtInitiative(
+  tx: any,
+  game: typeof gamesTable.$inferSelect,
+): Promise<void> {
+  const units = await tx.select().from(gameUnitsTable).where(and(
+    eq(gameUnitsTable.gameId, game.id),
+    eq(gameUnitsTable.isDestroyed, false),
+  ));
+  const standDownUnits = new Map<number, StandDownUnit>();
+  for (const unit of units as Array<typeof gameUnitsTable.$inferSelect>) {
+    standDownUnits.set(unit.id, await standDownUnitForRow(tx, unit));
+  }
+
+  for (const target of units as Array<typeof gameUnitsTable.$inferSelect>) {
+    const coercingOwnerId = target.surrenderedToOwnerId;
+    if (!coercingOwnerId) continue;
+    const targetView = standDownUnits.get(target.id);
+    if (!targetView) continue;
+    const enforcingShipPresent = units.some((candidate: typeof gameUnitsTable.$inferSelect) => {
+      const candidateView = standDownUnits.get(candidate.id);
+      return candidateView
+        ? standDownContributorEligible(candidateView, targetView, coercingOwnerId)
+        : false;
+    });
+    if (enforcingShipPresent) continue;
+
+    const roll = rollD6();
+    const effectiveCrewQuality = terrainAdjustedCrewQuality(
+      target.crewQuality,
+      { x: target.hexQ, z: target.hexR },
+      game.terrainConfig,
+      "special-action",
+    );
+    const modifier = standDownFactionModifier(target);
+    const total = roll + effectiveCrewQuality + modifier;
+    const success = standDownRecoverySucceeds(roll, effectiveCrewQuality + modifier);
+    const [updated] = success
+      ? await tx.update(gameUnitsTable).set({
+          surrenderedToOwnerId: null,
+          surrenderedRound: null,
+        }).where(eq(gameUnitsTable.id, target.id)).returning()
+      : [target];
+
+    await recordSpecialActionAuditLog(tx, {
+      game,
+      actorKind: "system",
+      actorPlayerId: target.ownerId,
+      unitBefore: target,
+      unitAfter: updated ?? target,
+      action: "stand-down-recovery",
+      storedAction: "stand-down-recovery",
+      success,
+      cqRequired: STAND_DOWN_RECOVERY_TARGET,
+      cqRoll: roll,
+      cqTotal: total,
+      targetUnitId: null,
+      summary: `${target.name} ${success ? "recovered control" : "remained surrendered"} after its captors moved beyond ${STAND_DOWN_RANGE_INCHES}\" (${total} vs ${STAND_DOWN_RECOVERY_TARGET}).`,
+      payload: {
+        rulesPath: "stand-down-initiative-recovery",
+        coercingOwnerId,
+        roll,
+        crewQuality: effectiveCrewQuality,
+        factionModifier: modifier,
+        total,
+        required: STAND_DOWN_RECOVERY_TARGET,
+      },
+    });
+  }
+}
+
 type ActivationSegment = "capital" | "fighter";
 
 async function gameUnitIsFighter(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
@@ -5533,6 +5887,7 @@ async function unitPinnedForRound(
 }
 
 async function movementActivationEligible(tx: any, unit: typeof gameUnitsTable.$inferSelect): Promise<boolean> {
+  if (unit.surrenderedToOwnerId) return false;
   if (unitIsWithdrawn(unit)) return false;
   if (unitIsInHyperspace(unit)) {
     return hyperspaceReserveMovementActivationEligible(tx, unit);
@@ -5562,6 +5917,7 @@ async function firingActivationEligible(
   if (unitIsInoperableSpaceStation(unit, model)) return false;
   return !unitIsInHyperspace(unit)
     && !unitIsWithdrawn(unit)
+    && !unit.surrenderedToOwnerId
     && !await unitPinnedForRound(tx, unit, currentRound)
     && !unit.isDestroyed
     && !unit.hasFiredThisRound
@@ -6232,6 +6588,135 @@ async function moveActiveAiUnit(tx: any, game: typeof gamesTable.$inferSelect): 
   const novaBroadsideBias = isNovaDreadnought(model, unit);
   const shipAiProfile = shipAiProfileForModel(model);
   const lowHealth = lowHullRatio(unit) < (shipAiProfile === "apex-predator" ? 0.2 : 0.3);
+  const withdrawalPolicy = withdrawalPolicyForGame(game);
+  const withdrawalForward = headingForwardVec(unit);
+  const withdrawalCrossing = speedCap > 0
+    ? firstFootprintBoundaryCrossing(
+        { x: unit.hexQ, z: unit.hexR },
+        {
+          x: unit.hexQ + withdrawalForward.x * speedCap,
+          z: unit.hexR + withdrawalForward.z * speedCap,
+        },
+        rulesBaseRadius(unit),
+      )
+    : null;
+  const withdrawalConsequence = withdrawalCrossing
+    ? departureConsequenceForEdge(withdrawalPolicy, unit.ownerId, withdrawalCrossing.edge)
+    : null;
+  const badlyDamagedForWithdrawal = lowHealth
+    && (isCrippledUnit(unit) || isSkeletonCrewUnit(unit))
+    && !traits.fighter
+    && !shipModelIsFighter(model)
+    && !shipModelIsSpaceStation(model);
+  const enemyBoarders = badlyDamagedForWithdrawal
+    ? await activeEnemyBoardingRowsForTarget(tx, game.id, unit.id, AI_OPPONENT_ID)
+    : [];
+  if (
+    badlyDamagedForWithdrawal
+    && withdrawalCrossing
+    && enemyBoarders.length === 0
+    && (withdrawalConsequence === "tactical-withdrawal" || withdrawalConsequence === "objective-exit")
+  ) {
+    const crossingDistance = snapHalfInch(
+      Math.hypot(withdrawalCrossing.x - unit.hexQ, withdrawalCrossing.z - unit.hexR),
+    );
+    const [movedToEdge] = await tx.update(gameUnitsTable).set({
+      hexQ: snapBoardCoord(withdrawalCrossing.x),
+      hexR: snapBoardCoord(withdrawalCrossing.z),
+      hasInitiatedMoveThisActivation: true,
+      inchesMovedThisActivation: crossingDistance,
+      distanceSinceLastTurnThisActivation: crossingDistance,
+      turnsMadeThisActivation: 0,
+      allStopReady: false,
+    }).where(and(eq(gameUnitsTable.id, unit.id), eq(gameUnitsTable.gameId, game.id))).returning();
+    const mindScream = await resolveMindScreamForMovement(tx, game, unit, movedToEdge, model);
+    const asteroidResult = await applyAsteroidMovementHazards(
+      tx,
+      game,
+      unit,
+      mindScream.unit,
+      model,
+      crossingDistance,
+      {
+        segments: [{
+          start: { x: unit.hexQ, z: unit.hexR },
+          end: { x: withdrawalCrossing.x, z: withdrawalCrossing.z },
+        }],
+      },
+    );
+    let finalUnit = asteroidResult.unit;
+    if (
+      !finalUnit.isDestroyed
+      && finalUnit.damageState !== "destroyed"
+      && finalUnit.hullPoints > 0
+      && (finalUnit.maxCrewPoints <= 0 || finalUnit.crewPoints > 0)
+    ) {
+      const [departed] = await tx.update(gameUnitsTable).set({
+        boardState: "withdrawn",
+        departureReason: "voluntary-edge",
+        departureEdge: withdrawalCrossing.edge,
+        departureRound: game.currentRound,
+        departureConsequence: withdrawalConsequence,
+        specialAction: "tactical-withdrawal",
+        hasFiredThisRound: true,
+      }).where(eq(gameUnitsTable.id, finalUnit.id)).returning();
+      if (departed) finalUnit = departed;
+    }
+    const normalValue = normalVictoryPoints(model.priorityLevel, game.priorityLevel);
+    const awarded = withdrawalConsequence === "objective-exit"
+      ? 0
+      : tacticalWithdrawalVictoryPoints(normalValue);
+    const details = {
+      chosenAction: "tactical-withdrawal",
+      reason: "badly-damaged-and-forward-edge-reachable",
+      hullRatio: Number(lowHullRatio(unit).toFixed(3)),
+      crippled: isCrippledUnit(unit),
+      skeletonCrew: isSkeletonCrewUnit(unit),
+      edge: withdrawalCrossing.edge,
+      consequence: withdrawalConsequence,
+      opponentVictoryPoints: awarded,
+      crossingDistance,
+      mindScream: mindScream.events,
+      asteroidHazards: asteroidResult.hazards,
+    };
+    await recordMovementAuditLog(tx, {
+      game,
+      actorKind: "ai",
+      actorPlayerId: AI_OPPONENT_ID,
+      unitBefore: unit,
+      unitAfter: finalUnit,
+      movementKind: finalUnit.boardState === "withdrawn" ? "edge-withdrawal" : "move",
+      summary: finalUnit.boardState === "withdrawn"
+        ? `AI withdrew badly damaged ${unit.name} through the ${withdrawalCrossing.edge} edge, conceding ${awarded} VP.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
+        : `AI attempted to withdraw ${unit.name}, but movement hazards prevented its departure.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
+      payload: { rulesPath: "ai-tactical-withdrawal", ...details },
+    });
+    const decision = aiDecision(
+      "movement.tactical-withdrawal",
+      "movement",
+      finalUnit.boardState === "withdrawn"
+        ? `AI withdrew badly damaged ${unit.name} through the ${withdrawalCrossing.edge} edge and conceded ${awarded} VP.`
+        : `AI attempted to withdraw ${unit.name}, but movement hazards prevented its departure.`,
+      details,
+      unit,
+    );
+    const statePatch = withAiDecisionLog(
+      game.aiState,
+      aiState("acted", "movement.tactical-withdrawal", {
+        message: decision.summary,
+        unitIds: [unit.id],
+      }),
+      decision,
+    );
+    const completed = await completeGameIfFleetGone(tx, game);
+    if (completed.status === "completed") {
+      const [completedWithAiState] = await tx.update(gamesTable).set({
+        aiState: mergeAiState(completed.aiState, statePatch),
+      }).where(eq(gamesTable.id, game.id)).returning();
+      return completedWithAiState ?? completed;
+    }
+    return finishAiActivation(tx, game, finalUnit, "movement", statePatch);
+  }
   const enemyRows = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
     eq(gameUnitsTable.ownerId, game.challengerId),
@@ -7885,6 +8370,7 @@ async function antiFighterEntryForUnit(
   unit: typeof gameUnitsTable.$inferSelect,
   footprintOverride?: Partial<UnitFootprint>,
 ): Promise<AntiFighterEntry | null> {
+  if (unit.surrenderedToOwnerId) return null;
   const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
   if (!ship) return null;
   const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
@@ -9231,6 +9717,8 @@ async function resolveBreachingPodContactBoardingForUnit(
 
   const [spentPod] = await tx.update(gameUnitsTable).set({
     boardState: "withdrawn",
+    departureReason: "breaching-pod-contact",
+    departureRound: game.currentRound,
     troopPoints: 0,
     hasMovedThisRound: true,
     hasFiredThisRound: true,
@@ -9838,9 +10326,14 @@ async function planAdriftDriftEndpoint(
     })),
     overlapEpsilon: BASE_CONTACT_EPSILON,
   });
+  const boundaryCrossing = firstFootprintBoundaryCrossing(
+    { x: unit.hexQ, z: unit.hexR },
+    endpoint,
+    rulesBaseRadius(unit),
+  );
   const driftTo = {
-    hexQ: snapBoardCoord(endpoint.x),
-    hexR: snapBoardCoord(endpoint.z),
+    hexQ: snapBoardCoord(boundaryCrossing?.x ?? endpoint.x),
+    hexR: snapBoardCoord(boundaryCrossing?.z ?? endpoint.z),
   };
   return {
     driftTo,
@@ -9851,6 +10344,7 @@ async function planAdriftDriftEndpoint(
     ),
     shortened: endpoint.shortened,
     blockedByUnitIds: endpoint.blockedByUnitIds,
+    boundaryCrossing,
   };
 }
 
@@ -9908,7 +10402,34 @@ async function rollOverRoundAfterEndPhase(
             reusePriorActivation: false,
           })
         : { unit: driftedUnit, hazards: [], gameCompleted: false, winnerId: null };
-      const finalDriftedUnit = asteroidResult.unit;
+      let finalDriftedUnit = asteroidResult.unit;
+      let completedAfterDeparture: typeof gamesTable.$inferSelect | null = null;
+      if (
+        driftPlan.boundaryCrossing
+        && !finalDriftedUnit.isDestroyed
+        && finalDriftedUnit.damageState !== "destroyed"
+      ) {
+        const consequence = departureConsequenceForEdge(
+          withdrawalPolicyForGame(game),
+          u.ownerId,
+          driftPlan.boundaryCrossing.edge,
+        );
+        const [departed] = await tx.update(gameUnitsTable).set({
+          boardState: "withdrawn",
+          departureReason: "compulsory-drift",
+          departureEdge: driftPlan.boundaryCrossing.edge,
+          departureRound: game.currentRound,
+          departureConsequence: consequence === "forbidden" ? "full-victory-points" : consequence,
+          hasFiredThisRound: true,
+        }).where(eq(gameUnitsTable.id, finalDriftedUnit.id)).returning();
+        if (departed) finalDriftedUnit = departed;
+        if (state !== "exploding-end-of-next") {
+          const completed = await completeGameIfFleetGone(tx, game);
+          if (completed.status === "completed") completedAfterDeparture = completed;
+        } else {
+          await refreshVictoryScores(tx, game);
+        }
+      }
       await recordMovementAuditLog(tx, {
         game,
         actorKind: "system",
@@ -9916,7 +10437,9 @@ async function rollOverRoundAfterEndPhase(
         unitBefore: u,
         unitAfter: finalDriftedUnit,
         movementKind: "adrift-drift",
-        summary: driftPlan.shortened
+        summary: driftPlan.boundaryCrossing
+          ? `${u.name} drifted ${actualDriftDistance.toFixed(1)}" off the ${driftPlan.boundaryCrossing.edge} edge during compulsory movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
+          : driftPlan.shortened
           ? `${u.name} drifted ${actualDriftDistance.toFixed(1)}" before contacting another base during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
           : `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
         payload: {
@@ -9928,6 +10451,7 @@ async function rollOverRoundAfterEndPhase(
           driftTo,
           intendedDriftTo,
           overlapBlockedByUnitIds: driftPlan.blockedByUnitIds,
+          boundaryCrossing: driftPlan.boundaryCrossing,
           critEffects: (critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>)
             .map(r => ({ id: r.id, effectKey: r.effectKey, name: r.name })),
           asteroidHazards: asteroidResult.hazards,
@@ -9939,6 +10463,7 @@ async function rollOverRoundAfterEndPhase(
         const [completedGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, game.id));
         return completedGame ?? game;
       }
+      if (completedAfterDeparture) return completedAfterDeparture;
     }
   }
 
@@ -9984,42 +10509,8 @@ async function rollOverRoundAfterEndPhase(
     ? { aiState: mergeAiState(game.aiState, aiStatePatch) }
     : {};
 
-  const postExplosion = await tx.select().from(gameUnitsTable)
-    .where(eq(gameUnitsTable.gameId, game.id));
-  let cAlive = 0, oAlive = 0;
-  for (const u of postExplosion) {
-    if (!unitCountsForVictory(u)) continue;
-    if (u.ownerId === game.challengerId) cAlive++;
-    else if (u.ownerId === game.opponentId) oAlive++;
-  }
-  if (game.opponentId && cAlive === 0 && oAlive > 0) {
-    const [row] = await tx.update(gamesTable).set({
-      ...gameUpdate,
-      status: "completed",
-      winnerId: game.opponentId,
-      activePlayerId: null,
-      activeUnitId: null,
-    }).where(eq(gamesTable.id, game.id)).returning();
-    return row;
-  } else if (game.opponentId && oAlive === 0 && cAlive > 0) {
-    const [row] = await tx.update(gamesTable).set({
-      ...gameUpdate,
-      status: "completed",
-      winnerId: game.challengerId,
-      activePlayerId: null,
-      activeUnitId: null,
-    }).where(eq(gamesTable.id, game.id)).returning();
-    return row;
-  } else if (game.opponentId && cAlive === 0 && oAlive === 0) {
-    const [row] = await tx.update(gamesTable).set({
-      ...gameUpdate,
-      status: "completed",
-      winnerId: null,
-      activePlayerId: null,
-      activeUnitId: null,
-    }).where(eq(gamesTable.id, game.id)).returning();
-    return row;
-  }
+  const fleetOutcome = await completeGameIfFleetGone(tx, game);
+  if (fleetOutcome.status === "completed") return fleetOutcome;
 
   const survivors = await tx.select().from(gameUnitsTable).where(and(
     eq(gameUnitsTable.gameId, game.id),
@@ -10390,8 +10881,14 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
     res.status(404).json({ error: "Game not found" });
     return;
   }
+  const currentScores = await calculateVictoryScores(db, game, game.status === "completed");
+  const scoredGame = {
+    ...game,
+    challengerVictoryPoints: currentScores.challenger,
+    opponentVictoryPoints: currentScores.opponent,
+  };
   if (!viewerRoleHasFullGameState(viewerRole)) {
-    const metadataGame = toGameDto({ ...game, aiState: {} });
+    const metadataGame = toGameDto({ ...scoredGame, aiState: {} });
     res.json(GetGameResponse.parse({
       game: metadataGame,
       units: [],
@@ -10447,17 +10944,19 @@ router.get("/games/:gameId", requireAuth, async (req, res): Promise<void> => {
       isSkeletonCrew: isSkeletonCrewUnit(u),
     };
   });
-  res.json(GetGameResponse.parse({ game: toGameDto(game), units: unitsWithCrits, turns, jumpPoints, observers, viewerRole }));
+  res.json(GetGameResponse.parse({ game: toGameDto(scoredGame), units: unitsWithCrits, turns, jumpPoints, observers, viewerRole }));
 });
 
 router.post("/games/:gameId/observe", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
+  const requesterIsAdmin = await isAdminUser(userId);
   const params = GetGameParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
     return;
   }
 
+  let viewerRole: "observer" | "admin-observer" = "observer";
   try {
     await db.transaction(async tx => {
       await tx.execute(sql`SELECT id FROM games WHERE id = ${params.data.gameId} FOR UPDATE`);
@@ -10466,7 +10965,14 @@ router.post("/games/:gameId/observe", requireAuth, async (req, res): Promise<voi
       if (game.challengerId === userId || game.opponentId === userId || isDevAiCommander(game, userId)) {
         throw Object.assign(new Error("Players already have full access to this engagement."), { status: 400 });
       }
-      if (!game.allowObservers || (game.status !== "active" && game.status !== "completed")) {
+      if (game.status !== "active" && game.status !== "completed") {
+        throw Object.assign(new Error("This engagement is not open to observers."), { status: 403 });
+      }
+      if (requesterIsAdmin) {
+        viewerRole = "admin-observer";
+        return;
+      }
+      if (!game.allowObservers) {
         throw Object.assign(new Error("This engagement is not open to observers."), { status: 403 });
       }
       if (game.passwordHash) {
@@ -10488,7 +10994,7 @@ router.post("/games/:gameId/observe", requireAuth, async (req, res): Promise<voi
       }
       await tx.insert(gameObserversTable).values({ gameId: game.id, userId });
     });
-    res.json({ viewerRole: "observer" });
+    res.json({ viewerRole });
   } catch (error) {
     const err = error as { status?: number; message?: string };
     res.status(err.status ?? 500).json({ error: err.message ?? "Unknown error" });
@@ -11395,6 +11901,40 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
       if (!isChallenger && game.opponentDeployed && !devAiRedeploy) {
         throw Object.assign(new Error("Opponent fleet is already deployed"), { status: 400 });
       }
+      const campaignShipInstanceIds = Array.from(new Set(
+        parsed.data.placements
+          .map((placement) => placement.campaignShipInstanceId ?? null)
+          .filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0),
+      ));
+      const campaignAssignmentByShipInstanceId = new Map<
+        number,
+        typeof campaignBattleShipAssignmentsTable.$inferSelect
+      >();
+      if (campaignShipInstanceIds.length > 0) {
+        if (!game.campaignBattleId) {
+          throw Object.assign(new Error("Campaign roster ships can only deploy into a campaign-linked battle"), { status: 400 });
+        }
+        const expectedSide = isChallenger ? "attacker" : "defender";
+        const assignments = await tx
+          .select()
+          .from(campaignBattleShipAssignmentsTable)
+          .where(and(
+            eq(campaignBattleShipAssignmentsTable.campaignBattleId, game.campaignBattleId),
+            inArray(campaignBattleShipAssignmentsTable.campaignShipInstanceId, campaignShipInstanceIds),
+          ));
+        for (const assignment of assignments as Array<typeof campaignBattleShipAssignmentsTable.$inferSelect>) {
+          campaignAssignmentByShipInstanceId.set(assignment.campaignShipInstanceId, assignment);
+        }
+        for (const shipInstanceId of campaignShipInstanceIds) {
+          const assignment = campaignAssignmentByShipInstanceId.get(shipInstanceId);
+          if (!assignment) {
+            throw Object.assign(new Error("Campaign roster ship is not assigned to this battle"), { status: 400 });
+          }
+          if (assignment.side !== expectedSide) {
+            throw Object.assign(new Error("Campaign roster ship is assigned to the other battle side"), { status: 400 });
+          }
+        }
+      }
       let fleetId: number | null = parsed.data.fleetId ?? null;
       let ships: typeof shipsTable.$inferSelect[];
 
@@ -11726,6 +12266,10 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           gameId: params.data.gameId,
           ownerId: playerUserId,
           shipId: ship.id,
+          campaignShipInstanceId: placement.campaignShipInstanceId ?? null,
+          campaignPreBattleSnapshot: placement.campaignShipInstanceId
+            ? campaignAssignmentByShipInstanceId.get(placement.campaignShipInstanceId)?.preBattleSnapshot ?? null
+            : null,
           name: ship.name,
           modelFilename: model.filename,
           faction: model.faction,
@@ -11763,7 +12307,21 @@ router.post("/games/:gameId/deploy", requireAuth, async (req, res): Promise<void
           launchedFromUnitId: null,
           isDestroyed: false,
         }).returning();
-        if (inserted) insertedUnitsByPlacementIndex.set(index, inserted);
+        if (inserted) {
+          insertedUnitsByPlacementIndex.set(index, inserted);
+          if (game.campaignBattleId && placement.campaignShipInstanceId) {
+            await tx
+              .update(campaignBattleShipAssignmentsTable)
+              .set({
+                tacticalShipId: ship.id,
+                tacticalGameUnitId: inserted.id,
+              })
+              .where(and(
+                eq(campaignBattleShipAssignmentsTable.campaignBattleId, game.campaignBattleId),
+                eq(campaignBattleShipAssignmentsTable.campaignShipInstanceId, placement.campaignShipInstanceId),
+              ));
+          }
+        }
       }
 
       const carrierInventoryByUnitId = new Map<number, CarriedFighterInventoryItem[]>();
@@ -12319,15 +12877,45 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     z: finalHexR,
   };
   const finalBaseRadius = rulesBaseRadius(finalFootprint);
-  if (
-    isMovingFighter &&
-    (finalHexQ < BOARD_MIN_X + finalBaseRadius ||
-      finalHexQ > BOARD_MAX_X - finalBaseRadius ||
-      finalHexR < BOARD_MIN_Z + finalBaseRadius ||
-      finalHexR > BOARD_MAX_Z - finalBaseRadius)
-  ) {
-    res.status(400).json({ error: "Fighter base must remain inside the board" });
+  const leavesPlayArea = !footprintInsidePlayArea({
+    x: finalHexQ,
+    z: finalHexR,
+    baseRadiusInches: finalBaseRadius,
+  });
+  const boundaryCrossing = leavesPlayArea
+    ? firstFootprintBoundaryCrossing(
+        { x: unit.hexQ, z: unit.hexR },
+        { x: finalHexQ, z: finalHexR },
+        finalBaseRadius,
+      )
+    : null;
+  if (leavesPlayArea && !boundaryCrossing) {
+    res.status(400).json({ error: "Unit begins outside the legal play area and cannot resolve an edge withdrawal" });
     return;
+  }
+  const withdrawalPolicy = withdrawalPolicyForGame(game);
+  const departureConsequence = boundaryCrossing
+    ? departureConsequenceForEdge(withdrawalPolicy, unit.ownerId, boundaryCrossing.edge)
+    : null;
+  if (departureConsequence === "forbidden") {
+    res.status(400).json({ error: `Scenario rules forbid withdrawal through the ${boundaryCrossing?.edge ?? "selected"} edge` });
+    return;
+  }
+  if (boundaryCrossing && body.data.confirmWithdrawal !== true) {
+    const normalValue = normalVictoryPoints(moveModel.priorityLevel, game.priorityLevel);
+    const awarded = departureConsequence === "full-victory-points"
+      ? normalValue
+      : departureConsequence === "objective-exit"
+        ? 0
+        : tacticalWithdrawalVictoryPoints(normalValue);
+    res.status(409).json({
+      error: `TACTICAL_WITHDRAWAL_CONFIRMATION_REQUIRED: ${unit.name} will leave through the ${boundaryCrossing.edge} edge; ${awarded} VP awarded to the opponent${departureConsequence === "full-victory-points" ? " (unsafe edge)" : ""}.`,
+    });
+    return;
+  }
+  if (boundaryCrossing) {
+    finalFootprint.x = snapBoardCoord(boundaryCrossing.x);
+    finalFootprint.z = snapBoardCoord(boundaryCrossing.z);
   }
   const activeOverlapBlockers = otherFootprints.filter(
     (other) => !pendingDisplacedUnitIds.has(other.id),
@@ -12341,18 +12929,22 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     (other) =>
       !displaceableFighterOverlaps.some((fighter) => fighter.id === other.id),
   );
-  if (findIllegalBaseOverlap(finalFootprint, hardOverlapBlockers)) {
+  if (!boundaryCrossing && findIllegalBaseOverlap(finalFootprint, hardOverlapBlockers)) {
     res.status(400).json({ error: "Move would overlap another base illegally" });
     return;
   }
-  const actualStepInches = isMovingFighter ? Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR) : snapHalfInch(Math.hypot(finalHexQ - unit.hexQ, finalHexR - unit.hexR));
-  if (isMovingFighter) {
+  const resolvedFinalHexQ = finalFootprint.x;
+  const resolvedFinalHexR = finalFootprint.z;
+  const actualStepInches = isMovingFighter
+    ? Math.hypot(resolvedFinalHexQ - unit.hexQ, resolvedFinalHexR - unit.hexR)
+    : snapHalfInch(Math.hypot(resolvedFinalHexQ - unit.hexQ, resolvedFinalHexR - unit.hexR));
+  if (isMovingFighter && !boundaryCrossing) {
     const contactedEnemyFighterIds = otherFootprints
       .filter(other => other.isFighter && other.ownerId !== unit.ownerId && basesInContact(finalFootprint, other))
       .map(other => other.id);
     const interrupt = await resolveFighterAntiFighterDogfightInterrupt(db, game, unit, finalFootprint, contactedEnemyFighterIds, {
-      hexQ: finalHexQ,
-      hexR: finalHexR,
+      hexQ: resolvedFinalHexQ,
+      hexR: resolvedFinalHexR,
       heading: finalHeading,
       actualStepInches,
     });
@@ -12372,7 +12964,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     ? [...pendingDisplacement.entries]
     : [];
   let nextDisplacementState = pendingDisplacement ?? null;
-  if (displaceableFighterOverlaps.length > 0) {
+  if (!boundaryCrossing && displaceableFighterOverlaps.length > 0) {
     const byUnitId = new Set(nextDisplacementEntries.map((entry) => entry.unitId));
     for (const fighter of displaceableFighterOverlaps) {
       if (byUnitId.has(fighter.id)) continue;
@@ -12405,8 +12997,8 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
 
   const [updated] = await db.update(gameUnitsTable)
     .set({
-      hexQ: finalHexQ,
-      hexR: finalHexR,
+      hexQ: resolvedFinalHexQ,
+      hexR: resolvedFinalHexR,
       heading: finalHeading,
       hasInitiatedMoveThisActivation: true,
       inchesMovedThisActivation: unit.inchesMovedThisActivation + actualStepInches,
@@ -12443,7 +13035,31 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     moveModel,
     actualStepInches,
   );
-  const finalUpdated = asteroidResult.unit;
+  let finalUpdated = asteroidResult.unit;
+  let responseGame: typeof gamesTable.$inferSelect = game;
+  if (
+    boundaryCrossing
+    && departureConsequence
+    && !finalUpdated.isDestroyed
+    && finalUpdated.damageState !== "destroyed"
+    && finalUpdated.hullPoints > 0
+    && (finalUpdated.maxCrewPoints <= 0 || finalUpdated.crewPoints > 0)
+  ) {
+    const [departed] = await db.update(gameUnitsTable).set({
+      boardState: "withdrawn",
+      departureReason: "voluntary-edge",
+      departureEdge: boundaryCrossing.edge,
+      departureRound: game.currentRound,
+      departureConsequence,
+      specialAction: "tactical-withdrawal",
+      hasFiredThisRound: true,
+    }).where(eq(gameUnitsTable.id, finalUpdated.id)).returning();
+    if (departed) finalUpdated = departed;
+    responseGame = await completeGameIfFleetGone(db, game);
+  } else {
+    const [latestGame] = await db.select().from(gamesTable).where(eq(gamesTable.id, game.id));
+    responseGame = latestGame ?? game;
+  }
   try {
     await recordMovementAuditLog(db, {
       game,
@@ -12451,8 +13067,10 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
       actorPlayerId: userId,
       unitBefore: unit,
       unitAfter: finalUpdated,
-      movementKind: actualStepInches > 0.001 && isTurn ? "move-and-turn" : isTurn ? "turn" : "move",
-      summary: `${unit.name} ${actualStepInches > 0.001 && isTurn
+      movementKind: boundaryCrossing ? "edge-withdrawal" : actualStepInches > 0.001 && isTurn ? "move-and-turn" : isTurn ? "turn" : "move",
+      summary: boundaryCrossing
+        ? `${unit.name} moved ${actualStepInches.toFixed(1)}" and left through the ${boundaryCrossing.edge} edge (${departureConsequence}).${formatAsteroidMovementHazards(asteroidResult.hazards)}`
+        : `${unit.name} ${actualStepInches > 0.001 && isTurn
         ? `moved ${actualStepInches.toFixed(1)}" and turned ${headingDelta.toFixed(1)} degrees`
         : isTurn
           ? `turned ${headingDelta.toFixed(1)} degrees`
@@ -12465,10 +13083,12 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
           newHeading: finalHeading,
         },
         final: {
-          hexQ: finalHexQ,
-          hexR: finalHexR,
+          hexQ: resolvedFinalHexQ,
+          hexR: resolvedFinalHexR,
           heading: finalHeading,
         },
+        boundaryCrossing,
+        departureConsequence,
         requestedStepInches,
         actualStepInches,
         headingDelta,
@@ -12489,8 +13109,8 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
         specialAction: unit.specialAction,
         allStopReadyBefore: unit.allStopReady,
         asteroidHazards: asteroidResult.hazards,
-        gameCompleted: asteroidResult.gameCompleted,
-        winnerId: asteroidResult.winnerId,
+        gameCompleted: responseGame.status === "completed",
+        winnerId: responseGame.winnerId,
       },
     });
   } catch (err) {
@@ -12546,7 +13166,6 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     },
   }, "movement step committed");
 
-  const [responseGame] = await db.select().from(gamesTable).where(eq(gamesTable.id, game.id));
   res.json({
     ...finalUpdated,
     damageState: effectiveDamageState(finalUpdated.damageState, moveCritRows),
@@ -12554,7 +13173,7 @@ router.post("/games/:gameId/units/:unitId/move", requireAuth, async (req, res): 
     isCrippled: isMovingFighter ? false : isCrippledUnit(finalUpdated),
     isSkeletonCrew: isSkeletonCrewUnit(finalUpdated),
     asteroidHazards: asteroidResult.hazards,
-    game: responseGame ?? game,
+    game: responseGame,
   });
 });
 
@@ -12800,6 +13419,7 @@ router.post("/games/:gameId/units/:unitId/launch-fighter", requireAuth, async (r
       const [carrier] = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, unitId), eq(gameUnitsTable.gameId, gameId)));
       if (!carrier) throw Object.assign(new Error("Carrier not found"), { status: 404 });
       if (carrier.ownerId !== userId) throw Object.assign(new Error("Not your carrier"), { status: 403 });
+      if (carrier.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship cannot launch fighters"), { status: 400 });
       if (carrier.isDestroyed || carrier.damageState === "adrift" || carrier.damageState === "exploding-end-of-next") {
         throw Object.assign(new Error("This ship cannot launch fighters in its current state"), { status: 400 });
       }
@@ -12982,6 +13602,7 @@ router.post("/games/:gameId/units/:unitId/recover-fighter", requireAuth, async (
       const [carrier] = await tx.select().from(gameUnitsTable).where(and(eq(gameUnitsTable.id, carrierUnitId), eq(gameUnitsTable.gameId, gameId)));
       if (!carrier) throw Object.assign(new Error("Carrier not found"), { status: 404 });
       if (carrier.ownerId !== userId) throw Object.assign(new Error("Not your carrier"), { status: 403 });
+      if (carrier.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship cannot recover fighters"), { status: 400 });
       if (carrier.isDestroyed || carrier.damageState === "adrift" || carrier.damageState === "exploding-end-of-next") {
         throw Object.assign(new Error("This ship cannot recover fighters in its current state"), { status: 400 });
       }
@@ -13266,6 +13887,7 @@ router.post("/games/:gameId/units/:unitId/activate", requireAuth, async (req, re
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Unit is destroyed"), { status: 400 });
+      if (unit.surrenderedToOwnerId) throw Object.assign(new Error("This ship has surrendered and takes no further part in the battle"), { status: 400 });
       if (unitIsWithdrawn(unit)) throw Object.assign(new Error("Unit has withdrawn from the battle"), { status: 400 });
       if (await unitPinnedForRound(tx, unit, game.currentRound)) {
         throw Object.assign(new Error("Unit is disrupted and may take no action this turn"), { status: 400 });
@@ -13999,6 +14621,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
         const eligible: Array<typeof gameUnitsTable.$inferSelect> = [];
         for (const row of rows) {
           if (pid !== null && row.ownerId !== pid) continue;
+          if (row.surrenderedToOwnerId) continue;
           if (firing && (unitIsInHyperspace(row) || unitIsWithdrawn(row))) continue;
           if (!firing && !(await isMovementActivationEligible(row))) continue;
           if (segment) {
@@ -14109,7 +14732,7 @@ router.post("/games/:gameId/end-activation", requireAuth, async (req, res): Prom
                   ? movementTraitsForModel(endedModel, cap)
                   : parseShipTraits("");
                 const effectiveMax = effectiveBaseSpeed(endedUnit, cap);
-                const minRequired = baseSA === "initiate-jump-point" || baseSA === "hyperspace-arrival" || baseSA === "hyperspace-withdrawal"
+                const minRequired = baseSA === "initiate-jump-point" || baseSA === "hyperspace-arrival" || baseSA === "hyperspace-withdrawal" || baseSA === "tactical-withdrawal"
                   ? 0
                   : endedTraits.superManeuverable
                   ? 0
@@ -14572,6 +15195,7 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       if (attacker.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unitIsInHyperspace(attacker)) throw Object.assign(new Error("Ship is in hyperspace reserves and cannot fire"), { status: 400 });
       if (attacker.isDestroyed) throw Object.assign(new Error("Attacker is destroyed"), { status: 400 });
+      if (attacker.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship takes no further part in the battle"), { status: 400 });
       // Hull or crew exhausted → ineligible to fire even if activation was
       // somehow obtained (race with damage application from another shot).
       if (attacker.hullPoints <= 0) {
@@ -14702,6 +15326,15 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
       ));
       if (protectedBoardingRows.length > 0) {
         throw Object.assign(new Error("Target is under a boarding action and cannot be attacked this Attack Phase"), { status: 400 });
+      }
+      if (await shipIsStandDownContributorAgainstTarget(
+        tx,
+        game.id,
+        game.currentRound,
+        attacker.id,
+        initialTarget.id,
+      )) {
+        throw Object.assign(new Error("This ship contributed to the Stand Down attempt and cannot attack that target this round"), { status: 400 });
       }
       let target = initialTarget;
       let resolvedTargetUnitId = targetUnitId;
@@ -14873,6 +15506,36 @@ router.post("/games/:gameId/units/:unitId/fire-weapon", requireAuth, async (req,
         : await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, targetShip!.shipModelId));
       const targetModel = loadedTargetModel;
       if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
+
+      if (target.surrenderedToOwnerId) {
+        const surrenderedBeforeAttack = target;
+        const [released] = await tx.update(gameUnitsTable).set({
+          surrenderedToOwnerId: null,
+          surrenderedRound: null,
+        }).where(eq(gameUnitsTable.id, target.id)).returning();
+        if (released) target = released;
+        await recordSpecialActionAuditLog(tx, {
+          game,
+          actorKind: "system",
+          actorPlayerId: attacker.ownerId,
+          unitBefore: surrenderedBeforeAttack,
+          unitAfter: released ?? surrenderedBeforeAttack,
+          action: "stand-down-released-by-attack",
+          storedAction: "stand-down-released-by-attack",
+          success: true,
+          cqRequired: null,
+          cqRoll: null,
+          cqTotal: null,
+          targetUnitId: attacker.id,
+          targetUnit: attacker,
+          summary: `${surrenderedBeforeAttack.name} returned to its original command when attacked by ${attacker.name}.`,
+          payload: {
+            rulesPath: "stand-down-release-on-attack",
+            formerCoercingOwnerId: surrenderedBeforeAttack.surrenderedToOwnerId,
+            attackerUnitId: attacker.id,
+          },
+        });
+      }
 
       // ── Target's live critical-hit effects ───────────────────────────────
       const targetCritRows = await tx.select().from(unitCriticalEffectsTable)
@@ -16043,7 +16706,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
   const body = ChooseSpecialActionBody.safeParse(req.body);
   if (!body.success) { res.status(400).json({ error: body.error.message }); return; }
   const { gameId, unitId } = params.data;
-  const { action, targetUnitId, troopsCommitted } = body.data;
+  const { action, targetUnitId, involvedUnitIds, troopsCommitted } = body.data;
 
   // CQ thresholds. null = automatic (always succeeds).
   const cqRequiredByAction: Record<string, number | null> = {
@@ -16059,6 +16722,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
     "track-that-target": 9,
     "maneuver-to-shield": null,
     "cause-confusion": null,
+    "stand-down-and-prepare-to-be-boarded": null,
     "initiate-jump-point": null,
     "all-hands-on-deck": 9,
     "scramble": 7,
@@ -16095,6 +16759,7 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship takes no further part in the battle"), { status: 400 });
       if (unit.specialAction) throw Object.assign(new Error("Already used a Special Action this round"), { status: 400 });
       if (unit.scoutAction) throw Object.assign(new Error("Already used Scout Support this round"), { status: 400 });
       // Special Actions must be declared before the activation's movement
@@ -16182,6 +16847,18 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       let nominatedTargetAfter: typeof gameUnitsTable.$inferSelect | null = null;
       let committedBoardingTroops = 0;
       let boardingDeliveryType = "ship";
+      let standDownInvolvedUnits: Array<typeof gameUnitsTable.$inferSelect> = [];
+      let standDownPressure = 0;
+      let standDownResolution: {
+        attackerRoll: number;
+        attackerCrewQuality: number;
+        attackerModifier: number;
+        attackerTotal: number;
+        defenderRoll: number;
+        defenderCrewQuality: number;
+        defenderModifier: number;
+        defenderTotal: number;
+      } | null = null;
       let causeConfusionResolution: {
         targetActionBefore: string;
         attackerPsychicCrew: number;
@@ -16263,6 +16940,82 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         storedTarget = targetUnitId;
         nominatedTarget = tgt;
       }
+      if (action === "stand-down-and-prepare-to-be-boarded") {
+        if (targetUnitId == null) {
+          throw Object.assign(new Error("Stand Down and Prepare to be Boarded requires a target"), { status: 400 });
+        }
+        const [tgt] = await tx.select().from(gameUnitsTable).where(and(
+          eq(gameUnitsTable.id, targetUnitId),
+          eq(gameUnitsTable.gameId, gameId),
+        ));
+        if (!tgt) throw Object.assign(new Error("Target not found"), { status: 404 });
+        if (tgt.ownerId === userId) throw Object.assign(new Error("Cannot force your own ship to surrender"), { status: 400 });
+        if (tgt.isDestroyed) throw Object.assign(new Error("Target already destroyed"), { status: 400 });
+        if (unitIsInHyperspace(tgt)) throw Object.assign(new Error("Target is in hyperspace reserves"), { status: 400 });
+        if (tgt.capturedByOwnerId) throw Object.assign(new Error("Captured ships cannot be forced to surrender"), { status: 400 });
+        if (tgt.surrenderedToOwnerId) throw Object.assign(new Error("Target has already surrendered"), { status: 400 });
+        if (!isCrippledUnit(tgt) && !isSkeletonCrewUnit(tgt)) {
+          throw Object.assign(new Error("Stand Down requires a Crippled or Skeleton Crew target"), { status: 400 });
+        }
+        const targetModel = await getShipModelForUnit(tx, tgt);
+        if (!targetModel) throw Object.assign(new Error("Target ship model missing"), { status: 500 });
+        if (shipModelIsFighter(targetModel)) {
+          throw Object.assign(new Error("Fighter flights cannot be forced to surrender"), { status: 400 });
+        }
+        if (shipModelIsSpaceStation(targetModel)) {
+          throw Object.assign(new Error("Stand Down targets ships, not space stations"), { status: 400 });
+        }
+        const sourceDistance = edgeDistance(
+          { x: unit.hexQ, z: unit.hexR, baseRadiusInches: rulesBaseRadius(unit) },
+          { x: tgt.hexQ, z: tgt.hexR, baseRadiusInches: rulesBaseRadius(tgt) },
+        );
+        if (sourceDistance > STAND_DOWN_RANGE_INCHES + 1e-6) {
+          throw Object.assign(new Error(`Stand Down target out of range (${sourceDistance.toFixed(1)}\" > ${STAND_DOWN_RANGE_INCHES}\")`), { status: 400 });
+        }
+        const activeBoarding = await tx.select({ id: gameBoardingActionsTable.id })
+          .from(gameBoardingActionsTable)
+          .where(and(
+            eq(gameBoardingActionsTable.gameId, game.id),
+            eq(gameBoardingActionsTable.targetUnitId, tgt.id),
+            inArray(gameBoardingActionsTable.status, [...ACTIVE_BOARDING_STATUSES]),
+          ));
+        if (activeBoarding.length > 0) {
+          throw Object.assign(new Error("Resolve the active boarding action before attempting Stand Down"), { status: 400 });
+        }
+
+        const contributorIds = Array.from(new Set((involvedUnitIds ?? []).map(Number)));
+        if (!contributorIds.includes(unit.id)) {
+          throw Object.assign(new Error("The declaring ship must be included among the involved ships"), { status: 400 });
+        }
+        const contributorRows = contributorIds.length > 0
+          ? await tx.select().from(gameUnitsTable).where(and(
+              eq(gameUnitsTable.gameId, game.id),
+              inArray(gameUnitsTable.id, contributorIds),
+            ))
+          : [];
+        if (contributorRows.length !== contributorIds.length) {
+          throw Object.assign(new Error("One or more involved ships were not found"), { status: 400 });
+        }
+        const targetView = await standDownUnitForRow(tx, tgt);
+        const contributorViews: StandDownUnit[] = [];
+        for (const contributor of contributorRows as Array<typeof gameUnitsTable.$inferSelect>) {
+          const contributorView = await standDownUnitForRow(tx, contributor);
+          if (!standDownContributorEligible(contributorView, targetView, userId)) {
+            throw Object.assign(new Error(`${contributor.name} is not an eligible involved ship within ${STAND_DOWN_RANGE_INCHES}\"`), { status: 400 });
+          }
+          contributorViews.push(contributorView);
+        }
+        if (!standDownPressureSufficient(contributorViews, tgt.maxHullPoints)) {
+          throw Object.assign(
+            new Error(`Involved ships have ${standDownPressureTotal(contributorViews)} current Damage; they must exceed ${tgt.maxHullPoints}`),
+            { status: 400 },
+          );
+        }
+        standDownInvolvedUnits = contributorRows;
+        standDownPressure = standDownPressureTotal(contributorViews);
+        storedTarget = tgt.id;
+        nominatedTarget = tgt;
+      }
       if (action === "track-that-target") {
         if (targetUnitId == null) throw Object.assign(new Error("Track That Target requires a target"), { status: 400 });
         const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, unit.shipId));
@@ -16341,11 +17094,53 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
       }
 
       // CQ check.
-      const cqRequired = cqRequiredByAction[action] ?? null;
+      let cqRequired = cqRequiredByAction[action] ?? null;
       let cqRoll: number | null = null;
       let cqTotal: number | null = null;
       let success = true;
-      if (action === "cause-confusion") {
+      if (action === "stand-down-and-prepare-to-be-boarded") {
+        if (!nominatedTarget) {
+          throw Object.assign(new Error("Stand Down requires a target"), { status: 400 });
+        }
+        const attackerRoll = rollD6();
+        const defenderRoll = rollD6();
+        const attackerCrewQuality = terrainAdjustedCrewQuality(
+          unit.crewQuality,
+          { x: unit.hexQ, z: unit.hexR },
+          game.terrainConfig,
+          "special-action",
+        );
+        const defenderCrewQuality = terrainAdjustedCrewQuality(
+          nominatedTarget.crewQuality,
+          { x: nominatedTarget.hexQ, z: nominatedTarget.hexR },
+          game.terrainConfig,
+          "special-action",
+        );
+        const attackerModifier = standDownFactionModifier(unit);
+        const defenderModifier = standDownFactionModifier(nominatedTarget);
+        const opposed = standDownOpposedCheck(
+          attackerRoll,
+          attackerCrewQuality,
+          attackerModifier,
+          defenderRoll,
+          defenderCrewQuality,
+          defenderModifier,
+        );
+        success = opposed.success;
+        cqRoll = attackerRoll;
+        cqTotal = opposed.attackerTotal;
+        cqRequired = opposed.defenderTotal + 1;
+        standDownResolution = {
+          attackerRoll,
+          attackerCrewQuality,
+          attackerModifier,
+          attackerTotal: opposed.attackerTotal,
+          defenderRoll,
+          defenderCrewQuality,
+          defenderModifier,
+          defenderTotal: opposed.defenderTotal,
+        };
+      } else if (action === "cause-confusion") {
         if (!nominatedTarget?.specialAction) {
           throw Object.assign(new Error("Cause Confusion requires a target with an active Special Action"), { status: 400 });
         }
@@ -16411,6 +17206,13 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         }).where(eq(gameUnitsTable.id, nominatedTarget.id)).returning();
         nominatedTargetAfter = targetAfter ?? null;
       }
+      if (success && action === "stand-down-and-prepare-to-be-boarded" && nominatedTarget) {
+        const [targetAfter] = await tx.update(gameUnitsTable).set({
+          surrenderedToOwnerId: userId,
+          surrenderedRound: game.currentRound,
+        }).where(eq(gameUnitsTable.id, nominatedTarget.id)).returning();
+        nominatedTargetAfter = targetAfter ?? null;
+      }
       const [updated] = await tx.update(gameUnitsTable).set({
         specialAction: stored,
         specialActionTargetId: success ? storedTarget : null,
@@ -16450,7 +17252,9 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
         cqTotal,
         targetUnitId: storedTarget,
         targetUnit: nominatedTarget,
-        summary: action === "cause-confusion" && causeConfusionResolution
+        summary: action === "stand-down-and-prepare-to-be-boarded" && standDownResolution
+          ? `${unit.name} ${success ? "forced" : "failed to force"} ${nominatedTarget?.name ?? "target"} to surrender (${standDownResolution.attackerTotal} vs ${standDownResolution.defenderTotal}).`
+          : action === "cause-confusion" && causeConfusionResolution
           ? `${unit.name} ${success ? "caused confusion on" : "failed to confuse"} ${nominatedTarget?.name ?? "target"} (${causeConfusionResolution.attackerTotal} vs ${causeConfusionResolution.targetTotal}).`
           : action === "launch-breaching-pods-and-shuttles"
             ? boardingDeliveryType === "counterattack"
@@ -16483,13 +17287,30 @@ router.post("/games/:gameId/units/:unitId/special-action", requireAuth, async (r
                   : null,
               }
             : null,
+          standDown: standDownResolution
+            ? {
+                targetUnitId: storedTarget,
+                involvedUnitIds: standDownInvolvedUnits.map(involved => involved.id),
+                involvedShips: standDownInvolvedUnits.map(involved => ({
+                  id: involved.id,
+                  name: involved.name,
+                  currentDamage: involved.hullPoints,
+                })),
+                pressureTotal: standDownPressure,
+                targetStartingDamage: nominatedTarget?.maxHullPoints ?? 0,
+                ...standDownResolution,
+                targetAfter: nominatedTargetAfter
+                  ? unitAuditState(nominatedTargetAfter)
+                  : null,
+              }
+            : null,
         },
       });
 
       return {
         action,
         success,
-        requiresCq: cqRequired !== null,
+        requiresCq: action === "stand-down-and-prepare-to-be-boarded" || cqRequired !== null,
         cqRequired,
         cqRoll,
         cqTotal,
@@ -17086,8 +17907,13 @@ router.post("/games/:gameId/hyperspace/enter-hyperspace", requireAuth, async (re
         throw Object.assign(new Error("Ship must enter the jump point through its forward arc"), { status: 400 });
       }
 
+      const jumpConsequence = withdrawalPolicyForGame(game).jumpConsequence;
       const [updatedUnit] = await tx.update(gameUnitsTable).set({
         boardState: "withdrawn",
+        departureReason: "hyperspace-jump",
+        departureEdge: null,
+        departureRound: game.currentRound,
+        departureConsequence: jumpConsequence,
         specialAction: "hyperspace-withdrawal",
         hasInitiatedMoveThisActivation: true,
         hasFiredThisRound: true,
@@ -17121,12 +17947,15 @@ router.post("/games/:gameId/hyperspace/enter-hyperspace", requireAuth, async (re
           rulesPath: "jump-points.realspace-to-hyperspace.enter",
           jumpPointId: jumpPoint.id,
           tacticalWithdrawal: true,
+          departureConsequence: jumpConsequence,
           creatorEnteredAndClosedPoint: jumpPoint.creatorUnitId === unit.id,
           jumpPointCreatedRound: jumpPoint.createdRound,
           currentRound: game.currentRound,
           counterDiameterInches: (jumpPoint.baseRadiusInches ?? JUMP_POINT_BASE_RADIUS_INCHES) * 2,
         },
       });
+
+      await completeGameIfFleetGone(tx, game);
 
       return { unit: updatedUnit, jumpPoints: openJumpPoints };
     });
@@ -17221,6 +18050,7 @@ router.post("/games/:gameId/units/:unitId/scout-action", requireAuth, async (req
       const scout = gameUnits.find(u => u.id === unitId);
       if (!scout) throw Object.assign(new Error("Scout unit not found"), { status: 404 });
       if (scout.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (scout.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship cannot provide Scout Support"), { status: 400 });
       if (!resolvingDeclaredAction) {
         if (game.activePlayerId !== userId) throw Object.assign(new Error("Not your activation"), { status: 400 });
         if (game.activeUnitId !== scout.id) throw Object.assign(new Error("This Scout is not the active ship"), { status: 400 });
@@ -17648,6 +18478,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
         eq(gameUnitsTable.isDestroyed, false),
       ));
       for (const u of driftCandidates) {
+        if (u.surrenderedToOwnerId) continue;
         if (u.lastAdriftDriftRound === game.currentRound) continue;
         const critRows = await tx.select().from(unitCriticalEffectsTable)
           .where(eq(unitCriticalEffectsTable.gameUnitId, u.id));
@@ -17692,7 +18523,34 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
                 reusePriorActivation: false,
               })
             : { unit: driftedUnit, hazards: [], gameCompleted: false, winnerId: null };
-          const finalDriftedUnit = asteroidResult.unit;
+          let finalDriftedUnit = asteroidResult.unit;
+          let completedAfterDeparture: typeof gamesTable.$inferSelect | null = null;
+          if (
+            driftPlan.boundaryCrossing
+            && !finalDriftedUnit.isDestroyed
+            && finalDriftedUnit.damageState !== "destroyed"
+          ) {
+            const consequence = departureConsequenceForEdge(
+              withdrawalPolicyForGame(game),
+              u.ownerId,
+              driftPlan.boundaryCrossing.edge,
+            );
+            const [departed] = await tx.update(gameUnitsTable).set({
+              boardState: "withdrawn",
+              departureReason: "compulsory-drift",
+              departureEdge: driftPlan.boundaryCrossing.edge,
+              departureRound: game.currentRound,
+              departureConsequence: consequence === "forbidden" ? "full-victory-points" : consequence,
+              hasFiredThisRound: true,
+            }).where(eq(gameUnitsTable.id, finalDriftedUnit.id)).returning();
+            if (departed) finalDriftedUnit = departed;
+            if (state !== "exploding-end-of-next") {
+              const completed = await completeGameIfFleetGone(tx, game);
+              if (completed.status === "completed") completedAfterDeparture = completed;
+            } else {
+              await refreshVictoryScores(tx, game);
+            }
+          }
           await recordMovementAuditLog(tx, {
             game,
             actorKind: "system",
@@ -17700,7 +18558,9 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
             unitBefore: u,
             unitAfter: finalDriftedUnit,
             movementKind: "adrift-drift",
-            summary: driftPlan.shortened
+            summary: driftPlan.boundaryCrossing
+              ? `${u.name} drifted ${actualDriftDistance.toFixed(1)}" off the ${driftPlan.boundaryCrossing.edge} edge during compulsory movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
+              : driftPlan.shortened
               ? `${u.name} drifted ${actualDriftDistance.toFixed(1)}" before contacting another base during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`
               : `${u.name} drifted ${driftDistance}" during end-phase adrift movement.${formatAsteroidMovementHazards(asteroidResult.hazards)}`,
             payload: {
@@ -17712,6 +18572,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
               driftTo,
               intendedDriftTo,
               overlapBlockedByUnitIds: driftPlan.blockedByUnitIds,
+              boundaryCrossing: driftPlan.boundaryCrossing,
               critEffects: (critRows as Array<typeof unitCriticalEffectsTable.$inferSelect>)
                 .map(r => ({ id: r.id, effectKey: r.effectKey, name: r.name })),
               asteroidHazards: asteroidResult.hazards,
@@ -17723,6 +18584,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
             const [completedGame] = await tx.select().from(gamesTable).where(eq(gamesTable.id, game.id));
             return completedGame ?? game;
           }
+          if (completedAfterDeparture) return completedAfterDeparture;
         }
       }
 
@@ -17771,34 +18633,26 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
       await autoRepairRedundantSystemCriticals(tx, game.id, game.currentRound);
       await autoRepairSpaceStationCriticals(tx, game.id, game.currentRound);
 
-      // 3. Re-evaluate win condition.
-      const postExplosion = await tx.select().from(gameUnitsTable)
-        .where(eq(gameUnitsTable.gameId, game.id));
-      let cAlive = 0, oAlive = 0;
-      for (const u of postExplosion) {
-        if (!unitCountsForVictory(u)) continue;
-        if (u.ownerId === game.challengerId) cAlive++;
-        else if (u.ownerId === game.opponentId) oAlive++;
-      }
-      if (game.opponentId && cAlive === 0 && oAlive > 0) {
-        const [row] = await tx.update(gamesTable).set({ status: "completed", winnerId: game.opponentId, activePlayerId: null, activeUnitId: null })
-          .where(eq(gamesTable.id, game.id)).returning();
-        return row;
-      } else if (game.opponentId && oAlive === 0 && cAlive > 0) {
-        const [row] = await tx.update(gamesTable).set({ status: "completed", winnerId: game.challengerId, activePlayerId: null, activeUnitId: null })
-          .where(eq(gamesTable.id, game.id)).returning();
-        return row;
-      } else if (game.opponentId && cAlive === 0 && oAlive === 0) {
-        const [row] = await tx.update(gamesTable).set({ status: "completed", winnerId: null, activePlayerId: null, activeUnitId: null })
-          .where(eq(gamesTable.id, game.id)).returning();
-        return row;
-      }
+      // Stand Down recovery is an Initiative Phase check. Resolve it while
+      // crossing into the new Initiative Phase, before surrendered ships are
+      // excluded from the fleet-survival check below.
+      await resolveStandDownRecoveryAtInitiative(tx, {
+        ...game,
+        currentRound: game.currentRound + 1,
+        currentTurn: game.currentTurn + 1,
+        phase: "initiative",
+      });
+
+      // 3. Re-evaluate the battle using victory points, including withdrawals.
+      const fleetOutcome = await completeGameIfFleetGone(tx, game);
+      if (fleetOutcome.status === "completed") return fleetOutcome;
 
       // 4. Shield regen.
       const survivors = await tx.select().from(gameUnitsTable).where(and(
         eq(gameUnitsTable.gameId, game.id), eq(gameUnitsTable.isDestroyed, false),
       ));
       for (const u of survivors) {
+        if (u.surrenderedToOwnerId) continue;
         const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
         if (!ship) continue;
         const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
@@ -17819,6 +18673,7 @@ router.post("/games/:gameId/pass-end-phase", requireAuth, async (req, res): Prom
 
       // 5. Interceptor refresh (filtered against permanently-lost traits).
       for (const u of survivors) {
+        if (u.surrenderedToOwnerId) continue;
         const [ship] = await tx.select().from(shipsTable).where(eq(shipsTable.id, u.shipId));
         if (!ship) continue;
         const [model] = await tx.select().from(shipModelsTable).where(eq(shipModelsTable.id, ship.shipModelId));
@@ -17913,6 +18768,7 @@ router.post("/games/:gameId/units/:unitId/self-repair", requireAuth, async (req,
       ));
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
+      if (unit.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship cannot use Self Repair"), { status: 400 });
 
       const result = await resolveSelfRepairForUnit(tx, game, unit, { throwOnUnavailable: true });
       if (!result) throw Object.assign(new Error("Self Repair unavailable"), { status: 400 });
@@ -17971,6 +18827,7 @@ router.post("/games/:gameId/units/:unitId/damage-control", requireAuth, async (r
       if (!unit) throw Object.assign(new Error("Unit not found"), { status: 404 });
       if (unit.ownerId !== userId) throw Object.assign(new Error("Not your ship"), { status: 403 });
       if (unit.isDestroyed) throw Object.assign(new Error("Ship destroyed"), { status: 400 });
+      if (unit.surrenderedToOwnerId) throw Object.assign(new Error("A surrendered ship cannot perform Damage Control"), { status: 400 });
       const unitModelForStation = await getShipModelForUnit(tx, unit);
       if (unitModelForStation && shipModelIsSpaceStation(unitModelForStation)) {
         throw Object.assign(new Error("Space stations never perform Damage Control"), { status: 400 });

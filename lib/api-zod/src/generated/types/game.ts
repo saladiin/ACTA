@@ -11,9 +11,11 @@ import type { GameDeploymentConfig } from './gameDeploymentConfig';
 import type { GameOpponentKind } from './gameOpponentKind';
 import type { GamePhase } from './gamePhase';
 import type { GamePriorityLevel } from './gamePriorityLevel';
+import type { GameSkybox } from './gameSkybox';
 import type { GameStatus } from './gameStatus';
 import type { GameTerrainConfig } from './gameTerrainConfig';
 import type { GameVisibility } from './gameVisibility';
+import type { GameWithdrawalConfig } from './gameWithdrawalConfig';
 
 export interface Game {
   id: number;
@@ -70,11 +72,11 @@ export interface Game {
      */
   allocationPoints: number;
   /** Engagement-specific board backdrop. Existing games default to bright-nebula. */
-  skybox: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
+  skybox: GameSkybox;
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
-  /** Host-controlled opt-in for authenticated observers. */
+  /** Host-controlled opt-in allowing authenticated non-participants to observe active or completed play. */
   allowObservers: boolean;
   /** True if this engagement includes generated terrain/scenery. */
   hasTerrain?: boolean;
@@ -96,6 +98,15 @@ export interface Game {
      * @nullable
      */
   terrainConfig?: GameTerrainConfig;
+  /**
+     * Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.
+     * @nullable
+     */
+  withdrawalConfig?: GameWithdrawalConfig;
+  /** Current rules-derived Victory Points for the challenger. */
+  challengerVictoryPoints?: number;
+  /** Current rules-derived Victory Points for the opponent. */
+  opponentVictoryPoints?: number;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**

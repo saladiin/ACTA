@@ -133,6 +133,16 @@ export const gamesTable = pgTable("games", {
   stationConfig: jsonb("station_config")
     .$type<Record<string, unknown> | null>()
     .default(null),
+  withdrawalConfig: jsonb("withdrawal_config")
+    .$type<Record<string, unknown> | null>()
+    .default(null),
+  challengerVictoryPoints: real("challenger_victory_points").notNull().default(0),
+  opponentVictoryPoints: real("opponent_victory_points").notNull().default(0),
+  campaignId: integer("campaign_id"),
+  campaignTurnId: integer("campaign_turn_id"),
+  campaignBattleId: integer("campaign_battle_id"),
+  campaignTargetId: integer("campaign_target_id"),
+  campaignScenarioKey: text("campaign_scenario_key"),
   // Crew Quality assignment policy for this engagement.
   // "standard" → every ship is locked to CQ 4 (Veteran) and the deploy UI
   // hides the per-ship picker. "custom" → each ship's CQ is chosen during
@@ -163,6 +173,10 @@ export const gameUnitsTable = pgTable("game_units", {
   gameId: integer("game_id").notNull(),
   ownerId: text("owner_id").notNull(),
   shipId: integer("ship_id").notNull(),
+  campaignShipInstanceId: integer("campaign_ship_instance_id"),
+  campaignPreBattleSnapshot: jsonb("campaign_pre_battle_snapshot")
+    .$type<Record<string, unknown> | null>()
+    .default(null),
   name: text("name").notNull(),
   modelFilename: text("model_filename").notNull(),
   faction: text("faction").notNull(),
@@ -170,6 +184,10 @@ export const gameUnitsTable = pgTable("game_units", {
   // "deployed" units exist in realspace on the board. "hyperspace" units
   // are reserve units held off-table until a jump point brings them in.
   boardState: text("board_state").notNull().default("deployed"),
+  departureReason: text("departure_reason"),
+  departureEdge: text("departure_edge"),
+  departureRound: integer("departure_round"),
+  departureConsequence: text("departure_consequence"),
   hullPoints: integer("hull_points").notNull(),
   maxHullPoints: integer("max_hull_points").notNull(),
   // Printed Damage threshold from the ship sheet. When current hullPoints is

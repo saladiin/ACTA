@@ -45,7 +45,7 @@ Circular blockers should be the default first implementation. Polygon support ex
 - Client preview is advisory and should never be the only blocker.
 - `blocked` means no shot may be declared through the object.
 - `obscured` should not be treated as blocked; implement separately as hit penalties, stealth modifiers, range effects, or scenario-specific rules.
-- Stations should not be implemented through the dormant Orion Starbase roster work unless explicitly requested.
+- Station LOS and combat should extend the published Orion station implementation already live on `public-alpha`.
 
 ## Open Rule Decisions
 

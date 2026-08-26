@@ -12,6 +12,14 @@ export function observerSeatAvailable(currentCount: number, alreadyMember: boole
   return alreadyMember || currentCount < MAX_GAME_OBSERVERS;
 }
 
+export function gameAppearsInObserverList(
+  game: Pick<ViewerGame, "status" | "allowObservers">,
+  isAdmin: boolean,
+): boolean {
+  const observableStatus = game.status === "active" || game.status === "completed";
+  return observableStatus && (isAdmin || game.allowObservers);
+}
+
 type ViewerGame = {
   challengerId: string;
   opponentId: string | null;

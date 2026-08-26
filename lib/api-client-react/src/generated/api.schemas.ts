@@ -51,25 +51,29 @@ export interface ShipModel {
   name: string;
   filename: string;
   faction: string;
+  /**
+     * Printed ship classification used for fleet and rules categorization.
+     * @nullable
+     */
+  shipClass?: string | null;
   /** Immutable faction rules identity; never inferred from trait text. */
   rulesProfile?: ShipModelRulesProfile;
   pointCost: number;
   priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
-  /** Printed Damage threshold copied to deployed units. */
+  /** @nullable */
   damageThreshold?: number | null;
   /** Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable. */
   physicalDisruptionThreshold?: number;
-  /** Printed crew complement. */
+  /** @nullable */
   crew?: number | null;
-  /** Printed Crew threshold copied to deployed units. */
+  /** @nullable */
   crewThreshold?: number | null;
   speed: number;
-  /** Printed turns per movement activation. */
+  /** @nullable */
   turns?: number | null;
-  /** Printed degrees per turn. */
+  /** @nullable */
   turnAngle?: number | null;
-  /** Maximum shield pool, if any. */
   shieldMax?: number;
   weaponRange: number;
   weaponDamage: number;
@@ -180,6 +184,21 @@ export const GamePriorityLevel = {
   ancient: 'ancient',
 } as const;
 
+/**
+ * Engagement-specific board backdrop. Existing games default to bright-nebula.
+ */
+export type GameSkybox = typeof GameSkybox[keyof typeof GameSkybox];
+
+
+export const GameSkybox = {
+  none: 'none',
+  'bright-nebula': 'bright-nebula',
+  'dark-forest': 'dark-forest',
+  'drazi-green-purple': 'drazi-green-purple',
+  'distant-fields': 'distant-fields',
+  zhadum: 'zhadum',
+} as const;
+
 export type GameVisibility = typeof GameVisibility[keyof typeof GameVisibility];
 
 
@@ -199,6 +218,12 @@ export type GameDeploymentConfig = { [key: string]: unknown } | null;
  * @nullable
  */
 export type GameTerrainConfig = { [key: string]: unknown } | null;
+
+/**
+ * Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.
+ * @nullable
+ */
+export type GameWithdrawalConfig = { [key: string]: unknown } | null;
 
 /**
  * standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.
@@ -271,11 +296,11 @@ export interface Game {
      */
   allocationPoints: number;
   /** Engagement-specific board backdrop. Existing games default to bright-nebula. */
-  skybox: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
+  skybox: GameSkybox;
   visibility?: GameVisibility;
   /** True if this engagement is gated by a password (does not expose the password itself). */
   hasPassword?: boolean;
-  /** Host-controlled opt-in for authenticated observers. */
+  /** Host-controlled opt-in allowing authenticated non-participants to observe active or completed play. */
   allowObservers: boolean;
   /** True if this engagement includes generated terrain/scenery. */
   hasTerrain?: boolean;
@@ -297,6 +322,15 @@ export interface Game {
      * @nullable
      */
   terrainConfig?: GameTerrainConfig;
+  /**
+     * Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.
+     * @nullable
+     */
+  withdrawalConfig?: GameWithdrawalConfig;
+  /** Current rules-derived Victory Points for the challenger. */
+  challengerVictoryPoints?: number;
+  /** Current rules-derived Victory Points for the opponent. */
+  opponentVictoryPoints?: number;
   /** standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy. */
   crewQualityMode?: GameCrewQualityMode;
   /**
@@ -370,6 +404,21 @@ export type GameInputAmbushPlayer = typeof GameInputAmbushPlayer[keyof typeof Ga
 export const GameInputAmbushPlayer = {
   challenger: 'challenger',
   opponent: 'opponent',
+} as const;
+
+/**
+ * Board backdrop selected for this engagement.
+ */
+export type GameInputSkybox = typeof GameInputSkybox[keyof typeof GameInputSkybox];
+
+
+export const GameInputSkybox = {
+  none: 'none',
+  'bright-nebula': 'bright-nebula',
+  'dark-forest': 'dark-forest',
+  'drazi-green-purple': 'drazi-green-purple',
+  'distant-fields': 'distant-fields',
+  zhadum: 'zhadum',
 } as const;
 
 /**
@@ -455,7 +504,7 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
-  /** Allow up to two authenticated observers after deployment. */
+  /** Allow authenticated non-participants to observe after deployment. */
   allowObservers?: boolean;
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
@@ -498,7 +547,7 @@ export interface GameInput {
      */
   ambushBoxDepth?: number;
   /** Board backdrop selected for this engagement. */
-  skybox?: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
+  skybox?: GameInputSkybox;
   /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
   terrainPlacement?: GameInputTerrainPlacement;
   /** Optional terrain package for this engagement. */
@@ -519,6 +568,26 @@ export interface AcceptGameInput {
      * @nullable
      */
   password?: string | null;
+}
+
+export interface ObserveGameInput {
+  /**
+     * Required to observe a private engagement.
+     * @nullable
+     */
+  password?: string | null;
+}
+
+export type ObserveGameResultViewerRole = typeof ObserveGameResultViewerRole[keyof typeof ObserveGameResultViewerRole];
+
+
+export const ObserveGameResultViewerRole = {
+  observer: 'observer',
+  'admin-observer': 'admin-observer',
+} as const;
+
+export interface ObserveGameResult {
+  viewerRole: ObserveGameResultViewerRole;
 }
 
 export type GameUnitAncientStatusEffectsItemKind = typeof GameUnitAncientStatusEffectsItemKind[keyof typeof GameUnitAncientStatusEffectsItemKind];
@@ -580,6 +649,40 @@ export type GameUnitCarriedFightersItem = {
   destroyed: number;
 };
 
+export type GameUnitBoardState = typeof GameUnitBoardState[keyof typeof GameUnitBoardState];
+
+
+export const GameUnitBoardState = {
+  deployed: 'deployed',
+  hyperspace: 'hyperspace',
+  withdrawn: 'withdrawn',
+} as const;
+
+/**
+ * @nullable
+ */
+export type GameUnitDepartureEdge = typeof GameUnitDepartureEdge[keyof typeof GameUnitDepartureEdge] | null;
+
+
+export const GameUnitDepartureEdge = {
+  port: 'port',
+  starboard: 'starboard',
+  north: 'north',
+  south: 'south',
+} as const;
+
+/**
+ * @nullable
+ */
+export type GameUnitDepartureConsequence = typeof GameUnitDepartureConsequence[keyof typeof GameUnitDepartureConsequence] | null;
+
+
+export const GameUnitDepartureConsequence = {
+  'tactical-withdrawal': 'tactical-withdrawal',
+  'full-victory-points': 'full-victory-points',
+  'objective-exit': 'objective-exit',
+} as const;
+
 /**
  * Server ledger used to enforce the 4-inch separation rule for Beam split-fire targets.
  */
@@ -635,8 +738,6 @@ export interface GameUnit {
   faction: string;
   /** Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement. */
   baseRadiusInches: number;
-  /** Board state. hyperspace units are alive but off-table in reserves; withdrawn units have tactically left the battle. */
-  boardState?: 'deployed' | 'hyperspace' | 'withdrawn';
   hullPoints: number;
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
@@ -662,18 +763,6 @@ export interface GameUnit {
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
   maxCrewPoints: number;
-  /** Current boarding Troops aboard the ship. */
-  troopPoints?: number;
-  /** Printed boarding Troops copied from the ship model at deploy. */
-  maxTroopPoints?: number;
-  /** Player id that captured this ship by boarding, if any. */
-  capturedByOwnerId?: string | null;
-  /** Round this ship was captured by boarding, if any. */
-  capturedRound?: number | null;
-  /** Player id this ship surrendered to, if any. */
-  surrenderedToOwnerId?: string | null;
-  /** Round this ship surrendered, if any. */
-  surrenderedRound?: number | null;
   /** Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback. */
   crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
@@ -689,6 +778,28 @@ export interface GameUnit {
      * @nullable
      */
   launchedFromUnitId?: number | null;
+  boardState?: GameUnitBoardState;
+  troopPoints?: number;
+  maxTroopPoints?: number;
+  /** @nullable */
+  capturedByOwnerId?: string | null;
+  /** @nullable */
+  capturedRound?: number | null;
+  /** @nullable */
+  surrenderedToOwnerId?: string | null;
+  /** @nullable */
+  surrenderedRound?: number | null;
+  /**
+     * Why this unit permanently left the battlefield.
+     * @nullable
+     */
+  departureReason?: string | null;
+  /** @nullable */
+  departureEdge?: GameUnitDepartureEdge;
+  /** @nullable */
+  departureRound?: number | null;
+  /** @nullable */
+  departureConsequence?: GameUnitDepartureConsequence;
   /** Round number for the current fighter bay operation counter. */
   fighterBayOperationsRound?: number;
   /** Launch/recovery operations used by this unit in fighterBayOperationsRound. */
@@ -752,6 +863,21 @@ export interface GameUnit {
   scoutCoordConsumed?: boolean;
 }
 
+/**
+ * The authenticated viewer's authority for this response. Eligible observers receive metadata only until POST /observe succeeds.
+ */
+export type GameDetailViewerRole = typeof GameDetailViewerRole[keyof typeof GameDetailViewerRole];
+
+
+export const GameDetailViewerRole = {
+  challenger: 'challenger',
+  opponent: 'opponent',
+  observer: 'observer',
+  'admin-observer': 'admin-observer',
+  'eligible-observer': 'eligible-observer',
+  'open-guest': 'open-guest',
+} as const;
+
 export type TurnMoves = { [key: string]: unknown };
 
 export type TurnAttacks = { [key: string]: unknown };
@@ -767,38 +893,72 @@ export interface Turn {
   resolvedAt: string | null;
 }
 
-export interface GameDetail {
-  game: Game;
-  units: GameUnit[];
-  turns: Turn[];
-  jumpPoints?: GameJumpPoint[];
-  observers: GameObserverSummary[];
-  viewerRole: 'challenger' | 'opponent' | 'observer' | 'admin-observer' | 'eligible-observer' | 'open-guest';
-}
+export type GameJumpPointDirection = typeof GameJumpPointDirection[keyof typeof GameJumpPointDirection];
 
-export interface GameObserverSummary {
-  userId: string;
-  name?: string | null;
-}
+
+export const GameJumpPointDirection = {
+  'to-realspace': 'to-realspace',
+  'to-hyperspace': 'to-hyperspace',
+} as const;
+
+export type GameJumpPointStatus = typeof GameJumpPointStatus[keyof typeof GameJumpPointStatus];
+
+
+export const GameJumpPointStatus = {
+  open: 'open',
+  spent: 'spent',
+  closed: 'closed',
+} as const;
+
+export type GameJumpPointVfxPreset = { [key: string]: unknown };
 
 export interface GameJumpPoint {
   id: number;
   gameId: number;
   ownerId: string;
   creatorUnitId: number;
-  direction: 'to-hyperspace' | 'to-realspace';
+  direction: GameJumpPointDirection;
   hexQ: number;
   hexR: number;
   baseRadiusInches: number;
   heading: number;
   createdRound: number;
   expiresAfterRound: number;
-  status: 'open' | 'closed' | 'spent';
+  status: GameJumpPointStatus;
   shockWaveArmed: boolean;
   shockWaveResolved: boolean;
-  vfxPreset: Record<string, unknown>;
+  vfxPreset: GameJumpPointVfxPreset;
   createdAt: string;
 }
+
+export interface GameObserverSummary {
+  userId: string;
+  /** @nullable */
+  name?: string | null;
+}
+
+export interface GameDetail {
+  game: Game;
+  units: GameUnit[];
+  turns: Turn[];
+  jumpPoints: GameJumpPoint[];
+  /** @maxItems 2 */
+  observers: GameObserverSummary[];
+  /** The authenticated viewer's authority for this response. Eligible observers receive metadata only until POST /observe succeeds. */
+  viewerRole: GameDetailViewerRole;
+}
+
+/**
+ * Initial deployment state. Hyperspace places the ship in reserve.
+ * @nullable
+ */
+export type ShipPlacementBoardState = typeof ShipPlacementBoardState[keyof typeof ShipPlacementBoardState] | null;
+
+
+export const ShipPlacementBoardState = {
+  deployed: 'deployed',
+  hyperspace: 'hyperspace',
+} as const;
 
 export interface ShipPlacement {
   /**
@@ -813,8 +973,6 @@ export interface ShipPlacement {
   shipModelId?: number | null;
   hexQ: number;
   hexR: number;
-  /** Deployment state. deployed = starts on the board; hyperspace = starts in hyperspace reserves. */
-  boardState?: 'deployed' | 'hyperspace';
   heading: number;
   /**
      * Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
@@ -834,6 +992,16 @@ export interface ShipPlacement {
      * @nullable
      */
   deploymentGroupId?: string | null;
+  /**
+     * Optional campaign roster ship assigned to this battle.
+     * @nullable
+     */
+  campaignShipInstanceId?: number | null;
+  /**
+     * Initial deployment state. Hyperspace places the ship in reserve.
+     * @nullable
+     */
+  boardState?: ShipPlacementBoardState;
 }
 
 export interface DeploymentInput {
@@ -851,6 +1019,8 @@ export interface MoveAction {
   toHexQ: number;
   toHexR: number;
   newHeading: number;
+  /** Required when any part of the moving base crosses a play-area boundary. */
+  confirmWithdrawal?: boolean;
 }
 
 export interface FireAction {
@@ -874,6 +1044,34 @@ export interface FireWeaponInput {
   /** Opt-in: consume an unspent allied Scout 'coord' token (declared this round and targeting this targetUnitId) to re-roll all failed AD from this weapon system. Server rejects with 400 if no eligible scout token exists, if the weapon has Beam / Mini Beam / Energy Mine / Twin Linked, or if a coord token has already been consumed this round by an allied scout targeting this target. Default false. */
   useScoutCoordination?: boolean;
 }
+
+export type FireWeaponResultManeuverToShieldFailureReason = typeof FireWeaponResultManeuverToShieldFailureReason[keyof typeof FireWeaponResultManeuverToShieldFailureReason];
+
+
+export const FireWeaponResultManeuverToShieldFailureReason = {
+  'line-outside': 'line-outside',
+  'roll-failed': 'roll-failed',
+} as const;
+
+/**
+ * Maneuver to Shield Them interposition result. Null when no eligible or nearby shield ship was relevant to the shot.
+ */
+export type FireWeaponResultManeuverToShield = {
+  originalTargetUnitId?: number;
+  originalTargetName?: string;
+  shieldUnitId?: number;
+  shieldUnitName?: string;
+  lineDistance?: number;
+  protectedDistance?: number;
+  attackerRoll?: number | null;
+  attackerCrewQuality?: number | null;
+  attackerTotal?: number | null;
+  shieldRoll?: number | null;
+  shieldCrewQuality?: number | null;
+  shieldTotal?: number | null;
+  success?: boolean;
+  failureReason?: FireWeaponResultManeuverToShieldFailureReason;
+} | null;
 
 export type FireWeaponResultAttackRollKindsItem = typeof FireWeaponResultAttackRollKindsItem[keyof typeof FireWeaponResultAttackRollKindsItem];
 
@@ -929,30 +1127,13 @@ export interface ExplosionVictim {
   destroyed: boolean;
 }
 
-export type FireWeaponResultManeuverToShield = {
-  originalTargetUnitId?: number;
-  originalTargetName?: string;
-  shieldUnitId?: number;
-  shieldUnitName?: string;
-  lineDistance?: number;
-  protectedDistance?: number;
-  attackerRoll?: number | null;
-  attackerCrewQuality?: number | null;
-  attackerTotal?: number | null;
-  shieldRoll?: number | null;
-  shieldCrewQuality?: number | null;
-  shieldTotal?: number | null;
-  success?: boolean;
-  failureReason?: 'line-outside' | 'roll-failed';
-};
-
 export interface FireWeaponResult {
   weaponId: number;
   targetUnitId: number;
   /** Original target selected before Maneuver to Shield Them interposition. Present when the attack was resolved through the current fire endpoint. */
   originalTargetUnitId?: number;
   /** Maneuver to Shield Them interposition result. Null when no eligible or nearby shield ship was relevant to the shot. */
-  maneuverToShield?: FireWeaponResultManeuverToShield | null;
+  maneuverToShield?: FireWeaponResultManeuverToShield;
   /** Raw die threshold for each AD after AP/Super AP result modifiers are folded in (base hullRating / Beam=4+ / crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
   hitThreshold: number;
   /** Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth). */
@@ -1090,6 +1271,7 @@ export const SpecialActionInputAction = {
   'track-that-target': 'track-that-target',
   'maneuver-to-shield': 'maneuver-to-shield',
   'cause-confusion': 'cause-confusion',
+  'stand-down-and-prepare-to-be-boarded': 'stand-down-and-prepare-to-be-boarded',
   'initiate-jump-point': 'initiate-jump-point',
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',
@@ -1100,12 +1282,15 @@ export const SpecialActionInputAction = {
 export interface SpecialActionInput {
   action: SpecialActionInputAction;
   /**
-     * Required for targeted Special Actions such as 'concentrate-fire', 'track-that-target', and 'cause-confusion' — the nominated enemy unit id.
+     * Required for targeted Special Actions; the nominated enemy unit id.
      * @nullable
      */
   targetUnitId?: number | null;
+  /** For Stand Down and Prepare to be Boarded, the friendly ships whose current Damage points are counted as pressure against the target. */
+  involvedUnitIds?: number[];
   /**
-     * For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action. Defaults to all available Troops for older clients.
+     * For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action.
+     * @minimum 1
      */
   troopsCommitted?: number;
 }
@@ -1195,7 +1380,10 @@ export const ScoutActionInputAction = {
 export interface ScoutActionInput {
   /** counter-stealth = reduce target's Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam / Mini Beam / Energy Mine / Twin Linked weapons). */
   action: ScoutActionInputAction;
-  /** Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted/null when declaring the support mode during movement. Must be within 36" of the Scout. */
+  /**
+     * Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted/null when declaring the support mode during movement. Must be within 36" of the Scout.
+     * @nullable
+     */
   targetUnitId?: number | null;
 }
 
@@ -1209,15 +1397,27 @@ export const ScoutActionResultAction = {
 
 export interface ScoutActionResult {
   action: ScoutActionResultAction;
-  /** Resolved target id, or null for a movement-phase declaration. */
+  /**
+     * Resolved target id, or null for a movement-phase declaration.
+     * @nullable
+     */
   targetUnitId: number | null;
   /** True if the declaration was recorded or the 1d6 + crewQuality CQ check met cqRequired. */
   success: boolean;
-  /** 1d6 result, or null before target resolution. */
+  /**
+     * 1d6 result, or null before target resolution.
+     * @nullable
+     */
   cqRoll: number | null;
-  /** cqRoll + scout's crewQuality, or null before target resolution. */
+  /**
+     * cqRoll + scout's crewQuality, or null before target resolution.
+     * @nullable
+     */
   cqTotal: number | null;
-  /** Always 8 for target resolution, or null for movement-phase declaration. */
+  /**
+     * Always 8 for target resolution, or null for movement-phase declaration.
+     * @nullable
+     */
   cqRequired: number | null;
   /** True when this response recorded the movement-phase declaration. */
   declared?: boolean;
@@ -1230,6 +1430,8 @@ export interface MoveUnitInput {
   toHexQ: number;
   toHexR: number;
   newHeading: number;
+  /** Required when any part of the moving base crosses a play-area boundary. */
+  confirmWithdrawal?: boolean;
 }
 
 export interface LaunchFighterInput {

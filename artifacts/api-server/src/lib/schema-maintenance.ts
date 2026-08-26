@@ -5856,6 +5856,38 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS withdrawal_config jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS challenger_victory_points real NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS opponent_victory_points real NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS campaign_id integer
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS campaign_turn_id integer
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS campaign_battle_id integer
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS campaign_target_id integer
+    `);
+    await pool.query(`
+      ALTER TABLE games
+      ADD COLUMN IF NOT EXISTS campaign_scenario_key text
+    `);
+    await pool.query(`
+      ALTER TABLE games
       ADD COLUMN IF NOT EXISTS archived_at timestamp with time zone
     `);
     await pool.query(`
@@ -5952,7 +5984,31 @@ export async function ensureActaAllocationSchema(): Promise<void> {
     `);
     await pool.query(`
       ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS campaign_ship_instance_id integer
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS campaign_pre_battle_snapshot jsonb
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
       ADD COLUMN IF NOT EXISTS board_state text NOT NULL DEFAULT 'deployed'
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS departure_reason text
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS departure_edge text
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS departure_round integer
+    `);
+    await pool.query(`
+      ALTER TABLE game_units
+      ADD COLUMN IF NOT EXISTS departure_consequence text
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS game_jump_points (

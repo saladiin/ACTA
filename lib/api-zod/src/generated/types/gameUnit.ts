@@ -7,8 +7,11 @@
  */
 import type { CriticalEffect } from './criticalEffect';
 import type { GameUnitAncientStatusEffectsItem } from './gameUnitAncientStatusEffectsItem';
+import type { GameUnitBoardState } from './gameUnitBoardState';
 import type { GameUnitCarriedFightersItem } from './gameUnitCarriedFightersItem';
 import type { GameUnitDamageState } from './gameUnitDamageState';
+import type { GameUnitDepartureConsequence } from './gameUnitDepartureConsequence';
+import type { GameUnitDepartureEdge } from './gameUnitDepartureEdge';
 import type { GameUnitShadowManeuverMode } from './gameUnitShadowManeuverMode';
 import type { GameUnitSlowLoadingWeaponCooldowns } from './gameUnitSlowLoadingWeaponCooldowns';
 import type { GameUnitSplitFireFirstTargetByWeapon } from './gameUnitSplitFireFirstTargetByWeapon';
@@ -25,8 +28,6 @@ export interface GameUnit {
   faction: string;
   /** Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement. */
   baseRadiusInches: number;
-  /** Board state. hyperspace units are alive but off-table in reserves; withdrawn units have tactically left the battle. */
-  boardState?: 'deployed' | 'hyperspace' | 'withdrawn';
   hullPoints: number;
   maxHullPoints: number;
   /** Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull. */
@@ -52,18 +53,6 @@ export interface GameUnit {
   crewPoints: number;
   /** Maximum crew complement, set at deploy from ship_model.crew. */
   maxCrewPoints: number;
-  /** Current boarding Troops aboard the ship. */
-  troopPoints?: number;
-  /** Printed boarding Troops copied from the ship model at deploy. */
-  maxTroopPoints?: number;
-  /** Player id that captured this ship by boarding, if any. */
-  capturedByOwnerId?: string | null;
-  /** Round this ship was captured by boarding, if any. */
-  capturedRound?: number | null;
-  /** Player id this ship surrendered to, if any. */
-  surrenderedToOwnerId?: string | null;
-  /** Round this ship surrendered, if any. */
-  surrenderedRound?: number | null;
   /** Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback. */
   crewThreshold: number;
   /** Authoritative life-state. 'adrift' = halved speed + compulsory drift; 'exploding-end-of-next' = delayed catastrophic kill; 'destroyed' mirrors isDestroyed. */
@@ -79,6 +68,28 @@ export interface GameUnit {
      * @nullable
      */
   launchedFromUnitId?: number | null;
+  boardState?: GameUnitBoardState;
+  troopPoints?: number;
+  maxTroopPoints?: number;
+  /** @nullable */
+  capturedByOwnerId?: string | null;
+  /** @nullable */
+  capturedRound?: number | null;
+  /** @nullable */
+  surrenderedToOwnerId?: string | null;
+  /** @nullable */
+  surrenderedRound?: number | null;
+  /**
+     * Why this unit permanently left the battlefield.
+     * @nullable
+     */
+  departureReason?: string | null;
+  /** @nullable */
+  departureEdge?: GameUnitDepartureEdge;
+  /** @nullable */
+  departureRound?: number | null;
+  /** @nullable */
+  departureConsequence?: GameUnitDepartureConsequence;
   /** Round number for the current fighter bay operation counter. */
   fighterBayOperationsRound?: number;
   /** Launch/recovery operations used by this unit in fighterBayOperationsRound. */

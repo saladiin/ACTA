@@ -10,4 +10,6 @@ export interface MoveUnitInput {
   toHexQ: number;
   toHexR: number;
   newHeading: number;
+  /** Required when any part of the moving base crosses a play-area boundary. */
+  confirmWithdrawal?: boolean;
 }

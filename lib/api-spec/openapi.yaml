@@ -900,12 +900,19 @@ components:
         name:     { type: string }
         filename: { type: string }
         faction:  { type: string }
+        shipClass: { type: ["string", "null"], description: "Printed ship classification used for fleet and rules categorization." }
         rulesProfile: { type: string, enum: [standard, ancients, shadows, vorlons], description: "Immutable faction rules identity; never inferred from trait text." }
         pointCost:    { type: integer }
         priorityLevel: { type: string, enum: [patrol, skirmish, raid, battle, war, armageddon, ancient] }
         hullPoints:   { type: integer }
+        damageThreshold: { type: ["integer", "null"] }
         physicalDisruptionThreshold: { type: integer, description: "Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable." }
+        crew:         { type: ["integer", "null"] }
+        crewThreshold: { type: ["integer", "null"] }
         speed:        { type: integer }
+        turns:        { type: ["integer", "null"] }
+        turnAngle:    { type: ["integer", "null"] }
+        shieldMax:    { type: integer }
         weaponRange:  { type: integer }
         weaponDamage: { type: integer }
         baseRadiusInches: { type: number, description: "Gameplay base radius in board inches. Used for contact/overlap/fighter edge range; independent of rendered model scale." }
@@ -1005,6 +1012,12 @@ components:
           type: ["object", "null"]
           additionalProperties: true
           description: "Structured terrain objects generated for this engagement."
+        withdrawalConfig:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: "Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals."
+        challengerVictoryPoints: { type: number, description: "Current rules-derived Victory Points for the challenger." }
+        opponentVictoryPoints: { type: number, description: "Current rules-derived Victory Points for the opponent." }
         crewQualityMode: { type: string, enum: [standard, custom], description: "standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy." }
         aiProfile: { type: ["string", "null"], description: "AI strategy profile selected for this game. Null for human games." }
         aiState: { type: object, additionalProperties: true, description: "Latest AI setup/action diagnostic state. Empty for human games." }
@@ -1053,7 +1066,7 @@ components:
       type: object
       required: [viewerRole]
       properties:
-        viewerRole: { type: string, enum: [observer] }
+        viewerRole: { type: string, enum: [observer, admin-observer] }
 
     GameUnit:
       type: object
@@ -1115,6 +1128,17 @@ components:
         launchedFromUnitId:
           type: ["integer", "null"]
           description: "Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters."
+        boardState: { type: string, enum: [deployed, hyperspace, withdrawn] }
+        troopPoints: { type: integer }
+        maxTroopPoints: { type: integer }
+        capturedByOwnerId: { type: ["string", "null"] }
+        capturedRound: { type: ["integer", "null"] }
+        surrenderedToOwnerId: { type: ["string", "null"] }
+        surrenderedRound: { type: ["integer", "null"] }
+        departureReason: { type: ["string", "null"], description: "Why this unit permanently left the battlefield." }
+        departureEdge: { type: ["string", "null"], enum: [port, starboard, north, south, null] }
+        departureRound: { type: ["integer", "null"] }
+        departureConsequence: { type: ["string", "null"], enum: [tactical-withdrawal, full-victory-points, objective-exit, null] }
         fighterBayOperationsRound:
           type: integer
           description: "Round number for the current fighter bay operation counter."
@@ -1184,11 +1208,12 @@ components:
 
     GameDetail:
       type: object
-      required: [game, units, turns, observers, viewerRole]
+      required: [game, units, turns, jumpPoints, observers, viewerRole]
       properties:
         game:  { $ref: "#/components/schemas/Game" }
         units: { type: array, items: { $ref: "#/components/schemas/GameUnit" } }
         turns: { type: array, items: { $ref: "#/components/schemas/Turn" } }
+        jumpPoints: { type: array, items: { $ref: "#/components/schemas/GameJumpPoint" } }
         observers:
           type: array
           maxItems: 2
@@ -1197,6 +1222,29 @@ components:
           type: string
           enum: [challenger, opponent, observer, admin-observer, eligible-observer, open-guest]
           description: "The authenticated viewer's authority for this response. Eligible observers receive metadata only until POST /observe succeeds."
+
+    GameJumpPoint:
+      type: object
+      required: [id, gameId, ownerId, creatorUnitId, direction, hexQ, hexR, baseRadiusInches, heading, createdRound, expiresAfterRound, status, shockWaveArmed, shockWaveResolved, vfxPreset, createdAt]
+      properties:
+        id: { type: integer }
+        gameId: { type: integer }
+        ownerId: { type: string }
+        creatorUnitId: { type: integer }
+        direction: { type: string, enum: [to-realspace, to-hyperspace] }
+        hexQ: { type: number }
+        hexR: { type: number }
+        baseRadiusInches: { type: number }
+        heading: { type: integer }
+        createdRound: { type: integer }
+        expiresAfterRound: { type: integer }
+        status: { type: string, enum: [open, spent, closed] }
+        shockWaveArmed: { type: boolean }
+        shockWaveResolved: { type: boolean }
+        vfxPreset:
+          type: object
+          additionalProperties: true
+        createdAt: { type: string, format: date-time }
 
     GameObserverSummary:
       type: object
@@ -1231,6 +1279,13 @@ components:
           type: ["string", "null"]
           maxLength: 80
           description: "Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry."
+        campaignShipInstanceId:
+          type: ["integer", "null"]
+          description: "Optional campaign roster ship assigned to this battle."
+        boardState:
+          type: ["string", "null"]
+          enum: [deployed, hyperspace, null]
+          description: "Initial deployment state. Hyperspace places the ship in reserve."
 
     DeploymentInput:
       type: object
@@ -1253,6 +1308,7 @@ components:
         toHexQ:     { type: number }
         toHexR:     { type: number }
         newHeading: { type: integer }
+        confirmWithdrawal: { type: boolean, default: false, description: "Required when any part of the moving base crosses a play-area boundary." }
 
     FireAction:
       type: object
@@ -1554,10 +1610,18 @@ components:
       properties:
         action:
           type: string
-          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, track-that-target, maneuver-to-shield, cause-confusion, all-hands-on-deck, scramble, regenerate]
+          enum: [all-power-engines, all-stop, all-stop-pivot, come-about-extra-turn, come-about-sharp-turn, blast-doors, intensify-defense, run-silent, concentrate-fire, track-that-target, maneuver-to-shield, cause-confusion, stand-down-and-prepare-to-be-boarded, initiate-jump-point, all-hands-on-deck, scramble, regenerate, launch-breaching-pods-and-shuttles]
         targetUnitId:
           type: ["integer", "null"]
-          description: "Required for targeted Special Actions such as 'concentrate-fire', 'track-that-target', and 'cause-confusion' — the nominated enemy unit id."
+          description: "Required for targeted Special Actions; the nominated enemy unit id."
+        involvedUnitIds:
+          type: array
+          items: { type: integer }
+          description: "For Stand Down and Prepare to be Boarded, the friendly ships whose current Damage points are counted as pressure against the target."
+        troopsCommitted:
+          type: integer
+          minimum: 1
+          description: "For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action."
 
     ShadowManeuverInput:
       type: object
@@ -1656,6 +1720,7 @@ components:
         toHexQ:     { type: number }
         toHexR:     { type: number }
         newHeading: { type: integer }
+        confirmWithdrawal: { type: boolean, default: false, description: "Required when any part of the moving base crosses a play-area boundary." }
 
     LaunchFighterInput:
       type: object

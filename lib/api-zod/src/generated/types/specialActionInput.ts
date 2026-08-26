@@ -10,12 +10,15 @@ import type { SpecialActionInputAction } from './specialActionInputAction';
 export interface SpecialActionInput {
   action: SpecialActionInputAction;
   /**
-     * Required for targeted Special Actions such as 'concentrate-fire', 'track-that-target', and 'cause-confusion' — the nominated enemy unit id.
+     * Required for targeted Special Actions; the nominated enemy unit id.
      * @nullable
      */
   targetUnitId?: number | null;
+  /** For Stand Down and Prepare to be Boarded, the friendly ships whose current Damage points are counted as pressure against the target. */
+  involvedUnitIds?: number[];
   /**
-     * For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action. Defaults to all available Troops for older clients.
+     * For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action.
+     * @minimum 1
      */
   troopsCommitted?: number;
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  gameAppearsInObserverList,
   resolveGameViewerRole,
   observerSeatAvailable,
   viewerRoleHasFullGameState,
@@ -60,6 +61,13 @@ test("admin and development AI control remain distinct", () => {
     isObserverMember: false,
     controlsAiOpponent: true,
   }), "opponent");
+});
+
+test("admins can discover games that ordinary observers cannot", () => {
+  const disabledGame = { ...activeGame, allowObservers: false };
+  assert.equal(gameAppearsInObserverList(disabledGame, false), false);
+  assert.equal(gameAppearsInObserverList(disabledGame, true), true);
+  assert.equal(gameAppearsInObserverList({ ...disabledGame, status: "deploying" }, true), false);
 });
 
 test("observer seats are idempotent and capped at two", () => {

@@ -14,25 +14,29 @@ export interface ShipModel {
   name: string;
   filename: string;
   faction: string;
+  /**
+     * Printed ship classification used for fleet and rules categorization.
+     * @nullable
+     */
+  shipClass?: string | null;
   /** Immutable faction rules identity; never inferred from trait text. */
   rulesProfile?: ShipModelRulesProfile;
   pointCost: number;
   priorityLevel: ShipModelPriorityLevel;
   hullPoints: number;
-  /** Printed Damage threshold copied to deployed units. */
+  /** @nullable */
   damageThreshold?: number | null;
   /** Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable. */
   physicalDisruptionThreshold?: number;
-  /** Printed crew complement. */
+  /** @nullable */
   crew?: number | null;
-  /** Printed Crew threshold copied to deployed units. */
+  /** @nullable */
   crewThreshold?: number | null;
   speed: number;
-  /** Printed turns per movement activation. */
+  /** @nullable */
   turns?: number | null;
-  /** Printed degrees per turn. */
+  /** @nullable */
   turnAngle?: number | null;
-  /** Maximum shield pool, if any. */
   shieldMax?: number;
   weaponRange: number;
   weaponDamage: number;

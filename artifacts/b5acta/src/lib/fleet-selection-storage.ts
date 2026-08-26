@@ -1,6 +1,11 @@
 export type StoredFleetSelectionEntry = {
   shipModelId: number;
   count: number;
+  campaignShips?: Array<{
+    campaignShipInstanceId: number;
+    name?: string | null;
+    crewQuality?: number | null;
+  }>;
 };
 
 export type StoredFleetSelection = {
@@ -32,6 +37,21 @@ export function readStoredFleetSelection(
           .map((entry) => ({
             shipModelId: Number(entry?.shipModelId),
             count: Math.max(0, Math.trunc(Number(entry?.count))),
+            campaignShips: Array.isArray(entry?.campaignShips)
+              ? entry.campaignShips
+                  .map((ship) => ({
+                    campaignShipInstanceId: Number(ship?.campaignShipInstanceId),
+                    name:
+                      typeof ship?.name === "string" && ship.name.trim()
+                        ? ship.name.trim()
+                        : null,
+                    crewQuality:
+                      Number.isInteger(Number(ship?.crewQuality))
+                        ? Math.max(1, Math.min(7, Math.trunc(Number(ship?.crewQuality))))
+                        : null,
+                  }))
+                  .filter((ship) => ship.campaignShipInstanceId > 0)
+              : undefined,
           }))
           .filter((entry) => entry.shipModelId > 0 && entry.count > 0)
       : [];

@@ -6,33 +6,19 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Game } from './game';
+import type { GameDetailViewerRole } from './gameDetailViewerRole';
+import type { GameJumpPoint } from './gameJumpPoint';
+import type { GameObserverSummary } from './gameObserverSummary';
 import type { GameUnit } from './gameUnit';
 import type { Turn } from './turn';
-
-export interface GameJumpPoint {
-  id: number;
-  gameId: number;
-  ownerId: string;
-  creatorUnitId: number;
-  direction: 'to-hyperspace' | 'to-realspace';
-  hexQ: number;
-  hexR: number;
-  baseRadiusInches: number;
-  heading: number;
-  createdRound: number;
-  expiresAfterRound: number;
-  status: 'open' | 'closed' | 'spent';
-  shockWaveArmed: boolean;
-  shockWaveResolved: boolean;
-  vfxPreset: Record<string, unknown>;
-  createdAt: string;
-}
 
 export interface GameDetail {
   game: Game;
   units: GameUnit[];
   turns: Turn[];
-  jumpPoints?: GameJumpPoint[];
-  observers: Array<{ userId: string; name?: string | null }>;
-  viewerRole: 'challenger' | 'opponent' | 'observer' | 'admin-observer' | 'eligible-observer' | 'open-guest';
+  jumpPoints: GameJumpPoint[];
+  /** @maxItems 2 */
+  observers: GameObserverSummary[];
+  /** The authenticated viewer's authority for this response. Eligible observers receive metadata only until POST /observe succeeds. */
+  viewerRole: GameDetailViewerRole;
 }

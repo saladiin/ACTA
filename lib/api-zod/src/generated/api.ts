@@ -24,6 +24,7 @@ export const ListShipModelsResponseItem = zod.object({
   "name": zod.string(),
   "filename": zod.string(),
   "faction": zod.string(),
+  "shipClass": zod.string().nullish().describe('Printed ship classification used for fleet and rules categorization.'),
   "rulesProfile": zod.enum(['standard', 'ancients', 'shadows', 'vorlons']).optional().describe('Immutable faction rules identity; never inferred from trait text.'),
   "pointCost": zod.number(),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
@@ -141,12 +142,19 @@ export const ListFleetShipsResponseItem = zod.object({
   "name": zod.string(),
   "filename": zod.string(),
   "faction": zod.string(),
+  "shipClass": zod.string().nullish().describe('Printed ship classification used for fleet and rules categorization.'),
   "rulesProfile": zod.enum(['standard', 'ancients', 'shadows', 'vorlons']).optional().describe('Immutable faction rules identity; never inferred from trait text.'),
   "pointCost": zod.number(),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "hullPoints": zod.number(),
+  "damageThreshold": zod.number().nullish(),
   "physicalDisruptionThreshold": zod.number().optional().describe('Single Beam attack damage required to trigger Shadow Physical Disruption; 0 when not applicable.'),
+  "crew": zod.number().nullish(),
+  "crewThreshold": zod.number().nullish(),
   "speed": zod.number(),
+  "turns": zod.number().nullish(),
+  "turnAngle": zod.number().nullish(),
+  "shieldMax": zod.number().optional(),
   "weaponRange": zod.number(),
   "weaponDamage": zod.number(),
   "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact\/overlap\/fighter edge range; independent of rendered model scale.'),
@@ -228,13 +236,18 @@ export const ListGamesResponseItem = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(listGamesResponseDeploymentDepthMin).max(listGamesResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -251,6 +264,7 @@ export const ListGamesResponse = zod.array(ListGamesResponseItem)
  */
 export const createGameBodyAllocationPointsMax = 99;
 
+export const createGameBodyAllowObserversDefault = false;
 export const createGameBodyOpponentKindDefault = `human`;
 export const createGameBodyMatchNameMax = 80;
 
@@ -263,14 +277,14 @@ export const createGameBodyAmbushBoxWidthMax = 40;
 export const createGameBodyAmbushBoxDepthMin = 6;
 export const createGameBodyAmbushBoxDepthMax = 56;
 
-
+export const createGameBodySkyboxDefault = `bright-nebula`;
 
 export const CreateGameBody = zod.object({
   "pointLimit": zod.number().optional().describe('Legacy optional point field. Ignored when allocationPoints is supplied.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']),
   "allocationPoints": zod.number().min(1).max(createGameBodyAllocationPointsMax),
   "visibility": zod.enum(['public', 'private']).describe('public = anyone may join from the lobby; private = password-gated.'),
-  "allowObservers": zod.boolean().default(false).describe('Allow up to two authenticated observers after deployment.'),
+  "allowObservers": zod.boolean().default(createGameBodyAllowObserversDefault).describe('Allow authenticated non-participants to observe after deployment.'),
   "opponentKind": zod.enum(['human', 'ai']).default(createGameBodyOpponentKindDefault).describe('Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation.'),
   "matchName": zod.string().max(createGameBodyMatchNameMax).nullish().describe('Optional title or desired match conditions shown beneath the host commander\'s name.'),
   "password": zod.string().nullish().describe('Required when visibility=private. Stored hashed; required again on accept.'),
@@ -280,7 +294,7 @@ export const CreateGameBody = zod.object({
   "ambushPlayer": zod.enum(['challenger', 'opponent']).optional().describe('For ambush-center deployment, which player deploys in the center box.'),
   "ambushBoxWidth": zod.number().min(createGameBodyAmbushBoxWidthMin).max(createGameBodyAmbushBoxWidthMax).optional().describe('For ambush-center deployment, center box width in inches.'),
   "ambushBoxDepth": zod.number().min(createGameBodyAmbushBoxDepthMin).max(createGameBodyAmbushBoxDepthMax).optional().describe('For ambush-center deployment, center box depth in inches.'),
-  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).default('bright-nebula').describe('Board backdrop selected for this engagement.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).default(createGameBodySkyboxDefault).describe('Board backdrop selected for this engagement.'),
   "terrainPlacement": zod.enum(['automatic', 'manual']).optional().describe('automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment.'),
   "terrain": zod.enum(['none', 'asteroid-fields', 'gas-clouds', 'mixed-terrain']).optional().describe('Optional terrain package for this engagement.'),
   "terrainCount": zod.union([zod.literal(3),zod.literal(4),zod.literal(6),zod.literal(8),zod.literal(9)]).optional().describe('Number of terrain objects to generate or place when terrain is enabled. Automatic supports 3, 6, or 9; manual supports 4, 6, or 8.'),
@@ -315,6 +329,8 @@ export const getGameResponseUnitsItemCarriedFightersItemDestroyedMin = 0;
 
 export const getGameResponseUnitsItemCrewQualityMax = 7;
 
+export const getGameResponseObserversMax = 2;
+
 
 
 export const GetGameResponse = zod.object({
@@ -345,12 +361,15 @@ export const GetGameResponse = zod.object({
   "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
-  "allowObservers": zod.boolean(),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getGameResponseGameDeploymentDepthMin).max(getGameResponseGameDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -369,7 +388,6 @@ export const GetGameResponse = zod.object({
   "modelFilename": zod.string(),
   "faction": zod.string(),
   "baseRadiusInches": zod.number().describe('Gameplay base radius in board inches. Used for contact, overlap, and fighter edge-based measurement.'),
-  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional().describe('Board state. hyperspace units are alive but off-table in reserves; withdrawn units have tactically left the battle.'),
   "hullPoints": zod.number(),
   "maxHullPoints": zod.number(),
   "damageThreshold": zod.number().describe('Printed Damage threshold copied from ship_model at deploy. At or below this hull value, the ship is Crippled. 0 means legacy fallback to half max hull.'),
@@ -392,12 +410,6 @@ export const GetGameResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -412,6 +424,17 @@ export const GetGameResponse = zod.object({
   "destroyed": zod.number().min(getGameResponseUnitsItemCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -474,24 +497,49 @@ export const GetGameResponse = zod.object({
   "gameId": zod.number(),
   "ownerId": zod.string(),
   "creatorUnitId": zod.number(),
-  "direction": zod.enum(['to-hyperspace', 'to-realspace']),
+  "direction": zod.enum(['to-realspace', 'to-hyperspace']),
   "hexQ": zod.number(),
   "hexR": zod.number(),
   "baseRadiusInches": zod.number(),
   "heading": zod.number(),
   "createdRound": zod.number(),
   "expiresAfterRound": zod.number(),
-  "status": zod.enum(['open', 'closed', 'spent']),
+  "status": zod.enum(['open', 'spent', 'closed']),
   "shockWaveArmed": zod.boolean(),
   "shockWaveResolved": zod.boolean(),
   "vfxPreset": zod.record(zod.string(), zod.unknown()),
   "createdAt": zod.coerce.date()
-})).optional(),
+})),
   "observers": zod.array(zod.object({
-    "userId": zod.string(),
-    "name": zod.string().nullish()
-  })).max(2),
-  "viewerRole": zod.enum(['challenger', 'opponent', 'observer', 'admin-observer', 'eligible-observer', 'open-guest'])
+  "userId": zod.string(),
+  "name": zod.string().nullish()
+})).max(getGameResponseObserversMax),
+  "viewerRole": zod.enum(['challenger', 'opponent', 'observer', 'admin-observer', 'eligible-observer', 'open-guest']).describe('The authenticated viewer\'s authority for this response. Eligible observers receive metadata only until POST \/observe succeeds.')
+})
+
+
+/**
+ * @summary Join an active or completed engagement as a read-only observer
+ */
+export const ObserveGameParams = zod.object({
+  "gameId": zod.coerce.number()
+})
+
+export const ObserveGameBody = zod.object({
+  "password": zod.string().nullish().describe('Required to observe a private engagement.')
+})
+
+export const ObserveGameResponse = zod.object({
+  "viewerRole": zod.enum(['observer', 'admin-observer'])
+})
+
+
+/**
+ * @summary Remove an observer from an engagement (players only)
+ */
+export const RemoveGameObserverParams = zod.object({
+  "gameId": zod.coerce.number(),
+  "observerUserId": zod.coerce.string()
 })
 
 
@@ -538,13 +586,18 @@ export const AcceptGameResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(acceptGameResponseDeploymentDepthMin).max(acceptGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -594,13 +647,18 @@ export const DeclineGameResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(declineGameResponseDeploymentDepthMin).max(declineGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -658,13 +716,18 @@ export const ConcedeGameResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(concedeGameResponseDeploymentDepthMin).max(concedeGameResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -698,11 +761,12 @@ export const DeployFleetBody = zod.object({
   "shipModelId": zod.number().nullish().describe('Required when DeploymentInput.fleetId is omitted (direct drop-in deploy). The server will materialize an ephemeral Ship row from this model.'),
   "hexQ": zod.number(),
   "hexR": zod.number(),
-  "boardState": zod.enum(['deployed', 'hyperspace']).optional().describe('Deployment state. deployed = starts on the board; hyperspace = starts in hyperspace reserves.'),
   "heading": zod.number(),
   "crewQuality": zod.number().min(1).max(deployFleetBodyPlacementsItemCrewQualityMax).optional().describe('Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a \'standard\' game the server forces this to 4 regardless.'),
   "launchedFromPlacementIndex": zod.number().min(deployFleetBodyPlacementsItemLaunchedFromPlacementIndexMin).nullish().describe('Optional deployment-only carrier link. When set, this placement is a carried fighter deployed within 3 inches of the referenced carrier placement and does not count as an extra fleet-allocation ship.'),
-  "deploymentGroupId": zod.string().max(deployFleetBodyPlacementsItemDeploymentGroupIdMax).nullish().describe('Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.')
+  "deploymentGroupId": zod.string().max(deployFleetBodyPlacementsItemDeploymentGroupIdMax).nullish().describe('Optional deployment-only grouping key. Multi-unit purchases use this to deploy multiple units while charging fleet allocation once for the purchased entry.'),
+  "campaignShipInstanceId": zod.number().nullish().describe('Optional campaign roster ship assigned to this battle.'),
+  "boardState": zod.union([zod.literal('deployed'),zod.literal('hyperspace'),zod.literal(null)]).nullish().describe('Initial deployment state. Hyperspace places the ship in reserve.')
 })).min(1)
 })
 
@@ -738,13 +802,18 @@ export const DeployFleetResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(deployFleetResponseDeploymentDepthMin).max(deployFleetResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -785,12 +854,15 @@ export const SubmitTurnParams = zod.object({
   "gameId": zod.coerce.number()
 })
 
+export const submitTurnBodyMovesItemConfirmWithdrawalDefault = false;
+
 export const SubmitTurnBody = zod.object({
   "moves": zod.array(zod.object({
   "unitId": zod.number(),
   "toHexQ": zod.number(),
   "toHexR": zod.number(),
-  "newHeading": zod.number()
+  "newHeading": zod.number(),
+  "confirmWithdrawal": zod.boolean().default(submitTurnBodyMovesItemConfirmWithdrawalDefault).describe('Required when any part of the moving base crosses a play-area boundary.')
 })),
   "attacks": zod.array(zod.object({
   "attackerUnitId": zod.number(),
@@ -839,13 +911,18 @@ export const ActivateUnitResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(activateUnitResponseDeploymentDepthMin).max(activateUnitResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -895,13 +972,18 @@ export const EndActivationResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(endActivationResponseDeploymentDepthMin).max(endActivationResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1078,13 +1160,18 @@ export const RollInitiativeResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(rollInitiativeResponseDeploymentDepthMin).max(rollInitiativeResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1134,13 +1221,18 @@ export const RunAiStepResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(runAiStepResponseDeploymentDepthMin).max(runAiStepResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1194,13 +1286,18 @@ export const ChooseFirstActivatorResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(chooseFirstActivatorResponseDeploymentDepthMin).max(chooseFirstActivatorResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1250,13 +1347,18 @@ export const PassEndPhaseResponse = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(passEndPhaseResponseDeploymentDepthMin).max(passEndPhaseResponseDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -1333,12 +1435,6 @@ export const DamageControlResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -1353,6 +1449,17 @@ export const DamageControlResponse = zod.object({
   "destroyed": zod.number().min(damageControlResponseUnitCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -1408,10 +1515,14 @@ export const ChooseSpecialActionParams = zod.object({
   "unitId": zod.coerce.number()
 })
 
+
+
+
 export const ChooseSpecialActionBody = zod.object({
-  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'maneuver-to-shield', 'cause-confusion', 'initiate-jump-point', 'all-hands-on-deck', 'scramble', 'regenerate', 'launch-breaching-pods-and-shuttles']),
-  "targetUnitId": zod.number().nullish().describe('Required for targeted Special Actions such as \'concentrate-fire\', \'track-that-target\', and \'cause-confusion\' — the nominated enemy unit id.'),
-  "troopsCommitted": zod.number().int().min(1).optional().describe('For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action. Defaults to all available Troops for older clients.')
+  "action": zod.enum(['all-power-engines', 'all-stop', 'all-stop-pivot', 'come-about-extra-turn', 'come-about-sharp-turn', 'blast-doors', 'intensify-defense', 'run-silent', 'concentrate-fire', 'track-that-target', 'maneuver-to-shield', 'cause-confusion', 'stand-down-and-prepare-to-be-boarded', 'initiate-jump-point', 'all-hands-on-deck', 'scramble', 'regenerate', 'launch-breaching-pods-and-shuttles']),
+  "targetUnitId": zod.number().nullish().describe('Required for targeted Special Actions; the nominated enemy unit id.'),
+  "involvedUnitIds": zod.array(zod.number()).optional().describe('For Stand Down and Prepare to be Boarded, the friendly ships whose current Damage points are counted as pressure against the target.'),
+  "troopsCommitted": zod.number().min(1).optional().describe('For Launch Breaching Pods and Shuttles, number of Troops committed to the boarding action.')
 })
 
 export const chooseSpecialActionResponseUnitCarriedFightersItemTotalMin = 0;
@@ -1467,12 +1578,6 @@ export const ChooseSpecialActionResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -1487,6 +1592,17 @@ export const ChooseSpecialActionResponse = zod.object({
   "destroyed": zod.number().min(chooseSpecialActionResponseUnitCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -1544,7 +1660,7 @@ export const ChooseScoutActionParams = zod.object({
 
 export const ChooseScoutActionBody = zod.object({
   "action": zod.enum(['counter-stealth', 'coord']).describe('counter-stealth = reduce target\'s Stealth rating by 1 for the rest of the round (target must have Stealth trait). coord = grant a one-shot re-roll-failed-AD token to one allied weapon system attacking this target (excludes Beam \/ Mini Beam \/ Energy Mine \/ Twin Linked weapons).'),
-  "targetUnitId": zod.number().nullish().describe('Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted/null when declaring the support mode during movement. Must be within 36\" of the Scout.')
+  "targetUnitId": zod.number().nullish().describe('Enemy unit id to support against. Required when resolving declared Scout Support in the firing phase; omitted\/null when declaring the support mode during movement. Must be within 36\" of the Scout.')
 })
 
 export const chooseScoutActionResponseUnitCarriedFightersItemTotalMin = 0;
@@ -1602,12 +1718,6 @@ export const ChooseScoutActionResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -1622,6 +1732,17 @@ export const ChooseScoutActionResponse = zod.object({
   "destroyed": zod.number().min(chooseScoutActionResponseUnitCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -1677,10 +1798,13 @@ export const MoveUnitParams = zod.object({
   "unitId": zod.coerce.number()
 })
 
+export const moveUnitBodyConfirmWithdrawalDefault = false;
+
 export const MoveUnitBody = zod.object({
   "toHexQ": zod.number(),
   "toHexR": zod.number(),
-  "newHeading": zod.number()
+  "newHeading": zod.number(),
+  "confirmWithdrawal": zod.boolean().default(moveUnitBodyConfirmWithdrawalDefault).describe('Required when any part of the moving base crosses a play-area boundary.')
 })
 
 export const moveUnitResponseCarriedFightersItemTotalMin = 0;
@@ -1729,12 +1853,6 @@ export const MoveUnitResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -1749,6 +1867,17 @@ export const MoveUnitResponse = zod.object({
   "destroyed": zod.number().min(moveUnitResponseCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -1869,12 +1998,6 @@ export const LaunchFighterResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -1889,6 +2012,17 @@ export const LaunchFighterResponse = zod.object({
   "destroyed": zod.number().min(launchFighterResponseCarrierCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -1965,12 +2099,6 @@ export const LaunchFighterResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -1985,6 +2113,17 @@ export const LaunchFighterResponse = zod.object({
   "destroyed": zod.number().min(launchFighterResponseFighterCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2086,12 +2225,6 @@ export const ChooseShadowPointDefenseResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2106,6 +2239,17 @@ export const ChooseShadowPointDefenseResponse = zod.object({
   "destroyed": zod.number().min(chooseShadowPointDefenseResponseCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2210,12 +2354,6 @@ export const ChooseShadowManeuverModeResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2230,6 +2368,17 @@ export const ChooseShadowManeuverModeResponse = zod.object({
   "destroyed": zod.number().min(chooseShadowManeuverModeResponseCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2355,12 +2504,6 @@ export const AttemptTelepathicDisruptionResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2375,6 +2518,17 @@ export const AttemptTelepathicDisruptionResponse = zod.object({
   "destroyed": zod.number().min(attemptTelepathicDisruptionResponseAttackerCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2451,12 +2605,6 @@ export const AttemptTelepathicDisruptionResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2471,6 +2619,17 @@ export const AttemptTelepathicDisruptionResponse = zod.object({
   "destroyed": zod.number().min(attemptTelepathicDisruptionResponseTargetCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2597,12 +2756,6 @@ export const LaunchShadowFighterDispersalResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2617,6 +2770,17 @@ export const LaunchShadowFighterDispersalResponse = zod.object({
   "destroyed": zod.number().min(launchShadowFighterDispersalResponseCarrierCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2693,12 +2857,6 @@ export const LaunchShadowFighterDispersalResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2713,6 +2871,17 @@ export const LaunchShadowFighterDispersalResponse = zod.object({
   "destroyed": zod.number().min(launchShadowFighterDispersalResponseFightersItemCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2819,12 +2988,6 @@ export const RecoverFighterResponse = zod.object({
   "lastSelfRepairRound": zod.number().optional().describe('Last round (1-based) this unit resolved Self Repair. 0 = never.'),
   "crewPoints": zod.number().describe('Current crew aboard the ship. Reduced by Attack Table crew rolls and certain crits. ≤½ max = Skeleton Crew.'),
   "maxCrewPoints": zod.number().describe('Maximum crew complement, set at deploy from ship_model.crew.'),
-  "troopPoints": zod.number().optional().describe('Current boarding Troops aboard the ship.'),
-  "maxTroopPoints": zod.number().optional().describe('Printed boarding Troops copied from the ship model at deploy.'),
-  "capturedByOwnerId": zod.string().nullish().describe('Player id that captured this ship by boarding, if any.'),
-  "capturedRound": zod.number().nullish().describe('Round this ship was captured by boarding, if any.'),
-  "surrenderedToOwnerId": zod.string().nullish().describe('Player id this ship surrendered to, if any.'),
-  "surrenderedRound": zod.number().nullish().describe('Round this ship surrendered, if any.'),
   "crewThreshold": zod.number().describe('Printed Crew threshold copied from ship_model at deploy. At or below this crew value, the ship has Skeleton Crew. 0 means no crew track or legacy fallback.'),
   "damageState": zod.enum(['normal', 'adrift', 'exploding-end-of-next', 'destroyed']).optional().describe('Authoritative life-state. \'adrift\' = halved speed + compulsory drift; \'exploding-end-of-next\' = delayed catastrophic kill; \'destroyed\' mirrors isDestroyed.'),
   "isCrippled": zod.boolean().optional().describe('Derived from the printed damageThreshold and permanentlyCrippled latch. Halves speed, caps turn at 45°\/1, only 1 weapon per arc fires, loses Fleet Carrier\/Command\/Interceptors\/Admiral.'),
@@ -2839,6 +3002,17 @@ export const RecoverFighterResponse = zod.object({
   "destroyed": zod.number().min(recoverFighterResponseCarrierCarriedFightersItemDestroyedMin)
 })).describe('Carrier bay inventory parsed from ship_model.smallCraft at deployment. Independently deployed fighters and non-carriers use an empty array.'),
   "launchedFromUnitId": zod.number().nullish().describe('Carrier unit id that launched this fighter flight, null for ships and independently deployed fighters.'),
+  "boardState": zod.enum(['deployed', 'hyperspace', 'withdrawn']).optional(),
+  "troopPoints": zod.number().optional(),
+  "maxTroopPoints": zod.number().optional(),
+  "capturedByOwnerId": zod.string().nullish(),
+  "capturedRound": zod.number().nullish(),
+  "surrenderedToOwnerId": zod.string().nullish(),
+  "surrenderedRound": zod.number().nullish(),
+  "departureReason": zod.string().nullish().describe('Why this unit permanently left the battlefield.'),
+  "departureEdge": zod.union([zod.literal('port'),zod.literal('starboard'),zod.literal('north'),zod.literal('south'),zod.literal(null)]).nullish(),
+  "departureRound": zod.number().nullish(),
+  "departureConsequence": zod.union([zod.literal('tactical-withdrawal'),zod.literal('full-victory-points'),zod.literal('objective-exit'),zod.literal(null)]).nullish(),
   "fighterBayOperationsRound": zod.number().optional().describe('Round number for the current fighter bay operation counter.'),
   "fighterBayOperationsUsed": zod.number().optional().describe('Launch\/recovery operations used by this unit in fighterBayOperationsRound.'),
   "criticals": zod.array(zod.object({
@@ -2902,6 +3076,12 @@ export const getLobbyResponseActiveGamesItemMatchNameMax = 80;
 export const getLobbyResponseActiveGamesItemDeploymentDepthMin = 4;
 export const getLobbyResponseActiveGamesItemDeploymentDepthMax = 30;
 
+export const getLobbyResponseObservableGamesItemMatchNameMax = 80;
+
+
+export const getLobbyResponseObservableGamesItemDeploymentDepthMin = 4;
+export const getLobbyResponseObservableGamesItemDeploymentDepthMax = 30;
+
 export const getLobbyResponseRecentlyCompletedItemMatchNameMax = 80;
 
 
@@ -2910,7 +3090,7 @@ export const getLobbyResponseRecentlyCompletedItemDeploymentDepthMax = 30;
 
 
 
-const GetLobbyResponseBase = zod.object({
+export const GetLobbyResponse = zod.object({
   "pendingChallenges": zod.array(zod.object({
   "id": zod.number(),
   "challengerId": zod.string(),
@@ -2935,13 +3115,18 @@ const GetLobbyResponseBase = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getLobbyResponsePendingChallengesItemDeploymentDepthMin).max(getLobbyResponsePendingChallengesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -2974,13 +3159,62 @@ const GetLobbyResponseBase = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getLobbyResponseActiveGamesItemDeploymentDepthMin).max(getLobbyResponseActiveGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
+  "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
+  "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
+  "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
+  "challengerDeployed": zod.boolean().optional().describe('True once the challenger has committed a fleet via POST \/games\/{id}\/deploy. When both sides are true, status auto-transitions to \'active\'.'),
+  "opponentDeployed": zod.boolean().optional().describe('True once the opponent has committed a fleet via POST \/games\/{id}\/deploy.'),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})),
+  "observableGames": zod.array(zod.object({
+  "id": zod.number(),
+  "challengerId": zod.string(),
+  "opponentId": zod.string().nullish(),
+  "opponentKind": zod.enum(['human', 'ai']).describe('human = another authenticated player controls the opponent slot. ai = reserved server-owned opponent slot for upcoming automation.'),
+  "challengerName": zod.string().nullish(),
+  "opponentName": zod.string().nullish(),
+  "matchName": zod.string().max(getLobbyResponseObservableGamesItemMatchNameMax).nullish().describe('Player-authored title or desired conditions for the engagement.'),
+  "status": zod.enum(['open', 'pending', 'deploying', 'active', 'completed', 'declined']),
+  "winnerId": zod.string().nullish(),
+  "currentTurn": zod.number(),
+  "currentRound": zod.number(),
+  "activePlayerId": zod.string().nullish(),
+  "activeUnitId": zod.number().nullish(),
+  "lastActivatorId": zod.string().nullish(),
+  "phase": zod.enum(['initiative', 'movement', 'firing', 'end']),
+  "initiativeWinnerId": zod.string().nullish(),
+  "initiativeChallengerRoll": zod.number().nullish().describe('Challenger\'s 2d6 initiative roll for the current round (null if not yet rolled or already consumed).'),
+  "initiativeOpponentRoll": zod.number().nullish().describe('Opponent\'s 2d6 initiative roll for the current round.'),
+  "endPhaseChallengerPassed": zod.boolean().optional().describe('True once the challenger has passed the current end phase. Reset at start of each end phase.'),
+  "endPhaseOpponentPassed": zod.boolean().optional().describe('True once the opponent has passed the current end phase. Reset at start of each end phase.'),
+  "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
+  "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
+  "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
+  "visibility": zod.enum(['public', 'private']).optional(),
+  "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
+  "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
+  "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
+  "deploymentDepth": zod.number().min(getLobbyResponseObservableGamesItemDeploymentDepthMin).max(getLobbyResponseObservableGamesItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
+  "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
+  "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -3013,13 +3247,18 @@ const GetLobbyResponseBase = zod.object({
   "pointLimit": zod.number().describe('Legacy numeric point field. For ACTA allocation games this is allocationPoints × 100 for older UI compatibility.'),
   "priorityLevel": zod.enum(['patrol', 'skirmish', 'raid', 'battle', 'war', 'armageddon', 'ancient']).describe('Scenario Priority Level used for ACTA Fleet Allocation Point costs.'),
   "allocationPoints": zod.number().min(1).describe('Fleet Allocation Points available to each commander.'),
+  "skybox": zod.enum(['none', 'bright-nebula', 'dark-forest', 'drazi-green-purple', 'distant-fields', 'zhadum']).describe('Engagement-specific board backdrop. Existing games default to bright-nebula.'),
   "visibility": zod.enum(['public', 'private']).optional(),
   "hasPassword": zod.boolean().optional().describe('True if this engagement is gated by a password (does not expose the password itself).'),
+  "allowObservers": zod.boolean().describe('Host-controlled opt-in allowing authenticated non-participants to observe active or completed play.'),
   "hasTerrain": zod.boolean().optional().describe('True if this engagement includes generated terrain\/scenery.'),
   "hasStation": zod.boolean().optional().describe('True if this engagement has station play enabled.'),
   "deploymentDepth": zod.number().min(getLobbyResponseRecentlyCompletedItemDeploymentDepthMin).max(getLobbyResponseRecentlyCompletedItemDeploymentDepthMax).optional().describe('Depth in inches of each player\'s deployment zone, measured inward from their short edge of the 48\"×72\" board.'),
   "deploymentConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured deployment regions used by configurable scenarios. Null means legacy depth-only short-edge deployment.'),
   "terrainConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Structured terrain objects generated for this engagement.'),
+  "withdrawalConfig": zod.record(zod.string(), zod.unknown()).nullish().describe('Scenario-specific withdrawal edges and consequences. Null uses ordinary all-edge Tactical Withdrawals.'),
+  "challengerVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the challenger.'),
+  "opponentVictoryPoints": zod.number().optional().describe('Current rules-derived Victory Points for the opponent.'),
   "crewQualityMode": zod.enum(['standard', 'custom']).optional().describe('standard = every ship is locked to Crew Quality 4 (Veteran). custom = each ship is assigned a CQ (1..7) individually during deploy.'),
   "aiProfile": zod.string().nullish().describe('AI strategy profile selected for this game. Null for human games.'),
   "aiState": zod.record(zod.string(), zod.unknown()).optional().describe('Latest AI setup\/action diagnostic state. Empty for human games.'),
@@ -3028,10 +3267,6 @@ const GetLobbyResponseBase = zod.object({
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))
-})
-
-export const GetLobbyResponse = GetLobbyResponseBase.extend({
-  "observableGames": GetLobbyResponseBase.shape.activeGames,
 })
 
 

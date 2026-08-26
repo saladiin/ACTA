@@ -1,5 +1,12 @@
 # Space Stations Implementation Plan
 
+## Status
+
+The Orion station profile, mesh, LOS behavior, and station combat rules are
+live on `public-alpha`. This document is retained as historical rules research
+and design context; current code and the development log take precedence over
+the older delivery checklist below.
+
 ## Source And Scope
 
 Primary source: `rules 2nd edition/A Call To Arms - Powers & Principalities.pdf`.
@@ -13,9 +20,9 @@ Primary source: `rules 2nd edition/A Call To Arms - Powers & Principalities.pdf`
 - `rules 2nd edition/Powers and Principalities errata.pdf` contains no Orion
   or general space-station correction.
 
-The initial implementation target is the published Orion Space Station. The
-same engine should later support custom station cores and modules without
-encoding each station as a special case.
+The published Orion Space Station is the reference implementation. The same
+engine can support custom station cores and modules without encoding each
+station as a special case.
 
 ## Orion Rules Profile
 
@@ -37,7 +44,10 @@ The checked-in ship-model schema currently supports only one Damage threshold.
 The data seed therefore uses 20 as the Crippled threshold. The 40-point Heavily
 Damaged threshold requires the station state work below.
 
-## Current Compatibility
+## Historical Compatibility Snapshot
+
+This section records the state before the live station implementation and is
+not a current feature-gap list.
 
 Already reusable:
 
@@ -56,8 +66,8 @@ Not rules-complete:
   destruction paths do not implement the station exceptions.
 - A generic LOS-obstacle utility now exists in the working tree, but station
   units are not yet registered as 1-inch blockers. Boarding is absent.
-- No Orion 3D asset is currently checked in under `orion-space-station.glb`,
-  so the board uses the normal missing-model fallback until an asset is added.
+- The Orion 3D asset is checked in as `orion-space-station.glb` and is used by
+  the live station profiles.
 
 ## Delivery Plan
 

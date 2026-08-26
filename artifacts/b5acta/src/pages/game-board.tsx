@@ -149,6 +149,7 @@ import zhadumRightUrl from "@assets/skybox-zhadum-right.jpg";
 import zhadumTopUrl from "@assets/skybox-zhadum-top.jpg";
 import boardingPartySilhouetteUrl from "@assets/boarding-party-silhouette.png";
 import damageControlWrenchUrl from "@assets/damage-control-wrench.png";
+import surrenderFlagUrl from "@assets/surrender-flag.png";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -454,6 +455,7 @@ function specialActionLabel(raw: string | null | undefined): string | null {
     "track-that-target": "Track That Target",
     "maneuver-to-shield": "Maneuver to Shield Them",
     "cause-confusion": "Cause Confusion",
+    "stand-down-and-prepare-to-be-boarded": "Stand Down and Prepare to be Boarded",
     "all-hands-on-deck": "All Hands on Deck",
     scramble: "Scramble",
     regenerate: "Regenerate",
@@ -1456,6 +1458,164 @@ function ConcentrateFireTargetLines({
           />
         </React.Fragment>
       ))}
+    </group>
+  );
+}
+
+type SurrenderControlVisualUnit = {
+  id: number;
+  name: string;
+  x: number;
+  z: number;
+  baseRadius: number;
+  isSelected?: boolean;
+};
+
+type SurrenderControlOverlayState = {
+  target: SurrenderControlVisualUnit;
+  maintainers: SurrenderControlVisualUnit[];
+  exitingMaintainer: (SurrenderControlVisualUnit & { critical: boolean }) | null;
+  status: "safe" | "fragile" | "unmaintained";
+};
+
+function surrenderControlTetherPoints(
+  target: SurrenderControlVisualUnit,
+  maintainer: SurrenderControlVisualUnit,
+): [THREE.Vector3, THREE.Vector3] | null {
+  const from = new THREE.Vector3(target.x, 0.12, target.z);
+  const to = new THREE.Vector3(maintainer.x, 0.12, maintainer.z);
+  const delta = to.clone().sub(from);
+  const distance = delta.length();
+  if (distance < 0.001) return null;
+  const direction = delta.normalize();
+  return [
+    from.add(direction.clone().multiplyScalar(target.baseRadius + 0.08)),
+    to.add(direction.clone().multiplyScalar(-(maintainer.baseRadius + 0.08))),
+  ];
+}
+
+function SurrenderControlOverlay({
+  overlay,
+}: {
+  overlay: SurrenderControlOverlayState;
+}) {
+  const perimeterMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const fillMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const controlRadius = 10 + overlay.target.baseRadius;
+  const warning = overlay.status === "unmaintained";
+  const fragile = overlay.status === "fragile";
+  const perimeterColor = warning
+    ? "#ef4444"
+    : fragile
+      ? "#f59e0b"
+      : "#dbeafe";
+  const fillColor = warning ? "#7f1d1d" : fragile ? "#78350f" : "#164e63";
+
+  useFrame(({ clock }) => {
+    const pulse = (Math.sin(clock.elapsedTime * 3.2) + 1) / 2;
+    if (perimeterMaterialRef.current) {
+      perimeterMaterialRef.current.opacity = warning
+        ? 0.48 + pulse * 0.38
+        : fragile
+          ? 0.5 + pulse * 0.16
+          : 0.54;
+    }
+    if (fillMaterialRef.current) {
+      fillMaterialRef.current.opacity = warning
+        ? 0.025 + pulse * 0.025
+        : 0.025;
+    }
+  });
+
+  const links = overlay.maintainers
+    .map((maintainer) => ({
+      maintainer,
+      points: surrenderControlTetherPoints(overlay.target, maintainer),
+    }))
+    .filter(
+      (link): link is {
+        maintainer: SurrenderControlVisualUnit;
+        points: [THREE.Vector3, THREE.Vector3];
+      } => link.points !== null,
+    );
+  const exitPoints = overlay.exitingMaintainer
+    ? surrenderControlTetherPoints(overlay.target, overlay.exitingMaintainer)
+    : null;
+
+  return (
+    <group position={[0, 0, 0]} renderOrder={6}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[overlay.target.x, 0.042, overlay.target.z]}
+        raycast={() => null}
+      >
+        <circleGeometry args={[controlRadius, 128]} />
+        <meshBasicMaterial
+          ref={fillMaterialRef}
+          color={fillColor}
+          transparent
+          opacity={0.025}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[overlay.target.x, 0.05, overlay.target.z]}
+        raycast={() => null}
+      >
+        <ringGeometry args={[controlRadius - 0.055, controlRadius + 0.055, 160]} />
+        <meshBasicMaterial
+          ref={perimeterMaterialRef}
+          color={perimeterColor}
+          transparent
+          opacity={0.54}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      {links.map(({ maintainer, points }) => (
+        <Line
+          key={`${overlay.target.id}-${maintainer.id}`}
+          points={points}
+          color={maintainer.isSelected && fragile ? "#f59e0b" : "#a5f3fc"}
+          lineWidth={maintainer.isSelected && fragile ? 1.8 : 1.25}
+          transparent
+          opacity={maintainer.isSelected && fragile ? 0.95 : 0.76}
+          depthTest={false}
+          raycast={() => null}
+        />
+      ))}
+      {overlay.exitingMaintainer && exitPoints && (
+        <Line
+          points={exitPoints}
+          color={overlay.exitingMaintainer.critical ? "#ef4444" : "#f59e0b"}
+          lineWidth={overlay.exitingMaintainer.critical ? 2 : 1.5}
+          transparent
+          opacity={0.94}
+          dashed
+          dashSize={0.3}
+          gapSize={0.2}
+          depthTest={false}
+          raycast={() => null}
+        />
+      )}
+      {warning && (
+        <Billboard position={[overlay.target.x, 5.35, overlay.target.z]}>
+          <Text
+            fontSize={0.2}
+            color="#fecaca"
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.032}
+            outlineColor="#450a0a"
+            renderOrder={31}
+          >
+            RECOVERY CHECK NEXT INITIATIVE
+          </Text>
+        </Billboard>
+      )}
     </group>
   );
 }
@@ -3673,6 +3833,36 @@ function DamageControlBaseMarker({ baseRadius }: { baseRadius: number }) {
         toneMapped={false}
       />
     </mesh>
+  );
+}
+
+function SurrenderFlagMarker({ baseRadius }: { baseRadius: number }) {
+  const flagTexture = useLoader(THREE.TextureLoader, surrenderFlagUrl);
+  const markerSize = Math.max(0.65, Math.min(1.15, baseRadius * 1.25));
+
+  useEffect(() => {
+    flagTexture.colorSpace = THREE.SRGBColorSpace;
+    flagTexture.anisotropy = 4;
+    flagTexture.needsUpdate = true;
+  }, [flagTexture]);
+
+  return (
+    <Billboard position={[0, 4.45, 0]}>
+      <mesh renderOrder={30}>
+        <planeGeometry args={[markerSize * 1.2, markerSize]} />
+        <meshBasicMaterial
+          alphaTest={0.08}
+          color="#ffffff"
+          map={flagTexture}
+          transparent
+          opacity={0.98}
+          depthTest={false}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+    </Billboard>
   );
 }
 
@@ -6481,6 +6671,7 @@ function GameUnit3D({
     baseRadiusInches?: number | null;
     specialAction?: string | null;
     capturedByOwnerId?: string | null;
+    surrenderedToOwnerId?: string | null;
   };
   isSelected: boolean;
   onClick: () => void;
@@ -6520,7 +6711,9 @@ function GameUnit3D({
   const arcSide = isMine ? "friendly" : "enemy";
   const sideColor = isMine ? "#34eb52" : "#ff0004";
   const capturedVisuallyIntact =
-    Boolean(unit.capturedByOwnerId) && !unit.isDestroyed && unit.hullPoints > 0;
+    Boolean(unit.capturedByOwnerId || unit.surrenderedToOwnerId) &&
+    !unit.isDestroyed &&
+    unit.hullPoints > 0;
   const capturedArcColor = capturedVisuallyIntact
     ? capturedShipArcColor(arcColorScheme)
     : null;
@@ -6818,6 +7011,9 @@ function GameUnit3D({
           counterCount={boardingTroops.counter}
           baseRadius={baseRadius}
         />
+      )}
+      {unit.surrenderedToOwnerId && !hasPreview && !unit.isDestroyed && (
+        <SurrenderFlagMarker baseRadius={baseRadius} />
       )}
       {damageControlHighlight && !hasPreview && (
         <>
@@ -8981,6 +9177,18 @@ type MovePlan =
   | { kind: "fighter-free"; x: number; z: number; heading: number }
   | null;
 
+type PendingWithdrawalMove = {
+  unitId: number;
+  unitName: string;
+  message: string;
+  data: {
+    toHexQ: number;
+    toHexR: number;
+    newHeading: number;
+    confirmWithdrawal: true;
+  };
+};
+
 type FighterContactWarning = "dogfight" | "boarding" | null;
 
 type MovementGesture =
@@ -9975,6 +10183,7 @@ function ShipStatusInspectorDialog({
     unit.isDestroyed ? "Destroyed" : null,
     unit.isCrippled && !isFighter ? "Crippled" : null,
     unit.isSkeletonCrew ? "Skeleton Crew" : null,
+    unit.surrenderedToOwnerId ? "Surrendered - takes no further part" : null,
     unit.damageState && unit.damageState !== "normal"
       ? titleCaseStatus(unit.damageState)
       : null,
@@ -11130,6 +11339,7 @@ interface StagedUnitData {
   id: string;
   ownerId: string;
   shipModelId: number;
+  campaignShipInstanceId?: number | null;
   name: string;
   modelFilename: string;
   faction: string;
@@ -11279,12 +11489,20 @@ function DeploymentAllocationHud({
   allocationPoints,
   legal,
   remainingTicks,
+  showCompactCommit = false,
+  commitDisabled = false,
+  commitPending = false,
+  onCommit,
 }: {
   units: StagedUnitData[];
   scenarioPriority: PriorityLevel;
   allocationPoints: number;
   legal: boolean;
   remainingTicks: number;
+  showCompactCommit?: boolean;
+  commitDisabled?: boolean;
+  commitPending?: boolean;
+  onCommit?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const budgetTicks = Math.max(1, allocationPoints * ALLOCATION_TICKS_PER_FAP);
@@ -11318,10 +11536,11 @@ function DeploymentAllocationHud({
     : formatAllocationRemainder(Math.abs(remainingTicks), scenarioPriority);
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-3">
+    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex flex-col items-center px-3">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
         className={`pointer-events-auto w-[min(42rem,calc(100vw-1.5rem))] rounded border px-3 py-2 text-left font-mono shadow-2xl backdrop-blur-md transition-colors ${
           legal
             ? "border-amber-500/40 bg-black/65 text-amber-100"
@@ -11388,6 +11607,18 @@ function DeploymentAllocationHud({
           </div>
         )}
       </button>
+      {showCompactCommit && onCommit && (
+        <button
+          type="button"
+          onClick={onCommit}
+          disabled={commitDisabled}
+          className="deployment-mobile-commit pointer-events-auto mt-2 h-8 items-center gap-1.5 self-end rounded border border-primary/60 bg-black/80 px-3 font-mono text-[10px] font-bold uppercase tracking-wider text-primary shadow-lg backdrop-blur-sm disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground"
+          data-testid="button-mobile-confirm-deployment"
+        >
+          <Swords className="h-3.5 w-3.5" />
+          {commitPending ? "Deploying..." : "Commit and Engage"}
+        </button>
+      )}
     </div>
   );
 }
@@ -12607,6 +12838,8 @@ export default function GameBoard() {
   const [confirmingSurrender, setConfirmingSurrender] = useState(false);
   const [confirmingConcede, setConfirmingConcede] = useState(false);
   const [confirmingAbandon, setConfirmingAbandon] = useState(false);
+  const [pendingWithdrawalMove, setPendingWithdrawalMove] =
+    useState<PendingWithdrawalMove | null>(null);
   const abandonGame = useMutation({
     mutationFn: () =>
       customFetch(`/api/games/${gameId}/abandon`, { method: "POST" }),
@@ -12817,7 +13050,7 @@ export default function GameBoard() {
     useState<{ x: number; y: number } | null>(null);
   // Targeted Special Actions need a board target picker before sending.
   const [specialActionTargetPicking, setSpecialActionTargetPicking] =
-    useState<"concentrate-fire" | "track-that-target" | "cause-confusion" | "launch-breaching-pods-and-shuttles" | null>(null);
+    useState<"concentrate-fire" | "track-that-target" | "cause-confusion" | "stand-down-and-prepare-to-be-boarded" | "launch-breaching-pods-and-shuttles" | null>(null);
   const [boardingCommitDialog, setBoardingCommitDialog] = useState<{
     attackerUnitId: number;
     attackerName: string;
@@ -12825,6 +13058,12 @@ export default function GameBoard() {
     targetName: string;
     troopsAvailable: number;
     troopsCommitted: number;
+  } | null>(null);
+  const [standDownDialog, setStandDownDialog] = useState<{
+    attackerUnitId: number;
+    targetUnitId: number;
+    selectedUnitIds: number[];
+    eligibleUnitIds: number[];
   } | null>(null);
 
   // Staging / fleet yards
@@ -14896,6 +15135,8 @@ export default function GameBoard() {
       deploymentGroupId: string | null = null,
       deploymentGroupSize: number | null = null,
       deploymentGroupOrdinal: number | null = null,
+      campaignShipInstanceId: number | null = null,
+      crewQualityOverride: number | null = null,
     ): StagedUnitData => {
       const side = mySide ?? "challenger";
       const [cx, cz] = defaultDeploymentPoint(
@@ -14911,6 +15152,7 @@ export default function GameBoard() {
         id: `staged-template-${Date.now()}-${ship.id}-${index}`,
         ownerId: myUserId,
         shipModelId: ship.id,
+        campaignShipInstanceId,
         name: stagedName,
         modelFilename: ship.filename,
         faction: ship.faction,
@@ -14935,25 +15177,32 @@ export default function GameBoard() {
         boardState: "deployed",
         heading: deployment.defaultHeading,
         locked: false,
-        crewQuality: 4,
+        crewQuality: crewQualityOverride ?? 4,
       };
     },
     [deploymentConfig, mySide, myUserId, shipModels],
   );
   const makeExpandedStagedUnits = useCallback(
     (
-      ships: Array<{ ship: ShipModel; name?: string }>,
+      ships: Array<{
+        ship: ShipModel;
+        name?: string;
+        campaignShipInstanceId?: number | null;
+        crewQuality?: number | null;
+      }>,
       idPrefix = "staged-template",
     ): StagedUnitData[] => {
       const batchId = Date.now();
       const expanded: Array<{
         ship: ShipModel;
         name: string;
+        campaignShipInstanceId: number | null;
+        crewQuality: number | null;
         groupId: string | null;
         groupSize: number | null;
         groupOrdinal: number | null;
       }> = [];
-      ships.forEach(({ ship, name }, sourceIndex) => {
+      ships.forEach(({ ship, name, campaignShipInstanceId, crewQuality }, sourceIndex) => {
         const unitCount = multiUnitPurchaseCount(ship);
         const groupId =
           unitCount > 1
@@ -14963,6 +15212,8 @@ export default function GameBoard() {
           expanded.push({
             ship,
             name: name ?? ship.name,
+            campaignShipInstanceId: campaignShipInstanceId ?? null,
+            crewQuality: crewQuality ?? null,
             groupId,
             groupSize: unitCount > 1 ? unitCount : null,
             groupOrdinal: unitCount > 1 ? ordinal : null,
@@ -14978,6 +15229,8 @@ export default function GameBoard() {
           entry.groupId,
           entry.groupSize,
           entry.groupOrdinal,
+          entry.campaignShipInstanceId,
+          entry.crewQuality,
         ),
       );
     },
@@ -15325,6 +15578,14 @@ export default function GameBoard() {
     const selectedShips = stored.entries.flatMap((entry) => {
       const ship = shipModelById[entry.shipModelId];
       if (!ship) return [];
+      if (entry.campaignShips && entry.campaignShips.length > 0) {
+        return entry.campaignShips.map((campaignShip) => ({
+          ship,
+          name: campaignShip.name ?? ship.name,
+          campaignShipInstanceId: campaignShip.campaignShipInstanceId,
+          crewQuality: campaignShip.crewQuality ?? null,
+        }));
+      }
       return Array.from({ length: entry.count }, () => ({ ship }));
     });
     if (selectedShips.length === 0) return;
@@ -15950,19 +16211,6 @@ export default function GameBoard() {
         isFighter: true,
         baseRadiusInches: u.baseRadiusInches,
       };
-      const radius = rulesBaseRadius(candidate);
-      if (
-        movePlan.x < -BOARD_W / 2 + radius ||
-        movePlan.x > BOARD_W / 2 - radius ||
-        movePlan.z < -BOARD_D / 2 + radius ||
-        movePlan.z > BOARD_D / 2 - radius
-      ) {
-        setActivationFeedback(
-          "Move rejected: fighter base must remain inside the board.",
-        );
-        setMovePlan(null);
-        return;
-      }
       const illegalOverlap = unitsWithFighterFlags.some((other) => {
         if (other.isDestroyed || other.id === u.id) return false;
         return uiBaseFootprintsIllegallyOverlap(candidate, {
@@ -16145,7 +16393,20 @@ export default function GameBoard() {
         // Roll back the optimistic ledger charge on server rejection.
         onError: (err: any) => {
           moveConfirmInFlightRef.current = false;
-          setActivationFeedback(`Move rejected: ${cleanApiErrorMessage(err)}`);
+          const message = cleanApiErrorMessage(err);
+          const confirmationPrefix =
+            "TACTICAL_WITHDRAWAL_CONFIRMATION_REQUIRED:";
+          if (message.startsWith(confirmationPrefix)) {
+            setPendingWithdrawalMove({
+              unitId,
+              unitName: u.name,
+              message: message.slice(confirmationPrefix.length).trim(),
+              data: { toHexQ, toHexR, newHeading, confirmWithdrawal: true },
+            });
+            setActivationFeedback("Tactical withdrawal confirmation required.");
+          } else {
+            setActivationFeedback(`Move rejected: ${message}`);
+          }
           setPhaseLedger((prev) => ({ ...prev, [unitId]: ledgerBeforeCommit }));
           qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
         },
@@ -16175,6 +16436,48 @@ export default function GameBoard() {
   const confirmMovePlan = useCallback(() => {
     commitMovePlan();
   }, [commitMovePlan]);
+
+  const confirmTacticalWithdrawal = useCallback(() => {
+    const pending = pendingWithdrawalMove;
+    if (!pending || moveUnit.isPending) return;
+    moveConfirmInFlightRef.current = true;
+    moveUnit.mutate(
+      { gameId, unitId: pending.unitId, data: pending.data },
+      {
+        onSuccess: (updatedUnit) => {
+          moveConfirmInFlightRef.current = false;
+          setPendingWithdrawalMove(null);
+          setActivationFeedback(
+            `${pending.unitName} withdrew from the battle. End its activation to continue.`,
+          );
+          const moveResult = updatedUnit as GameUnit & {
+            game?: GameDetail["game"];
+          };
+          const { game: updatedGame, ...unitOnly } = moveResult;
+          if (updatedGame) mergeGameIntoCache(updatedGame);
+          mergeUpdatedUnitIntoGame(unitOnly as GameUnit);
+          showTerrainHazardsForMove(unitOnly as TerrainHazardMoveResult);
+          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        },
+        onError: (err: any) => {
+          moveConfirmInFlightRef.current = false;
+          setPendingWithdrawalMove(null);
+          setActivationFeedback(
+            `Withdrawal rejected: ${cleanApiErrorMessage(err)}`,
+          );
+          qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+        },
+      },
+    );
+  }, [
+    gameId,
+    mergeGameIntoCache,
+    mergeUpdatedUnitIntoGame,
+    moveUnit,
+    pendingWithdrawalMove,
+    qc,
+    showTerrainHazardsForMove,
+  ]);
 
   const cancelMovePlan = useCallback(() => {
     setMovePlan(null);
@@ -16656,6 +16959,142 @@ export default function GameBoard() {
         filename: selectedUnitData.modelFilename,
       })
     : false;
+  const surrenderControlOverlays = useMemo<SurrenderControlOverlayState[]>(() => {
+    if (game?.status !== "active") return [];
+    const surrenderedTargets = units.filter(
+      (unit) =>
+        Boolean(unit.surrenderedToOwnerId) &&
+        !unit.isDestroyed &&
+        !unitIsOffBoard(unit),
+    );
+    if (surrenderedTargets.length === 0) return [];
+
+    const eligibleWithoutRange = (candidate: GameUnit, target: GameUnit) => {
+      const coercingOwnerId = target.surrenderedToOwnerId;
+      if (!coercingOwnerId || candidate.ownerId !== coercingOwnerId) return false;
+      if (candidate.id === target.id || candidate.isDestroyed || unitIsOffBoard(candidate)) return false;
+      if (candidate.surrenderedToOwnerId || candidate.capturedByOwnerId) return false;
+      if (unitIsInactiveAdrift(candidate) || candidate.damageState === "exploding-end-of-next") return false;
+      if (candidate.hullPoints <= 0) return false;
+      if ((candidate.maxCrewPoints ?? 0) > 0 && (candidate.crewPoints ?? 0) <= 0) return false;
+      if (isFighterUnit(candidate)) return false;
+      return !uiModelIsSpaceStation(getShipModelForUnit(candidate));
+    };
+    const visualUnit = (
+      unit: GameUnit,
+      useMovementPreview: boolean,
+    ): SurrenderControlVisualUnit => ({
+      id: unit.id,
+      name: unit.name,
+      x:
+        unit.hexQ +
+        (useMovementPreview && unit.id === selectedUnitData?.id
+          ? (selectedDragOffset?.x ?? 0)
+          : 0),
+      z:
+        unit.hexR +
+        (useMovementPreview && unit.id === selectedUnitData?.id
+          ? (selectedDragOffset?.z ?? 0)
+          : 0),
+      baseRadius: rulesBaseRadius(unit),
+      isSelected: unit.id === selectedUnitData?.id,
+    });
+    const inRange = (
+      candidate: GameUnit,
+      target: GameUnit,
+      useMovementPreview: boolean,
+    ) => {
+      const candidateVisual = visualUnit(candidate, useMovementPreview);
+      return uiBaseFootprintEdgeDistance(
+        {
+          id: candidate.id,
+          x: candidateVisual.x,
+          z: candidateVisual.z,
+          baseRadiusInches: candidateVisual.baseRadius,
+          isFighter: false,
+        },
+        {
+          id: target.id,
+          x: target.hexQ,
+          z: target.hexR,
+          baseRadiusInches: rulesBaseRadius(target),
+          isFighter: false,
+        },
+      ) <= 10 + 1e-6;
+    };
+
+    return surrenderedTargets.flatMap((target) => {
+      const eligible = units.filter((candidate) =>
+        eligibleWithoutRange(candidate, target),
+      );
+      const currentMaintainers = eligible.filter((candidate) =>
+        inRange(candidate, target, false),
+      );
+      const previewMaintainers = eligible.filter((candidate) =>
+        inRange(candidate, target, true),
+      );
+      const selectedCandidate = selectedUnitData
+        ? eligible.find((candidate) => candidate.id === selectedUnitData.id) ?? null
+        : null;
+      const selectedCurrentlyMaintains = Boolean(
+        selectedCandidate && currentMaintainers.some((candidate) => candidate.id === selectedCandidate.id),
+      );
+      const selectedPreviewMaintains = Boolean(
+        selectedCandidate && previewMaintainers.some((candidate) => candidate.id === selectedCandidate.id),
+      );
+      const selectedHasPositionPreview = Boolean(
+        selectedCandidate && selectedDragOffset,
+      );
+      const selectedRelevant = Boolean(
+        target.surrenderedToOwnerId === myUserId &&
+        game?.phase === "movement" &&
+        selectedCandidate &&
+        (selectedCurrentlyMaintains || selectedPreviewMaintains),
+      );
+      const inspectingTarget =
+        selectedUnit === target.id || hoveredUnitId === target.id;
+      const unmaintained = previewMaintainers.length === 0;
+      const show = inspectingTarget || selectedRelevant || unmaintained;
+      if (!show) return [];
+
+      const selectedIsFinalMaintainer =
+        previewMaintainers.length === 1 &&
+        previewMaintainers[0]?.id === selectedCandidate?.id;
+      const exitingMaintainer =
+        selectedCandidate &&
+        selectedHasPositionPreview &&
+        selectedCurrentlyMaintains &&
+        !selectedPreviewMaintains
+          ? {
+              ...visualUnit(selectedCandidate, true),
+              critical: previewMaintainers.length === 0,
+            }
+          : null;
+
+      return [{
+        target: visualUnit(target, false),
+        maintainers: previewMaintainers.map((candidate) =>
+          visualUnit(candidate, true),
+        ),
+        exitingMaintainer,
+        status: unmaintained
+          ? "unmaintained"
+          : selectedIsFinalMaintainer
+            ? "fragile"
+            : "safe",
+      } satisfies SurrenderControlOverlayState];
+    });
+  }, [
+    game?.phase,
+    game?.status,
+    getShipModelForUnit,
+    hoveredUnitId,
+    myUserId,
+    selectedDragOffset,
+    selectedUnit,
+    selectedUnitData,
+    units,
+  ]);
   const selectedFighterLockedInDogfight = Boolean(
     selectedUnitData &&
       selectedUnitIsFighter &&
@@ -16685,7 +17124,8 @@ export default function GameBoard() {
           x = unit.hexQ + (dx / dist) * remaining;
           z = unit.hexR + (dz / dist) * remaining;
         }
-        [x, z] = clampBaseCenterInsideBoard(x, z, unit);
+        x = clampNumber(x, -BOARD_W / 2, BOARD_W / 2);
+        z = clampNumber(z, -BOARD_D / 2, BOARD_D / 2);
       }
       let candidate: UiBaseFootprint = {
         id: unit.id,
@@ -16943,6 +17383,7 @@ export default function GameBoard() {
     return units
       .filter((unit) => {
         if (unit.ownerId !== myUserId || unit.isDestroyed) return false;
+        if (unit.surrenderedToOwnerId) return false;
         if (unit.hullPoints <= 0 || unit.hullPoints >= unit.maxHullPoints)
           return false;
         if ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
@@ -16999,6 +17440,7 @@ export default function GameBoard() {
     (unit: BoardUnit): boolean => {
       if (!isMyEndPhaseWindow || myEndPhasePassed) return false;
       if (unit.ownerId !== myUserId || unit.isDestroyed) return false;
+      if (unit.surrenderedToOwnerId) return false;
       if (unit.hullPoints <= 0) return false;
       if ((unit.maxCrewPoints ?? 0) > 0 && (unit.crewPoints ?? 0) <= 0)
         return false;
@@ -17124,6 +17566,7 @@ export default function GameBoard() {
     (carrier: GameUnit): boolean => {
       if (!game || !isMyEndPhaseWindow) return false;
       if (carrier.ownerId !== myUserId) return false;
+      if (carrier.surrenderedToOwnerId) return false;
       if (carrier.isDestroyed || !unitIsCombatEffective(carrier)) return false;
       if (
         carrier.damageState === "adrift" ||
@@ -17725,6 +18168,7 @@ export default function GameBoard() {
   const unitEligibleForCurrentPhase = useCallback(
     (u: BoardUnit): boolean => {
       if (u.isDestroyed) return false;
+      if (u.surrenderedToOwnerId) return false;
       if (u.boardState === "withdrawn") return false;
       if (u.boardState === "hyperspace" && currentPhase !== "movement") {
         return false;
@@ -18307,6 +18751,57 @@ export default function GameBoard() {
     specialActionTargetPicking,
     unitsWithFighterFlags,
   ]);
+  const activeStandDownTargetPreview = useMemo(() => {
+    if (
+      game?.status !== "active" ||
+      !isMyActivation ||
+      currentPhase !== "movement" ||
+      specialActionTargetPicking !== "stand-down-and-prepare-to-be-boarded" ||
+      activeUnitId === null
+    ) {
+      return null;
+    }
+    const attacker = unitsWithFighterFlags.find((u) => u.id === activeUnitId);
+    if (!attacker || attacker.ownerId !== myUserId || !unitIsCombatEffective(attacker)) {
+      return null;
+    }
+    return { attacker };
+  }, [
+    activeUnitId,
+    currentPhase,
+    game?.status,
+    isMyActivation,
+    myUserId,
+    specialActionTargetPicking,
+    unitsWithFighterFlags,
+  ]);
+  const standDownDialogTarget = standDownDialog
+    ? units.find((unit) => unit.id === standDownDialog.targetUnitId) ?? null
+    : null;
+  const standDownDialogAttacker = standDownDialog
+    ? units.find((unit) => unit.id === standDownDialog.attackerUnitId) ?? null
+    : null;
+  const standDownDialogContributors = standDownDialog
+    ? standDownDialog.eligibleUnitIds
+        .map((id) => units.find((unit) => unit.id === id))
+        .filter((unit): unit is BoardUnit => Boolean(unit))
+        .sort((a, b) =>
+          a.id === standDownDialog.attackerUnitId
+            ? -1
+            : b.id === standDownDialog.attackerUnitId
+              ? 1
+              : a.name.localeCompare(b.name),
+        )
+    : [];
+  const standDownSelectedPressure = standDownDialog
+    ? standDownDialogContributors.reduce(
+        (total, unit) =>
+          standDownDialog.selectedUnitIds.includes(unit.id)
+            ? total + Math.max(0, unit.hullPoints)
+            : total,
+        0,
+      )
+    : 0;
   const minMoveGate = useMemo(() => {
     if (!activeUnitData || currentPhase !== "movement") {
       return { blocked: false, required: 0, moved: 0 };
@@ -18798,6 +19293,81 @@ export default function GameBoard() {
       }
       if (action === "track-that-target" && isFighterUnit(unit)) {
         setActivationFeedback("Track That Target nominates an enemy ship, not a fighter flight.");
+        return;
+      }
+      if (action === "stand-down-and-prepare-to-be-boarded") {
+        const attacker = units.find((candidate) => candidate.id === attackerUnitId);
+        const targetModel = getShipModelForUnit(unit);
+        if (!attacker) return;
+        if (isFighterUnit(unit) || uiModelIsSpaceStation(targetModel)) {
+          setActivationFeedback("Stand Down targets enemy ships, not fighters or stations.");
+          return;
+        }
+        if (!unit.isCrippled && !unit.isSkeletonCrew) {
+          setActivationFeedback("Stand Down requires a Crippled or Skeleton Crew target.");
+          return;
+        }
+        if (unit.surrenderedToOwnerId || unit.capturedByOwnerId) {
+          setActivationFeedback("That ship is already surrendered or captured.");
+          return;
+        }
+        const targetFootprint = {
+          id: unit.id,
+          x: unit.hexQ,
+          z: unit.hexR,
+          baseRadiusInches: unit.baseRadiusInches,
+          isFighter: false,
+        };
+        const attackerDistance = uiBaseFootprintEdgeDistance(
+          {
+            id: attacker.id,
+            x: attacker.hexQ,
+            z: attacker.hexR,
+            baseRadiusInches: attacker.baseRadiusInches,
+            isFighter: false,
+          },
+          targetFootprint,
+        );
+        if (attackerDistance > 10 + 1e-6) {
+          setActivationFeedback(`Stand Down target is ${attackerDistance.toFixed(1)}\" away; maximum range is 10\".`);
+          return;
+        }
+        const eligibleContributors = units.filter((candidate) => {
+          if (candidate.ownerId !== myUserId || unitIsOffBoard(candidate)) return false;
+          if (!unitIsCombatEffective(candidate) || candidate.surrenderedToOwnerId || candidate.capturedByOwnerId) return false;
+          if (unitIsInactiveAdrift(candidate)) return false;
+          const model = getShipModelForUnit(candidate);
+          if (isFighterUnit(candidate) || uiModelIsSpaceStation(model)) return false;
+          return uiBaseFootprintEdgeDistance(
+            {
+              id: candidate.id,
+              x: candidate.hexQ,
+              z: candidate.hexR,
+              baseRadiusInches: candidate.baseRadiusInches,
+              isFighter: false,
+            },
+            targetFootprint,
+          ) <= 10 + 1e-6;
+        });
+        if (!eligibleContributors.some((candidate) => candidate.id === attacker.id)) {
+          setActivationFeedback("The declaring ship must be within 10\" of the target.");
+          return;
+        }
+        const maximumPressure = eligibleContributors.reduce(
+          (total, candidate) => total + Math.max(0, candidate.hullPoints),
+          0,
+        );
+        if (maximumPressure <= unit.maxHullPoints) {
+          setActivationFeedback(`Nearby ships have ${maximumPressure} current Damage; they must exceed the target's starting Damage ${unit.maxHullPoints}.`);
+          return;
+        }
+        setSpecialActionTargetPicking(null);
+        setStandDownDialog({
+          attackerUnitId: attacker.id,
+          targetUnitId: unit.id,
+          selectedUnitIds: eligibleContributors.map((candidate) => candidate.id),
+          eligibleUnitIds: eligibleContributors.map((candidate) => candidate.id),
+        });
         return;
       }
       if (action === "launch-breaching-pods-and-shuttles") {
@@ -19882,6 +20452,7 @@ export default function GameBoard() {
       boardState?: "deployed" | "hyperspace";
       heading: number;
       crewQuality?: number;
+      campaignShipInstanceId?: number | null;
       launchedFromPlacementIndex?: number | null;
       deploymentGroupId?: string | null;
     }>;
@@ -19932,6 +20503,7 @@ export default function GameBoard() {
             boardState: staged.boardState,
             heading: staged.heading,
             crewQuality: staged.crewQuality,
+            campaignShipInstanceId: staged.campaignShipInstanceId ?? null,
             deploymentGroupId,
           });
           continue;
@@ -19943,6 +20515,7 @@ export default function GameBoard() {
           boardState: staged.boardState,
           heading: staged.heading,
           crewQuality: staged.crewQuality,
+          campaignShipInstanceId: staged.campaignShipInstanceId ?? null,
           deploymentGroupId,
         });
       }
@@ -19959,6 +20532,7 @@ export default function GameBoard() {
           boardState: s.boardState,
           heading: s.heading,
           crewQuality: s.crewQuality,
+          campaignShipInstanceId: s.campaignShipInstanceId ?? null,
           deploymentGroupId: s.deploymentGroupId?.trim() || null,
         }));
     } else {
@@ -19970,6 +20544,7 @@ export default function GameBoard() {
         boardState: s.boardState,
         heading: s.heading,
         crewQuality: s.crewQuality,
+        campaignShipInstanceId: s.campaignShipInstanceId ?? null,
         launchedFromPlacementIndex: s.launchedFromStagedId
           ? (stagedIndexById.get(s.launchedFromStagedId) ?? null)
           : null,
@@ -20010,6 +20585,13 @@ export default function GameBoard() {
     qc,
     myUserId,
   ]);
+
+  const deploymentCommitDisabled =
+    currentStagedUnits.length === 0 ||
+    !stagedAllocation.legal ||
+    Boolean(deploymentOverlapWarning) ||
+    Boolean(hyperspaceReserveWarning) ||
+    deployFleet.isPending;
 
   if (isLoading) {
     return (
@@ -22099,6 +22681,12 @@ export default function GameBoard() {
                 units={units.filter((unit) => !unitIsOffBoard(unit))}
               />
             )}
+            {surrenderControlOverlays.map((overlay) => (
+              <SurrenderControlOverlay
+                key={`surrender-control-${overlay.target.id}`}
+                overlay={overlay}
+              />
+            ))}
             <BoardBoundary />
             {game.status === "deploying" && (
               <DeploymentZones config={deploymentConfig} mySide={mySide} />
@@ -22405,6 +22993,57 @@ export default function GameBoard() {
                   activeBoardingActions: activeBoardingData?.actions ?? [],
                 });
                 targetingPreview = eligibility.eligible ? "eligible" : "ineligible";
+              }
+              if (
+                activeStandDownTargetPreview &&
+                unit.id !== activeStandDownTargetPreview.attacker.id &&
+                unit.ownerId !== myUserId
+              ) {
+                const targetFootprint = {
+                  id: unit.id,
+                  x: unit.hexQ,
+                  z: unit.hexR,
+                  baseRadiusInches: unit.baseRadiusInches,
+                  isFighter: false,
+                };
+                const attacker = activeStandDownTargetPreview.attacker;
+                const attackerInRange = uiBaseFootprintEdgeDistance(
+                  {
+                    id: attacker.id,
+                    x: attacker.hexQ,
+                    z: attacker.hexR,
+                    baseRadiusInches: attacker.baseRadiusInches,
+                    isFighter: false,
+                  },
+                  targetFootprint,
+                ) <= 10 + 1e-6;
+                const pressure = units.reduce((total, candidate) => {
+                  if (candidate.ownerId !== myUserId || unitIsOffBoard(candidate)) return total;
+                  if (!unitIsCombatEffective(candidate) || candidate.surrenderedToOwnerId || candidate.capturedByOwnerId) return total;
+                  if (unitIsInactiveAdrift(candidate)) return total;
+                  if (isFighterUnit(candidate) || uiModelIsSpaceStation(getShipModelForUnit(candidate))) return total;
+                  const inRange = uiBaseFootprintEdgeDistance(
+                    {
+                      id: candidate.id,
+                      x: candidate.hexQ,
+                      z: candidate.hexR,
+                      baseRadiusInches: candidate.baseRadiusInches,
+                      isFighter: false,
+                    },
+                    targetFootprint,
+                  ) <= 10 + 1e-6;
+                  return inRange ? total + Math.max(0, candidate.hullPoints) : total;
+                }, 0);
+                const eligible =
+                  unitIsCombatEffective(unit) &&
+                  !unit.surrenderedToOwnerId &&
+                  !unit.capturedByOwnerId &&
+                  !unitIsFighter &&
+                  !uiModelIsSpaceStation(unitModel) &&
+                  Boolean(unit.isCrippled || unit.isSkeletonCrew) &&
+                  attackerInRange &&
+                  pressure > unit.maxHullPoints;
+                targetingPreview = eligible ? "eligible" : "ineligible";
               }
               let visualAttackTurn: { key: string; targetHeading: number } | null = null;
               const visualAttackPhases = new Set<DiceModalPhase>([
@@ -23319,6 +23958,10 @@ export default function GameBoard() {
               allocationPoints={allocationPoints}
               legal={stagedAllocation.legal}
               remainingTicks={stagedAllocation.remainingTicks}
+              showCompactCommit={mobileGameChrome}
+              commitDisabled={deploymentCommitDisabled}
+              commitPending={deployFleet.isPending}
+              onCommit={handleYardsDeploy}
             />
           )}
           {game.status === "deploying" && isParticipant && !myDeploymentLocked && (
@@ -23345,6 +23988,16 @@ export default function GameBoard() {
               {game.status}{" "}
               {game.status === "active" && `— Round ${game.currentRound}`}
             </div>
+            {(game.status === "active" || game.status === "completed") && (
+              <div
+                className="border border-cyan-400/35 bg-black/80 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-cyan-100"
+                data-testid="hud-victory-points"
+              >
+                {game.challengerName ?? "Challenger"}: {game.challengerVictoryPoints ?? 0} VP
+                <span className="mx-1.5 text-cyan-500/70">|</span>
+                {game.opponentName ?? (game.opponentKind === "ai" ? "AI" : "Opponent")}: {game.opponentVictoryPoints ?? 0} VP
+              </div>
+            )}
             {isReadOnlyObserver && (
               <div
                 className="px-2 py-1 rounded text-xs font-mono tracking-widest uppercase border border-cyan-400/45 bg-cyan-400/10 text-cyan-200"
@@ -23441,18 +24094,25 @@ export default function GameBoard() {
 
         {mobileGameChrome && (
           <>
-            {!opsPanelOpen && (
-              <button
-                type="button"
-                aria-label="Open operations panel"
-                aria-expanded={opsPanelOpen}
-                onClick={() => setOpsPanelOpen(true)}
-                className="mobile-side-drawer-tab mobile-side-drawer-tab-right fixed right-0 top-24 z-50 flex h-12 w-9 items-center justify-center border border-r-0 border-border bg-card/95 text-primary shadow-lg"
-                data-testid="button-mobile-ops-panel-open"
-              >
+            <button
+              type="button"
+              aria-label={opsPanelOpen ? "Close operations panel" : "Open operations panel"}
+              aria-expanded={opsPanelOpen}
+              onClick={() => setOpsPanelOpen((open) => !open)}
+              className="mobile-side-drawer-tab mobile-side-drawer-tab-right fixed right-0 top-24 z-50 flex h-12 w-9 items-center justify-center border border-r-0 border-border bg-card/95 text-primary shadow-lg transition-transform duration-200 ease-out"
+              style={{
+                transform: opsPanelOpen
+                  ? "translateX(calc(-1 * min(88vw, 22rem)))"
+                  : "translateX(0)",
+              }}
+              data-testid="button-mobile-ops-panel-toggle"
+            >
+              {opsPanelOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
                 <PanelRightOpen className="h-4 w-4" />
-              </button>
-            )}
+              )}
+            </button>
             {opsPanelOpen && (
               <button
                 type="button"
@@ -24131,13 +24791,7 @@ export default function GameBoard() {
               <Button
                 data-testid="button-confirm-deployment"
                 className="w-full mt-2 uppercase tracking-widest text-xs gap-2"
-                disabled={
-                  currentStagedUnits.length === 0 ||
-                  !stagedAllocation.legal ||
-                  Boolean(deploymentOverlapWarning) ||
-                  Boolean(hyperspaceReserveWarning) ||
-                  deployFleet.isPending
-                }
+                disabled={deploymentCommitDisabled}
                 onClick={handleYardsDeploy}
               >
                 <Swords className="w-3.5 h-3.5" />
@@ -25337,6 +25991,7 @@ export default function GameBoard() {
                         | "track-that-target"
                         | "maneuver-to-shield"
                         | "cause-confusion"
+                        | "stand-down-and-prepare-to-be-boarded"
                         | "initiate-jump-point"
                         | "all-hands-on-deck"
                         | "scramble"
@@ -25429,6 +26084,13 @@ export default function GameBoard() {
                         hidden:
                           psychicCrewForSA <= 0 ||
                           isFighterUnit(selectedUnitData),
+                      },
+                      {
+                        id: "stand-down-and-prepare-to-be-boarded",
+                        label: "Stand Down and Prepare to be Boarded!",
+                        cq: null,
+                        hint: "Opposed CQ; select pressure ships within 10\"",
+                        hidden: isFighterUnit(selectedUnitData),
                       },
                       {
                         id: "initiate-jump-point",
@@ -25771,6 +26433,7 @@ export default function GameBoard() {
                                   | "concentrate-fire"
                                   | "track-that-target"
                                   | "cause-confusion"
+                                  | "stand-down-and-prepare-to-be-boarded"
                                   | "launch-breaching-pods-and-shuttles"
                                   | null =
                                   a.id === "concentrate-fire"
@@ -25778,7 +26441,9 @@ export default function GameBoard() {
                                     : a.id === "track-that-target"
                                       ? "track-that-target"
                                       : a.id === "cause-confusion"
-                                        ? "cause-confusion"
+                                      ? "cause-confusion"
+                                      : a.id === "stand-down-and-prepare-to-be-boarded"
+                                        ? "stand-down-and-prepare-to-be-boarded"
                                         : a.id === "launch-breaching-pods-and-shuttles"
                                           ? "launch-breaching-pods-and-shuttles"
                                           : null;
@@ -27333,6 +27998,57 @@ export default function GameBoard() {
       </Dialog>
 
       <AlertDialog
+        open={pendingWithdrawalMove !== null}
+        onOpenChange={(open) => {
+          if (!open && !moveUnit.isPending) setPendingWithdrawalMove(null);
+        }}
+      >
+        <AlertDialogContent
+          className="fixed max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] overflow-hidden border-2 border-amber-400/90 bg-black p-0 text-amber-50 shadow-[0_0_45px_rgba(251,191,36,0.3)] sm:max-w-md"
+          data-testid="dialog-tactical-withdrawal-confirm"
+        >
+          <div className="relative m-2 max-h-[calc(100dvh-2.5rem)] overflow-y-auto border border-amber-300/60 bg-black/95 p-4 shadow-inner shadow-black sm:p-5">
+            <AlertDialogHeader className="space-y-3 text-left">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-amber-300/80 bg-amber-300 text-black">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <AlertDialogTitle className="font-mono text-base uppercase tracking-[0.12em] text-amber-200">
+                  Confirm Tactical Withdrawal
+                </AlertDialogTitle>
+              </div>
+              <AlertDialogDescription className="font-mono text-xs leading-relaxed text-amber-100/85">
+                {pendingWithdrawalMove?.message}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="my-4 border border-amber-300/35 bg-amber-300/10 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-amber-100/90">
+              The ship permanently leaves the battlefield when confirmed.
+            </div>
+            <AlertDialogFooter className="gap-2 sm:space-x-0">
+              <AlertDialogCancel
+                disabled={moveUnit.isPending}
+                className="border-slate-500 bg-slate-950 font-mono text-xs uppercase tracking-widest text-slate-100 hover:bg-slate-800"
+                data-testid="button-cancel-tactical-withdrawal"
+              >
+                Keep Ship On Board
+              </AlertDialogCancel>
+              <AlertDialogAction
+                disabled={moveUnit.isPending}
+                onClick={(event) => {
+                  event.preventDefault();
+                  confirmTacticalWithdrawal();
+                }}
+                className="bg-amber-300 font-mono text-xs font-black uppercase tracking-widest text-black hover:bg-amber-200 disabled:bg-slate-700 disabled:text-slate-400"
+                data-testid="button-confirm-tactical-withdrawal"
+              >
+                {moveUnit.isPending ? "Withdrawing..." : "Withdraw Ship"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
         open={confirmingAbandon}
         onOpenChange={(open) => {
           if (!abandonGame.isPending) setConfirmingAbandon(open);
@@ -27653,6 +28369,141 @@ export default function GameBoard() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={standDownDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setStandDownDialog(null);
+        }}
+      >
+        <DialogContent
+          className="w-[calc(100vw-2rem)] max-w-2xl border-cyan-400/45 bg-black/95 text-cyan-50 sm:max-w-2xl"
+          data-testid="stand-down-contributors-dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm uppercase tracking-[0.14em] text-cyan-100">
+              Identify Involved Ships
+            </DialogTitle>
+            <DialogDescription className="break-words font-mono text-xs text-cyan-100/70">
+              Selected ships contribute their current Damage and cannot attack this target during this round.
+            </DialogDescription>
+          </DialogHeader>
+          {standDownDialog && standDownDialogTarget && standDownDialogAttacker && (
+            <div className="space-y-3 font-mono text-xs">
+              <div className="border border-cyan-500/25 bg-cyan-500/10 p-2">
+                <div className="text-cyan-300/70">Target</div>
+                <div className="break-words text-sm font-bold text-cyan-50">
+                  {standDownDialogTarget.name}
+                </div>
+                <div className="mt-1 text-[10px] text-cyan-100/65">
+                  Pressure must exceed starting Damage {standDownDialogTarget.maxHullPoints}.
+                </div>
+              </div>
+              <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                {standDownDialogContributors.map((contributor) => {
+                  const declaring = contributor.id === standDownDialog.attackerUnitId;
+                  const checked = standDownDialog.selectedUnitIds.includes(contributor.id);
+                  return (
+                    <label
+                      key={contributor.id}
+                      className="grid w-full min-w-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border border-slate-700 bg-slate-950/80 px-2 py-2"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={declaring}
+                        onChange={(event) => {
+                          setStandDownDialog((current) => {
+                            if (!current) return current;
+                            const selected = new Set(current.selectedUnitIds);
+                            if (event.target.checked) selected.add(contributor.id);
+                            else selected.delete(contributor.id);
+                            selected.add(current.attackerUnitId);
+                            return { ...current, selectedUnitIds: [...selected] };
+                          });
+                        }}
+                        className="h-4 w-4 shrink-0 accent-cyan-400"
+                        data-testid={`stand-down-contributor-${contributor.id}`}
+                      />
+                      <span className="min-w-0 break-words leading-4 text-cyan-50">
+                        {contributor.name}{declaring ? " (declaring)" : ""}
+                      </span>
+                      <span className="tabular-nums text-cyan-200">{contributor.hullPoints}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div
+                className={`border px-2 py-2 text-center font-bold ${
+                  standDownSelectedPressure > standDownDialogTarget.maxHullPoints
+                    ? "border-emerald-400/45 bg-emerald-500/10 text-emerald-200"
+                    : "border-amber-400/45 bg-amber-500/10 text-amber-200"
+                }`}
+                data-testid="stand-down-pressure-total"
+              >
+                Pressure {standDownSelectedPressure} / must exceed {standDownDialogTarget.maxHullPoints}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setStandDownDialog(null)}
+              disabled={chooseSpecialAction.isPending}
+              className="border-slate-600 bg-slate-950 font-mono text-xs uppercase text-slate-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                !standDownDialog ||
+                !standDownDialogTarget ||
+                standDownSelectedPressure <= standDownDialogTarget.maxHullPoints ||
+                chooseSpecialAction.isPending
+              }
+              onClick={() => {
+                if (!standDownDialog) return;
+                const payload = standDownDialog;
+                chooseSpecialAction.mutate(
+                  {
+                    gameId,
+                    unitId: payload.attackerUnitId,
+                    data: {
+                      action: "stand-down-and-prepare-to-be-boarded",
+                      targetUnitId: payload.targetUnitId,
+                      involvedUnitIds: payload.selectedUnitIds,
+                    },
+                  },
+                  {
+                    onSuccess: (res) => {
+                      setStandDownDialog(null);
+                      setSpecialActionFeedback({
+                        action: res.action,
+                        success: res.success,
+                        cqRoll: res.cqRoll ?? null,
+                        cqTotal: res.cqTotal ?? null,
+                        cqRequired: res.cqRequired ?? null,
+                      });
+                      mergeUpdatedUnitIntoGame(res.unit);
+                      qc.invalidateQueries({ queryKey: getGetGameQueryKey(gameId) });
+                      qc.invalidateQueries({ queryKey: ["special-action-audit-log", gameId] });
+                    },
+                    onError: (err: any) => {
+                      setActivationFeedback(cleanApiErrorMessage(err, "Stand Down failed"));
+                    },
+                  },
+                );
+              }}
+              className="bg-cyan-300 font-mono text-xs font-black uppercase text-black hover:bg-cyan-200"
+              data-testid="stand-down-commit"
+            >
+              Commit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={boardingCommitDialog !== null}

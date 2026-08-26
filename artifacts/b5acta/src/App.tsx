@@ -12,7 +12,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Home from "@/pages/home";
 import SignInPage from "@/pages/sign-in";
 import SignUpPage from "@/pages/sign-up";
-import Lobby from "@/pages/lobby";
+import Lobby, { ShadowLobby } from "@/pages/lobby";
+import Campaign from "@/pages/campaign";
+import CampaignBattle from "@/pages/campaign-battle";
 import Fleets from "@/pages/fleets";
 import NewGame from "@/pages/new-game";
 import GameFleetSelection from "@/pages/game-fleet-selection";
@@ -231,6 +233,9 @@ function AppRoutes({ clerkEnabled }: { clerkEnabled: boolean }) {
             {temporaryUsernameAuthEnabled ? <Redirect to="/sign-in" /> : <SignUpPage />}
           </Route>
           <Route path="/lobby"><ProtectedRoute component={Lobby} /></Route>
+          <Route path="/shadow-lobby"><ProtectedRoute component={ShadowLobby} /></Route>
+          <Route path="/campaign/:campaignId/battles/:battleId"><ProtectedRoute component={CampaignBattle} /></Route>
+          <Route path="/campaign"><ProtectedRoute component={Campaign} /></Route>
           <Route path="/fleets"><ProtectedRoute component={Fleets} /></Route>
           <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
           <Route path="/games/:id/fleet-selection"><ProtectedRoute component={GameFleetSelection} /></Route>

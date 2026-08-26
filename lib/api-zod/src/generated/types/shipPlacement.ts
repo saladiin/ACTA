@@ -5,6 +5,7 @@
  * Babylon 5 A Call to Arms - Async Online Wargame API
  * OpenAPI spec version: 0.1.0
  */
+import type { ShipPlacementBoardState } from './shipPlacementBoardState';
 
 export interface ShipPlacement {
   /**
@@ -19,8 +20,6 @@ export interface ShipPlacement {
   shipModelId?: number | null;
   hexQ: number;
   hexR: number;
-  /** Deployment state. deployed = starts on the board; hyperspace = starts in hyperspace reserves. */
-  boardState?: 'deployed' | 'hyperspace';
   heading: number;
   /**
      * Crew Quality 1..7. Optional; omitted = 4 (Veteran). In a 'standard' game the server forces this to 4 regardless.
@@ -40,4 +39,14 @@ export interface ShipPlacement {
      * @nullable
      */
   deploymentGroupId?: string | null;
+  /**
+     * Optional campaign roster ship assigned to this battle.
+     * @nullable
+     */
+  campaignShipInstanceId?: number | null;
+  /**
+     * Initial deployment state. Hyperspace places the ship in reserve.
+     * @nullable
+     */
+  boardState?: ShipPlacementBoardState;
 }

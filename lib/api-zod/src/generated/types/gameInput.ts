@@ -11,6 +11,7 @@ import type { GameInputCrewQualityMode } from './gameInputCrewQualityMode';
 import type { GameInputDeploymentPreset } from './gameInputDeploymentPreset';
 import type { GameInputOpponentKind } from './gameInputOpponentKind';
 import type { GameInputPriorityLevel } from './gameInputPriorityLevel';
+import type { GameInputSkybox } from './gameInputSkybox';
 import type { GameInputStations } from './gameInputStations';
 import type { GameInputTerrain } from './gameInputTerrain';
 import type { GameInputTerrainCount } from './gameInputTerrainCount';
@@ -28,7 +29,7 @@ export interface GameInput {
   allocationPoints: number;
   /** public = anyone may join from the lobby; private = password-gated. */
   visibility: GameInputVisibility;
-  /** Allow up to two authenticated observers after deployment. */
+  /** Allow authenticated non-participants to observe after deployment. */
   allowObservers?: boolean;
   /** Choose human for lobby matchmaking or ai for the reserved server-controlled opponent with board-step automation. */
   opponentKind?: GameInputOpponentKind;
@@ -71,7 +72,7 @@ export interface GameInput {
      */
   ambushBoxDepth?: number;
   /** Board backdrop selected for this engagement. */
-  skybox?: 'none' | 'bright-nebula' | 'dark-forest' | 'drazi-green-purple' | 'distant-fields' | 'zhadum';
+  skybox?: GameInputSkybox;
   /** automatic = server generates terrain at creation. manual = commanders place terrain before fleet deployment. */
   terrainPlacement?: GameInputTerrainPlacement;
   /** Optional terrain package for this engagement. */

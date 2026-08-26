@@ -1,8 +1,8 @@
 import { Link, useLocation } from "wouter";
 import { useClerk } from "@clerk/react";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode } from "react";
-import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck, Newspaper, ChevronDown, ChevronUp, Ship } from "lucide-react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { LogOut, LayoutDashboard, Crosshair, List, PanelLeftClose, PanelLeftOpen, CircleHelp, ScrollText, Settings, Sparkles, ShieldCheck, Newspaper, ChevronDown, ChevronUp, Ship, Map, Orbit, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { customFetch } from "@workspace/api-client-react";
 import { APP_BUILD_SHA } from "@/lib/build-version";
@@ -16,6 +16,14 @@ type AdminMeResponse = {
 
 type AppVersionResponse = {
   buildSha: string;
+};
+
+type SitePresenceResponse = {
+  activeWithinSeconds: number;
+  players: Array<{
+    username: string;
+    isCurrentUser: boolean;
+  }>;
 };
 
 function ClerkDisengageButton({ basePath }: { basePath: string }) {
@@ -32,7 +40,19 @@ function ClerkDisengageButton({ basePath }: { basePath: string }) {
   );
 }
 
-export function Layout({ children, title, sidebarBottom }: { children: ReactNode; title?: string; sidebarBottom?: ReactNode }) {
+type LayoutAppearance = "standard" | "shadow-organic";
+
+export function Layout({
+  children,
+  title,
+  sidebarBottom,
+  appearance = "standard",
+}: {
+  children: ReactNode;
+  title?: string;
+  sidebarBottom?: ReactNode;
+  appearance?: LayoutAppearance;
+}) {
   const [, setLocation] = useLocation();
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const inputProfile = useInputProfile();
@@ -53,17 +73,53 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
     refetchInterval: 180_000,
     refetchOnWindowFocus: true,
   });
+  const presenceQuery = useQuery({
+    queryKey: ["site-presence"],
+    queryFn: () => customFetch<SitePresenceResponse>("/api/presence", { responseType: "json" }),
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
   const showAdminNav = adminMe?.isAdmin === true;
   const updateAvailable = Boolean(appVersion?.buildSha && appVersion.buildSha !== APP_BUILD_SHA);
   const showLocalToolingNav = import.meta.env.DEV || isLocalToolingHost(window.location.hostname);
+  const shadowOrganic = appearance === "shadow-organic";
+  const shellStyle = shadowOrganic
+    ? ({
+        "--shadow-organic-texture": `url("${basePath}/api/textures/shadow_flesh_base_tile.png?v=${APP_BUILD_SHA}")`,
+      } as CSSProperties)
+    : undefined;
 
   useEffect(() => {
     setNavOpen(!mobileChrome);
   }, [mobileChrome]);
 
+  useEffect(() => {
+    const heartbeat = () => {
+      if (document.visibilityState !== "visible") return;
+      void customFetch<string>("/api/presence/heartbeat", {
+        method: "POST",
+        responseType: "text",
+      }).catch(() => undefined);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") heartbeat();
+    };
+
+    heartbeat();
+    const intervalId = window.setInterval(heartbeat, 30_000);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
   return (
     <div
-      className="min-h-[100dvh] pb-5 flex flex-col md:flex-row bg-background text-foreground selection:bg-primary/30"
+      className={`min-h-[100dvh] pb-5 flex flex-col md:flex-row bg-background text-foreground selection:bg-primary/30 ${
+        shadowOrganic ? "shadow-organic-shell" : ""
+      }`}
+      style={shellStyle}
       data-input={inputProfile.input}
       data-layout={inputProfile.layout}
       data-platform={inputProfile.platform}
@@ -132,6 +188,14 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
                 <LayoutDashboard className="w-4 h-4" />
                 <span className="text-sm font-medium tracking-wide uppercase">Lobby</span>
               </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/shadow-lobby" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <Orbit className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Shadow Lobby</span>
+              </Link>
+              <Link onClick={() => mobileChrome && setNavOpen(false)} href="/campaign" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                <Map className="w-4 h-4" />
+                <span className="text-sm font-medium tracking-wide uppercase">Campaign</span>
+              </Link>
               <Link onClick={() => mobileChrome && setNavOpen(false)} href="/fleets" className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 <List className="w-4 h-4" />
                 <span className="text-sm font-medium tracking-wide uppercase">Fleets</span>
@@ -182,6 +246,40 @@ export function Layout({ children, title, sidebarBottom }: { children: ReactNode
               )}
             </div>
           )}
+          <section
+            className="site-presence-sidebar mt-1 border-y border-border/70 px-2 py-3"
+            data-testid="site-presence-panel"
+          >
+            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              <Users className="h-3.5 w-3.5 text-cyan-300" />
+              <span>Players Online</span>
+              <span className="ml-auto text-cyan-200" data-testid="site-presence-count">
+                {presenceQuery.data?.players.length ?? 0}
+              </span>
+            </div>
+            {presenceQuery.isLoading ? (
+              <div className="h-8 border border-border/50 bg-background/40" />
+            ) : presenceQuery.isError ? (
+              <p className="text-[10px] leading-relaxed text-muted-foreground">Presence unavailable.</p>
+            ) : presenceQuery.data?.players.length ? (
+              <ul className="max-h-40 space-y-0.5 overflow-y-auto pr-1" data-testid="site-presence-list">
+                {presenceQuery.data.players.map((player, index) => (
+                  <li
+                    key={`${player.username}-${index}`}
+                    className="flex min-w-0 items-center gap-2 border-b border-border/40 py-1.5 text-xs"
+                  >
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
+                    <span className="truncate" title={player.username}>{player.username}</span>
+                    {player.isCurrentUser ? (
+                      <span className="ml-auto font-mono text-[8px] uppercase tracking-wider text-muted-foreground">You</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[10px] leading-relaxed text-muted-foreground">No active commanders.</p>
+            )}
+          </section>
         </nav>
         {sidebarBottom && (
           <div className="min-h-0 flex-1 overflow-y-auto border-t border-border">

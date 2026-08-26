@@ -10,23 +10,7 @@ import type { DamageTableResult } from './damageTableResult';
 import type { ExplosionVictim } from './explosionVictim';
 import type { FireWeaponResultAttackRollKindsItem } from './fireWeaponResultAttackRollKindsItem';
 import type { FireWeaponResultInterceptorAttemptsItem } from './fireWeaponResultInterceptorAttemptsItem';
-
-export type FireWeaponResultManeuverToShield = {
-  originalTargetUnitId?: number;
-  originalTargetName?: string;
-  shieldUnitId?: number;
-  shieldUnitName?: string;
-  lineDistance?: number;
-  protectedDistance?: number;
-  attackerRoll?: number | null;
-  attackerCrewQuality?: number | null;
-  attackerTotal?: number | null;
-  shieldRoll?: number | null;
-  shieldCrewQuality?: number | null;
-  shieldTotal?: number | null;
-  success?: boolean;
-  failureReason?: 'line-outside' | 'roll-failed';
-};
+import type { FireWeaponResultManeuverToShield } from './fireWeaponResultManeuverToShield';
 
 export interface FireWeaponResult {
   weaponId: number;
@@ -34,7 +18,7 @@ export interface FireWeaponResult {
   /** Original target selected before Maneuver to Shield Them interposition. Present when the attack was resolved through the current fire endpoint. */
   originalTargetUnitId?: number;
   /** Maneuver to Shield Them interposition result. Null when no eligible or nearby shield ship was relevant to the shot. */
-  maneuverToShield?: FireWeaponResultManeuverToShield | null;
+  maneuverToShield?: FireWeaponResultManeuverToShield;
   /** Raw die threshold for each AD after AP/Super AP result modifiers are folded in (base hullRating / Beam=4+ / crit-floors minus AP modifier). Stealth is NO LONGER folded into this — it's a separate pre-attack 1d6 check (see stealthCheck*). */
   hitThreshold: number;
   /** Defender's stealth value (with range/already-hit modifiers, clamped 2..6) the attacker must meet or exceed on a single pre-attack 1d6. Null when target has no Stealth trait or the weapon has Energy Mine (bypasses Stealth). */

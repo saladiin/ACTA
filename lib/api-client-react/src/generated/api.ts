@@ -39,6 +39,8 @@ import type {
   LaunchFighterInput,
   LobbyState,
   MoveUnitInput,
+  ObserveGameInput,
+  ObserveGameResult,
   PlayerProfile,
   RecoverFighterInput,
   ScoutActionInput,
@@ -965,6 +967,150 @@ export function useGetGame<TData = Awaited<ReturnType<typeof getGame>>, TError =
 
 
 
+
+export const getObserveGameUrl = (gameId: number,) => {
+
+
+
+
+  return `/api/games/${gameId}/observe`
+}
+
+/**
+ * @summary Join an active or completed engagement as a read-only observer
+ */
+export const observeGame = async (gameId: number,
+    observeGameInput?: ObserveGameInput, options?: RequestInit): Promise<ObserveGameResult> => {
+
+  return customFetch<ObserveGameResult>(getObserveGameUrl(gameId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      observeGameInput,)
+  }
+);}
+
+
+
+
+export const getObserveGameMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof observeGame>>, TError,{gameId: number;data?: BodyType<ObserveGameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof observeGame>>, TError,{gameId: number;data?: BodyType<ObserveGameInput>}, TContext> => {
+
+const mutationKey = ['observeGame'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof observeGame>>, {gameId: number;data?: BodyType<ObserveGameInput>}> = (props) => {
+          const {gameId,data} = props ?? {};
+
+          return  observeGame(gameId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ObserveGameMutationResult = NonNullable<Awaited<ReturnType<typeof observeGame>>>
+    export type ObserveGameMutationBody = BodyType<ObserveGameInput> | undefined
+    export type ObserveGameMutationError = ErrorType<void>
+
+    /**
+ * @summary Join an active or completed engagement as a read-only observer
+ */
+export const useObserveGame = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof observeGame>>, TError,{gameId: number;data?: BodyType<ObserveGameInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof observeGame>>,
+        TError,
+        {gameId: number;data?: BodyType<ObserveGameInput>},
+        TContext
+      > => {
+      return useMutation(getObserveGameMutationOptions(options));
+    }
+
+export const getRemoveGameObserverUrl = (gameId: number,
+    observerUserId: string,) => {
+
+
+
+
+  return `/api/games/${gameId}/observers/${observerUserId}`
+}
+
+/**
+ * @summary Remove an observer from an engagement (players only)
+ */
+export const removeGameObserver = async (gameId: number,
+    observerUserId: string, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRemoveGameObserverUrl(gameId,observerUserId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getRemoveGameObserverMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeGameObserver>>, TError,{gameId: number;observerUserId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeGameObserver>>, TError,{gameId: number;observerUserId: string}, TContext> => {
+
+const mutationKey = ['removeGameObserver'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeGameObserver>>, {gameId: number;observerUserId: string}> = (props) => {
+          const {gameId,observerUserId} = props ?? {};
+
+          return  removeGameObserver(gameId,observerUserId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveGameObserverMutationResult = NonNullable<Awaited<ReturnType<typeof removeGameObserver>>>
+
+    export type RemoveGameObserverMutationError = ErrorType<void>
+
+    /**
+ * @summary Remove an observer from an engagement (players only)
+ */
+export const useRemoveGameObserver = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeGameObserver>>, TError,{gameId: number;observerUserId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof removeGameObserver>>,
+        TError,
+        {gameId: number;observerUserId: string},
+        TContext
+      > => {
+      return useMutation(getRemoveGameObserverMutationOptions(options));
+    }
 
 export const getAcceptGameUrl = (gameId: number,) => {
 

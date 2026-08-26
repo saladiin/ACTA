@@ -1,16 +1,42 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { MutableRefObject } from "react";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
-import { Billboard, Line, OrbitControls, Text, useGLTF } from "@react-three/drei";
+import {
+  Billboard,
+  Line,
+  OrbitControls,
+  Text,
+  useGLTF,
+} from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import * as THREE from "three";
 // @ts-ignore
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { Copy, RotateCcw, SlidersHorizontal, Sparkles, Target, Waves } from "lucide-react";
+import {
+  Copy,
+  RotateCcw,
+  SlidersHorizontal,
+  Sparkles,
+  Target,
+  Waves,
+} from "lucide-react";
 
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -69,6 +95,22 @@ type Tuning = {
   gateSize?: number;
   portalSize?: number;
   portalOffset?: number;
+  celToonEnabled?: boolean;
+  celTextureEnabled?: boolean;
+  celEmissiveEnabled?: boolean;
+  celTransparencyEnabled?: boolean;
+  celOutlineEnabled?: boolean;
+  celBloomEnabled?: boolean;
+  celTextureStrength?: number;
+  celShadowDepth?: number;
+  celBandContrast?: number;
+  celEmissiveStrength?: number;
+  celNormalStrength?: number;
+  celAmbientLight?: number;
+  celDirectionalLight?: number;
+  celLightAzimuth?: number;
+  celLightElevation?: number;
+  celBloomStrength?: number;
 };
 
 function impactFadeEnvelope(t: number): number {
@@ -78,7 +120,11 @@ function impactFadeEnvelope(t: number): number {
   return attack * release;
 }
 
-function impactClusterOffsets(count: number, spread: number, seed = 0): [number, number, number][] {
+function impactClusterOffsets(
+  count: number,
+  spread: number,
+  seed = 0,
+): [number, number, number][] {
   const spacing = Math.max(0.625, spread * 1.125);
   const wobble = seed * 0.13;
   const pattern: [number, number, number][] = [
@@ -181,6 +227,7 @@ type SpecialStation = {
     | "railgun-projectile-test"
     | "texture-missile-salvo"
     | "emissive-material-alternator"
+    | "cel-shaded-model"
     | "kirishiac-beam-test"
     | "vorlon-dreadnought-beam-test"
     | "textured-exploding-sphere";
@@ -330,7 +377,7 @@ const KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES = 1.35;
 const FACTION_COLORS: Record<string, string> = {
   "Earth Alliance": "#ff2a2a",
   "Minbari Federation": "#8bdcff",
-  "Shadows": "#b85cff",
+  Shadows: "#b85cff",
   "Centauri Republic": "#ffa040",
 };
 
@@ -346,14 +393,32 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         label: "Earth Beam",
         note: "Beam trait with red EA color and the default Fire Diffuse target impact.",
         faction: "Earth Alliance",
-        weapon: { id: 9001, name: "Heavy Laser Cannon", traits: "Beam; Double Damage", attackDice: 4 },
+        weapon: {
+          id: 9001,
+          name: "Heavy Laser Cannon",
+          traits: "Beam; Double Damage",
+          attackDice: 4,
+        },
         from: [-18, -24],
         to: [-4, -24],
         hits: 2,
         totalDice: 4,
         targetModelFilename: "hyperion.glb",
         targetModelSize: 3.2,
-        tuning: { color: "#ef4444", secondaryColor: "#f97316", speed: 0.75, size: 0.31, fade: 1, intensity: 1.4, spread: 0.5, count: 4, arc: 0, thickness: 1.35, expansionCycle: 3.2, randomness: 0 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#f97316",
+          speed: 0.75,
+          size: 0.31,
+          fade: 1,
+          intensity: 1.4,
+          spread: 0.5,
+          count: 4,
+          arc: 0,
+          thickness: 1.35,
+          expansionCycle: 3.2,
+          randomness: 0,
+        },
       },
       {
         kind: "special",
@@ -429,6 +494,51 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
           randomness: 0.42,
           meshSize: 0.4,
           flareSize: 0.1,
+        },
+      },
+    ],
+  },
+  {
+    id: "material-studies",
+    name: "Material Studies",
+    summary:
+      "Preview-only surface treatments for evaluating alternate ship rendering styles.",
+    stations: [
+      {
+        kind: "special",
+        id: "cel-shaded-hyperion",
+        label: "Cel-Shaded Hyperion",
+        note: "Texture-preserving stepped toon lighting with an optional inverted-hull silhouette outline.",
+        effect: "cel-shaded-model",
+        position: [0, 0],
+        modelFilename: "hyperion.glb",
+        tuning: {
+          color: "#ffffff",
+          secondaryColor: "#05070a",
+          speed: 1,
+          size: 1,
+          fade: 1,
+          intensity: 1,
+          spread: 1,
+          count: 3,
+          arc: 0,
+          thickness: 3.5,
+          celToonEnabled: true,
+          celTextureEnabled: true,
+          celEmissiveEnabled: true,
+          celTransparencyEnabled: true,
+          celOutlineEnabled: true,
+          celBloomEnabled: false,
+          celTextureStrength: 1,
+          celShadowDepth: 0.76,
+          celBandContrast: 1,
+          celEmissiveStrength: 1,
+          celNormalStrength: 1,
+          celAmbientLight: 0.2,
+          celDirectionalLight: 2.1,
+          celLightAzimuth: 36,
+          celLightElevation: 54,
+          celBloomStrength: 1,
         },
       },
     ],
@@ -571,7 +681,15 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         mode: "exploding",
         modelFilename: "hyperion.glb",
         position: [-16, -24],
-        tuning: { color: "#ef4444", secondaryColor: "#f97316", speed: 1.25, size: 0.9, intensity: 1.35, count: 18, spread: 0.72 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#f97316",
+          speed: 1.25,
+          size: 0.9,
+          intensity: 1.35,
+          count: 18,
+          spread: 0.72,
+        },
       },
       {
         kind: "ambient",
@@ -580,7 +698,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Localized fire used for damaged ships.",
         effect: "fire",
         position: [-8, -24],
-        tuning: { color: "#ff7a18", secondaryColor: "#ffd166", speed: 1.1, size: 0.75, fade: 1, intensity: 0.8, spread: 0.45, count: 16, arc: 0.15, thickness: 0.9 },
+        tuning: {
+          color: "#ff7a18",
+          secondaryColor: "#ffd166",
+          speed: 1.1,
+          size: 0.75,
+          fade: 1,
+          intensity: 0.8,
+          spread: 0.45,
+          count: 16,
+          arc: 0.15,
+          thickness: 0.9,
+        },
       },
       {
         kind: "special",
@@ -662,7 +791,19 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "dead-hulk-point-sparks",
         position: [-18, -12],
         modelFilename: "dead-hyperion.glb",
-        tuning: { color: "#fb923c", secondaryColor: "#fef3c7", speed: 0.15, size: 0.72, fade: 1.45, intensity: 1.05, spread: 0.72, count: 55, arc: 0.55, thickness: 0.82, randomness: 0.25 },
+        tuning: {
+          color: "#fb923c",
+          secondaryColor: "#fef3c7",
+          speed: 0.15,
+          size: 0.72,
+          fade: 1.45,
+          intensity: 1.05,
+          spread: 0.72,
+          count: 55,
+          arc: 0.55,
+          thickness: 0.82,
+          randomness: 0.25,
+        },
       },
       {
         kind: "special",
@@ -672,7 +813,19 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "dead-hulk-point-sparks",
         position: [-6, -12],
         modelFilename: "dead-hyperion.glb",
-        tuning: { color: "#f97316", secondaryColor: "#fde68a", speed: 0.72, size: 0.86, fade: 1.1, intensity: 1.35, spread: 0.55, count: 110, arc: 0.32, thickness: 0.95, randomness: 0.42 },
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#fde68a",
+          speed: 0.72,
+          size: 0.86,
+          fade: 1.1,
+          intensity: 1.35,
+          spread: 0.55,
+          count: 110,
+          arc: 0.32,
+          thickness: 0.95,
+          randomness: 0.42,
+        },
       },
       {
         kind: "special",
@@ -682,7 +835,19 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "dead-hulk-point-sparks",
         position: [6, -12],
         modelFilename: "dead-hyperion.glb",
-        tuning: { color: "#67e8f9", secondaryColor: "#f8fafc", speed: 0.58, size: 0.54, fade: 1.8, intensity: 1.5, spread: 0.9, count: 78, arc: 0.82, thickness: 0.68, randomness: 0.86 },
+        tuning: {
+          color: "#67e8f9",
+          secondaryColor: "#f8fafc",
+          speed: 0.58,
+          size: 0.54,
+          fade: 1.8,
+          intensity: 1.5,
+          spread: 0.9,
+          count: 78,
+          arc: 0.82,
+          thickness: 0.68,
+          randomness: 0.86,
+        },
       },
       {
         kind: "special",
@@ -692,7 +857,19 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "dead-hulk-point-sparks",
         position: [18, -12],
         modelFilename: "dead-hyperion.glb",
-        tuning: { color: "#f59e0b", secondaryColor: "#94a3b8", speed: 0.3, size: 0.46, fade: 2.1, intensity: 0.9, spread: 1.35, count: 135, arc: 1.1, thickness: 0.62, randomness: 0.7 },
+        tuning: {
+          color: "#f59e0b",
+          secondaryColor: "#94a3b8",
+          speed: 0.3,
+          size: 0.46,
+          fade: 2.1,
+          intensity: 0.9,
+          spread: 1.35,
+          count: 135,
+          arc: 1.1,
+          thickness: 0.62,
+          randomness: 0.7,
+        },
       },
     ],
   },
@@ -752,7 +929,8 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
   {
     id: "orb-texture-tests",
     name: "Orb Textures",
-    summary: "Exploding Hyperion sphere material tests using local T_ texture maps as diffuse, alpha, emissive, and distortion inputs.",
+    summary:
+      "Exploding Hyperion sphere material tests using local T_ texture maps as diffuse, alpha, emissive, and distortion inputs.",
     stations: [
       {
         kind: "special",
@@ -767,7 +945,20 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_Noise1_nk.png",
         alphaTextureFilename: "T_Noise_HU85k.png",
         textureVariant: "diffuse-additive",
-        tuning: { color: "#ef4444", secondaryColor: "#f97316", speed: 0.75, size: 0.31, fade: 1, intensity: 1.4, spread: 0.5, count: 4, arc: 0, thickness: 1.35, expansionCycle: 3.2, randomness: 0 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#f97316",
+          speed: 0.75,
+          size: 0.31,
+          fade: 1,
+          intensity: 1.4,
+          spread: 0.5,
+          count: 4,
+          arc: 0,
+          thickness: 1.35,
+          expansionCycle: 3.2,
+          randomness: 0,
+        },
       },
       {
         kind: "special",
@@ -782,7 +973,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_VFX_WindNoise1.png",
         alphaTextureFilename: "T_Noise1_nk.png",
         textureVariant: "diffuse-alpha",
-        tuning: { color: "#ff3b1f", secondaryColor: "#ffd166", speed: 1, size: 1, fade: 1, intensity: 1.05, spread: 1, count: 1, arc: 0, thickness: 1 },
+        tuning: {
+          color: "#ff3b1f",
+          secondaryColor: "#ffd166",
+          speed: 1,
+          size: 1,
+          fade: 1,
+          intensity: 1.05,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -797,7 +999,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_FirePanningCyl45.png",
         alphaTextureFilename: "T_Noise_HU85k.png",
         textureVariant: "alpha-shell",
-        tuning: { color: "#ef4444", secondaryColor: "#fef08a", speed: 0.9, size: 1, fade: 1.05, intensity: 1.1, spread: 1, count: 1, arc: 0, thickness: 1 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fef08a",
+          speed: 0.9,
+          size: 1,
+          fade: 1.05,
+          intensity: 1.1,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -812,7 +1025,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_FirePanningCyl45.png",
         alphaTextureFilename: "T_Noise1_nk.png",
         textureVariant: "emissive-noise",
-        tuning: { color: "#dc2626", secondaryColor: "#fb923c", speed: 1.2, size: 1, fade: 1, intensity: 1.25, spread: 1, count: 1, arc: 0, thickness: 1.15 },
+        tuning: {
+          color: "#dc2626",
+          secondaryColor: "#fb923c",
+          speed: 1.2,
+          size: 1,
+          fade: 1,
+          intensity: 1.25,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1.15,
+        },
       },
       {
         kind: "special",
@@ -827,7 +1051,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_VFX_WindNoise1.png",
         alphaTextureFilename: "T_Noise_HU85k.png",
         textureVariant: "dual-diffuse",
-        tuning: { color: "#f43f5e", secondaryColor: "#facc15", speed: 0.7, size: 1, fade: 1.1, intensity: 1.2, spread: 1, count: 1, arc: 0, thickness: 1 },
+        tuning: {
+          color: "#f43f5e",
+          secondaryColor: "#facc15",
+          speed: 0.7,
+          size: 1,
+          fade: 1.1,
+          intensity: 1.2,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -842,7 +1077,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_FirePanningCyl45.png",
         alphaTextureFilename: "T_Noise1_nk.png",
         textureVariant: "rim-alpha",
-        tuning: { color: "#ef4444", secondaryColor: "#fde68a", speed: 0.85, size: 1, fade: 1, intensity: 1.3, spread: 1, count: 1, arc: 0, thickness: 1.3 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fde68a",
+          speed: 0.85,
+          size: 1,
+          fade: 1,
+          intensity: 1.3,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1.3,
+        },
       },
       {
         kind: "special",
@@ -857,7 +1103,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_Noise_HU85k.png",
         alphaTextureFilename: "T_VFX_WindNoise1.png",
         textureVariant: "inner-hot-core",
-        tuning: { color: "#dc2626", secondaryColor: "#fff7ad", speed: 1.05, size: 1, fade: 1, intensity: 1.15, spread: 1, count: 1, arc: 0, thickness: 1 },
+        tuning: {
+          color: "#dc2626",
+          secondaryColor: "#fff7ad",
+          speed: 1.05,
+          size: 1,
+          fade: 1,
+          intensity: 1.15,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -872,7 +1129,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_VFX_WindNoise1.png",
         alphaTextureFilename: "T_FirePanningCyl45.png",
         textureVariant: "cool-smoke-mask",
-        tuning: { color: "#991b1b", secondaryColor: "#fb923c", speed: 0.65, size: 1, fade: 1.2, intensity: 0.95, spread: 1, count: 1, arc: 0, thickness: 0.95 },
+        tuning: {
+          color: "#991b1b",
+          secondaryColor: "#fb923c",
+          speed: 0.65,
+          size: 1,
+          fade: 1.2,
+          intensity: 0.95,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 0.95,
+        },
       },
       {
         kind: "special",
@@ -887,7 +1155,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_Noise1_nk.png",
         alphaTextureFilename: "T_FirePanningCyl45.png",
         textureVariant: "panning-fire-alpha",
-        tuning: { color: "#ef4444", secondaryColor: "#fdba74", speed: 1.35, size: 1, fade: 1, intensity: 1.2, spread: 1, count: 1, arc: 0, thickness: 1 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fdba74",
+          speed: 1.35,
+          size: 1,
+          fade: 1,
+          intensity: 1.2,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -902,7 +1181,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_Noise_HU85k.png",
         alphaTextureFilename: "T_VFX_WindNoise1.png",
         textureVariant: "wind-cutout",
-        tuning: { color: "#f97316", secondaryColor: "#fef08a", speed: 1.15, size: 1, fade: 1.05, intensity: 1.05, spread: 1, count: 1, arc: 0, thickness: 1.25 },
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#fef08a",
+          speed: 1.15,
+          size: 1,
+          fade: 1.05,
+          intensity: 1.05,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1.25,
+        },
       },
       {
         kind: "special",
@@ -917,7 +1207,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_FirePanningCyl45.png",
         alphaTextureFilename: "T_Noise_HU85k.png",
         textureVariant: "hard-plasma",
-        tuning: { color: "#ef4444", secondaryColor: "#fff7ed", speed: 0.95, size: 1, fade: 0.95, intensity: 1.35, spread: 1, count: 1, arc: 0, thickness: 1.1 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fff7ed",
+          speed: 0.95,
+          size: 1,
+          fade: 0.95,
+          intensity: 1.35,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1.1,
+        },
       },
       {
         kind: "special",
@@ -932,14 +1233,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         secondaryTextureFilename: "T_VFX_WindNoise1.png",
         alphaTextureFilename: "T_Noise1_nk.png",
         textureVariant: "ghost-shell",
-        tuning: { color: "#ef4444", secondaryColor: "#fca5a5", speed: 0.55, size: 1, fade: 1.45, intensity: 0.72, spread: 1, count: 1, arc: 0, thickness: 0.75 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fca5a5",
+          speed: 0.55,
+          size: 1,
+          fade: 1.45,
+          intensity: 0.72,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 0.75,
+        },
       },
     ],
   },
   {
     id: "organic-skin-tests",
     name: "Organic Skin",
-    summary: "Single-drift organic hull motion on the Spitfire and Shadow Battlecrab, preserving the source texture's black and grey palette.",
+    summary:
+      "Single-drift organic hull motion on the Spitfire and Shadow Battlecrab, preserving the source texture's black and grey palette.",
     stations: [
       {
         kind: "organic-skin",
@@ -949,7 +1262,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         modelFilename: "spitfire.glb",
         position: [-9, 0],
         variant: "single-drift",
-        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
+        tuning: {
+          color: "#151515",
+          secondaryColor: "#737373",
+          speed: 2,
+          size: 1.15,
+          fade: 1,
+          intensity: 1.19,
+          spread: 1.15,
+          count: 4,
+          arc: 0.01,
+          thickness: 0.9,
+        },
       },
       {
         kind: "organic-skin",
@@ -959,14 +1283,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         modelFilename: "battlecrab.glb",
         position: [9, 0],
         variant: "single-drift",
-        tuning: { color: "#151515", secondaryColor: "#737373", speed: 2, size: 1.15, fade: 1, intensity: 1.19, spread: 1.15, count: 4, arc: 0.01, thickness: 0.9 },
+        tuning: {
+          color: "#151515",
+          secondaryColor: "#737373",
+          speed: 2,
+          size: 1.15,
+          fade: 1,
+          intensity: 1.19,
+          spread: 1.15,
+          count: 4,
+          arc: 0.01,
+          thickness: 0.9,
+        },
       },
     ],
   },
   {
     id: "special-systems",
     name: "Special Systems",
-    summary: "Additional plausible game effects for defenses, special actions, and battlefield events.",
+    summary:
+      "Additional plausible game effects for defenses, special actions, and battlefield events.",
     stations: [
       {
         kind: "special",
@@ -975,7 +1311,14 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Defensive hit absorption or adaptive armor feedback.",
         effect: "shield-ripple",
         position: [-17, -22],
-        tuning: { color: "#38bdf8", secondaryColor: "#a7f3d0", speed: 1, size: 1, fade: 1.1, intensity: 1.2 },
+        tuning: {
+          color: "#38bdf8",
+          secondaryColor: "#a7f3d0",
+          speed: 1,
+          size: 1,
+          fade: 1.1,
+          intensity: 1.2,
+        },
       },
       {
         kind: "special",
@@ -984,7 +1327,14 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Short defensive fire blossoms around a target.",
         effect: "interceptor-burst",
         position: [0, -22],
-        tuning: { color: "#facc15", secondaryColor: "#fb923c", speed: 1.3, size: 1, count: 10, spread: 1.2 },
+        tuning: {
+          color: "#facc15",
+          secondaryColor: "#fb923c",
+          speed: 1.3,
+          size: 1,
+          count: 10,
+          spread: 1.2,
+        },
       },
       {
         kind: "special",
@@ -993,7 +1343,19 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Horizontal ribbon vortex with origin at the base and portal at the far end.",
         effect: "jump-point",
         position: [17, -22],
-        tuning: { color: "#2dd4bf", secondaryColor: "#01c7fc", speed: 3, size: 1, fade: 1.55, intensity: 2.9, spread: 1.5, count: 16, arc: 2.7, thickness: 4, randomness: 1 },
+        tuning: {
+          color: "#2dd4bf",
+          secondaryColor: "#01c7fc",
+          speed: 3,
+          size: 1,
+          fade: 1.55,
+          intensity: 2.9,
+          spread: 1.5,
+          count: 16,
+          arc: 2.7,
+          thickness: 4,
+          randomness: 1,
+        },
       },
       {
         kind: "special",
@@ -1076,7 +1438,14 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Expanding area pulse for mine detonation.",
         effect: "energy-mine",
         position: [17, 8],
-        tuning: { color: "#f472b6", secondaryColor: "#fde68a", speed: 0.85, size: 1.15, fade: 1, thickness: 1.2 },
+        tuning: {
+          color: "#f472b6",
+          secondaryColor: "#fde68a",
+          speed: 0.85,
+          size: 1.15,
+          fade: 1,
+          thickness: 1.2,
+        },
       },
       {
         kind: "special",
@@ -1085,14 +1454,22 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Scout, stealth, or sensor ghost visualization.",
         effect: "stealth-shimmer",
         position: [-17, 28],
-        tuning: { color: "#c4b5fd", secondaryColor: "#67e8f9", speed: 0.75, size: 1, fade: 1.5, intensity: 0.85 },
+        tuning: {
+          color: "#c4b5fd",
+          secondaryColor: "#67e8f9",
+          speed: 0.75,
+          size: 1,
+          fade: 1.5,
+          intensity: 0.85,
+        },
       },
     ],
   },
   {
     id: "battlefield-events",
     name: "Battlefield Events",
-    summary: "Utility and scenario VFX for locks, scans, cloaks, debris, and shockwaves.",
+    summary:
+      "Utility and scenario VFX for locks, scans, cloaks, debris, and shockwaves.",
     stations: [
       {
         kind: "special",
@@ -1101,7 +1478,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Constraining rings and beam column for gravitic holds.",
         effect: "tractor-lock",
         position: [-17, -22],
-        tuning: { color: "#38bdf8", secondaryColor: "#facc15", speed: 0.9, size: 1, fade: 1.1, intensity: 1, spread: 1, count: 4, arc: 3.2, thickness: 1 },
+        tuning: {
+          color: "#38bdf8",
+          secondaryColor: "#facc15",
+          speed: 0.9,
+          size: 1,
+          fade: 1.1,
+          intensity: 1,
+          spread: 1,
+          count: 4,
+          arc: 3.2,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -1110,7 +1498,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Expanding tactical scan rings with a rotating sweep plane.",
         effect: "sensor-sweep",
         position: [0, -22],
-        tuning: { color: "#22d3ee", secondaryColor: "#bef264", speed: 1, size: 1, fade: 1.4, intensity: 0.9, spread: 1.2, count: 5, arc: 2.8, thickness: 0.8 },
+        tuning: {
+          color: "#22d3ee",
+          secondaryColor: "#bef264",
+          speed: 1,
+          size: 1,
+          fade: 1.4,
+          intensity: 0.9,
+          spread: 1.2,
+          count: 5,
+          arc: 2.8,
+          thickness: 0.8,
+        },
       },
       {
         kind: "special",
@@ -1119,7 +1518,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Layered wire shells for stealth, dodge, or phase transition states.",
         effect: "phase-cloak",
         position: [17, -22],
-        tuning: { color: "#a78bfa", secondaryColor: "#67e8f9", speed: 0.65, size: 1, fade: 1.6, intensity: 0.75, spread: 1, count: 3, arc: 2.5, thickness: 1 },
+        tuning: {
+          color: "#a78bfa",
+          secondaryColor: "#67e8f9",
+          speed: 0.65,
+          size: 1,
+          fade: 1.6,
+          intensity: 0.75,
+          spread: 1,
+          count: 3,
+          arc: 2.5,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -1128,7 +1538,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Angular fragments for hull breach or wreckage events.",
         effect: "debris-sparks",
         position: [-9, 8],
-        tuning: { color: "#f97316", secondaryColor: "#fde68a", speed: 1.2, size: 1, fade: 1.1, intensity: 1.15, spread: 1.35, count: 14, arc: 2.2, thickness: 1 },
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#fde68a",
+          speed: 1.2,
+          size: 1,
+          fade: 1.1,
+          intensity: 1.15,
+          spread: 1.35,
+          count: 14,
+          arc: 2.2,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -1180,7 +1601,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Expanding shell for large detonations or spatial pressure waves.",
         effect: "shockwave-dome",
         position: [10, 8],
-        tuning: { color: "#fb7185", secondaryColor: "#fef08a", speed: 0.8, size: 1.1, fade: 1.25, intensity: 0.9, spread: 1, count: 3, arc: 2.8, thickness: 1.2 },
+        tuning: {
+          color: "#fb7185",
+          secondaryColor: "#fef08a",
+          speed: 0.8,
+          size: 1.1,
+          fade: 1.25,
+          intensity: 0.9,
+          spread: 1,
+          count: 3,
+          arc: 2.8,
+          thickness: 1.2,
+        },
       },
       {
         kind: "special",
@@ -1211,7 +1643,8 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
   {
     id: "command-status",
     name: "Command Status",
-    summary: "Readable activation, command, and defensive-state candidates for live board feedback.",
+    summary:
+      "Readable activation, command, and defensive-state candidates for live board feedback.",
     stations: [
       {
         kind: "special",
@@ -1220,7 +1653,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Target-designation sweep for scout reroll support.",
         effect: "sensor-sweep",
         position: [-17, -22],
-        tuning: { color: "#38bdf8", secondaryColor: "#bef264", speed: 0.75, size: 0.95, fade: 1.35, intensity: 0.95, spread: 1.05, count: 4, arc: 2.8, thickness: 0.7 },
+        tuning: {
+          color: "#38bdf8",
+          secondaryColor: "#bef264",
+          speed: 0.75,
+          size: 0.95,
+          fade: 1.35,
+          intensity: 0.95,
+          spread: 1.05,
+          count: 4,
+          arc: 2.8,
+          thickness: 0.7,
+        },
       },
       {
         kind: "special",
@@ -1229,7 +1673,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Focused firing-solution marker for nominated targets.",
         effect: "tractor-lock",
         position: [0, -22],
-        tuning: { color: "#facc15", secondaryColor: "#fb923c", speed: 0.65, size: 0.95, fade: 1.1, intensity: 1, spread: 0.85, count: 3, arc: 2.6, thickness: 0.75 },
+        tuning: {
+          color: "#facc15",
+          secondaryColor: "#fb923c",
+          speed: 0.65,
+          size: 0.95,
+          fade: 1.1,
+          intensity: 1,
+          spread: 0.85,
+          count: 3,
+          arc: 2.6,
+          thickness: 0.75,
+        },
       },
       {
         kind: "special",
@@ -1238,7 +1693,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Close blast doors / intensified defense visual state.",
         effect: "shield-ripple",
         position: [17, -22],
-        tuning: { color: "#60a5fa", secondaryColor: "#fef08a", speed: 0.75, size: 0.9, fade: 1.2, intensity: 0.85, spread: 1, count: 4, arc: 2.4, thickness: 1.3 },
+        tuning: {
+          color: "#60a5fa",
+          secondaryColor: "#fef08a",
+          speed: 0.75,
+          size: 0.9,
+          fade: 1.2,
+          intensity: 0.85,
+          spread: 1,
+          count: 4,
+          arc: 2.4,
+          thickness: 1.3,
+        },
       },
       {
         kind: "special",
@@ -1247,7 +1713,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Low-intensity shield flicker for crippled or skeleton-crew ships.",
         effect: "stealth-shimmer",
         position: [-9, 8],
-        tuning: { color: "#f97316", secondaryColor: "#94a3b8", speed: 0.52, size: 0.85, fade: 1.75, intensity: 0.65, spread: 0.85, count: 3, arc: 2.5, thickness: 0.8 },
+        tuning: {
+          color: "#f97316",
+          secondaryColor: "#94a3b8",
+          speed: 0.52,
+          size: 0.85,
+          fade: 1.75,
+          intensity: 0.65,
+          spread: 0.85,
+          count: 3,
+          arc: 2.5,
+          thickness: 0.8,
+        },
       },
       {
         kind: "ambient",
@@ -1256,14 +1733,26 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         note: "Persistent internal-fire accent for critical reactor damage.",
         effect: "fire",
         position: [10, 8],
-        tuning: { color: "#ef4444", secondaryColor: "#fef08a", speed: 0.85, size: 0.58, fade: 1.25, intensity: 0.75, spread: 0.36, count: 18, arc: 0.2, thickness: 0.8 },
+        tuning: {
+          color: "#ef4444",
+          secondaryColor: "#fef08a",
+          speed: 0.85,
+          size: 0.58,
+          fade: 1.25,
+          intensity: 0.75,
+          spread: 0.36,
+          count: 18,
+          arc: 0.2,
+          thickness: 0.8,
+        },
       },
     ],
   },
   {
     id: "gas-cloud-terrain",
     name: "Gas Cloud Terrain",
-    summary: "High-quality gas-cloud VFX candidates for future terrain: layered haze, sensor-obscuring banks, and ionized color depth.",
+    summary:
+      "High-quality gas-cloud VFX candidates for future terrain: layered haze, sensor-obscuring banks, and ionized color depth.",
     stations: [
       {
         kind: "special",
@@ -1273,7 +1762,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "gas-cloud-terrain",
         position: [0, -22],
         textureFilename: "cloud01-8x8.webp",
-        tuning: { color: "#22d3ee", secondaryColor: "#f97316", speed: 0.36, size: 1.18, fade: 1.65, intensity: 0.78, spread: 2.35, count: 36, arc: 0.82, thickness: 0.62 },
+        tuning: {
+          color: "#22d3ee",
+          secondaryColor: "#f97316",
+          speed: 0.36,
+          size: 1.18,
+          fade: 1.65,
+          intensity: 0.78,
+          spread: 2.35,
+          count: 36,
+          arc: 0.82,
+          thickness: 0.62,
+        },
       },
       {
         kind: "special",
@@ -1284,7 +1784,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         position: [10, -22],
         modelFilename: "test-cloud.glb",
         textureFilename: "cloud01-8x8.webp",
-        tuning: { color: "#9be7ff", secondaryColor: "#ffffff", speed: 0.55, size: 1, fade: 0.72, intensity: 0.62, spread: 1, count: 1, arc: 0, thickness: 1 },
+        tuning: {
+          color: "#9be7ff",
+          secondaryColor: "#ffffff",
+          speed: 0.55,
+          size: 1,
+          fade: 0.72,
+          intensity: 0.62,
+          spread: 1,
+          count: 1,
+          arc: 0,
+          thickness: 1,
+        },
       },
       {
         kind: "special",
@@ -1294,7 +1805,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "gas-cloud-terrain",
         position: [-13, -22],
         textureFilename: "cloud01-8x8.webp",
-        tuning: { color: "#22d3ee", secondaryColor: "#93c5fd", speed: 0.34, size: 1.55, fade: 1.85, intensity: 0.62, spread: 3.15, count: 64, arc: 1.05, thickness: 0.78 },
+        tuning: {
+          color: "#22d3ee",
+          secondaryColor: "#93c5fd",
+          speed: 0.34,
+          size: 1.55,
+          fade: 1.85,
+          intensity: 0.62,
+          spread: 3.15,
+          count: 64,
+          arc: 1.05,
+          thickness: 0.78,
+        },
       },
       {
         kind: "special",
@@ -1304,7 +1826,18 @@ const SHOWCASE_BOARDS: ShowcaseBoard[] = [
         effect: "gas-cloud-terrain",
         position: [-26, -22],
         textureFilename: "wispy-smoke01-8x8.webp",
-        tuning: { color: "#7dd3fc", secondaryColor: "#c4b5fd", speed: 0.28, size: 1.85, fade: 1.55, intensity: 0.54, spread: 3.35, count: 72, arc: 1.25, thickness: 0.72 },
+        tuning: {
+          color: "#7dd3fc",
+          secondaryColor: "#c4b5fd",
+          speed: 0.28,
+          size: 1.85,
+          fade: 1.55,
+          intensity: 0.54,
+          spread: 3.35,
+          count: 72,
+          arc: 1.25,
+          thickness: 0.72,
+        },
       },
     ],
   },
@@ -1336,7 +1869,15 @@ function stationTypeLabel(station: ShowcaseStation): string {
 
 function supportsRibbonRandomness(station: ShowcaseStation): boolean {
   if (station.kind !== "special") return false;
-  return station.effect === "jump-point" || station.effect === "vortex-ribbons" || station.effect === "jump-vortex" || station.effect === "jump-point-aperture" || station.effect === "arc-particle-spray" || station.effect === "persistent-impact-flashes" || isPointSparkTrail(station);
+  return (
+    station.effect === "jump-point" ||
+    station.effect === "vortex-ribbons" ||
+    station.effect === "jump-vortex" ||
+    station.effect === "jump-point-aperture" ||
+    station.effect === "arc-particle-spray" ||
+    station.effect === "persistent-impact-flashes" ||
+    isPointSparkTrail(station)
+  );
 }
 
 function isArcParticleSpray(station: ShowcaseStation): boolean {
@@ -1344,19 +1885,26 @@ function isArcParticleSpray(station: ShowcaseStation): boolean {
 }
 
 function isPersistentImpactFlashes(station: ShowcaseStation): boolean {
-  return station.kind === "special" && station.effect === "persistent-impact-flashes";
-}
-
-function isPointSparkTrail(station: ShowcaseStation): boolean {
-  return station.kind === "special" && (
-    station.effect === "dead-hulk-point-sparks" ||
-    station.effect === "battlecrab-damage-particle-spray" ||
-    station.effect === "missile-impact-flipbook-test"
+  return (
+    station.kind === "special" && station.effect === "persistent-impact-flashes"
   );
 }
 
-function isTexturedExplodingSphere(station: ShowcaseStation): station is SpecialStation {
-  return station.kind === "special" && station.effect === "textured-exploding-sphere";
+function isPointSparkTrail(station: ShowcaseStation): boolean {
+  return (
+    station.kind === "special" &&
+    (station.effect === "dead-hulk-point-sparks" ||
+      station.effect === "battlecrab-damage-particle-spray" ||
+      station.effect === "missile-impact-flipbook-test")
+  );
+}
+
+function isTexturedExplodingSphere(
+  station: ShowcaseStation,
+): station is SpecialStation {
+  return (
+    station.kind === "special" && station.effect === "textured-exploding-sphere"
+  );
 }
 
 function isTexturedSphereSampleOne(station: ShowcaseStation): boolean {
@@ -1367,20 +1915,26 @@ function isShieldTokenStation(station: ShowcaseStation): boolean {
   return station.kind === "special" && station.effect === "shield-token-hover";
 }
 
-function selectedShieldTokenTexture(value: number | undefined): typeof SHIELD_TOKEN_TEXTURE_OPTIONS[number] {
-  const index = clamp(Math.round(value ?? 1) - 1, 0, SHIELD_TOKEN_TEXTURE_OPTIONS.length - 1);
+function selectedShieldTokenTexture(
+  value: number | undefined,
+): (typeof SHIELD_TOKEN_TEXTURE_OPTIONS)[number] {
+  const index = clamp(
+    Math.round(value ?? 1) - 1,
+    0,
+    SHIELD_TOKEN_TEXTURE_OPTIONS.length - 1,
+  );
   return SHIELD_TOKEN_TEXTURE_OPTIONS[index] ?? SHIELD_TOKEN_TEXTURE_OPTIONS[0];
 }
 
 function baseTuningFor(station: ShowcaseStation): Tuning {
-  const stationColor = station.kind === "organic-skin"
-    ? "#151515"
-    : station.kind === "weapon"
-      ? FACTION_COLORS[station.faction] ?? DEFAULT_TUNING.color
-      : DEFAULT_TUNING.color;
-  const secondaryColor = station.kind === "organic-skin"
-    ? "#737373"
-    : DEFAULT_TUNING.secondaryColor;
+  const stationColor =
+    station.kind === "organic-skin"
+      ? "#151515"
+      : station.kind === "weapon"
+        ? (FACTION_COLORS[station.faction] ?? DEFAULT_TUNING.color)
+        : DEFAULT_TUNING.color;
+  const secondaryColor =
+    station.kind === "organic-skin" ? "#737373" : DEFAULT_TUNING.secondaryColor;
   return {
     ...DEFAULT_TUNING,
     color: stationColor,
@@ -1390,17 +1944,23 @@ function baseTuningFor(station: ShowcaseStation): Tuning {
   };
 }
 
-function effectiveTuning(station: ShowcaseStation, overrides: TuningOverrides): Tuning {
+function effectiveTuning(
+  station: ShowcaseStation,
+  overrides: TuningOverrides,
+): Tuning {
   return { ...baseTuningFor(station), ...(overrides[station.id] ?? {}) };
 }
 
-function classifyWeapon(weapon: Pick<Weapon, "name" | "traits">): "beam" | "tracer" | "missile" {
+function classifyWeapon(
+  weapon: Pick<Weapon, "name" | "traits">,
+): "beam" | "tracer" | "missile" {
   const name = (weapon.name ?? "").toLowerCase();
   const traits = (weapon.traits ?? "").toLowerCase();
   if (name.includes("missile")) return "missile";
   if (name.includes("molecular slicer")) return "beam";
   if (name.includes("laser")) return "beam";
-  if (/\bmini[- ]?beam\b/.test(traits) || /\bbeam\b/.test(traits)) return "beam";
+  if (/\bmini[- ]?beam\b/.test(traits) || /\bbeam\b/.test(traits))
+    return "beam";
   return "tracer";
 }
 
@@ -1414,9 +1974,17 @@ function phaseAlpha(t: number, fade = 1): number {
 function BoardPlane() {
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.04, 0]} receiveShadow>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.04, 0]}
+        receiveShadow
+      >
         <planeGeometry args={[48, 72]} />
-        <meshStandardMaterial color="#091109" roughness={0.88} metalness={0.05} />
+        <meshStandardMaterial
+          color="#091109"
+          roughness={0.88}
+          metalness={0.05}
+        />
       </mesh>
       <gridHelper args={[72, 72, "#12301a", "#0e1f14"]} position={[0, 0, 0]} />
       <lineSegments position={[0, 0.02, 0]}>
@@ -1427,29 +1995,68 @@ function BoardPlane() {
   );
 }
 
-function StationLabel({ station, selected }: { station: ShowcaseStation; selected: boolean }) {
-  const [x, z] = station.kind === "weapon"
-    ? [(station.from[0] + station.to[0]) / 2, (station.from[1] + station.to[1]) / 2]
-    : station.position;
+function StationLabel({
+  station,
+  selected,
+}: {
+  station: ShowcaseStation;
+  selected: boolean;
+}) {
+  const [x, z] =
+    station.kind === "weapon"
+      ? [
+          (station.from[0] + station.to[0]) / 2,
+          (station.from[1] + station.to[1]) / 2,
+        ]
+      : station.position;
 
   return (
     <Billboard position={[x, 2.8, z]} follow>
-      <Text fontSize={0.54} color={selected ? "#facc15" : "#f8fafc"} anchorX="center" anchorY="middle" outlineWidth={0.035} outlineColor="#020617">
+      <Text
+        fontSize={0.54}
+        color={selected ? "#facc15" : "#f8fafc"}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.035}
+        outlineColor="#020617"
+      >
         {station.label}
       </Text>
-      <Text position={[0, -0.58, 0]} fontSize={0.28} color="#cbd5e1" anchorX="center" anchorY="middle" outlineWidth={0.025} outlineColor="#020617">
+      <Text
+        position={[0, -0.58, 0]}
+        fontSize={0.28}
+        color="#cbd5e1"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.025}
+        outlineColor="#020617"
+      >
         {station.note}
       </Text>
     </Billboard>
   );
 }
 
-function EndpointMarker({ position, color, selected = false }: { position: Vec2; color: string; selected?: boolean }) {
+function EndpointMarker({
+  position,
+  color,
+  selected = false,
+}: {
+  position: Vec2;
+  color: string;
+  selected?: boolean;
+}) {
   return (
     <group position={[position[0], 0.12, position[1]]}>
       <mesh raycast={() => null}>
-        <cylinderGeometry args={[selected ? 0.62 : 0.45, selected ? 0.62 : 0.45, 0.05, 32]} />
-        <meshBasicMaterial color={color} transparent opacity={selected ? 0.94 : 0.78} />
+        <cylinderGeometry
+          args={[selected ? 0.62 : 0.45, selected ? 0.62 : 0.45, 0.05, 32]}
+        />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={selected ? 0.94 : 0.78}
+        />
       </mesh>
       <pointLight color={color} intensity={selected ? 1.8 : 1.1} distance={5} />
     </group>
@@ -1464,14 +2071,23 @@ function showcaseShipScale(object: THREE.Object3D, targetInches = 2.4): number {
   return maxHorizontal > 0 ? targetInches / maxHorizontal : 1;
 }
 
-function showcaseShipScaleIgnoring(object: THREE.Object3D, targetInches: number, ignoredName: string): number {
+function showcaseShipScaleIgnoring(
+  object: THREE.Object3D,
+  targetInches: number,
+  ignoredName: string,
+): number {
   const box = new THREE.Box3();
   const scratch = new THREE.Box3();
   const ignored = ignoredName.toLowerCase();
   object.updateMatrixWorld(true);
   object.traverse((child: any) => {
     if (!child.isMesh) return;
-    if (String(child.name ?? "").toLowerCase().includes(ignored)) return;
+    if (
+      String(child.name ?? "")
+        .toLowerCase()
+        .includes(ignored)
+    )
+      return;
     scratch.setFromObject(child);
     if (!scratch.isEmpty()) box.union(scratch);
   });
@@ -1487,7 +2103,11 @@ function readEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z"): number {
   return rotation.z;
 }
 
-function writeEulerAxis(rotation: THREE.Euler, axis: "x" | "y" | "z", value: number) {
+function writeEulerAxis(
+  rotation: THREE.Euler,
+  axis: "x" | "y" | "z",
+  value: number,
+) {
   if (axis === "x") rotation.x = value;
   else if (axis === "y") rotation.y = value;
   else rotation.z = value;
@@ -1528,7 +2148,8 @@ function createKirishiacRotatorWeightMaskMaterial(
       }`,
     );
   };
-  maskedMaterial.customProgramCacheKey = () => `kirishiac-${mode}-rotator-weight-mask`;
+  maskedMaterial.customProgramCacheKey = () =>
+    `kirishiac-${mode}-rotator-weight-mask`;
   return maskedMaterial;
 }
 
@@ -1574,7 +2195,8 @@ const SHOWCASE_TEXTURE_ASSET_REVISIONS: Record<string, string> = {
   "explosion00-5x5-keyed.webp": "20260719-113000",
   "missileflare.png": "20260719-011930",
   "sci-fi-explosion-flipbook-5x5.png": "20260720-020000",
-  "energy-impact-particles-flipbook-5x5.png": "20260720-114500-stabilized-alpha",
+  "energy-impact-particles-flipbook-5x5.png":
+    "20260720-114500-stabilized-alpha",
   "praxis.png": "20260720-120000",
   "shadow_flesh_alpha.png": "20260720-organic-v1",
   "shadow_flesh_base_tile.png": "20260720-organic-v1",
@@ -1628,11 +2250,17 @@ function ShowcaseGlbModel({
 }) {
   const url = showcaseModelUrl(filename);
   const { scene } = useGLTF(url);
-  const emissiveMaterialsRef = useRef<Array<THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }>>([]);
+  const emissiveMaterialsRef = useRef<
+    Array<
+      THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }
+    >
+  >([]);
 
   const { cloned, anchors } = useMemo(() => {
     const c = scene.clone(true);
-    const emissiveMaterials: Array<THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }> = [];
+    const emissiveMaterials: Array<
+      THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number }
+    > = [];
     const tintColor = new THREE.Color(tint);
     const glowColor = new THREE.Color(emissiveColor ?? tint);
     const anchorPoints: ShowcaseModelAnchor[] = [];
@@ -1654,27 +2282,29 @@ function ShowcaseGlbModel({
       const sourceMaterials = Array.isArray(child.material)
         ? child.material
         : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
-        const clonedMaterial = material?.clone
-          ? material.clone()
-          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        const adjustable = clonedMaterial as THREE.Material & {
-          color?: THREE.Color;
-          emissive?: THREE.Color;
-          emissiveIntensity?: number;
-        };
-        if (adjustable.color instanceof THREE.Color) {
-          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.14);
-        }
-        if (adjustable.emissive instanceof THREE.Color) {
-          adjustable.emissive = glowColor.clone();
-          adjustable.emissiveIntensity = emissiveIntensity;
-          emissiveMaterials.push(adjustable);
-        }
-        clonedMaterial.transparent = opacity < 1;
-        clonedMaterial.opacity = opacity;
-        return clonedMaterial;
-      });
+      const materials = sourceMaterials.map(
+        (material: THREE.Material | undefined) => {
+          const clonedMaterial = material?.clone
+            ? material.clone()
+            : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+          const adjustable = clonedMaterial as THREE.Material & {
+            color?: THREE.Color;
+            emissive?: THREE.Color;
+            emissiveIntensity?: number;
+          };
+          if (adjustable.color instanceof THREE.Color) {
+            adjustable.color = adjustable.color.clone().lerp(tintColor, 0.14);
+          }
+          if (adjustable.emissive instanceof THREE.Color) {
+            adjustable.emissive = glowColor.clone();
+            adjustable.emissiveIntensity = emissiveIntensity;
+            emissiveMaterials.push(adjustable);
+          }
+          clonedMaterial.transparent = opacity < 1;
+          clonedMaterial.opacity = opacity;
+          return clonedMaterial;
+        },
+      );
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
 
@@ -1690,7 +2320,10 @@ function ShowcaseGlbModel({
     }
   });
 
-  const scale = useMemo(() => showcaseShipScale(cloned, targetInches), [cloned, targetInches]);
+  const scale = useMemo(
+    () => showcaseShipScale(cloned, targetInches),
+    [cloned, targetInches],
+  );
   return (
     <group rotation={rotation} scale={[scale, scale, scale]}>
       <primitive object={cloned} />
@@ -1703,6 +2336,287 @@ function ShowcaseGlbModel({
             />
           ))
         : null}
+    </group>
+  );
+}
+
+function createToonGradientMap(
+  bandCount: number,
+  shadowDepth: number,
+  bandContrast: number,
+): THREE.DataTexture {
+  const bands = clamp(Math.round(bandCount), 2, 8);
+  const depth = clamp(shadowDepth, 0, 1);
+  const contrast = clamp(bandContrast, 0, 2);
+  const minimumBrightness = 1 - depth;
+  const data = new Uint8Array(bands * 4);
+  for (let index = 0; index < bands; index += 1) {
+    const normalized = index / Math.max(1, bands - 1);
+    const contrasted = clamp(0.5 + (normalized - 0.5) * contrast, 0, 1);
+    const value = Math.round(255 * (minimumBrightness + depth * contrasted));
+    const offset = index * 4;
+    data[offset] = value;
+    data[offset + 1] = value;
+    data[offset + 2] = value;
+    data[offset + 3] = 255;
+  }
+  const texture = new THREE.DataTexture(data, bands, 1, THREE.RGBAFormat);
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function applyTextureStrengthShader(
+  material: THREE.Material,
+  textureStrength: number,
+): void {
+  const strength = clamp(textureStrength, 0, 1);
+  if (strength >= 0.999) return;
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.celTextureStrength = { value: strength };
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <map_fragment>",
+      `
+#ifdef USE_MAP
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+  #ifdef DECODE_VIDEO_TEXTURE
+    sampledDiffuseColor = sRGBTransferEOTF( sampledDiffuseColor );
+  #endif
+  diffuseColor *= mix( vec4( 1.0 ), sampledDiffuseColor, celTextureStrength );
+#endif
+      `,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "void main() {",
+      "uniform float celTextureStrength;\nvoid main() {",
+    );
+  };
+  material.customProgramCacheKey = () =>
+    `cel-texture-strength-${strength.toFixed(3)}`;
+}
+
+function CelShadedModelShowcase({
+  station,
+  tuning,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+}) {
+  const filename = station.modelFilename ?? "hyperion.glb";
+  const { scene } = useGLTF(showcaseModelUrl(filename));
+  const bandCount = clamp(Math.round(tuning.count), 2, 8);
+  const toonEnabled = tuning.celToonEnabled ?? true;
+  const textureEnabled = tuning.celTextureEnabled ?? true;
+  const emissiveEnabled = tuning.celEmissiveEnabled ?? true;
+  const transparencyEnabled = tuning.celTransparencyEnabled ?? true;
+  const outlineEnabled = tuning.celOutlineEnabled ?? true;
+  const textureStrength = clamp(tuning.celTextureStrength ?? 1, 0, 1);
+  const shadowDepth = clamp(tuning.celShadowDepth ?? 0.76, 0, 1);
+  const bandContrast = clamp(tuning.celBandContrast ?? 1, 0, 2);
+  const emissiveStrength = Math.max(0, tuning.celEmissiveStrength ?? 1);
+  const normalStrength = Math.max(0, tuning.celNormalStrength ?? 1);
+
+  const preview = useMemo(() => {
+    const gradientMap = createToonGradientMap(
+      bandCount,
+      shadowDepth,
+      bandContrast,
+    );
+    const toonModel = scene.clone(true);
+    const outlineModel = scene.clone(true);
+    const toonMaterials: THREE.Material[] = [];
+    const outlineMaterials: THREE.Material[] = [];
+    const tint = new THREE.Color(tuning.color);
+    const outlineColor = new THREE.Color(tuning.secondaryColor);
+
+    toonModel.traverse((child: any) => {
+      if (!child.isMesh) return;
+      const sources = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sources.map((source: any) => {
+        const sourceColor =
+          source?.color instanceof THREE.Color
+            ? source.color.clone()
+            : new THREE.Color("#ffffff");
+        const material = toonEnabled
+          ? new THREE.MeshToonMaterial({
+              color: sourceColor
+                .multiply(tint)
+                .multiplyScalar(Math.max(0.1, tuning.intensity)),
+              map: textureEnabled ? (source?.map ?? null) : null,
+              alphaMap: transparencyEnabled ? (source?.alphaMap ?? null) : null,
+              emissive:
+                emissiveEnabled && source?.emissive instanceof THREE.Color
+                  ? source.emissive.clone()
+                  : new THREE.Color("#000000"),
+              emissiveMap: emissiveEnabled
+                ? (source?.emissiveMap ?? null)
+                : null,
+              emissiveIntensity:
+                (source?.emissiveIntensity ?? 1) * emissiveStrength,
+              gradientMap,
+              normalMap: source?.normalMap ?? null,
+              normalScale:
+                source?.normalScale instanceof THREE.Vector2
+                  ? source.normalScale.clone().multiplyScalar(normalStrength)
+                  : new THREE.Vector2(normalStrength, normalStrength),
+              transparent: transparencyEnabled && Boolean(source?.transparent),
+              opacity: transparencyEnabled ? (source?.opacity ?? 1) : 1,
+              alphaTest: transparencyEnabled ? (source?.alphaTest ?? 0) : 0,
+              depthWrite: transparencyEnabled
+                ? (source?.depthWrite ?? true)
+                : true,
+              side: THREE.FrontSide,
+            })
+          : (source?.clone?.() ?? new THREE.MeshStandardMaterial());
+
+        if (!toonEnabled) {
+          const standardMaterial = material as any;
+          if (standardMaterial.color instanceof THREE.Color) {
+            standardMaterial.color
+              .multiply(tint)
+              .multiplyScalar(Math.max(0.1, tuning.intensity));
+          }
+          if ("map" in standardMaterial)
+            standardMaterial.map = textureEnabled
+              ? (source?.map ?? null)
+              : null;
+          if ("emissive" in standardMaterial) {
+            standardMaterial.emissive =
+              emissiveEnabled && source?.emissive instanceof THREE.Color
+                ? source.emissive.clone()
+                : new THREE.Color("#000000");
+          }
+          if ("emissiveMap" in standardMaterial) {
+            standardMaterial.emissiveMap = emissiveEnabled
+              ? (source?.emissiveMap ?? null)
+              : null;
+          }
+          if ("emissiveIntensity" in standardMaterial) {
+            standardMaterial.emissiveIntensity =
+              (source?.emissiveIntensity ?? 1) * emissiveStrength;
+          }
+          if (standardMaterial.normalScale instanceof THREE.Vector2) {
+            standardMaterial.normalScale.copy(
+              source?.normalScale instanceof THREE.Vector2
+                ? source.normalScale.clone().multiplyScalar(normalStrength)
+                : new THREE.Vector2(normalStrength, normalStrength),
+            );
+          }
+          standardMaterial.alphaMap = transparencyEnabled
+            ? (source?.alphaMap ?? null)
+            : null;
+          standardMaterial.transparent =
+            transparencyEnabled && Boolean(source?.transparent);
+          standardMaterial.opacity = transparencyEnabled
+            ? (source?.opacity ?? 1)
+            : 1;
+          standardMaterial.alphaTest = transparencyEnabled
+            ? (source?.alphaTest ?? 0)
+            : 0;
+          standardMaterial.depthWrite = transparencyEnabled
+            ? (source?.depthWrite ?? true)
+            : true;
+          standardMaterial.side = THREE.FrontSide;
+          standardMaterial.needsUpdate = true;
+        }
+
+        if (textureEnabled)
+          applyTextureStrengthShader(material, textureStrength);
+        material.name = `${source?.name ?? "material"}-toon-preview`;
+        toonMaterials.push(material);
+        return material;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+      child.castShadow = true;
+      child.receiveShadow = true;
+    });
+
+    outlineModel.traverse((child: any) => {
+      if (!child.isMesh) return;
+      const sources = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sources.map((source: any) => {
+        const material = new THREE.MeshBasicMaterial({
+          color: outlineColor,
+          side: THREE.BackSide,
+          transparent: tuning.fade < 0.999,
+          opacity: clamp(tuning.fade, 0, 1),
+          depthWrite: true,
+          alphaMap: transparencyEnabled ? (source?.alphaMap ?? null) : null,
+          alphaTest: transparencyEnabled ? (source?.alphaTest ?? 0) : 0,
+          toneMapped: false,
+        });
+        material.name = `${source?.name ?? "material"}-outline-preview`;
+        outlineMaterials.push(material);
+        return material;
+      });
+      child.material = Array.isArray(child.material) ? materials : materials[0];
+      child.renderOrder = -1;
+    });
+
+    const bounds = new THREE.Box3().setFromObject(toonModel);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const originOffset = new THREE.Vector3(-center.x, -bounds.min.y, -center.z);
+    toonModel.position.add(originOffset);
+    outlineModel.position.add(originOffset);
+
+    return {
+      gradientMap,
+      outlineMaterials,
+      outlineModel,
+      toonMaterials,
+      toonModel,
+    };
+  }, [
+    bandContrast,
+    bandCount,
+    emissiveEnabled,
+    emissiveStrength,
+    normalStrength,
+    scene,
+    shadowDepth,
+    textureEnabled,
+    textureStrength,
+    toonEnabled,
+    transparencyEnabled,
+    tuning.color,
+    tuning.fade,
+    tuning.intensity,
+    tuning.secondaryColor,
+  ]);
+
+  useEffect(
+    () => () => {
+      preview.gradientMap.dispose();
+      preview.toonMaterials.forEach((material) => material.dispose());
+      preview.outlineMaterials.forEach((material) => material.dispose());
+    },
+    [preview],
+  );
+
+  const scale = useMemo(
+    () => showcaseShipScale(preview.toonModel, 7 * tuning.size),
+    [preview.toonModel, tuning.size],
+  );
+  const outlineScale = 1 + Math.max(0, tuning.thickness) * 0.006;
+
+  return (
+    <group position={[station.position[0], 0.08, station.position[1]]}>
+      <group scale={[scale, scale, scale]}>
+        <primitive object={preview.toonModel} />
+        {outlineEnabled && tuning.thickness > 0 && tuning.fade > 0 ? (
+          <group scale={[outlineScale, outlineScale, outlineScale]}>
+            <primitive object={preview.outlineModel} />
+          </group>
+        ) : null}
+      </group>
     </group>
   );
 }
@@ -1732,25 +2646,27 @@ function EmissiveMaterialAlternatorShowcase({
       const sourceMaterials = Array.isArray(child.material)
         ? child.material
         : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
-        const clonedMaterial = material?.clone
-          ? material.clone()
-          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        const standard = clonedMaterial as THREE.MeshStandardMaterial;
-        const materialName = String(clonedMaterial.name ?? "").toLowerCase();
-        if (standard.emissive instanceof THREE.Color) {
-          if (materialName.includes("red_emissive")) {
-            standard.emissive = new THREE.Color("#ef4444");
-            standard.emissiveIntensity = 0;
-            redMaterials.push(standard);
-          } else if (materialName.includes("blue_emissive")) {
-            standard.emissive = new THREE.Color("#503af8");
-            standard.emissiveIntensity = 0;
-            blueMaterials.push(standard);
+      const materials = sourceMaterials.map(
+        (material: THREE.Material | undefined) => {
+          const clonedMaterial = material?.clone
+            ? material.clone()
+            : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+          const standard = clonedMaterial as THREE.MeshStandardMaterial;
+          const materialName = String(clonedMaterial.name ?? "").toLowerCase();
+          if (standard.emissive instanceof THREE.Color) {
+            if (materialName.includes("red_emissive")) {
+              standard.emissive = new THREE.Color("#ef4444");
+              standard.emissiveIntensity = 0;
+              redMaterials.push(standard);
+            } else if (materialName.includes("blue_emissive")) {
+              standard.emissive = new THREE.Color("#503af8");
+              standard.emissiveIntensity = 0;
+              blueMaterials.push(standard);
+            }
           }
-        }
-        return clonedMaterial;
-      });
+          return clonedMaterial;
+        },
+      );
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
     redMaterialsRef.current = redMaterials;
@@ -1766,11 +2682,15 @@ function EmissiveMaterialAlternatorShowcase({
     const inactiveIntensity = 0;
     for (const material of redMaterialsRef.current) {
       material.emissive.set(tuning.color);
-      material.emissiveIntensity = redActive ? activeIntensity : inactiveIntensity;
+      material.emissiveIntensity = redActive
+        ? activeIntensity
+        : inactiveIntensity;
     }
     for (const material of blueMaterialsRef.current) {
       material.emissive.set(tuning.secondaryColor);
-      material.emissiveIntensity = redActive ? inactiveIntensity : activeIntensity;
+      material.emissiveIntensity = redActive
+        ? inactiveIntensity
+        : activeIntensity;
     }
   });
 
@@ -1780,7 +2700,10 @@ function EmissiveMaterialAlternatorShowcase({
   );
 
   return (
-    <group position={[station.position[0], 0.2, station.position[1]]} scale={[scale, scale, scale]}>
+    <group
+      position={[station.position[0], 0.2, station.position[1]]}
+      scale={[scale, scale, scale]}
+    >
       <primitive object={cloned} />
     </group>
   );
@@ -1801,17 +2724,15 @@ function ShieldTokenHoverShowcase({
   const diffuseOption = selectedShieldTokenTexture(tuning.diffuseTextureIndex);
   const alphaOption = selectedShieldTokenTexture(tuning.alphaTextureIndex);
   const { scene } = useGLTF(showcaseModelUrl(filename));
-  const [diffuseTexture, alphaTexture] = useLoader(
-    THREE.TextureLoader,
-    [
-      showcaseTextureUrl(diffuseOption.filename),
-      showcaseTextureUrl(alphaOption.filename),
-    ],
-  ) as THREE.Texture[];
+  const [diffuseTexture, alphaTexture] = useLoader(THREE.TextureLoader, [
+    showcaseTextureUrl(diffuseOption.filename),
+    showcaseTextureUrl(alphaOption.filename),
+  ]) as THREE.Texture[];
 
   useEffect(() => {
     for (const texture of [diffuseTexture, alphaTexture]) {
-      texture.colorSpace = texture === diffuseTexture ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      texture.colorSpace =
+        texture === diffuseTexture ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       texture.wrapS = THREE.RepeatWrapping;
       texture.wrapT = THREE.RepeatWrapping;
       texture.anisotropy = 8;
@@ -1846,13 +2767,23 @@ function ShieldTokenHoverShowcase({
     });
 
     return c;
-  }, [alphaTexture, diffuseTexture, scene, tuning.color, tuning.fade, tuning.intensity, tuning.secondaryColor]);
+  }, [
+    alphaTexture,
+    diffuseTexture,
+    scene,
+    tuning.color,
+    tuning.fade,
+    tuning.intensity,
+    tuning.secondaryColor,
+  ]);
 
   useEffect(() => {
     return () => {
       cloned.traverse((child: any) => {
         if (!child.isMesh) return;
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        const materials = Array.isArray(child.material)
+          ? child.material
+          : [child.material];
         for (const material of materials) material?.dispose?.();
       });
     };
@@ -1862,8 +2793,12 @@ function ShieldTokenHoverShowcase({
     if (!paused) elapsedRef.current += delta;
     if (!tokenRef.current) return;
     tokenRef.current.rotation.y = elapsedRef.current * tuning.speed * 1.15;
-    tokenRef.current.rotation.x = THREE.MathUtils.degToRad(tuning.rotationX ?? 0);
-    tokenRef.current.rotation.z = THREE.MathUtils.degToRad(tuning.rotationZ ?? 0);
+    tokenRef.current.rotation.x = THREE.MathUtils.degToRad(
+      tuning.rotationX ?? 0,
+    );
+    tokenRef.current.rotation.z = THREE.MathUtils.degToRad(
+      tuning.rotationZ ?? 0,
+    );
   });
 
   const tokenScale = useMemo(
@@ -1874,13 +2809,31 @@ function ShieldTokenHoverShowcase({
 
   return (
     <group position={[station.position[0], 0, station.position[1]]}>
-      <group position={[0, SHOWCASE_MESH_ORIGIN_Y, 0]} rotation={[0, Math.PI, 0]}>
-        <ShowcaseGlbModel filename="hyperion.glb" tint="#9fb8c9" opacity={0.92} targetInches={2.4} />
+      <group
+        position={[0, SHOWCASE_MESH_ORIGIN_Y, 0]}
+        rotation={[0, Math.PI, 0]}
+      >
+        <ShowcaseGlbModel
+          filename="hyperion.glb"
+          tint="#9fb8c9"
+          opacity={0.92}
+          targetInches={2.4}
+        />
       </group>
-      <group ref={tokenRef} position={[0, lift, 0]} scale={[tokenScale, tokenScale, tokenScale]} raycast={() => null}>
+      <group
+        ref={tokenRef}
+        position={[0, lift, 0]}
+        scale={[tokenScale, tokenScale, tokenScale]}
+        raycast={() => null}
+      >
         <primitive object={cloned} />
       </group>
-      <pointLight color={tuning.color} intensity={2.2 * tuning.intensity} distance={5.5} position={[0, lift, 0]} />
+      <pointLight
+        color={tuning.color}
+        intensity={2.2 * tuning.intensity}
+        distance={5.5}
+        position={[0, lift, 0]}
+      />
     </group>
   );
 }
@@ -1897,7 +2850,10 @@ function TestCloudTexturedMesh({
   const filename = station.modelFilename ?? "test-cloud.glb";
   const textureFilename = station.textureFilename ?? "cloud01-8x8.webp";
   const { scene } = useGLTF(showcaseModelUrl(filename));
-  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  );
   const materialsRef = useRef<THREE.ShaderMaterial[]>([]);
   const elapsedRef = useRef(0);
   const columns = 8;
@@ -2011,7 +2967,14 @@ function TestCloudTexturedMesh({
   );
 
   return (
-    <group position={[station.position[0], SHOWCASE_MESH_ORIGIN_Y, station.position[1]]} scale={[scale, scale, scale]}>
+    <group
+      position={[
+        station.position[0],
+        SHOWCASE_MESH_ORIGIN_Y,
+        station.position[1],
+      ]}
+      scale={[scale, scale, scale]}
+    >
       <primitive object={cloned} />
     </group>
   );
@@ -2113,7 +3076,7 @@ function OrganicSkinShowcaseModel({
         metalness: 0,
         side: THREE.DoubleSide,
       });
-      material.onBeforeCompile = shader => {
+      material.onBeforeCompile = (shader) => {
         shader.uniforms.uOrganicTime = { value: elapsedRef.current };
         shader.uniforms.uOrganicSpeed = { value: tuningRef.current.speed };
         shader.uniforms.uOrganicRepeat = { value: tuningRef.current.spread };
@@ -2220,7 +3183,7 @@ void main() {
 
   useEffect(
     () => () => {
-      organic.materials.forEach(material => material.dispose());
+      organic.materials.forEach((material) => material.dispose());
       organic.normalTexture.dispose();
       organic.roughnessTexture.dispose();
     },
@@ -2292,9 +3255,16 @@ function OrganicSkinFxStation({
             paused={paused}
           />
         </Suspense>
-        <pointLight color="#e5e7eb" intensity={2.2} distance={15} position={[0, 6, 2]} />
+        <pointLight
+          color="#e5e7eb"
+          intensity={2.2}
+          distance={15}
+          position={[0, 6, 2]}
+        />
       </group>
-      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+      {showLabel ? (
+        <StationLabel station={station} selected={selected} />
+      ) : null}
     </group>
   );
 }
@@ -2331,9 +3301,18 @@ function RotatingBoneShowcaseModel({
   const shaderMaterialsRef = useRef<THREE.ShaderMaterial[]>([]);
   const skinnedMeshesRef = useRef<THREE.SkinnedMesh[]>([]);
   const rotatingLayerRef = useRef<THREE.Object3D | null>(null);
-  const primaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_FirePanningCyl45.png"));
-  const secondaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_VFX_WindNoise1.png"));
-  const alphaTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_Noise_HU85k.png"));
+  const primaryTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl("T_FirePanningCyl45.png"),
+  );
+  const secondaryTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl("T_VFX_WindNoise1.png"),
+  );
+  const alphaTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl("T_Noise_HU85k.png"),
+  );
   const dualDiffuseConfig = TEXTURED_SPHERE_VARIANT_CONFIGS["dual-diffuse"];
 
   useMemo(() => {
@@ -2358,7 +3337,8 @@ function RotatingBoneShowcaseModel({
     rotatingLayerRef.current = null;
 
     const createDualDiffuseMaterial = () => {
-      const originalReference = materialFx === "kirishiac-dual-diffuse-original";
+      const originalReference =
+        materialFx === "kirishiac-dual-diffuse-original";
       const uniforms = {
         uPrimaryMap: { value: primaryTexture },
         uSecondaryMap: { value: secondaryTexture },
@@ -2369,11 +3349,21 @@ function RotatingBoneShowcaseModel({
         uIntensity: { value: tuning.intensity },
         uFade: { value: tuning.fade },
         uAlphaSource: { value: dualDiffuseConfig.alphaSource },
-        uAlphaFloor: { value: dualDiffuseConfig.alphaFloor * (originalReference ? 1 : 0.65) },
-        uAlphaStrength: { value: dualDiffuseConfig.alphaStrength * (originalReference ? 1 : 0.75) },
+        uAlphaFloor: {
+          value: dualDiffuseConfig.alphaFloor * (originalReference ? 1 : 0.65),
+        },
+        uAlphaStrength: {
+          value:
+            dualDiffuseConfig.alphaStrength * (originalReference ? 1 : 0.75),
+        },
         uSecondaryMix: { value: dualDiffuseConfig.secondaryMix },
-        uEmissiveBoost: { value: dualDiffuseConfig.emissiveBoost * (originalReference ? 1 : 2.4) },
-        uRimBoost: { value: dualDiffuseConfig.rimBoost * (originalReference ? 1 : 0.55) },
+        uEmissiveBoost: {
+          value:
+            dualDiffuseConfig.emissiveBoost * (originalReference ? 1 : 2.4),
+        },
+        uRimBoost: {
+          value: dualDiffuseConfig.rimBoost * (originalReference ? 1 : 0.55),
+        },
         uRimAlpha: { value: dualDiffuseConfig.rimAlpha },
         uFresnelPower: { value: dualDiffuseConfig.fresnelPower },
         uThreshold: { value: dualDiffuseConfig.threshold },
@@ -2381,12 +3371,24 @@ function RotatingBoneShowcaseModel({
         uBaseFadeEnabled: { value: originalReference ? 0 : 1 },
         uBaseFadeInnerRadius: { value: KIRISHIAC_SPIKE_BASE_FADE_INNER_RADIUS },
         uBaseFadeOuterRadius: { value: KIRISHIAC_SPIKE_BASE_FADE_OUTER_RADIUS },
-        uPrimarySpeed: { value: new THREE.Vector2(...dualDiffuseConfig.primarySpeed) },
-        uSecondarySpeed: { value: new THREE.Vector2(...dualDiffuseConfig.secondarySpeed) },
-        uAlphaSpeed: { value: new THREE.Vector2(...dualDiffuseConfig.alphaSpeed) },
-        uPrimaryRepeat: { value: new THREE.Vector2(...dualDiffuseConfig.primaryRepeat) },
-        uSecondaryRepeat: { value: new THREE.Vector2(...dualDiffuseConfig.secondaryRepeat) },
-        uAlphaRepeat: { value: new THREE.Vector2(...dualDiffuseConfig.alphaRepeat) },
+        uPrimarySpeed: {
+          value: new THREE.Vector2(...dualDiffuseConfig.primarySpeed),
+        },
+        uSecondarySpeed: {
+          value: new THREE.Vector2(...dualDiffuseConfig.secondarySpeed),
+        },
+        uAlphaSpeed: {
+          value: new THREE.Vector2(...dualDiffuseConfig.alphaSpeed),
+        },
+        uPrimaryRepeat: {
+          value: new THREE.Vector2(...dualDiffuseConfig.primaryRepeat),
+        },
+        uSecondaryRepeat: {
+          value: new THREE.Vector2(...dualDiffuseConfig.secondaryRepeat),
+        },
+        uAlphaRepeat: {
+          value: new THREE.Vector2(...dualDiffuseConfig.alphaRepeat),
+        },
       };
       const material = new THREE.ShaderMaterial({
         uniforms,
@@ -2475,7 +3477,8 @@ function RotatingBoneShowcaseModel({
         side: THREE.DoubleSide,
         toneMapped: false,
       });
-      (material as THREE.ShaderMaterial & { skinning?: boolean }).skinning = true;
+      (material as THREE.ShaderMaterial & { skinning?: boolean }).skinning =
+        true;
       shaderMaterialsRef.current.push(material);
       return material;
     };
@@ -2523,67 +3526,82 @@ function RotatingBoneShowcaseModel({
           }`,
         );
       };
-      maskedMaterial.customProgramCacheKey = () => `kirishiac-${mode}-rotator-weight-mask`;
+      maskedMaterial.customProgramCacheKey = () =>
+        `kirishiac-${mode}-rotator-weight-mask`;
       return maskedMaterial;
     };
 
-    const prepareClone = (root: THREE.Object3D, mode: "default" | "static" | "rotating") => {
+    const prepareClone = (
+      root: THREE.Object3D,
+      mode: "default" | "static" | "rotating",
+    ) => {
       root.traverse((child: any) => {
-      const childName = String(child.name ?? "").toLowerCase();
-      if (childName === targetBoneName) {
-        boneRef.current = child;
-        initialRotationRef.current = readEulerAxis(child.rotation, rotationAxis);
-        initialQuaternionRef.current.copy(child.quaternion);
-        localAxisRef.current.set(
-          rotationAxis === "x" ? 1 : 0,
-          rotationAxis === "y" ? 1 : 0,
-          rotationAxis === "z" ? 1 : 0,
+        const childName = String(child.name ?? "").toLowerCase();
+        if (childName === targetBoneName) {
+          boneRef.current = child;
+          initialRotationRef.current = readEulerAxis(
+            child.rotation,
+            rotationAxis,
+          );
+          initialQuaternionRef.current.copy(child.quaternion);
+          localAxisRef.current.set(
+            rotationAxis === "x" ? 1 : 0,
+            rotationAxis === "y" ? 1 : 0,
+            rotationAxis === "z" ? 1 : 0,
+          );
+        }
+        if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        if (child.isSkinnedMesh && child.skeleton) {
+          skinnedMeshesRef.current.push(child as THREE.SkinnedMesh);
+        }
+        const sourceMaterials = Array.isArray(child.material)
+          ? child.material
+          : [child.material];
+        const materials = sourceMaterials.map(
+          (material: THREE.Material | undefined) => {
+            const isKirishiacFlame = String(material?.name ?? "")
+              .toLowerCase()
+              .includes("kirishiac flame");
+            if (
+              kirishiacLayeredPreview &&
+              mode === "static" &&
+              isKirishiacFlame
+            ) {
+              return invisibleMaterial.clone();
+            }
+            const clonedMaterial = material?.clone
+              ? material.clone()
+              : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+            if (kirishiacLayeredPreview && isKirishiacFlame) {
+              return createDualDiffuseMaterial();
+            }
+            if (
+              kirishiacLayeredPreview &&
+              (mode === "static" || mode === "rotating")
+            ) {
+              return createRotatorWeightMaskMaterial(clonedMaterial, mode);
+            }
+            const adjustable = clonedMaterial as THREE.Material & {
+              color?: THREE.Color;
+              emissive?: THREE.Color;
+              emissiveIntensity?: number;
+            };
+            if (adjustable.color instanceof THREE.Color) {
+              adjustable.color = adjustable.color.clone().lerp(tintColor, 0.1);
+            }
+            if (adjustable.emissive instanceof THREE.Color) {
+              adjustable.emissive = tintColor.clone();
+              adjustable.emissiveIntensity = 0.06;
+            }
+            return clonedMaterial;
+          },
         );
-      }
-      if (!child.isMesh) return;
-      child.castShadow = true;
-      child.receiveShadow = true;
-      if (child.isSkinnedMesh && child.skeleton) {
-        skinnedMeshesRef.current.push(child as THREE.SkinnedMesh);
-      }
-      const sourceMaterials = Array.isArray(child.material)
-        ? child.material
-        : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
-        const isKirishiacFlame = String(material?.name ?? "")
-          .toLowerCase()
-          .includes("kirishiac flame");
-        if (kirishiacLayeredPreview && mode === "static" && isKirishiacFlame) {
-          return invisibleMaterial.clone();
-        }
-        const clonedMaterial = material?.clone
-          ? material.clone()
-          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        if (
-          kirishiacLayeredPreview &&
-          isKirishiacFlame
-        ) {
-          return createDualDiffuseMaterial();
-        }
-        if (kirishiacLayeredPreview && (mode === "static" || mode === "rotating")) {
-          return createRotatorWeightMaskMaterial(clonedMaterial, mode);
-        }
-        const adjustable = clonedMaterial as THREE.Material & {
-          color?: THREE.Color;
-          emissive?: THREE.Color;
-          emissiveIntensity?: number;
-        };
-        if (adjustable.color instanceof THREE.Color) {
-          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.1);
-        }
-        if (adjustable.emissive instanceof THREE.Color) {
-          adjustable.emissive = tintColor.clone();
-          adjustable.emissiveIntensity = 0.06;
-        }
-        return clonedMaterial;
+        child.material = Array.isArray(child.material)
+          ? materials
+          : materials[0];
       });
-      child.material = Array.isArray(child.material) ? materials : materials[0];
-    });
     };
 
     if (kirishiacLayeredPreview) {
@@ -2628,7 +3646,11 @@ function RotatingBoneShowcaseModel({
     const progress = (clock.elapsedTime % cycle) / cycle;
     const rotatingLayer = rotatingLayerRef.current;
     if (rotatingLayer) {
-      writeEulerAxis(rotatingLayer.rotation, rotationAxis, progress * Math.PI * 2);
+      writeEulerAxis(
+        rotatingLayer.rotation,
+        rotationAxis,
+        progress * Math.PI * 2,
+      );
       rotatingLayer.updateMatrix();
       rotatingLayer.updateMatrixWorld(true);
       cloned.updateMatrixWorld(true);
@@ -2667,14 +3689,36 @@ function RotatingBoneShowcaseModel({
   );
 }
 
-function AnimatedModelFxStation({ station, tuning, selected, showLabel }: { station: AnimatedModelStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
+function AnimatedModelFxStation({
+  station,
+  tuning,
+  selected,
+  showLabel,
+}: {
+  station: AnimatedModelStation;
+  tuning: Tuning;
+  selected: boolean;
+  showLabel: boolean;
+}) {
   return (
     <group>
-      <EndpointMarker position={station.position} color={tuning.color} selected={selected} />
+      <EndpointMarker
+        position={station.position}
+        color={tuning.color}
+        selected={selected}
+      />
       <group position={[station.position[0], 0, station.position[1]]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.05, 0]}
+          raycast={() => null}
+        >
           <ringGeometry args={[1.45, 1.62, 64]} />
-          <meshBasicMaterial color={tuning.color} transparent opacity={selected ? 0.9 : 0.42} />
+          <meshBasicMaterial
+            color={tuning.color}
+            transparent
+            opacity={selected ? 0.9 : 0.42}
+          />
         </mesh>
         <group position={[0, 1.35, 0]}>
           <Suspense fallback={null}>
@@ -2691,7 +3735,9 @@ function AnimatedModelFxStation({ station, tuning, selected, showLabel }: { stat
           </Suspense>
         </group>
       </group>
-      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+      {showLabel ? (
+        <StationLabel station={station} selected={selected} />
+      ) : null}
     </group>
   );
 }
@@ -2744,9 +3790,12 @@ function ModelAnchorSmoke({
     [puffs, sourceTexture],
   );
 
-  useEffect(() => () => {
-    for (const texture of frameTextures) texture.dispose();
-  }, [frameTextures]);
+  useEffect(
+    () => () => {
+      for (const texture of frameTextures) texture.dispose();
+    },
+    [frameTextures],
+  );
 
   useFrame((_, delta) => {
     elapsedRef.current += delta;
@@ -2764,10 +3813,16 @@ function ModelAnchorSmoke({
   });
 
   return (
-    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]}>
+    <group
+      position={anchor.position}
+      scale={[effectScale, effectScale, effectScale]}
+    >
       {puffs.map((puff, i) => (
         <Billboard key={i} position={[puff.x, puff.y, puff.z]}>
-          <mesh scale={[puff.scale, puff.scale, puff.scale]} raycast={() => null}>
+          <mesh
+            scale={[puff.scale, puff.scale, puff.scale]}
+            raycast={() => null}
+          >
             <planeGeometry args={[2.15, 2.15]} />
             <meshBasicMaterial
               map={frameTextures[i]}
@@ -2782,7 +3837,12 @@ function ModelAnchorSmoke({
           </mesh>
         </Billboard>
       ))}
-      <pointLight color={tuning.secondaryColor} intensity={1.2 * tuning.intensity} distance={5 * tuning.spread} position={[0, 1.2, 0]} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.2 * tuning.intensity}
+        distance={5 * tuning.spread}
+        position={[0, 1.2, 0]}
+      />
     </group>
   );
 }
@@ -2801,13 +3861,17 @@ function ModelAnchorGlow({
 
   useFrame(({ clock }) => {
     const pulse = (Math.sin(clock.elapsedTime * 4.8) + 1) / 2;
-    if (meshRef.current) meshRef.current.scale.setScalar((0.2 + pulse * 0.04) * 0.3);
+    if (meshRef.current)
+      meshRef.current.scale.setScalar((0.2 + pulse * 0.04) * 0.3);
     if (matRef.current) matRef.current.opacity = 0.12 + pulse * 0.24;
     if (lightRef.current) lightRef.current.intensity = 0.55 + pulse * 1.15;
   });
 
   return (
-    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]}>
+    <group
+      position={anchor.position}
+      scale={[effectScale, effectScale, effectScale]}
+    >
       <mesh ref={meshRef} raycast={() => null}>
         <sphereGeometry args={[1, 24, 16]} />
         <meshBasicMaterial
@@ -2820,7 +3884,12 @@ function ModelAnchorGlow({
           toneMapped={false}
         />
       </mesh>
-      <pointLight ref={lightRef} color="#f97316" intensity={0.8} distance={1.8} />
+      <pointLight
+        ref={lightRef}
+        color="#f97316"
+        intensity={0.8}
+        distance={1.8}
+      />
     </group>
   );
 }
@@ -2896,7 +3965,10 @@ function ModelAnchorEmberTrail({
   });
 
   return (
-    <group position={anchor.position} scale={[effectScale, effectScale, effectScale]}>
+    <group
+      position={anchor.position}
+      scale={[effectScale, effectScale, effectScale]}
+    >
       <points geometry={geometry} raycast={() => null}>
         <pointsMaterial
           size={0.055}
@@ -2914,7 +3986,13 @@ function ModelAnchorEmberTrail({
   );
 }
 
-function DamageGlowCore({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function DamageGlowCore({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const coreRef = useRef<THREE.Mesh>(null);
   const shellRef = useRef<THREE.Mesh>(null);
   const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -2925,10 +4003,14 @@ function DamageGlowCore({ position, tuning }: { position: Vec2; tuning: Tuning }
     const pulse = (Math.sin(clock.elapsedTime * 4.8 * tuning.speed) + 1) / 2;
     const size = tuning.size * (1 + pulse * 0.08);
     if (coreRef.current) coreRef.current.scale.setScalar(size);
-    if (shellRef.current) shellRef.current.scale.setScalar(tuning.size * (1.18 + pulse * 0.1));
-    if (coreMatRef.current) coreMatRef.current.opacity = (0.62 + pulse * 0.28) * tuning.intensity;
-    if (shellMatRef.current) shellMatRef.current.opacity = (0.18 + pulse * 0.22) * tuning.intensity;
-    if (lightRef.current) lightRef.current.intensity = (1.8 + pulse * 2.8) * tuning.intensity;
+    if (shellRef.current)
+      shellRef.current.scale.setScalar(tuning.size * (1.18 + pulse * 0.1));
+    if (coreMatRef.current)
+      coreMatRef.current.opacity = (0.62 + pulse * 0.28) * tuning.intensity;
+    if (shellMatRef.current)
+      shellMatRef.current.opacity = (0.18 + pulse * 0.22) * tuning.intensity;
+    if (lightRef.current)
+      lightRef.current.intensity = (1.8 + pulse * 2.8) * tuning.intensity;
   });
 
   return (
@@ -2957,7 +4039,12 @@ function DamageGlowCore({ position, tuning }: { position: Vec2; tuning: Tuning }
           toneMapped={false}
         />
       </mesh>
-      <pointLight ref={lightRef} color={tuning.color} intensity={2.4} distance={5} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={2.4}
+        distance={5}
+      />
     </group>
   );
 }
@@ -2975,7 +4062,8 @@ function CloudFlipbookDamageEmitter({
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const revision =
-    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ??
+    "vfx-range";
   const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
   const sourceTexture = useLoader(THREE.TextureLoader, url);
   const elapsedRef = useRef(0);
@@ -3015,16 +4103,21 @@ function CloudFlipbookDamageEmitter({
     [puffs, sourceTexture],
   );
 
-  useEffect(() => () => {
-    for (const texture of frameTextures) texture.dispose();
-  }, [frameTextures]);
+  useEffect(
+    () => () => {
+      for (const texture of frameTextures) texture.dispose();
+    },
+    [frameTextures],
+  );
 
   useFrame((_, delta) => {
     if (!paused) elapsedRef.current += delta;
     const frameRate = 18 * clamp(tuning.speed, 0.25, 3);
     for (let i = 0; i < frameTextures.length; i += 1) {
       const texture = frameTextures[i];
-      const frame = Math.floor(elapsedRef.current * frameRate + (puffs[i]?.phase ?? 0)) % frameCount;
+      const frame =
+        Math.floor(elapsedRef.current * frameRate + (puffs[i]?.phase ?? 0)) %
+        frameCount;
       const column = frame % columns;
       const row = Math.floor(frame / columns);
       texture.offset.x = column / columns;
@@ -3036,7 +4129,10 @@ function CloudFlipbookDamageEmitter({
     <group position={[position[0], 0, position[1]]}>
       {puffs.map((puff, i) => (
         <Billboard key={i} position={[puff.x, puff.y, puff.z]}>
-          <mesh scale={[puff.scale, puff.scale, puff.scale]} raycast={() => null}>
+          <mesh
+            scale={[puff.scale, puff.scale, puff.scale]}
+            raycast={() => null}
+          >
             <planeGeometry args={[2.15, 2.15]} />
             <meshBasicMaterial
               map={frameTextures[i]}
@@ -3051,7 +4147,12 @@ function CloudFlipbookDamageEmitter({
           </mesh>
         </Billboard>
       ))}
-      <pointLight color={tuning.secondaryColor} intensity={1.2 * tuning.intensity} distance={5 * tuning.spread} position={[0, 1.2, 0]} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.2 * tuning.intensity}
+        distance={5 * tuning.spread}
+        position={[0, 1.2, 0]}
+      />
     </group>
   );
 }
@@ -3084,7 +4185,7 @@ function GasCloudTerrainEffect({
     ? mixedTextureFilenames
     : useWispyCloudTextures
       ? wispyTextureFilenames
-    : [textureFilename];
+      : [textureFilename];
   const sourceTextures = useLoader(
     THREE.TextureLoader,
     textureFilenames.map((filename) => showcaseTextureUrl(filename)),
@@ -3094,11 +4195,12 @@ function GasCloudTerrainEffect({
   const columns = 8;
   const rows = 8;
   const frameCount = columns * rows;
-  const seed = station.id === "mixed-large-gas-cloud"
-    ? 947
-    : station.id === "wispy-large-gas-cloud"
-      ? 1667
-      : 113;
+  const seed =
+    station.id === "mixed-large-gas-cloud"
+      ? 947
+      : station.id === "wispy-large-gas-cloud"
+        ? 1667
+        : 113;
 
   const footprint = useMemo(() => {
     const rawPoints: Vec2[] = [
@@ -3131,70 +4233,103 @@ function GasCloudTerrainEffect({
     [footprint],
   );
 
-  const instances = useMemo(
-    () => {
-      const desiredCount = clamp(Math.round(tuning.count), 12, 96);
-      const lowCount = Math.max(8, Math.round(desiredCount * 0.68));
-      const highCount = Math.max(4, desiredCount - lowCount);
-      const lowColumns = station.id === "mixed-large-gas-cloud" ? 9 : 6;
-      const highColumns = station.id === "mixed-large-gas-cloud" ? 6 : 4;
-      const seededUnit = (index: number) => {
-        const x = Math.sin((seed + index * 91.7) * 12.9898) * 43758.5453;
-        return x - Math.floor(x);
+  const instances = useMemo(() => {
+    const desiredCount = clamp(Math.round(tuning.count), 12, 96);
+    const lowCount = Math.max(8, Math.round(desiredCount * 0.68));
+    const highCount = Math.max(4, desiredCount - lowCount);
+    const lowColumns = station.id === "mixed-large-gas-cloud" ? 9 : 6;
+    const highColumns = station.id === "mixed-large-gas-cloud" ? 6 : 4;
+    const seededUnit = (index: number) => {
+      const x = Math.sin((seed + index * 91.7) * 12.9898) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    const lowLayer = Array.from({ length: lowCount }, (_, i) => {
+      const layerRow = Math.floor(i / lowColumns);
+      const column = i % lowColumns;
+      const progress = lowColumns <= 1 ? 0.5 : column / (lowColumns - 1);
+      const rowOffset = layerRow - (Math.ceil(lowCount / lowColumns) - 1) / 2;
+      const edgeFade = Math.sin(progress * Math.PI);
+      const jitterX = (seededUnit(i + 3) - 0.5) * tuning.spread * 0.34;
+      const jitterZ = (seededUnit(i + 7) - 0.5) * tuning.spread * 0.48;
+      return {
+        x:
+          (progress - 0.5) * tuning.spread * 5.8 +
+          rowOffset * tuning.spread * 0.22 +
+          Math.sin(i * 1.73) * tuning.spread * 0.12 +
+          jitterX,
+        z:
+          rowOffset * tuning.spread * 0.72 +
+          Math.cos(i * 1.29) * tuning.spread * 0.18 +
+          jitterZ,
+        y:
+          0.38 +
+          layerRow * 0.11 +
+          edgeFade * 0.28 +
+          tuning.arc +
+          seededUnit(i + 11) * 0.24,
+        scale:
+          (1.08 +
+            edgeFade * 0.36 +
+            (i % 3) * 0.08 +
+            seededUnit(i + 13) * 0.18) *
+          tuning.size,
+        opacity: (0.085 + edgeFade * 0.045) * tuning.intensity * tuning.fade,
+        phase: i * 6.3 + seededUnit(i + 17) * frameCount,
+        rotation:
+          rowOffset * 0.24 +
+          Math.sin(i * 0.81) * 0.18 +
+          (seededUnit(i + 19) - 0.5) * 0.7,
       };
-      const lowLayer = Array.from({ length: lowCount }, (_, i) => {
-        const layerRow = Math.floor(i / lowColumns);
-        const column = i % lowColumns;
-        const progress = lowColumns <= 1 ? 0.5 : column / (lowColumns - 1);
-        const rowOffset = layerRow - (Math.ceil(lowCount / lowColumns) - 1) / 2;
-        const edgeFade = Math.sin(progress * Math.PI);
-        const jitterX = (seededUnit(i + 3) - 0.5) * tuning.spread * 0.34;
-        const jitterZ = (seededUnit(i + 7) - 0.5) * tuning.spread * 0.48;
-        return {
-          x:
-            (progress - 0.5) * tuning.spread * 5.8 +
-            rowOffset * tuning.spread * 0.22 +
-            Math.sin(i * 1.73) * tuning.spread * 0.12 +
-            jitterX,
-          z:
-            rowOffset * tuning.spread * 0.72 +
-            Math.cos(i * 1.29) * tuning.spread * 0.18 +
-            jitterZ,
-          y: 0.38 + layerRow * 0.11 + edgeFade * 0.28 + tuning.arc + seededUnit(i + 11) * 0.24,
-          scale: (1.08 + edgeFade * 0.36 + (i % 3) * 0.08 + seededUnit(i + 13) * 0.18) * tuning.size,
-          opacity: (0.085 + edgeFade * 0.045) * tuning.intensity * tuning.fade,
-          phase: i * 6.3 + seededUnit(i + 17) * frameCount,
-          rotation: (rowOffset * 0.24) + Math.sin(i * 0.81) * 0.18 + (seededUnit(i + 19) - 0.5) * 0.7,
-        };
-      });
-      const highLayer = Array.from({ length: highCount }, (_, highIndex) => {
-        const row = Math.floor(highIndex / highColumns);
-        const column = highIndex % highColumns;
-        const progress = highColumns <= 1 ? 0.5 : column / (highColumns - 1);
-        const rowOffset = row - (Math.ceil(highCount / highColumns) - 1) / 2;
-        const edgeFade = Math.sin(progress * Math.PI);
-        const i = highIndex + lowCount;
-        return {
-          x:
-            (progress - 0.5) * tuning.spread * 5.15 +
-            rowOffset * tuning.spread * 0.36 +
-            Math.sin(i * 1.41) * tuning.spread * 0.24 +
-            (seededUnit(i + 23) - 0.5) * tuning.spread * 0.42,
-          z:
-            rowOffset * tuning.spread * 0.88 +
-            Math.cos(i * 1.17) * tuning.spread * 0.28 +
-            (seededUnit(i + 29) - 0.5) * tuning.spread * 0.55,
-          y: 1.45 + row * 0.22 + edgeFade * 0.38 + tuning.arc + seededUnit(i + 31) * 0.42,
-          scale: (0.92 + edgeFade * 0.3 + (highIndex % 2) * 0.12 + seededUnit(i + 37) * 0.18) * tuning.size,
-          opacity: (0.045 + edgeFade * 0.026) * tuning.intensity * tuning.fade,
-          phase: i * 6.3 + seededUnit(i + 41) * frameCount,
-          rotation: rowOffset * 0.34 + Math.sin(i * 0.69) * 0.24 + (seededUnit(i + 43) - 0.5) * 0.85,
-        };
-      });
-      return [...lowLayer, ...highLayer];
-    },
-    [frameCount, seed, station.id, tuning.arc, tuning.count, tuning.fade, tuning.intensity, tuning.size, tuning.spread],
-  );
+    });
+    const highLayer = Array.from({ length: highCount }, (_, highIndex) => {
+      const row = Math.floor(highIndex / highColumns);
+      const column = highIndex % highColumns;
+      const progress = highColumns <= 1 ? 0.5 : column / (highColumns - 1);
+      const rowOffset = row - (Math.ceil(highCount / highColumns) - 1) / 2;
+      const edgeFade = Math.sin(progress * Math.PI);
+      const i = highIndex + lowCount;
+      return {
+        x:
+          (progress - 0.5) * tuning.spread * 5.15 +
+          rowOffset * tuning.spread * 0.36 +
+          Math.sin(i * 1.41) * tuning.spread * 0.24 +
+          (seededUnit(i + 23) - 0.5) * tuning.spread * 0.42,
+        z:
+          rowOffset * tuning.spread * 0.88 +
+          Math.cos(i * 1.17) * tuning.spread * 0.28 +
+          (seededUnit(i + 29) - 0.5) * tuning.spread * 0.55,
+        y:
+          1.45 +
+          row * 0.22 +
+          edgeFade * 0.38 +
+          tuning.arc +
+          seededUnit(i + 31) * 0.42,
+        scale:
+          (0.92 +
+            edgeFade * 0.3 +
+            (highIndex % 2) * 0.12 +
+            seededUnit(i + 37) * 0.18) *
+          tuning.size,
+        opacity: (0.045 + edgeFade * 0.026) * tuning.intensity * tuning.fade,
+        phase: i * 6.3 + seededUnit(i + 41) * frameCount,
+        rotation:
+          rowOffset * 0.34 +
+          Math.sin(i * 0.69) * 0.24 +
+          (seededUnit(i + 43) - 0.5) * 0.85,
+      };
+    });
+    return [...lowLayer, ...highLayer];
+  }, [
+    frameCount,
+    seed,
+    station.id,
+    tuning.arc,
+    tuning.count,
+    tuning.fade,
+    tuning.intensity,
+    tuning.size,
+    tuning.spread,
+  ]);
 
   const frameTextures = useMemo(
     () =>
@@ -3202,7 +4337,8 @@ function GasCloudTerrainEffect({
         const seeded = Math.sin((seed + index * 53.1) * 78.233) * 43758.5453;
         const randomUnit = seeded - Math.floor(seeded);
         const textureChoice = Math.floor(randomUnit * sourceTextures.length);
-        const sourceTexture = sourceTextures[textureChoice] ?? sourceTextures[0]!;
+        const sourceTexture =
+          sourceTextures[textureChoice] ?? sourceTextures[0]!;
         const texture = sourceTexture.clone();
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -3214,9 +4350,12 @@ function GasCloudTerrainEffect({
     [instances, seed, sourceTextures],
   );
 
-  useEffect(() => () => {
-    for (const texture of frameTextures) texture.dispose();
-  }, [frameTextures]);
+  useEffect(
+    () => () => {
+      for (const texture of frameTextures) texture.dispose();
+    },
+    [frameTextures],
+  );
 
   useFrame((_, delta) => {
     if (!paused) elapsedRef.current += delta;
@@ -3224,7 +4363,9 @@ function GasCloudTerrainEffect({
     const frameRate = 14 * clamp(tuning.speed, 0.15, 2.5);
     for (let i = 0; i < frameTextures.length; i += 1) {
       const texture = frameTextures[i];
-      const frame = Math.floor(elapsed * frameRate + (instances[i]?.phase ?? 0)) % frameCount;
+      const frame =
+        Math.floor(elapsed * frameRate + (instances[i]?.phase ?? 0)) %
+        frameCount;
       const column = frame % columns;
       const row = Math.floor(frame / columns);
       texture.offset.x = column / columns;
@@ -3240,7 +4381,8 @@ function GasCloudTerrainEffect({
           instance.y + Math.sin(driftPhase * 1.5) * 0.06,
           instance.z + Math.cos(driftPhase * 0.9) * tuning.spread * 0.08,
         );
-        child.rotation.y = instance.rotation + Math.sin(driftPhase * 0.35) * 0.08;
+        child.rotation.y =
+          instance.rotation + Math.sin(driftPhase * 0.35) * 0.08;
         const pulse = 1 + Math.sin(driftPhase * 1.1) * 0.045;
         child.scale.setScalar(pulse);
       });
@@ -3270,7 +4412,11 @@ function GasCloudTerrainEffect({
           >
             <mesh
               rotation={[0, 0, instance.rotation]}
-              scale={[instance.scale * 1.45, instance.scale * 1.08, instance.scale]}
+              scale={[
+                instance.scale * 1.45,
+                instance.scale * 1.08,
+                instance.scale,
+              ]}
               raycast={() => null}
             >
               <planeGeometry args={[2.15, 2.15]} />
@@ -3305,7 +4451,10 @@ function ModelAnchorEffect({
   anchor: ShowcaseModelAnchor;
   modelScale: number;
 }) {
-  if (anchor.name.startsWith("wreck_smoke") || anchor.name.startsWith("smoke_light")) {
+  if (
+    anchor.name.startsWith("wreck_smoke") ||
+    anchor.name.startsWith("smoke_light")
+  ) {
     return <ModelAnchorSmoke anchor={anchor} modelScale={modelScale} />;
   }
   if (anchor.name.startsWith("small_glow")) {
@@ -3317,7 +4466,13 @@ function ModelAnchorEffect({
   return null;
 }
 
-function ExplodingHullPulse({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function ExplodingHullPulse({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
@@ -3349,7 +4504,12 @@ function ExplodingHullPulse({ position, tuning }: { position: Vec2; tuning: Tuni
           toneMapped={false}
         />
       </mesh>
-      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={8}
+      />
     </group>
   );
 }
@@ -3373,7 +4533,10 @@ type TexturedSphereVariantConfig = {
   alphaRepeat: Vec2;
 };
 
-const TEXTURED_SPHERE_VARIANT_CONFIGS: Record<TexturedSphereVariant, TexturedSphereVariantConfig> = {
+const TEXTURED_SPHERE_VARIANT_CONFIGS: Record<
+  TexturedSphereVariant,
+  TexturedSphereVariantConfig
+> = {
   "diffuse-additive": {
     alphaSource: 0,
     alphaFloor: 0.2,
@@ -3592,44 +4755,66 @@ const TEXTURED_SPHERE_VARIANT_CONFIGS: Record<TexturedSphereVariant, TexturedSph
   },
 };
 
-function configureSphereTexture(texture: THREE.Texture, colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace): void {
+function configureSphereTexture(
+  texture: THREE.Texture,
+  colorSpace: THREE.ColorSpace = THREE.SRGBColorSpace,
+): void {
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = colorSpace;
   texture.needsUpdate = true;
 }
 
-function TexturedExplodingSphereStation({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+function TexturedExplodingSphereStation({
+  station,
+  tuning,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+}) {
   const sphereGroupRef = useRef<THREE.Group>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const primaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.textureFilename ?? "T_FirePanningCyl45.png"));
-  const secondaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.secondaryTextureFilename ?? "T_Noise1_nk.png"));
-  const alphaTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.alphaTextureFilename ?? "T_Noise_HU85k.png"));
+  const primaryTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(station.textureFilename ?? "T_FirePanningCyl45.png"),
+  );
+  const secondaryTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(station.secondaryTextureFilename ?? "T_Noise1_nk.png"),
+  );
+  const alphaTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(station.alphaTextureFilename ?? "T_Noise_HU85k.png"),
+  );
   const variant = station.textureVariant ?? "diffuse-additive";
   const config = TEXTURED_SPHERE_VARIANT_CONFIGS[variant];
   const sphereCount = clamp(Math.round(tuning.count), 1, 16);
   const randomPlacement = (tuning.randomness ?? 0) >= 0.5;
-  const expansionCycle = station.testNumber === 1 ? clamp(tuning.expansionCycle ?? 0, 0, 8) : 0;
+  const expansionCycle =
+    station.testNumber === 1 ? clamp(tuning.expansionCycle ?? 0, 0, 8) : 0;
   const sphereOffsets = useMemo<[number, number, number][]>(
-    () => Array.from({ length: sphereCount }, (_, index) => {
-      if (index === 0) return [0, 0, 0];
+    () =>
+      Array.from({ length: sphereCount }, (_, index) => {
+        if (index === 0) return [0, 0, 0];
 
-      if (randomPlacement) {
-        const angle = seededUnit(index * 3.17 + 0.4) * Math.PI * 2;
-        const radius = (0.45 + seededUnit(index * 5.31 + 1.7) * 1.1) * tuning.spread;
-        const height = (seededUnit(index * 7.13 + 2.9) - 0.5) * 1.4 * tuning.spread;
+        if (randomPlacement) {
+          const angle = seededUnit(index * 3.17 + 0.4) * Math.PI * 2;
+          const radius =
+            (0.45 + seededUnit(index * 5.31 + 1.7) * 1.1) * tuning.spread;
+          const height =
+            (seededUnit(index * 7.13 + 2.9) - 0.5) * 1.4 * tuning.spread;
+          return [Math.cos(angle) * radius, height, Math.sin(angle) * radius];
+        }
+
+        const clusterIndex = index - 1;
+        const ring = Math.floor(clusterIndex / 6);
+        const angle = ((clusterIndex % 6) / 6) * Math.PI * 2 + ring * 0.42;
+        const radius = (0.68 + ring * 0.5) * tuning.spread;
+        const height = ((clusterIndex % 3) - 1) * 0.12 * tuning.spread;
         return [Math.cos(angle) * radius, height, Math.sin(angle) * radius];
-      }
-
-      const clusterIndex = index - 1;
-      const ring = Math.floor(clusterIndex / 6);
-      const angle = (clusterIndex % 6) / 6 * Math.PI * 2 + ring * 0.42;
-      const radius = (0.68 + ring * 0.5) * tuning.spread;
-      const height = ((clusterIndex % 3) - 1) * 0.12 * tuning.spread;
-      return [Math.cos(angle) * radius, height, Math.sin(angle) * radius];
-    }),
+      }),
     [randomPlacement, sphereCount, tuning.spread],
   );
 
@@ -3666,21 +4851,45 @@ function TexturedExplodingSphereStation({ station, tuning }: { station: SpecialS
       uSecondaryRepeat: { value: new THREE.Vector2(...config.secondaryRepeat) },
       uAlphaRepeat: { value: new THREE.Vector2(...config.alphaRepeat) },
     }),
-    [alphaTexture, config, primaryTexture, secondaryTexture, tuning.color, tuning.fade, tuning.intensity, tuning.secondaryColor],
+    [
+      alphaTexture,
+      config,
+      primaryTexture,
+      secondaryTexture,
+      tuning.color,
+      tuning.fade,
+      tuning.intensity,
+      tuning.secondaryColor,
+    ],
   );
 
   useFrame(({ clock }) => {
     const elapsed = clock.elapsedTime * clamp(tuning.speed, 0.25, 3);
     const pulse = (Math.sin(elapsed * 4.2) + 1) / 2;
-    const cycleProgress = expansionCycle > 0 ? (clock.elapsedTime % expansionCycle) / expansionCycle : 0.5;
-    const expansionEnvelope = expansionCycle > 0 ? Math.sin(Math.PI * cycleProgress) ** 2 : 1;
+    const cycleProgress =
+      expansionCycle > 0
+        ? (clock.elapsedTime % expansionCycle) / expansionCycle
+        : 0.5;
+    const expansionEnvelope =
+      expansionCycle > 0 ? Math.sin(Math.PI * cycleProgress) ** 2 : 1;
     sphereGroupRef.current?.children.forEach((child, index) => {
-      const sizeVariation = randomPlacement && index > 0 ? 0.82 + seededUnit(index * 4.71 + 3.2) * 0.34 : 1;
-      child.scale.setScalar((1.16 + pulse * 0.16) * tuning.size * sizeVariation * expansionEnvelope);
+      const sizeVariation =
+        randomPlacement && index > 0
+          ? 0.82 + seededUnit(index * 4.71 + 3.2) * 0.34
+          : 1;
+      child.scale.setScalar(
+        (1.16 + pulse * 0.16) * tuning.size * sizeVariation * expansionEnvelope,
+      );
     });
-    if (coreRef.current) coreRef.current.scale.setScalar((0.38 + pulse * 0.08) * tuning.size * expansionEnvelope);
-    if (coreMatRef.current) coreMatRef.current.opacity = 0.24 * tuning.intensity * expansionEnvelope;
-    if (lightRef.current) lightRef.current.intensity = (1.4 + pulse * 3.8) * tuning.intensity * expansionEnvelope;
+    if (coreRef.current)
+      coreRef.current.scale.setScalar(
+        (0.38 + pulse * 0.08) * tuning.size * expansionEnvelope,
+      );
+    if (coreMatRef.current)
+      coreMatRef.current.opacity = 0.24 * tuning.intensity * expansionEnvelope;
+    if (lightRef.current)
+      lightRef.current.intensity =
+        (1.4 + pulse * 3.8) * tuning.intensity * expansionEnvelope;
     uniforms.uTime.value = elapsed;
     uniforms.uColor.value.set(tuning.color);
     uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
@@ -3805,7 +5014,12 @@ function TexturedExplodingSphereStation({ station, tuning }: { station: SpecialS
             />
           </mesh>
         ) : null}
-        <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8 * tuning.thickness} />
+        <pointLight
+          ref={lightRef}
+          color={tuning.color}
+          intensity={0}
+          distance={8 * tuning.thickness}
+        />
       </group>
     </group>
   );
@@ -3862,11 +5076,23 @@ function ExplodingOriginSmoke({ tuning }: { tuning: Tuning }) {
   );
 }
 
-function HullStateFxStation({ station, tuning, selected, showLabel }: { station: HullStateStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
+function HullStateFxStation({
+  station,
+  tuning,
+  selected,
+  showLabel,
+}: {
+  station: HullStateStation;
+  tuning: Tuning;
+  selected: boolean;
+  showLabel: boolean;
+}) {
   const modelGroupRef = useRef<THREE.Group>(null);
   const staticRotation = useMemo<[number, number, number]>(() => {
-    if (station.mode === "adrift-askew") return [THREE.MathUtils.degToRad(18), 0, THREE.MathUtils.degToRad(-23)];
-    if (station.mode === "destroyed") return [THREE.MathUtils.degToRad(7), 0, THREE.MathUtils.degToRad(5)];
+    if (station.mode === "adrift-askew")
+      return [THREE.MathUtils.degToRad(18), 0, THREE.MathUtils.degToRad(-23)];
+    if (station.mode === "destroyed")
+      return [THREE.MathUtils.degToRad(7), 0, THREE.MathUtils.degToRad(5)];
     return [0, 0, 0];
   }, [station.mode]);
   const modelTint =
@@ -3887,27 +5113,53 @@ function HullStateFxStation({ station, tuning, selected, showLabel }: { station:
   useFrame(({ clock }) => {
     if (!modelGroupRef.current || station.mode !== "adrift-tumble") return;
     const t = clock.elapsedTime * tuning.speed;
-    modelGroupRef.current.rotation.x = THREE.MathUtils.degToRad(9 + Math.sin(t * 0.83) * 8);
+    modelGroupRef.current.rotation.x = THREE.MathUtils.degToRad(
+      9 + Math.sin(t * 0.83) * 8,
+    );
     modelGroupRef.current.rotation.y = Math.sin(t * 0.42) * 0.12;
-    modelGroupRef.current.rotation.z = THREE.MathUtils.degToRad(-11 + Math.cos(t * 0.71) * 9);
+    modelGroupRef.current.rotation.z = THREE.MathUtils.degToRad(
+      -11 + Math.cos(t * 0.71) * 9,
+    );
   });
 
   return (
     <group>
-      <EndpointMarker position={station.position} color={markerColor} selected={selected} />
+      <EndpointMarker
+        position={station.position}
+        color={markerColor}
+        selected={selected}
+      />
       <group position={[station.position[0], 0, station.position[1]]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, 0.05, 0]}
+          raycast={() => null}
+        >
           <ringGeometry args={[1.25, 1.42, 64]} />
-          <meshBasicMaterial color={markerColor} transparent opacity={selected ? 0.9 : 0.42} />
+          <meshBasicMaterial
+            color={markerColor}
+            transparent
+            opacity={selected ? 0.9 : 0.42}
+          />
         </mesh>
-        <group ref={modelGroupRef} position={[0, 1.35, 0]} rotation={staticRotation}>
+        <group
+          ref={modelGroupRef}
+          position={[0, 1.35, 0]}
+          rotation={staticRotation}
+        >
           <Suspense fallback={null}>
             <ShowcaseGlbModel
               filename={station.modelFilename}
               tint={modelTint}
               opacity={station.mode === "destroyed" ? 0.92 : 1}
-              emissiveColor={station.mode === "exploding" ? tuning.color : tuning.secondaryColor}
-              emissiveIntensity={station.mode === "exploding" ? 0.85 : 0.08 * tuning.intensity}
+              emissiveColor={
+                station.mode === "exploding"
+                  ? tuning.color
+                  : tuning.secondaryColor
+              }
+              emissiveIntensity={
+                station.mode === "exploding" ? 0.85 : 0.08 * tuning.intensity
+              }
               emissivePulse={station.mode === "exploding"}
               anchorEffects={station.mode === "destroyed"}
             />
@@ -3922,7 +5174,9 @@ function HullStateFxStation({ station, tuning, selected, showLabel }: { station:
           <ExplodingHullPulse position={station.position} tuning={tuning} />
         </>
       ) : null}
-      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+      {showLabel ? (
+        <StationLabel station={station} selected={selected} />
+      ) : null}
     </group>
   );
 }
@@ -3988,7 +5242,13 @@ function DeadHulkPointSparks({
         colorMix: d,
       };
     });
-  }, [particleCount, tuning.arc, tuning.fade, tuning.randomness, tuning.spread]);
+  }, [
+    particleCount,
+    tuning.arc,
+    tuning.fade,
+    tuning.randomness,
+    tuning.spread,
+  ]);
   const primary = useMemo(() => new THREE.Color(tuning.color), [tuning.color]);
   const secondary = useMemo(
     () => new THREE.Color(tuning.secondaryColor),
@@ -3999,8 +5259,7 @@ function DeadHulkPointSparks({
 
   useFrame((_, delta) => {
     if (!paused) timeRef.current += delta * clamp(tuning.speed, 0.05, 3);
-    const positions = geometry.getAttribute("position")
-      .array as Float32Array;
+    const positions = geometry.getAttribute("position").array as Float32Array;
     const colors = geometry.getAttribute("color").array as Float32Array;
     const time = timeRef.current;
     for (let i = 0; i < seeds.length; i += 1) {
@@ -4011,9 +5270,12 @@ function DeadHulkPointSparks({
       const brightness =
         fadeIn *
         fadeOut *
-        (0.38 + Math.sin((time + seed.phase) * (5.5 + seed.wobble * 4)) * 0.22 + seed.colorMix * 0.55);
+        (0.38 +
+          Math.sin((time + seed.phase) * (5.5 + seed.wobble * 4)) * 0.22 +
+          seed.colorMix * 0.55);
       const wobbleX = Math.sin(time * 1.7 + seed.phase) * 0.08 * seed.wobble;
-      const wobbleZ = Math.cos(time * 1.2 + seed.phase * 0.7) * 0.05 * seed.wobble;
+      const wobbleZ =
+        Math.cos(time * 1.2 + seed.phase * 0.7) * 0.05 * seed.wobble;
       const idx = i * 3;
       positions[idx] = seed.origin[0] + seed.velocity[0] * local + wobbleX;
       positions[idx + 1] = seed.origin[1] + seed.velocity[1] * local;
@@ -4032,11 +5294,18 @@ function DeadHulkPointSparks({
 
   return (
     <group position={[station.position[0], 0, station.position[1]]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.05, 0]}
+        raycast={() => null}
+      >
         <ringGeometry args={[1.35, 1.52, 64]} />
         <meshBasicMaterial color={tuning.color} transparent opacity={0.36} />
       </mesh>
-      <group position={[0, 1.35, 0]} rotation={[THREE.MathUtils.degToRad(7), 0, THREE.MathUtils.degToRad(5)]}>
+      <group
+        position={[0, 1.35, 0]}
+        rotation={[THREE.MathUtils.degToRad(7), 0, THREE.MathUtils.degToRad(5)]}
+      >
         <Suspense fallback={null}>
           <ShowcaseGlbModel
             filename={station.modelFilename ?? "dead-hyperion.glb"}
@@ -4144,31 +5413,38 @@ function BattlecrabDamageParticleSpray({
     return g;
   }, [particleCount]);
   const spriteTexture = useMemo(() => makeBlackParticleSpriteTexture(), []);
-  useEffect(() => () => {
-    geometry.dispose();
-  }, [geometry]);
-  useEffect(() => () => {
-    spriteTexture.dispose();
-  }, [spriteTexture]);
+  useEffect(
+    () => () => {
+      geometry.dispose();
+    },
+    [geometry],
+  );
+  useEffect(
+    () => () => {
+      spriteTexture.dispose();
+    },
+    [spriteTexture],
+  );
 
-  const particles = useMemo<BattlecrabDamageParticleSeed[]>(() =>
-    Array.from({ length: particleCount }, (_, i) => {
-      const slot = particleCount <= 1 ? 0.5 : i / (particleCount - 1);
-      const band = i % 5;
-      const jitter = (seededSparkNoise(i, 12.9898) - 0.5) * randomness * 0.36;
-      return {
-        yaw: (slot - 0.5) * fanAngle + jitter,
-        distance: (5.4 + (i % 9) * 0.36) * spread,
-        height:
-          (0.8 + band * 0.24 + Math.abs(Math.sin(i * 2.31)) * 0.36) *
-          tuning.size *
-          (0.85 + fanAngle * 0.12),
-        rise: (0.15 + (i % 4) * 0.1) * spread,
-        speed: 0.5 + (i % 7) * 0.055,
-        phase: (i * 0.071) % 1,
-        wobble: randomness * (0.015 + (i % 4) * 0.012),
-      };
-    }),
+  const particles = useMemo<BattlecrabDamageParticleSeed[]>(
+    () =>
+      Array.from({ length: particleCount }, (_, i) => {
+        const slot = particleCount <= 1 ? 0.5 : i / (particleCount - 1);
+        const band = i % 5;
+        const jitter = (seededSparkNoise(i, 12.9898) - 0.5) * randomness * 0.36;
+        return {
+          yaw: (slot - 0.5) * fanAngle + jitter,
+          distance: (5.4 + (i % 9) * 0.36) * spread,
+          height:
+            (0.8 + band * 0.24 + Math.abs(Math.sin(i * 2.31)) * 0.36) *
+            tuning.size *
+            (0.85 + fanAngle * 0.12),
+          rise: (0.15 + (i % 4) * 0.1) * spread,
+          speed: 0.5 + (i % 7) * 0.055,
+          phase: (i * 0.071) % 1,
+          wobble: randomness * (0.015 + (i % 4) * 0.012),
+        };
+      }),
     [fanAngle, particleCount, randomness, spread, tuning.size],
   );
 
@@ -4179,7 +5455,11 @@ function BattlecrabDamageParticleSpray({
       const particle = particles[i];
       if (!particle) continue;
       const local = (timeRef.current * particle.speed + particle.phase) % 1;
-      const position = battlecrabDamageParticlePosition(particle, local, spread);
+      const position = battlecrabDamageParticlePosition(
+        particle,
+        local,
+        spread,
+      );
       const idx = i * 3;
       positions[idx] = position.x;
       positions[idx + 1] = position.y;
@@ -4187,13 +5467,23 @@ function BattlecrabDamageParticleSpray({
     }
     geometry.getAttribute("position").needsUpdate = true;
     if (materialRef.current) {
-      materialRef.current.size = 0.22 * clamp(tuning.size, 0.05, 3) * clamp(tuning.thickness, 0.25, 4);
-      materialRef.current.opacity = clamp(0.88 * tuning.intensity * tuning.fade, 0.08, 0.98);
+      materialRef.current.size =
+        0.22 * clamp(tuning.size, 0.05, 3) * clamp(tuning.thickness, 0.25, 4);
+      materialRef.current.opacity = clamp(
+        0.88 * tuning.intensity * tuning.fade,
+        0.08,
+        0.98,
+      );
       materialRef.current.needsUpdate = true;
     }
     if (haloMaterialRef.current) {
-      haloMaterialRef.current.size = 0.38 * clamp(tuning.size, 0.05, 3) * clamp(tuning.thickness, 0.25, 4);
-      haloMaterialRef.current.opacity = clamp(0.42 * tuning.intensity * tuning.fade, 0.04, 0.62);
+      haloMaterialRef.current.size =
+        0.38 * clamp(tuning.size, 0.05, 3) * clamp(tuning.thickness, 0.25, 4);
+      haloMaterialRef.current.opacity = clamp(
+        0.42 * tuning.intensity * tuning.fade,
+        0.04,
+        0.62,
+      );
       haloMaterialRef.current.needsUpdate = true;
     }
   });
@@ -4202,7 +5492,11 @@ function BattlecrabDamageParticleSpray({
   const modelYaw = THREE.MathUtils.degToRad(-18);
   return (
     <group position={[station.position[0], 0, station.position[1]]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} raycast={() => null}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.05, 0]}
+        raycast={() => null}
+      >
         <ringGeometry args={[1.75, 1.95, 80]} />
         <meshBasicMaterial color="#334155" transparent opacity={0.28} />
       </mesh>
@@ -4218,7 +5512,12 @@ function BattlecrabDamageParticleSpray({
           />
         </Suspense>
       </group>
-      <points geometry={geometry} position={[0, 1.16, 0]} rotation={[0, modelYaw, 0]} raycast={() => null}>
+      <points
+        geometry={geometry}
+        position={[0, 1.16, 0]}
+        rotation={[0, modelYaw, 0]}
+        raycast={() => null}
+      >
         <pointsMaterial
           ref={haloMaterialRef}
           map={spriteTexture}
@@ -4234,7 +5533,12 @@ function BattlecrabDamageParticleSpray({
           toneMapped={false}
         />
       </points>
-      <points geometry={geometry} position={[0, 1.16, 0]} rotation={[0, modelYaw, 0]} raycast={() => null}>
+      <points
+        geometry={geometry}
+        position={[0, 1.16, 0]}
+        rotation={[0, modelYaw, 0]}
+        raycast={() => null}
+      >
         <pointsMaterial
           ref={materialRef}
           map={spriteTexture}
@@ -4260,14 +5564,27 @@ function BattlecrabDamageParticleSpray({
   );
 }
 
-function BeamPreview({ from, to, tuning }: { from: THREE.Vector3; to: THREE.Vector3; tuning: Tuning }) {
+function BeamPreview({
+  from,
+  to,
+  tuning,
+}: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  tuning: Tuning;
+}) {
   const coreRef = useRef<THREE.MeshBasicMaterial>(null);
   const haloRef = useRef<THREE.MeshBasicMaterial>(null);
   const { mid, quat, len } = useMemo(() => {
     const dir = new THREE.Vector3().subVectors(to, from);
     const length = dir.length();
-    const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    const midpoint = new THREE.Vector3()
+      .addVectors(from, to)
+      .multiplyScalar(0.5);
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize(),
+    );
     return { mid: midpoint, quat: q, len: length };
   }, [from, to]);
 
@@ -4275,8 +5592,10 @@ function BeamPreview({ from, to, tuning }: { from: THREE.Vector3; to: THREE.Vect
     const cycle = 2.6 / clamp(tuning.speed, 0.25, 3);
     const t = (clock.elapsedTime % cycle) / cycle;
     const a = phaseAlpha(t, tuning.fade);
-    if (coreRef.current) coreRef.current.opacity = a * clamp(tuning.intensity, 0.1, 3);
-    if (haloRef.current) haloRef.current.opacity = a * 0.34 * clamp(tuning.intensity, 0.1, 3);
+    if (coreRef.current)
+      coreRef.current.opacity = a * clamp(tuning.intensity, 0.1, 3);
+    if (haloRef.current)
+      haloRef.current.opacity = a * 0.34 * clamp(tuning.intensity, 0.1, 3);
   });
 
   const thickness = 0.018 * tuning.thickness * tuning.size;
@@ -4284,11 +5603,29 @@ function BeamPreview({ from, to, tuning }: { from: THREE.Vector3; to: THREE.Vect
     <group position={mid.toArray()} quaternion={quat}>
       <mesh raycast={() => null}>
         <cylinderGeometry args={[thickness, thickness, len, 8, 1]} />
-        <meshBasicMaterial ref={coreRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={coreRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh raycast={() => null}>
-        <cylinderGeometry args={[thickness * 3.8, thickness * 3.8, len, 12, 1]} />
-        <meshBasicMaterial ref={haloRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <cylinderGeometry
+          args={[thickness * 3.8, thickness * 3.8, len, 12, 1]}
+        />
+        <meshBasicMaterial
+          ref={haloRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
     </group>
   );
@@ -4309,12 +5646,20 @@ function TexturedBeamEmitterPreview({
   const crossMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const coreRef = useRef<THREE.MeshBasicMaterial>(null);
   const haloRef = useRef<THREE.MeshBasicMaterial>(null);
-  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  );
   const { mid, quat, len } = useMemo(() => {
     const dir = new THREE.Vector3().subVectors(to, from);
     const length = dir.length();
-    const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    const midpoint = new THREE.Vector3()
+      .addVectors(from, to)
+      .multiplyScalar(0.5);
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize(),
+    );
     return { mid: midpoint, quat: q, len: length };
   }, [from, to]);
   const [mainTexture, crossTexture] = useMemo(() => {
@@ -4328,7 +5673,10 @@ function TexturedBeamEmitterPreview({
       texture.needsUpdate = true;
       return texture;
     };
-    return [configure(sourceTexture.clone()), configure(sourceTexture.clone())] as const;
+    return [
+      configure(sourceTexture.clone()),
+      configure(sourceTexture.clone()),
+    ] as const;
   }, [sourceTexture]);
 
   useEffect(() => {
@@ -4340,7 +5688,9 @@ function TexturedBeamEmitterPreview({
 
   useFrame(({ clock }) => {
     const frameCount = 25;
-    const frame = Math.floor(clock.elapsedTime * 18 * clamp(tuning.speed, 0.25, 3)) % frameCount;
+    const frame =
+      Math.floor(clock.elapsedTime * 18 * clamp(tuning.speed, 0.25, 3)) %
+      frameCount;
     const column = frame % 5;
     const row = Math.floor(frame / 5);
     for (const texture of [mainTexture, crossTexture]) {
@@ -4401,7 +5751,9 @@ function TexturedBeamEmitterPreview({
         />
       </mesh>
       <mesh raycast={() => null}>
-        <cylinderGeometry args={[coreThickness * 7.5, coreThickness * 7.5, len, 16, 1]} />
+        <cylinderGeometry
+          args={[coreThickness * 7.5, coreThickness * 7.5, len, 16, 1]}
+        />
         <meshBasicMaterial
           ref={haloRef}
           color={tuning.color}
@@ -4412,14 +5764,26 @@ function TexturedBeamEmitterPreview({
           toneMapped={false}
         />
       </mesh>
-      <pointLight color={tuning.color} intensity={4.2 * tuning.intensity} distance={10} />
+      <pointLight
+        color={tuning.color}
+        intensity={4.2 * tuning.intensity}
+        distance={10}
+      />
     </group>
   );
 }
 
-function selectedKirishiacBeamTexture(tuning: Tuning): typeof KIRISHIAC_BEAM_TEXTURE_OPTIONS[number] {
-  const index = clamp(Math.round(tuning.count) - 1, 0, KIRISHIAC_BEAM_TEXTURE_OPTIONS.length - 1);
-  return KIRISHIAC_BEAM_TEXTURE_OPTIONS[index] ?? KIRISHIAC_BEAM_TEXTURE_OPTIONS[0];
+function selectedKirishiacBeamTexture(
+  tuning: Tuning,
+): (typeof KIRISHIAC_BEAM_TEXTURE_OPTIONS)[number] {
+  const index = clamp(
+    Math.round(tuning.count) - 1,
+    0,
+    KIRISHIAC_BEAM_TEXTURE_OPTIONS.length - 1,
+  );
+  return (
+    KIRISHIAC_BEAM_TEXTURE_OPTIONS[index] ?? KIRISHIAC_BEAM_TEXTURE_OPTIONS[0]
+  );
 }
 
 function KirishiacInnerCombatBeam({
@@ -4443,12 +5807,20 @@ function KirishiacInnerCombatBeam({
   const coreMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  );
   const { mid, quat, len } = useMemo(() => {
     const dir = new THREE.Vector3().subVectors(to, from);
     const length = dir.length();
-    const midpoint = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    const midpoint = new THREE.Vector3()
+      .addVectors(from, to)
+      .multiplyScalar(0.5);
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize(),
+    );
     return { mid: midpoint, quat: q, len: length };
   }, [from, to]);
   const [mainTexture, crossTexture] = useMemo(() => {
@@ -4462,7 +5834,10 @@ function KirishiacInnerCombatBeam({
       texture.needsUpdate = true;
       return texture;
     };
-    return [configure(sourceTexture.clone()), configure(sourceTexture.clone())] as const;
+    return [
+      configure(sourceTexture.clone()),
+      configure(sourceTexture.clone()),
+    ] as const;
   }, [sourceTexture]);
 
   useEffect(() => {
@@ -4485,19 +5860,35 @@ function KirishiacInnerCombatBeam({
     crossTexture.offset.x = Math.cos(elapsed * 0.36) * 0.04;
     if (planeMatRef.current) {
       planeMatRef.current.color.set(tuning.color);
-      planeMatRef.current.opacity = clamp(0.42 * opacity * brightness * pulse, 0, 1.2);
+      planeMatRef.current.opacity = clamp(
+        0.42 * opacity * brightness * pulse,
+        0,
+        1.2,
+      );
     }
     if (crossMatRef.current) {
       crossMatRef.current.color.set(tuning.secondaryColor);
-      crossMatRef.current.opacity = clamp(0.26 * opacity * brightness * pulse, 0, 1);
+      crossMatRef.current.opacity = clamp(
+        0.26 * opacity * brightness * pulse,
+        0,
+        1,
+      );
     }
     if (coreMatRef.current) {
       coreMatRef.current.color.set(tuning.secondaryColor);
-      coreMatRef.current.opacity = clamp(0.78 * opacity * brightness * pulse, 0, 1.35);
+      coreMatRef.current.opacity = clamp(
+        0.78 * opacity * brightness * pulse,
+        0,
+        1.35,
+      );
     }
     if (haloMatRef.current) {
       haloMatRef.current.color.set(tuning.color);
-      haloMatRef.current.opacity = clamp(0.18 * opacity * brightness * pulse, 0, 0.8);
+      haloMatRef.current.opacity = clamp(
+        0.18 * opacity * brightness * pulse,
+        0,
+        0.8,
+      );
     }
     if (lightRef.current) {
       lightRef.current.color.set(tuning.color);
@@ -4560,7 +5951,12 @@ function KirishiacInnerCombatBeam({
           toneMapped={false}
         />
       </mesh>
-      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={12 + diameter * 7} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={12 + diameter * 7}
+      />
     </group>
   );
 }
@@ -4577,16 +5973,24 @@ function KirishiacBeamFiringShowcase({
   const filename = station.modelFilename ?? "kirishiac1.glb";
   const { scene } = useGLTF(showcaseModelUrl(filename));
   const textureOption = selectedKirishiacBeamTexture(tuning);
-  const beamTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureOption.filename));
+  const beamTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureOption.filename),
+  );
   const elapsedRef = useRef(0);
   const shellMaterialsRef = useRef<THREE.ShaderMaterial[]>([]);
-  const beamMeshesRef = useRef<Array<{ mesh: THREE.Mesh; baseScale: THREE.Vector3 }>>([]);
+  const beamMeshesRef = useRef<
+    Array<{ mesh: THREE.Mesh; baseScale: THREE.Vector3 }>
+  >([]);
   const shipYawGroupRef = useRef<THREE.Group>(null);
   const rotatingShipLayerRef = useRef<THREE.Object3D | null>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const [beamActive, setBeamActive] = useState(false);
   const beamActiveRef = useRef(false);
-  const targetPosition = station.to ?? [station.position[0], station.position[1] + 20];
+  const targetPosition = station.to ?? [
+    station.position[0],
+    station.position[1] + 20,
+  ];
   const shipY = SHOWCASE_MESH_ORIGIN_Y + 1;
   const shipOrigin = useMemo(
     () => toVector3(station.position, shipY + 0.05),
@@ -4601,7 +6005,11 @@ function KirishiacBeamFiringShowcase({
     [beamTarget, shipOrigin],
   );
   const beamSource = useMemo(() => {
-    const offset = new THREE.Vector3(0, 0, KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES);
+    const offset = new THREE.Vector3(
+      0,
+      0,
+      KIRISHIAC_BEAM_EMITTER_FORWARD_INCHES,
+    );
     offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), targetYaw);
     return shipOrigin.clone().add(offset);
   }, [shipOrigin, targetYaw]);
@@ -4686,75 +6094,108 @@ function KirishiacBeamFiringShowcase({
       kirishiacSpikeMaterial = false,
     ) => {
       const cloneOne = (material: THREE.Material | undefined) => {
-        const clonedMaterial = material?.clone?.() ?? new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        const adjustable = clonedMaterial as THREE.Material & { emissive?: THREE.Color; emissiveIntensity?: number };
+        const clonedMaterial =
+          material?.clone?.() ??
+          new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+        const adjustable = clonedMaterial as THREE.Material & {
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+        };
         if (kirishiacSpikeMaterial) {
-          if ("color" in clonedMaterial && clonedMaterial.color instanceof THREE.Color) {
-            clonedMaterial.color = clonedMaterial.color.clone().lerp(new THREE.Color(tuning.secondaryColor), 0.34);
+          if (
+            "color" in clonedMaterial &&
+            clonedMaterial.color instanceof THREE.Color
+          ) {
+            clonedMaterial.color = clonedMaterial.color
+              .clone()
+              .lerp(new THREE.Color(tuning.secondaryColor), 0.34);
           }
           if (adjustable.emissive instanceof THREE.Color) {
             adjustable.emissive = new THREE.Color(tuning.secondaryColor);
-            adjustable.emissiveIntensity = 6.5 * clamp(tuning.intensity, 0.1, 4);
+            adjustable.emissiveIntensity =
+              6.5 * clamp(tuning.intensity, 0.1, 4);
           }
           clonedMaterial.toneMapped = false;
         } else if (adjustable.emissive instanceof THREE.Color) {
           adjustable.emissive = new THREE.Color(tuning.color);
           adjustable.emissiveIntensity = 0.08 * tuning.intensity;
         }
-        return mode ? createKirishiacRotatorWeightMaskMaterial(clonedMaterial, mode) : clonedMaterial;
+        return mode
+          ? createKirishiacRotatorWeightMaskMaterial(clonedMaterial, mode)
+          : clonedMaterial;
       };
       return Array.isArray(source) ? source.map(cloneOne) : cloneOne(source);
     };
 
-    const prepareLayer = (root: THREE.Object3D, mode: "static" | "rotating" | "beam") => {
+    const prepareLayer = (
+      root: THREE.Object3D,
+      mode: "static" | "rotating" | "beam",
+    ) => {
       root.traverse((child: any) => {
-      if (!child.isMesh) return;
-      child.castShadow = true;
-      child.receiveShadow = true;
-      child.raycast = () => null;
-      const childName = String(child.name ?? "").toLowerCase();
-      const materialName = Array.isArray(child.material)
-        ? child.material.map((material: THREE.Material) => material.name).join(" ")
-        : String(child.material?.name ?? "");
-      const isKirishiacSpikeMaterial = materialName.toLowerCase().includes("kirishiac flame");
-      const isBeamShell =
-        childName.includes("kirishiac_beam") ||
-        String(child.geometry?.name ?? "").toLowerCase().includes("kirishiac_beam");
+        if (!child.isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        child.raycast = () => null;
+        const childName = String(child.name ?? "").toLowerCase();
+        const materialName = Array.isArray(child.material)
+          ? child.material
+              .map((material: THREE.Material) => material.name)
+              .join(" ")
+          : String(child.material?.name ?? "");
+        const isKirishiacSpikeMaterial = materialName
+          .toLowerCase()
+          .includes("kirishiac flame");
+        const isBeamShell =
+          childName.includes("kirishiac_beam") ||
+          String(child.geometry?.name ?? "")
+            .toLowerCase()
+            .includes("kirishiac_beam");
 
-      if (isBeamShell) {
-        if (mode !== "beam") {
+        if (isBeamShell) {
+          if (mode !== "beam") {
+            child.visible = false;
+            return;
+          }
+          child.castShadow = false;
+          child.receiveShadow = false;
+          const shellMaterial = createShellMaterial();
+          child.material = shellMaterial;
+          child.geometry.computeBoundingBox();
+          const box = child.geometry.boundingBox;
+          if (box) {
+            shellMaterial.uniforms.uBeamMinY.value = box.min.y;
+            shellMaterial.uniforms.uBeamMaxY.value = box.max.y;
+          }
+          beamMeshesRef.current.push({
+            mesh: child as THREE.Mesh,
+            baseScale: child.scale.clone(),
+          });
+          return;
+        }
+
+        if (mode === "beam") {
           child.visible = false;
           return;
         }
-        child.castShadow = false;
-        child.receiveShadow = false;
-        const shellMaterial = createShellMaterial();
-        child.material = shellMaterial;
-        child.geometry.computeBoundingBox();
-        const box = child.geometry.boundingBox;
-        if (box) {
-          shellMaterial.uniforms.uBeamMinY.value = box.min.y;
-          shellMaterial.uniforms.uBeamMaxY.value = box.max.y;
-        }
-        beamMeshesRef.current.push({ mesh: child as THREE.Mesh, baseScale: child.scale.clone() });
-        return;
-      }
 
-      if (mode === "beam") {
-        child.visible = false;
-        return;
-      }
-
-      if (child.isSkinnedMesh) {
-        child.material = cloneStandardMaterials(child.material, mode, isKirishiacSpikeMaterial);
-      } else {
-        if (mode === "rotating") {
-          child.visible = false;
-          return;
+        if (child.isSkinnedMesh) {
+          child.material = cloneStandardMaterials(
+            child.material,
+            mode,
+            isKirishiacSpikeMaterial,
+          );
+        } else {
+          if (mode === "rotating") {
+            child.visible = false;
+            return;
+          }
+          child.material = cloneStandardMaterials(
+            child.material,
+            undefined,
+            isKirishiacSpikeMaterial,
+          );
         }
-        child.material = cloneStandardMaterials(child.material, undefined, isKirishiacSpikeMaterial);
-      }
-      void materialName;
+        void materialName;
       });
     };
 
@@ -4767,13 +6208,24 @@ function KirishiacBeamFiringShowcase({
     rotatingShipLayerRef.current = rotatingLayer;
     c.add(staticLayer, rotatingLayer, beamLayer);
     return c;
-  }, [beamTexture, scene, tuning.color, tuning.intensity, tuning.secondaryColor]);
+  }, [
+    beamTexture,
+    scene,
+    tuning.color,
+    tuning.intensity,
+    tuning.secondaryColor,
+  ]);
 
-  const scale = useMemo(() => showcaseShipScaleIgnoring(cloned, 4.1 * tuning.size, "kirishiac_beam"), [cloned, tuning.size]);
+  const scale = useMemo(
+    () =>
+      showcaseShipScaleIgnoring(cloned, 4.1 * tuning.size, "kirishiac_beam"),
+    [cloned, tuning.size],
+  );
 
   useFrame((_, delta) => {
     if (!paused) elapsedRef.current += delta;
-    const sequenceTime = elapsedRef.current % KIRISHIAC_ATTACK_PREVIEW_CYCLE_SECONDS;
+    const sequenceTime =
+      elapsedRef.current % KIRISHIAC_ATTACK_PREVIEW_CYCLE_SECONDS;
     const turnInEnd = KIRISHIAC_ATTACK_TURN_IN_SECONDS;
     const fireEnd = turnInEnd + KIRISHIAC_ATTACK_FIRE_SECONDS;
     const returnEnd = fireEnd + KIRISHIAC_ATTACK_RETURN_SECONDS;
@@ -4788,12 +6240,14 @@ function KirishiacBeamFiringShowcase({
     } else if (sequenceTime <= fireEnd) {
       yawAmount = 1;
     } else if (sequenceTime <= returnEnd) {
-      yawAmount = 1 - THREE.MathUtils.smoothstep(sequenceTime, fireEnd, returnEnd);
+      yawAmount =
+        1 - THREE.MathUtils.smoothstep(sequenceTime, fireEnd, returnEnd);
     }
     if (shipYawGroupRef.current) {
       shipYawGroupRef.current.rotation.y = targetYaw * yawAmount;
     }
-    const elapsed = Math.max(0, sequenceTime - turnInEnd) * clamp(tuning.speed, 0.05, 3);
+    const elapsed =
+      Math.max(0, sequenceTime - turnInEnd) * clamp(tuning.speed, 0.05, 3);
     const pulseAmount = clamp(tuning.arc, 0, 1.5);
     const pulse = 1 + Math.sin(elapsed * 5.8) * pulseAmount;
     const outerVisible = fireActive && (tuning.ribbonEffect ?? 1) >= 0.5;
@@ -4801,7 +6255,8 @@ function KirishiacBeamFiringShowcase({
     const opacity = clamp(tuning.fade, 0, 3) * clamp(tuning.intensity, 0.1, 4);
 
     if (rotatingShipLayerRef.current) {
-      rotatingShipLayerRef.current.rotation.z = (elapsedRef.current % 30) / 30 * Math.PI * 2;
+      rotatingShipLayerRef.current.rotation.z =
+        ((elapsedRef.current % 30) / 30) * Math.PI * 2;
       rotatingShipLayerRef.current.updateMatrixWorld(true);
     }
     shellMaterialsRef.current.forEach((material) => {
@@ -4813,12 +6268,18 @@ function KirishiacBeamFiringShowcase({
     });
     beamMeshesRef.current.forEach(({ mesh, baseScale }) => {
       const lengthScale = clamp(tuning.cylinderLength ?? 1, 0.1, 6);
-      mesh.scale.set(baseScale.x * diameter, baseScale.y * lengthScale, baseScale.z * diameter);
+      mesh.scale.set(
+        baseScale.x * diameter,
+        baseScale.y * lengthScale,
+        baseScale.z * diameter,
+      );
       mesh.visible = outerVisible;
     });
     if (lightRef.current) {
       lightRef.current.color.set(tuning.color);
-      lightRef.current.intensity = outerVisible ? 5.5 * opacity * (0.75 + pulse * 0.25) : 0;
+      lightRef.current.intensity = outerVisible
+        ? 5.5 * opacity * (0.75 + pulse * 0.25)
+        : 0;
       lightRef.current.distance = 10 + diameter * 3;
     }
   });
@@ -4832,14 +6293,26 @@ function KirishiacBeamFiringShowcase({
 
   return (
     <>
-      <group ref={shipYawGroupRef} position={[station.position[0], shipY, station.position[1]]}>
+      <group
+        ref={shipYawGroupRef}
+        position={[station.position[0], shipY, station.position[1]]}
+      >
         <group scale={[scale, scale, scale]}>
           <primitive object={cloned} />
         </group>
-        <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={14} position={[0, 1.5, 7.2]} />
+        <pointLight
+          ref={lightRef}
+          color={tuning.color}
+          intensity={0}
+          distance={14}
+          position={[0, 1.5, 7.2]}
+        />
       </group>
       <EndpointMarker position={targetPosition} color={tuning.secondaryColor} />
-      <group position={toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y).toArray()} rotation={[0, targetHeading, 0]}>
+      <group
+        position={toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y).toArray()}
+        rotation={[0, targetHeading, 0]}
+      >
         <Suspense fallback={null}>
           <ShowcaseGlbModel
             filename="hyperion.glb"
@@ -4889,7 +6362,11 @@ function ProjectilePreview({
     const x = from.x + (to.x - from.x) * t;
     const z = from.z + (to.z - from.z) * t;
     const yLinear = from.y + (to.y - from.y) * t;
-    const y = yLinear + (missile ? Math.sin(Math.PI * t) * tuning.arc * (1 + (index % 2) * 0.25) : 0);
+    const y =
+      yLinear +
+      (missile
+        ? Math.sin(Math.PI * t) * tuning.arc * (1 + (index % 2) * 0.25)
+        : 0);
     return new THREE.Vector3(x, y, z);
   };
 
@@ -4915,7 +6392,8 @@ function ProjectilePreview({
     const t = clamp(elapsed / duration, 0, 1);
     const current = pointAt(t);
     groupRef.current.position.copy(current);
-    if (projectileShape === "cylinder") groupRef.current.quaternion.setFromUnitVectors(up, directionAt(t));
+    if (projectileShape === "cylinder")
+      groupRef.current.quaternion.setFromUnitVectors(up, directionAt(t));
     if (t < 1) {
       matRef.current.opacity = clamp(tuning.intensity, 0.1, 3);
       trailRef.current.opacity = 0.42 * clamp(tuning.intensity, 0.1, 3);
@@ -4923,7 +6401,7 @@ function ProjectilePreview({
       matRef.current.opacity = 0;
       trailRef.current.opacity = 0;
     } else {
-      const a = clamp(1 - ((elapsed - duration) / (0.34 * tuning.fade)), 0, 1);
+      const a = clamp(1 - (elapsed - duration) / (0.34 * tuning.fade), 0, 1);
       matRef.current.opacity = a;
       trailRef.current.opacity = a * 0.42;
     }
@@ -4935,7 +6413,10 @@ function ProjectilePreview({
       ribbonRef.current.visible = len > 0.01 && trailRef.current.opacity > 0.01;
       if (ribbonRef.current.visible) {
         ribbonRef.current.position.copy(localTail).multiplyScalar(0.5);
-        ribbonRef.current.quaternion.setFromUnitVectors(up, localTail.clone().normalize());
+        ribbonRef.current.quaternion.setFromUnitVectors(
+          up,
+          localTail.clone().normalize(),
+        );
         ribbonRef.current.scale.set(0.18 * tuning.size, len, 1);
       }
     }
@@ -4946,21 +6427,54 @@ function ProjectilePreview({
     <group ref={groupRef}>
       <mesh raycast={() => null}>
         {projectileShape === "cylinder" ? (
-          <cylinderGeometry args={[size * 0.62, size * 0.62, cylinderLength * tuning.size, 12, 1]} />
+          <cylinderGeometry
+            args={[
+              size * 0.62,
+              size * 0.62,
+              cylinderLength * tuning.size,
+              12,
+              1,
+            ]}
+          />
         ) : (
           <sphereGeometry args={[size, 10, 10]} />
         )}
-        <meshBasicMaterial ref={matRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={matRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       {missile ? (
         <mesh ref={ribbonRef} visible={false} raycast={() => null}>
           <planeGeometry args={[1, 1]} />
-          <meshBasicMaterial ref={trailRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
+          <meshBasicMaterial
+            ref={trailRef}
+            color={tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
         </mesh>
       ) : (
         <mesh raycast={() => null}>
           <sphereGeometry args={[size * 2.5, 10, 10]} />
-          <meshBasicMaterial ref={trailRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            ref={trailRef}
+            color={tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       )}
     </group>
@@ -4990,21 +6504,47 @@ function MissileEngineGlow({
   useFrame(({ clock }) => {
     const pulse = (Math.sin(clock.elapsedTime * 18) + 1) / 2;
     if (coreRef.current) coreRef.current.opacity = 0.74 + pulse * 0.2;
-    if (haloRef.current) haloRef.current.opacity = (0.18 + pulse * 0.16) * intensity;
-    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.3) * intensity;
+    if (haloRef.current)
+      haloRef.current.opacity = (0.18 + pulse * 0.16) * intensity;
+    if (lightRef.current)
+      lightRef.current.intensity = (0.7 + pulse * 1.3) * intensity;
   });
 
   return (
-    <group position={position.toArray()} scale={[effectScale, effectScale, effectScale]}>
+    <group
+      position={position.toArray()}
+      scale={[effectScale, effectScale, effectScale]}
+    >
       <mesh raycast={() => null}>
         <sphereGeometry args={[0.014 * flareSize, 14, 14]} />
-        <meshBasicMaterial ref={coreRef} color={secondaryColor} transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={coreRef}
+          color={secondaryColor}
+          transparent
+          opacity={0.8}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh raycast={() => null}>
         <sphereGeometry args={[0.042 * flareSize, 18, 18]} />
-        <meshBasicMaterial ref={haloRef} color={color} transparent opacity={0.2} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={haloRef}
+          color={color}
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight ref={lightRef} color={color} intensity={0.9} distance={0.38 * flareSize} />
+      <pointLight
+        ref={lightRef}
+        color={color}
+        intensity={0.9}
+        distance={0.38 * flareSize}
+      />
     </group>
   );
 }
@@ -5039,8 +6579,10 @@ function MissileTextureFlare({
 
   useFrame(({ clock }) => {
     const pulse = (Math.sin(clock.elapsedTime * 14) + 1) / 2;
-    if (matRef.current) matRef.current.opacity = (0.5 + pulse * 0.22) * intensity;
-    if (lightRef.current) lightRef.current.intensity = (0.7 + pulse * 1.1) * intensity;
+    if (matRef.current)
+      matRef.current.opacity = (0.5 + pulse * 0.22) * intensity;
+    if (lightRef.current)
+      lightRef.current.intensity = (0.7 + pulse * 1.1) * intensity;
   });
 
   return (
@@ -5104,32 +6646,42 @@ function MissileMeshModel({
     let anchorNode: THREE.Object3D | undefined;
 
     c.traverse((child: any) => {
-      const childName = String(child.name ?? "").trim().toLowerCase();
-      if (!useOriginEngineFlare && (childName === "engine flare" || childName === "missileflare" || childName === "missile flare")) anchorNode = child;
+      const childName = String(child.name ?? "")
+        .trim()
+        .toLowerCase();
+      if (
+        !useOriginEngineFlare &&
+        (childName === "engine flare" ||
+          childName === "missileflare" ||
+          childName === "missile flare")
+      )
+        anchorNode = child;
       if (!child.isMesh) return;
       child.castShadow = true;
       child.receiveShadow = true;
       const sourceMaterials = Array.isArray(child.material)
         ? child.material
         : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
-        const clonedMaterial = material?.clone
-          ? material.clone()
-          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        const adjustable = clonedMaterial as THREE.Material & {
-          color?: THREE.Color;
-          emissive?: THREE.Color;
-          emissiveIntensity?: number;
-        };
-        if (adjustable.color instanceof THREE.Color) {
-          adjustable.color = adjustable.color.clone().lerp(tintColor, 0.08);
-        }
-        if (adjustable.emissive instanceof THREE.Color) {
-          adjustable.emissive = tintColor.clone();
-          adjustable.emissiveIntensity = 0.04;
-        }
-        return clonedMaterial;
-      });
+      const materials = sourceMaterials.map(
+        (material: THREE.Material | undefined) => {
+          const clonedMaterial = material?.clone
+            ? material.clone()
+            : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+          const adjustable = clonedMaterial as THREE.Material & {
+            color?: THREE.Color;
+            emissive?: THREE.Color;
+            emissiveIntensity?: number;
+          };
+          if (adjustable.color instanceof THREE.Color) {
+            adjustable.color = adjustable.color.clone().lerp(tintColor, 0.08);
+          }
+          if (adjustable.emissive instanceof THREE.Color) {
+            adjustable.emissive = tintColor.clone();
+            adjustable.emissiveIntensity = 0.04;
+          }
+          return clonedMaterial;
+        },
+      );
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
 
@@ -5179,7 +6731,12 @@ const MESH_MISSILE_FLIGHT_SECONDS = 3;
 const MESH_MISSILE_LAUNCH_DELAYS_SECONDS = [0, 0.5, 1.2] as const;
 
 function meshMissileLaunchDelaySeconds(index: number): number {
-  return MESH_MISSILE_LAUNCH_DELAYS_SECONDS[index] ?? MESH_MISSILE_LAUNCH_DELAYS_SECONDS[MESH_MISSILE_LAUNCH_DELAYS_SECONDS.length - 1];
+  return (
+    MESH_MISSILE_LAUNCH_DELAYS_SECONDS[index] ??
+    MESH_MISSILE_LAUNCH_DELAYS_SECONDS[
+      MESH_MISSILE_LAUNCH_DELAYS_SECONDS.length - 1
+    ]
+  );
 }
 
 function MeshMissileRound({
@@ -5237,8 +6794,12 @@ function MeshMissileRound({
         const d = seededSparkNoise(index * 197 + sparkIndex, 9.83);
         const randomness = clamp(tuning.randomness ?? 0.42, 0, 1.5);
         return {
-          lag: 0.018 + (sparkIndex / Math.max(1, sparkParticleCount - 1)) * (0.18 + tuning.fade * 0.05),
-          side: (a - 0.5) * (0.18 + tuning.spread * 0.22) * (1 + randomness * 0.35),
+          lag:
+            0.018 +
+            (sparkIndex / Math.max(1, sparkParticleCount - 1)) *
+              (0.18 + tuning.fade * 0.05),
+          side:
+            (a - 0.5) * (0.18 + tuning.spread * 0.22) * (1 + randomness * 0.35),
           lift: (b - 0.35) * (0.05 + tuning.arc * 0.18),
           drift: (c - 0.5) * (0.08 + tuning.spread * 0.12),
           phase: d * 8.5,
@@ -5246,7 +6807,14 @@ function MeshMissileRound({
           brightness: 0.55 + c * 0.55,
         };
       }),
-    [index, sparkParticleCount, tuning.arc, tuning.fade, tuning.randomness, tuning.spread],
+    [
+      index,
+      sparkParticleCount,
+      tuning.arc,
+      tuning.fade,
+      tuning.randomness,
+      tuning.spread,
+    ],
   );
   const smokePuffs = useMemo(
     () =>
@@ -5263,9 +6831,13 @@ function MeshMissileRound({
     const dir = new THREE.Vector3().subVectors(to, from).normalize();
     const side = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
     const offsets = [-0.42, -0.14, 0.14, 0.42];
-    const start = from.clone().add(side.multiplyScalar(offsets[index % offsets.length] ?? 0));
+    const start = from
+      .clone()
+      .add(side.multiplyScalar(offsets[index % offsets.length] ?? 0));
     start.y += 0.12 + (index % 2) * 0.08;
-    const end = to.clone().add(new THREE.Vector3((index - 1.5) * 0.12, 0.08, 0));
+    const end = to
+      .clone()
+      .add(new THREE.Vector3((index - 1.5) * 0.12, 0.08, 0));
     return { start, end };
   }, [from, index, to]);
 
@@ -5297,7 +6869,8 @@ function MeshMissileRound({
 
     const duration = MESH_MISSILE_FLIGHT_SECONDS;
     const delay = meshMissileLaunchDelaySeconds(index);
-    const cycle = cycleDuration ?? duration + meshMissileLaunchDelaySeconds(2) + 1.4;
+    const cycle =
+      cycleDuration ?? duration + meshMissileLaunchDelaySeconds(2) + 1.4;
     const timelineSeconds = timelineRef?.current ?? localElapsedRef.current;
     const elapsed = (timelineSeconds % cycle) - delay;
     if (elapsed < 0) {
@@ -5315,14 +6888,20 @@ function MeshMissileRound({
     group.quaternion.setFromUnitVectors(forward, direction);
 
     if (sparkTrail) {
-      const positions = sparkTrailGeometry.getAttribute("position").array as Float32Array;
-      const colors = sparkTrailGeometry.getAttribute("color").array as Float32Array;
+      const positions = sparkTrailGeometry.getAttribute("position")
+        .array as Float32Array;
+      const colors = sparkTrailGeometry.getAttribute("color")
+        .array as Float32Array;
       const side = new THREE.Vector3(-direction.z, 0, direction.x).normalize();
       const primary = new THREE.Color(tuning.color);
       const secondary = new THREE.Color(tuning.secondaryColor);
       const workingColor = new THREE.Color();
       const isTrailVisible = visible && t > 0.02;
-      for (let sparkIndex = 0; sparkIndex < sparkSeeds.length; sparkIndex += 1) {
+      for (
+        let sparkIndex = 0;
+        sparkIndex < sparkSeeds.length;
+        sparkIndex += 1
+      ) {
         const seed = sparkSeeds[sparkIndex];
         const idx = sparkIndex * 3;
         if (!isTrailVisible || t - seed.lag <= 0) {
@@ -5335,16 +6914,29 @@ function MeshMissileRound({
           continue;
         }
         const lagT = clamp(t - seed.lag, 0, 1);
-        const age = clamp(seed.lag / Math.max(0.001, 0.18 + tuning.fade * 0.05), 0, 1);
-        const flicker = 0.65 + Math.sin((timelineSeconds + seed.phase) * (6.5 + seed.brightness * 3)) * 0.28;
-        const brightness = (1 - age) * seed.brightness * flicker * tuning.intensity;
+        const age = clamp(
+          seed.lag / Math.max(0.001, 0.18 + tuning.fade * 0.05),
+          0,
+          1,
+        );
+        const flicker =
+          0.65 +
+          Math.sin(
+            (timelineSeconds + seed.phase) * (6.5 + seed.brightness * 3),
+          ) *
+            0.28;
+        const brightness =
+          (1 - age) * seed.brightness * flicker * tuning.intensity;
         const sparkPoint = pointAt(lagT)
           .add(side.clone().multiplyScalar(seed.side))
           .add(new THREE.Vector3(seed.drift, seed.lift, -seed.drift * 0.35));
         positions[idx] = sparkPoint.x;
         positions[idx + 1] = sparkPoint.y;
         positions[idx + 2] = sparkPoint.z;
-        workingColor.copy(primary).lerp(secondary, seed.colorMix * 0.8).multiplyScalar(clamp(brightness, 0, 2.6));
+        workingColor
+          .copy(primary)
+          .lerp(secondary, seed.colorMix * 0.8)
+          .multiplyScalar(clamp(brightness, 0, 2.6));
         colors[idx] = workingColor.r;
         colors[idx + 1] = workingColor.g;
         colors[idx + 2] = workingColor.b;
@@ -5372,7 +6964,10 @@ function MeshMissileRound({
         child.position.copy(smokePoint);
         child.scale.setScalar(puff.size * tuning.size * (1 + puffIndex * 0.22));
         const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-        mat.opacity = lagT <= 0 ? 0 : 0.18 * tuning.intensity * (1 - puffIndex / smokePuffs.length);
+        mat.opacity =
+          lagT <= 0
+            ? 0
+            : 0.18 * tuning.intensity * (1 - puffIndex / smokePuffs.length);
       });
     }
   });
@@ -5440,8 +7035,14 @@ function MeshMissileSalvo({
   timelineRef?: MutableRefObject<number>;
   cycleDuration?: number;
 }) {
-  const from = useMemo(() => toVector3(station.position, 1.28), [station.position]);
-  const targetPosition = station.to ?? [station.position[0] + 18, station.position[1] + 8];
+  const from = useMemo(
+    () => toVector3(station.position, 1.28),
+    [station.position],
+  );
+  const targetPosition = station.to ?? [
+    station.position[0] + 18,
+    station.position[1] + 8,
+  ];
   const to = useMemo(() => toVector3(targetPosition, 1.15), [targetPosition]);
   const filename = station.modelFilename ?? "missile.glb";
   const textureFilename = station.textureFilename;
@@ -5449,7 +7050,10 @@ function MeshMissileSalvo({
   const sparkTrail = station.effect === "missile-impact-flipbook-test";
   const smokeTrail = station.effect !== "missile-impact-flipbook-test";
   const directPath = station.effect === "missile-impact-flipbook-test";
-  const count = station.effect === "missile-impact-flipbook-test" ? 3 : clamp(Math.round(tuning.count), 1, 5);
+  const count =
+    station.effect === "missile-impact-flipbook-test"
+      ? 3
+      : clamp(Math.round(tuning.count), 1, 5);
 
   return (
     <group>
@@ -5478,7 +7082,9 @@ function MeshMissileSalvo({
 }
 
 const MESH_PROJECTILE_FLIGHT_SECONDS = 0.95;
-const MESH_PROJECTILE_LAUNCH_DELAYS_SECONDS = [0, 0.2, 0.4, 0.3, 0.5, 0.7] as const;
+const MESH_PROJECTILE_LAUNCH_DELAYS_SECONDS = [
+  0, 0.2, 0.4, 0.3, 0.5, 0.7,
+] as const;
 
 function meshProjectileLaunchDelaySeconds(index: number): number {
   return MESH_PROJECTILE_LAUNCH_DELAYS_SECONDS[index] ?? index * 0.2;
@@ -5505,9 +7111,20 @@ function MeshProjectileRound({
   const forward = useMemo(() => new THREE.Vector3(0, 0, -1), []);
   const filename = station.modelFilename ?? "projectile_mesh.glb";
   const { scene } = useGLTF(showcaseModelUrl(filename));
-  const primaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.textureFilename ?? "T_FirePanningCyl45.png"));
-  const secondaryTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.secondaryTextureFilename ?? "T_VFX_WindNoise1.png"));
-  const alphaTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(station.alphaTextureFilename ?? "T_Noise_HU85k.png"));
+  const primaryTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(station.textureFilename ?? "T_FirePanningCyl45.png"),
+  );
+  const secondaryTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(
+      station.secondaryTextureFilename ?? "T_VFX_WindNoise1.png",
+    ),
+  );
+  const alphaTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(station.alphaTextureFilename ?? "T_Noise_HU85k.png"),
+  );
   const config = TEXTURED_SPHERE_VARIANT_CONFIGS["dual-diffuse"];
 
   useMemo(() => {
@@ -5543,7 +7160,15 @@ function MeshProjectileRound({
       uSecondaryRepeat: { value: new THREE.Vector2(...config.secondaryRepeat) },
       uAlphaRepeat: { value: new THREE.Vector2(...config.alphaRepeat) },
     }),
-    [alphaTexture, config, primaryTexture, secondaryTexture, tuning.color, tuning.intensity, tuning.secondaryColor],
+    [
+      alphaTexture,
+      config,
+      primaryTexture,
+      secondaryTexture,
+      tuning.color,
+      tuning.intensity,
+      tuning.secondaryColor,
+    ],
   );
 
   const { cloned, scale } = useMemo(() => {
@@ -5671,7 +7296,8 @@ function MeshProjectileRound({
     const material = materialRef.current;
     if (!group || !material) return;
 
-    const duration = MESH_PROJECTILE_FLIGHT_SECONDS / clamp(tuning.speed, 0.25, 3);
+    const duration =
+      MESH_PROJECTILE_FLIGHT_SECONDS / clamp(tuning.speed, 0.25, 3);
     const delay = meshProjectileLaunchDelaySeconds(index);
     const cycle = duration + meshProjectileLaunchDelaySeconds(5) + 0.85;
     const elapsed = (elapsedRef.current % cycle) - delay;
@@ -5692,7 +7318,8 @@ function MeshProjectileRound({
     group.visible = true;
     group.position.copy(current);
     group.quaternion.setFromUnitVectors(forward, direction);
-    material.uniforms.uTime.value = elapsedRef.current * clamp(tuning.speed, 0.25, 3);
+    material.uniforms.uTime.value =
+      elapsedRef.current * clamp(tuning.speed, 0.25, 3);
     material.uniforms.uOpacity.value = opacity;
     material.uniforms.uColor.value.set(tuning.color);
     material.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
@@ -5702,7 +7329,11 @@ function MeshProjectileRound({
   return (
     <group ref={groupRef} visible={false}>
       <primitive object={cloned} scale={[scale, scale, scale]} />
-      <pointLight color={tuning.secondaryColor} intensity={1.7 * tuning.intensity} distance={2.4} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.7 * tuning.intensity}
+        distance={2.4}
+      />
     </group>
   );
 }
@@ -5716,8 +7347,14 @@ function MeshProjectileSalvo({
   tuning: Tuning;
   paused: boolean;
 }) {
-  const from = useMemo(() => toVector3(station.position, 1.18), [station.position]);
-  const targetPosition = station.to ?? [station.position[0] + 18, station.position[1]];
+  const from = useMemo(
+    () => toVector3(station.position, 1.18),
+    [station.position],
+  );
+  const targetPosition = station.to ?? [
+    station.position[0] + 18,
+    station.position[1],
+  ];
   const to = useMemo(() => toVector3(targetPosition, 1.18), [targetPosition]);
   const count = clamp(Math.round(tuning.count), 1, 6);
 
@@ -5808,10 +7445,25 @@ function RailgunProjectileShot({
     const distance = from.distanceTo(through);
     const targetDistance = from.distanceTo(to);
     const targetT = distance > 0 ? clamp(targetDistance / distance, 0, 1) : 1;
-    const midpoint = new THREE.Vector3().addVectors(from, through).multiplyScalar(0.5);
-    const projectileQuaternion = new THREE.Quaternion().setFromUnitVectors(forward, direction);
-    const trailQuaternion = new THREE.Quaternion().setFromUnitVectors(up, direction);
-    return { direction, distance, midpoint, projectileQuaternion, trailQuaternion, targetT };
+    const midpoint = new THREE.Vector3()
+      .addVectors(from, through)
+      .multiplyScalar(0.5);
+    const projectileQuaternion = new THREE.Quaternion().setFromUnitVectors(
+      forward,
+      direction,
+    );
+    const trailQuaternion = new THREE.Quaternion().setFromUnitVectors(
+      up,
+      direction,
+    );
+    return {
+      direction,
+      distance,
+      midpoint,
+      projectileQuaternion,
+      trailQuaternion,
+      targetT,
+    };
   }, [forward, from, through, to, up]);
 
   useFrame((_, delta) => {
@@ -5833,12 +7485,16 @@ function RailgunProjectileShot({
     projectile.position.copy(current);
     projectile.quaternion.copy(path.projectileQuaternion);
 
-    const activeTrailLength = inFlight ? Math.max(0.02, path.distance * t) : path.distance;
+    const activeTrailLength = inFlight
+      ? Math.max(0.02, path.distance * t)
+      : path.distance;
     const activeTrailMidpoint = inFlight
       ? from.clone().lerp(current, 0.5)
       : path.midpoint;
     const fadeElapsed = Math.max(0, elapsed - RAILGUN_FLIGHT_SECONDS);
-    const fadeOut = inFlight ? 1 : clamp(1 - fadeElapsed / RAILGUN_TRAIL_FADE_SECONDS, 0, 1);
+    const fadeOut = inFlight
+      ? 1
+      : clamp(1 - fadeElapsed / RAILGUN_TRAIL_FADE_SECONDS, 0, 1);
     const trailOpacity = fadeOut * tuning.fade;
 
     trail.visible = trailOpacity > 0.01;
@@ -5895,7 +7551,12 @@ function RailgunProjectileShot({
           toneMapped={false}
         />
       </mesh>
-      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={4.5} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={4.5}
+      />
     </>
   );
 }
@@ -5915,16 +7576,26 @@ function RailgunImpactSparks({
   const particleCount = clamp(Math.round(RAILGUN_IMPACT_TUNING.count), 8, 160);
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
-    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3));
+    g.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
+    g.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(particleCount * 3), 3),
+    );
     return g;
   }, [particleCount]);
   const axes = useMemo(() => {
     const forwardAxis = direction.clone().normalize();
     const worldUp = new THREE.Vector3(0, 1, 0);
-    const sideAxis = new THREE.Vector3().crossVectors(forwardAxis, worldUp).normalize();
+    const sideAxis = new THREE.Vector3()
+      .crossVectors(forwardAxis, worldUp)
+      .normalize();
     if (sideAxis.lengthSq() < 0.01) sideAxis.set(1, 0, 0);
-    const upAxis = new THREE.Vector3().crossVectors(sideAxis, forwardAxis).normalize();
+    const upAxis = new THREE.Vector3()
+      .crossVectors(sideAxis, forwardAxis)
+      .normalize();
     return { forwardAxis, sideAxis, upAxis };
   }, [direction]);
   const seeds = useMemo(() => {
@@ -5947,10 +7618,19 @@ function RailgunImpactSparks({
       };
     });
   }, [particleCount]);
-  const primary = useMemo(() => new THREE.Color(RAILGUN_IMPACT_TUNING.color), []);
-  const secondary = useMemo(() => new THREE.Color(RAILGUN_IMPACT_TUNING.secondaryColor), []);
+  const primary = useMemo(
+    () => new THREE.Color(RAILGUN_IMPACT_TUNING.color),
+    [],
+  );
+  const secondary = useMemo(
+    () => new THREE.Color(RAILGUN_IMPACT_TUNING.secondaryColor),
+    [],
+  );
   const workingColorRef = useRef(new THREE.Color());
-  const sparkSize = Math.max(0.01, 0.055 * RAILGUN_IMPACT_TUNING.size * RAILGUN_IMPACT_TUNING.thickness);
+  const sparkSize = Math.max(
+    0.01,
+    0.055 * RAILGUN_IMPACT_TUNING.size * RAILGUN_IMPACT_TUNING.thickness,
+  );
 
   useFrame((_, delta) => {
     if (!paused) timeRef.current += delta;
@@ -5974,15 +7654,21 @@ function RailgunImpactSparks({
         continue;
       }
       const t = clamp((age - seed.delay) * RAILGUN_IMPACT_TUNING.speed, 0, 1);
-      const fade = clamp(1 - t, 0, 1) * clamp(t / 0.08, 0, 1) * RAILGUN_IMPACT_TUNING.fade;
-      const burst = RAILGUN_IMPACT_TUNING.spread * seed.speed * (1 - Math.pow(1 - t, 2));
-      const point = axes.forwardAxis.clone().multiplyScalar(seed.punch * burst)
+      const fade =
+        clamp(1 - t, 0, 1) * clamp(t / 0.08, 0, 1) * RAILGUN_IMPACT_TUNING.fade;
+      const burst =
+        RAILGUN_IMPACT_TUNING.spread * seed.speed * (1 - Math.pow(1 - t, 2));
+      const point = axes.forwardAxis
+        .clone()
+        .multiplyScalar(seed.punch * burst)
         .add(axes.sideAxis.clone().multiplyScalar(seed.side * burst))
         .add(axes.upAxis.clone().multiplyScalar(seed.lift * burst));
       positions[idx] = point.x;
       positions[idx + 1] = point.y;
       positions[idx + 2] = point.z;
-      const color = workingColorRef.current.copy(primary).lerp(secondary, seed.colorMix * 0.86);
+      const color = workingColorRef.current
+        .copy(primary)
+        .lerp(secondary, seed.colorMix * 0.86);
       color.multiplyScalar(fade * RAILGUN_IMPACT_TUNING.intensity);
       colors[idx] = color.r;
       colors[idx + 1] = color.g;
@@ -5993,7 +7679,11 @@ function RailgunImpactSparks({
   });
 
   return (
-    <points geometry={geometry} position={position.toArray()} raycast={() => null}>
+    <points
+      geometry={geometry}
+      position={position.toArray()}
+      raycast={() => null}
+    >
       <pointsMaterial
         size={sparkSize}
         sizeAttenuation
@@ -6017,16 +7707,37 @@ function RailgunProjectileTest({
   tuning: Tuning;
   paused: boolean;
 }) {
-  const targetPosition = station.to ?? [station.position[0] + 20, station.position[1]];
-  const from = useMemo(() => toVector3(station.position, SHOWCASE_MESH_ORIGIN_Y), [station.position]);
-  const to = useMemo(() => toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y), [targetPosition]);
+  const targetPosition = station.to ?? [
+    station.position[0] + 20,
+    station.position[1],
+  ];
+  const from = useMemo(
+    () => toVector3(station.position, SHOWCASE_MESH_ORIGIN_Y),
+    [station.position],
+  );
+  const to = useMemo(
+    () => toVector3(targetPosition, SHOWCASE_MESH_ORIGIN_Y),
+    [targetPosition],
+  );
   const impactCycleTimeRef = useRef(RAILGUN_FLIGHT_SECONDS);
   const through = useMemo(() => {
     const direction = new THREE.Vector3().subVectors(to, from).normalize();
-    return to.clone().add(direction.multiplyScalar(RAILGUN_OVERPENETRATION_INCHES));
+    return to
+      .clone()
+      .add(direction.multiplyScalar(RAILGUN_OVERPENETRATION_INCHES));
   }, [from, to]);
-  const shotDirection = useMemo(() => new THREE.Vector3().subVectors(through, from).normalize(), [from, through]);
-  const heading = useMemo(() => Math.atan2(targetPosition[0] - station.position[0], targetPosition[1] - station.position[1]), [station.position, targetPosition]);
+  const shotDirection = useMemo(
+    () => new THREE.Vector3().subVectors(through, from).normalize(),
+    [from, through],
+  );
+  const heading = useMemo(
+    () =>
+      Math.atan2(
+        targetPosition[0] - station.position[0],
+        targetPosition[1] - station.position[1],
+      ),
+    [station.position, targetPosition],
+  );
 
   return (
     <group>
@@ -6034,16 +7745,41 @@ function RailgunProjectileTest({
       <EndpointMarker position={targetPosition} color={tuning.secondaryColor} />
       <group position={from.toArray()} rotation={[0, heading, 0]}>
         <Suspense fallback={null}>
-          <ShowcaseGlbModel filename="hyperion.glb" tint="#cbd5e1" emissiveColor={tuning.color} emissiveIntensity={0.05} targetInches={3.2} />
+          <ShowcaseGlbModel
+            filename="hyperion.glb"
+            tint="#cbd5e1"
+            emissiveColor={tuning.color}
+            emissiveIntensity={0.05}
+            targetInches={3.2}
+          />
         </Suspense>
       </group>
       <group position={to.toArray()} rotation={[0, heading + Math.PI, 0]}>
         <Suspense fallback={null}>
-          <ShowcaseGlbModel filename="hyperion.glb" tint="#dbeafe" emissiveColor={tuning.secondaryColor} emissiveIntensity={0.04} targetInches={3.2} />
+          <ShowcaseGlbModel
+            filename="hyperion.glb"
+            tint="#dbeafe"
+            emissiveColor={tuning.secondaryColor}
+            emissiveIntensity={0.04}
+            targetInches={3.2}
+          />
         </Suspense>
       </group>
-      <RailgunProjectileShot station={station} from={from} to={to} through={through} tuning={tuning} paused={paused} impactCycleTime={impactCycleTimeRef} />
-      <RailgunImpactSparks position={to} direction={shotDirection} paused={paused} triggerTimeRef={impactCycleTimeRef} />
+      <RailgunProjectileShot
+        station={station}
+        from={from}
+        to={to}
+        through={through}
+        tuning={tuning}
+        paused={paused}
+        impactCycleTime={impactCycleTimeRef}
+      />
+      <RailgunImpactSparks
+        position={to}
+        direction={shotDirection}
+        paused={paused}
+        triggerTimeRef={impactCycleTimeRef}
+      />
     </group>
   );
 }
@@ -6065,7 +7801,8 @@ function StandaloneFlipbookPreview({
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const revision =
-    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ??
+    "vfx-range";
   const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
   const sourceTexture = useLoader(THREE.TextureLoader, url);
   const elapsedRef = useRef(0);
@@ -6081,10 +7818,15 @@ function StandaloneFlipbookPreview({
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      const image = texture.image as { width?: number; height?: number } | undefined;
+      const image = texture.image as
+        | { width?: number; height?: number }
+        | undefined;
       const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
       const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
-      texture.repeat.set(Math.max(0.001, 1 / columns - insetU * 2), Math.max(0.001, 1 / rows - insetV * 2));
+      texture.repeat.set(
+        Math.max(0.001, 1 / columns - insetU * 2),
+        Math.max(0.001, 1 / rows - insetV * 2),
+      );
       texture.needsUpdate = true;
       return texture;
     };
@@ -6094,10 +7836,13 @@ function StandaloneFlipbookPreview({
     };
   }, [columns, rows, sourceTexture]);
 
-  useEffect(() => () => {
-    mainTexture.dispose();
-    glowTexture.dispose();
-  }, [glowTexture, mainTexture]);
+  useEffect(
+    () => () => {
+      mainTexture.dispose();
+      glowTexture.dispose();
+    },
+    [glowTexture, mainTexture],
+  );
 
   useFrame((_, delta) => {
     if (!paused) elapsedRef.current += delta;
@@ -6108,7 +7853,9 @@ function StandaloneFlipbookPreview({
     const row = Math.floor(frame / columns);
 
     for (const texture of [mainTexture, glowTexture]) {
-      const image = texture.image as { width?: number; height?: number } | undefined;
+      const image = texture.image as
+        | { width?: number; height?: number }
+        | undefined;
       const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
       const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
       texture.offset.x = column / columns + insetU;
@@ -6116,16 +7863,23 @@ function StandaloneFlipbookPreview({
     }
 
     const bloom = Math.sin(Math.PI * t);
-    if (mainMatRef.current) mainMatRef.current.opacity = (0.76 + bloom * 0.18) * tuning.intensity;
-    if (glowMatRef.current) glowMatRef.current.opacity = bloom * 0.5 * tuning.intensity;
-    if (lightRef.current) lightRef.current.intensity = (0.9 + bloom * 5.5) * tuning.intensity;
+    if (mainMatRef.current)
+      mainMatRef.current.opacity = (0.76 + bloom * 0.18) * tuning.intensity;
+    if (glowMatRef.current)
+      glowMatRef.current.opacity = bloom * 0.5 * tuning.intensity;
+    if (lightRef.current)
+      lightRef.current.intensity = (0.9 + bloom * 5.5) * tuning.intensity;
   });
 
   const scale = 1.25 * tuning.size;
   return (
     <group position={[position[0], 1.6, position[1]]}>
       <Billboard>
-        <mesh scale={[scale, scale, scale]} raycast={() => null} renderOrder={8}>
+        <mesh
+          scale={[scale, scale, scale]}
+          raycast={() => null}
+          renderOrder={8}
+        >
           <planeGeometry args={[2.6, 2.6]} />
           <meshBasicMaterial
             ref={mainMatRef}
@@ -6139,7 +7893,11 @@ function StandaloneFlipbookPreview({
             toneMapped={false}
           />
         </mesh>
-        <mesh scale={[scale * 0.82, scale * 0.82, scale * 0.82]} raycast={() => null} renderOrder={9}>
+        <mesh
+          scale={[scale * 0.82, scale * 0.82, scale * 0.82]}
+          raycast={() => null}
+          renderOrder={9}
+        >
           <planeGeometry args={[2.6, 2.6]} />
           <meshBasicMaterial
             ref={glowMatRef}
@@ -6154,7 +7912,12 @@ function StandaloneFlipbookPreview({
           />
         </mesh>
       </Billboard>
-      <pointLight ref={lightRef} color={tuning.secondaryColor} intensity={0} distance={7 * tuning.spread} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.secondaryColor}
+        intensity={0}
+        distance={7 * tuning.spread}
+      />
     </group>
   );
 }
@@ -6182,7 +7945,8 @@ function FlipbookExplosionImpact({
 }) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
   const revision =
-    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ?? "vfx-range";
+    SHOWCASE_TEXTURE_ASSET_REVISIONS[textureFilename.toLowerCase()] ??
+    "vfx-range";
   const url = `${basePath}/api/textures/${textureFilename}?v=${encodeURIComponent(revision)}`;
   const sourceTexture = useLoader(THREE.TextureLoader, url);
   const localElapsedRef = useRef(0);
@@ -6201,10 +7965,15 @@ function FlipbookExplosionImpact({
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      const image = texture.image as { width?: number; height?: number } | undefined;
+      const image = texture.image as
+        | { width?: number; height?: number }
+        | undefined;
       const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
       const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
-      texture.repeat.set(Math.max(0.001, 1 / columns - insetU * 2), Math.max(0.001, 1 / rows - insetV * 2));
+      texture.repeat.set(
+        Math.max(0.001, 1 / columns - insetU * 2),
+        Math.max(0.001, 1 / rows - insetV * 2),
+      );
       texture.needsUpdate = true;
       return texture;
     };
@@ -6214,10 +7983,13 @@ function FlipbookExplosionImpact({
     };
   }, [columns, rows, sourceTexture]);
 
-  useEffect(() => () => {
-    mainTexture.dispose();
-    glowTexture.dispose();
-  }, [glowTexture, mainTexture]);
+  useEffect(
+    () => () => {
+      mainTexture.dispose();
+      glowTexture.dispose();
+    },
+    [glowTexture, mainTexture],
+  );
 
   useFrame((_, delta) => {
     if (!timelineRef && !paused) localElapsedRef.current += delta;
@@ -6229,7 +8001,9 @@ function FlipbookExplosionImpact({
     const row = Math.floor(frame / columns);
 
     for (const texture of [mainTexture, glowTexture]) {
-      const image = texture.image as { width?: number; height?: number } | undefined;
+      const image = texture.image as
+        | { width?: number; height?: number }
+        | undefined;
       const insetU = 0.5 / Math.max(1, image?.width ?? columns * 256);
       const insetV = 0.5 / Math.max(1, image?.height ?? rows * 256);
       texture.offset.x = column / columns + insetU;
@@ -6237,16 +8011,29 @@ function FlipbookExplosionImpact({
     }
 
     const bloom = visible ? Math.sin(Math.PI * clamp(activeT, 0, 1)) : 0;
-    if (mainMatRef.current) mainMatRef.current.opacity = visible ? (0.78 + bloom * 0.18) * tuning.intensity : 0;
-    if (glowMatRef.current) glowMatRef.current.opacity = visible ? bloom * 0.62 * tuning.intensity : 0;
-    if (lightRef.current) lightRef.current.intensity = visible ? (1.5 + bloom * 8) * tuning.intensity : 0;
+    if (mainMatRef.current)
+      mainMatRef.current.opacity = visible
+        ? (0.78 + bloom * 0.18) * tuning.intensity
+        : 0;
+    if (glowMatRef.current)
+      glowMatRef.current.opacity = visible
+        ? bloom * 0.62 * tuning.intensity
+        : 0;
+    if (lightRef.current)
+      lightRef.current.intensity = visible
+        ? (1.5 + bloom * 8) * tuning.intensity
+        : 0;
   });
 
   const scale = 0.775 * tuning.size;
   return (
     <group position={position.toArray()}>
       <Billboard position={[0, 0.35, 0]}>
-        <mesh scale={[scale, scale, scale]} raycast={() => null} renderOrder={8}>
+        <mesh
+          scale={[scale, scale, scale]}
+          raycast={() => null}
+          renderOrder={8}
+        >
           <planeGeometry args={[2.3, 2.3]} />
           <meshBasicMaterial
             ref={mainMatRef}
@@ -6260,7 +8047,11 @@ function FlipbookExplosionImpact({
             toneMapped={false}
           />
         </mesh>
-        <mesh scale={[scale * 0.74, scale * 0.74, scale * 0.74]} raycast={() => null} renderOrder={9}>
+        <mesh
+          scale={[scale * 0.74, scale * 0.74, scale * 0.74]}
+          raycast={() => null}
+          renderOrder={9}
+        >
           <planeGeometry args={[2.3, 2.3]} />
           <meshBasicMaterial
             ref={glowMatRef}
@@ -6276,14 +8067,34 @@ function FlipbookExplosionImpact({
           />
         </mesh>
       </Billboard>
-      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8 * tuning.spread} position={[0, 1.2, 0]} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={8 * tuning.spread}
+        position={[0, 1.2, 0]}
+      />
     </group>
   );
 }
 
-function MissileImpactFlipbookTest({ station, tuning, paused }: { station: SpecialStation; tuning: Tuning; paused: boolean }) {
-  const targetPosition = station.to ?? [station.position[0] + 18, station.position[1]];
-  const targetVector = useMemo(() => toVector3(targetPosition, 1.85), [targetPosition]);
+function MissileImpactFlipbookTest({
+  station,
+  tuning,
+  paused,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+  paused: boolean;
+}) {
+  const targetPosition = station.to ?? [
+    station.position[0] + 18,
+    station.position[1],
+  ];
+  const targetVector = useMemo(
+    () => toVector3(targetPosition, 1.85),
+    [targetPosition],
+  );
   const salvoTimelineRef = useRef(0);
   const missileCount = 3;
   const impactTuning = useMemo<Tuning>(
@@ -6310,7 +8121,9 @@ function MissileImpactFlipbookTest({ station, tuning, paused }: { station: Speci
   const impactPositions = useMemo(
     () =>
       Array.from({ length: missileCount }, (_, i) =>
-        targetVector.clone().add(new THREE.Vector3((i - 1.5) * 0.12, 0.08 + (i % 2) * 0.05, 0)),
+        targetVector
+          .clone()
+          .add(new THREE.Vector3((i - 1.5) * 0.12, 0.08 + (i % 2) * 0.05, 0)),
       ),
     [missileCount, targetVector],
   );
@@ -6326,14 +8139,30 @@ function MissileImpactFlipbookTest({ station, tuning, paused }: { station: Speci
 
   return (
     <group>
-      <group position={[station.position[0], 1.35, station.position[1]]} rotation={[0, heading, 0]}>
+      <group
+        position={[station.position[0], 1.35, station.position[1]]}
+        rotation={[0, heading, 0]}
+      >
         <Suspense fallback={null}>
-          <ShowcaseGlbModel filename="missile-hyperion.glb" tint="#dbeafe" emissiveColor={tuning.color} emissiveIntensity={0.06} />
+          <ShowcaseGlbModel
+            filename="missile-hyperion.glb"
+            tint="#dbeafe"
+            emissiveColor={tuning.color}
+            emissiveIntensity={0.06}
+          />
         </Suspense>
       </group>
-      <group position={[targetPosition[0], 1.35, targetPosition[1]]} rotation={[0, heading + Math.PI, 0]}>
+      <group
+        position={[targetPosition[0], 1.35, targetPosition[1]]}
+        rotation={[0, heading + Math.PI, 0]}
+      >
         <Suspense fallback={null}>
-          <ShowcaseGlbModel filename="hyperion.glb" tint="#dbeafe" emissiveColor={tuning.secondaryColor} emissiveIntensity={0.06} />
+          <ShowcaseGlbModel
+            filename="hyperion.glb"
+            tint="#dbeafe"
+            emissiveColor={tuning.secondaryColor}
+            emissiveIntensity={0.06}
+          />
         </Suspense>
       </group>
       <MeshMissileSalvo
@@ -6349,7 +8178,9 @@ function MissileImpactFlipbookTest({ station, tuning, paused }: { station: Speci
           position={position}
           tuning={impactTuning}
           paused={paused}
-          delaySeconds={MESH_MISSILE_FLIGHT_SECONDS + meshMissileLaunchDelaySeconds(i)}
+          delaySeconds={
+            MESH_MISSILE_FLIGHT_SECONDS + meshMissileLaunchDelaySeconds(i)
+          }
           timelineRef={salvoTimelineRef}
           cycleDuration={cycleDuration}
           seed={i}
@@ -6382,7 +8213,10 @@ function ShowcaseTargetImpactSphere({
   const materialRefs = useRef<Array<THREE.ShaderMaterial | null>>([]);
   const lightRef = useRef<THREE.PointLight>(null);
   const localElapsedRef = useRef(0);
-  const texture = useLoader(THREE.TextureLoader, showcaseTextureUrl("T_FirePanningCyl45.png"));
+  const texture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl("T_FirePanningCyl45.png"),
+  );
   const count = clamp(Math.round(tuning.count), 1, 8);
   const offsets = useMemo<[number, number, number][]>(
     () => impactClusterOffsets(count, tuning.spread, seed),
@@ -6407,7 +8241,8 @@ function ShowcaseTargetImpactSphere({
 
   useFrame((_, delta) => {
     if (!timelineRef && !paused) localElapsedRef.current += delta;
-    const cycle = cycleDuration ?? (tuning.expansionCycle ?? 3.2) + delaySeconds + 0.8;
+    const cycle =
+      cycleDuration ?? (tuning.expansionCycle ?? 3.2) + delaySeconds + 0.8;
     const elapsed = (timelineRef?.current ?? localElapsedRef.current) % cycle;
     const activeT = (elapsed - delaySeconds) / (tuning.expansionCycle ?? 3.2);
     const visible = activeT >= 0 && activeT <= 1;
@@ -6417,7 +8252,7 @@ function ShowcaseTargetImpactSphere({
     if (!visible) {
       if (lightRef.current) lightRef.current.intensity = 0;
       if (coreMatRef.current) coreMatRef.current.opacity = 0;
-      materialRefs.current.forEach(material => {
+      materialRefs.current.forEach((material) => {
         if (material) material.uniforms.uAlpha.value = 0;
       });
       return;
@@ -6430,8 +8265,9 @@ function ShowcaseTargetImpactSphere({
       child.scale.setScalar(scale * (index === 0 ? 1 : 0.82 + index * 0.08));
     });
     if (coreRef.current) coreRef.current.scale.setScalar(scale * 0.72);
-    if (coreMatRef.current) coreMatRef.current.opacity = alpha * 0.2 * tuning.intensity;
-    materialRefs.current.forEach(material => {
+    if (coreMatRef.current)
+      coreMatRef.current.opacity = alpha * 0.2 * tuning.intensity;
+    materialRefs.current.forEach((material) => {
       if (!material) return;
       material.uniforms.uTime.value = time;
       material.uniforms.uAlpha.value = alpha * tuning.intensity;
@@ -6439,7 +8275,8 @@ function ShowcaseTargetImpactSphere({
       material.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
       material.uniforms.uIntensity.value = tuning.intensity;
     });
-    if (lightRef.current) lightRef.current.intensity = alpha * 4.5 * tuning.intensity;
+    if (lightRef.current)
+      lightRef.current.intensity = alpha * 4.5 * tuning.intensity;
   });
 
   return (
@@ -6448,7 +8285,7 @@ function ShowcaseTargetImpactSphere({
         <mesh key={index} position={offset} raycast={() => null}>
           <sphereGeometry args={[1.08, 32, 18]} />
           <shaderMaterial
-            ref={material => {
+            ref={(material) => {
               materialRefs.current[index] = material;
             }}
             uniforms={uniforms}
@@ -6495,14 +8332,35 @@ function ShowcaseTargetImpactSphere({
       ))}
       <mesh ref={coreRef} raycast={() => null}>
         <sphereGeometry args={[0.72, 24, 16]} />
-        <meshBasicMaterial ref={coreMatRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={coreMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight ref={lightRef} color={tuning.color} intensity={0} distance={8 * tuning.thickness} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.color}
+        intensity={0}
+        distance={8 * tuning.thickness}
+      />
     </group>
   );
 }
 
-function ImpactPulse({ position, tuning, delay = 0 }: { position: THREE.Vector3; tuning: Tuning; delay?: number }) {
+function ImpactPulse({
+  position,
+  tuning,
+  delay = 0,
+}: {
+  position: THREE.Vector3;
+  tuning: Tuning;
+  delay?: number;
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
   const lightRef = useRef<THREE.PointLight>(null);
@@ -6511,7 +8369,8 @@ function ImpactPulse({ position, tuning, delay = 0 }: { position: THREE.Vector3;
     const cycle = 1.4 / clamp(tuning.speed, 0.25, 3);
     const t = ((clock.elapsedTime + delay) % cycle) / cycle;
     const alpha = clamp(1 - t, 0, 1) * clamp(tuning.intensity, 0.1, 3);
-    if (meshRef.current) meshRef.current.scale.setScalar((0.28 + t * 1.9) * tuning.size);
+    if (meshRef.current)
+      meshRef.current.scale.setScalar((0.28 + t * 1.9) * tuning.size);
     if (matRef.current) matRef.current.opacity = alpha;
     if (lightRef.current) lightRef.current.intensity = alpha * 4.5;
   });
@@ -6520,32 +8379,81 @@ function ImpactPulse({ position, tuning, delay = 0 }: { position: THREE.Vector3;
     <group position={position.toArray()}>
       <mesh ref={meshRef} raycast={() => null}>
         <sphereGeometry args={[1, 16, 16]} />
-        <meshBasicMaterial ref={matRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={matRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight ref={lightRef} color={tuning.secondaryColor} intensity={0} distance={7} />
+      <pointLight
+        ref={lightRef}
+        color={tuning.secondaryColor}
+        intensity={0}
+        distance={7}
+      />
     </group>
   );
 }
 
-function TunableWeaponStation({ station, tuning, selected, showLabel, paused }: { station: WeaponStation; tuning: Tuning; selected: boolean; showLabel: boolean; paused: boolean }) {
+function TunableWeaponStation({
+  station,
+  tuning,
+  selected,
+  showLabel,
+  paused,
+}: {
+  station: WeaponStation;
+  tuning: Tuning;
+  selected: boolean;
+  showLabel: boolean;
+  paused: boolean;
+}) {
   const weaponKind = classifyWeapon(station.weapon);
   const endpointY = weaponKind === "beam" ? SHOWCASE_MESH_ORIGIN_Y : 0.8;
-  const from = useMemo(() => toVector3(station.from, endpointY), [endpointY, station.from]);
-  const to = useMemo(() => toVector3(station.to, endpointY), [endpointY, station.to]);
-  const count = clamp(Math.round(tuning.count), 1, weaponKind === "beam" ? 1 : 14);
+  const from = useMemo(
+    () => toVector3(station.from, endpointY),
+    [endpointY, station.from],
+  );
+  const to = useMemo(
+    () => toVector3(station.to, endpointY),
+    [endpointY, station.to],
+  );
+  const count = clamp(
+    Math.round(tuning.count),
+    1,
+    weaponKind === "beam" ? 1 : 14,
+  );
   const heading = useMemo(() => {
     const dx = station.to[0] - station.from[0];
     const dz = station.to[1] - station.from[1];
     return Math.atan2(dx, dz);
   }, [station.from, station.to]);
-  const targetModelPosition = useMemo(() => toVector3(station.to, SHOWCASE_MESH_ORIGIN_Y), [station.to]);
+  const targetModelPosition = useMemo(
+    () => toVector3(station.to, SHOWCASE_MESH_ORIGIN_Y),
+    [station.to],
+  );
 
   return (
     <group>
-      <EndpointMarker position={station.from} color="#38bdf8" selected={selected} />
-      <EndpointMarker position={station.to} color="#f97316" selected={selected} />
+      <EndpointMarker
+        position={station.from}
+        color="#38bdf8"
+        selected={selected}
+      />
+      <EndpointMarker
+        position={station.to}
+        color="#f97316"
+        selected={selected}
+      />
       {station.targetModelFilename ? (
-        <group position={targetModelPosition.toArray()} rotation={[0, heading + Math.PI, 0]}>
+        <group
+          position={targetModelPosition.toArray()}
+          rotation={[0, heading + Math.PI, 0]}
+        >
           <Suspense fallback={null}>
             <ShowcaseGlbModel
               filename={station.targetModelFilename}
@@ -6560,28 +8468,46 @@ function TunableWeaponStation({ station, tuning, selected, showLabel, paused }: 
       {weaponKind === "beam" ? (
         station.effect === "texture-beam-emitter" && station.textureFilename ? (
           <Suspense fallback={null}>
-            <TexturedBeamEmitterPreview from={from} to={to} tuning={tuning} textureFilename={station.textureFilename} />
+            <TexturedBeamEmitterPreview
+              from={from}
+              to={to}
+              tuning={tuning}
+              textureFilename={station.textureFilename}
+            />
           </Suspense>
         ) : (
           <BeamPreview from={from} to={to} tuning={tuning} />
         )
       ) : (
         Array.from({ length: count }).map((_, i) => (
-          <ProjectilePreview key={i} from={from} to={to} tuning={tuning} index={i} missile={weaponKind === "missile"} />
+          <ProjectilePreview
+            key={i}
+            from={from}
+            to={to}
+            tuning={tuning}
+            index={i}
+            missile={weaponKind === "missile"}
+          />
         ))
       )}
-      {Array.from({ length: clamp(Math.round(station.hits), 1, 6) }).map((_, i) => (
-        <ShowcaseTargetImpactSphere
-          key={i}
-          position={to}
-          tuning={tuning}
-          paused={paused}
-          delaySeconds={weaponKind === "beam" ? 0.25 + i * 0.07 : 0.34 + i * 0.07}
-          cycleDuration={(tuning.expansionCycle ?? 3.2) + 1}
-          seed={i}
-        />
-      ))}
-      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+      {Array.from({ length: clamp(Math.round(station.hits), 1, 6) }).map(
+        (_, i) => (
+          <ShowcaseTargetImpactSphere
+            key={i}
+            position={to}
+            tuning={tuning}
+            paused={paused}
+            delaySeconds={
+              weaponKind === "beam" ? 0.25 + i * 0.07 : 0.34 + i * 0.07
+            }
+            cycleDuration={(tuning.expansionCycle ?? 3.2) + 1}
+            seed={i}
+          />
+        ),
+      )}
+      {showLabel ? (
+        <StationLabel station={station} selected={selected} />
+      ) : null}
     </group>
   );
 }
@@ -6590,13 +8516,14 @@ function FireColumn({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 4, 40);
   const particles = useMemo(
-    () => Array.from({ length: count }, (_, i) => ({
-      angle: i * 2.399,
-      radius: (0.13 + (i % 5) * 0.08) * tuning.spread,
-      speed: (0.48 + (i % 4) * 0.12) * tuning.speed,
-      offset: i * 0.19,
-      size: (0.18 + (i % 3) * 0.08) * tuning.size,
-    })),
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        angle: i * 2.399,
+        radius: (0.13 + (i % 5) * 0.08) * tuning.spread,
+        speed: (0.48 + (i % 4) * 0.12) * tuning.speed,
+        offset: i * 0.19,
+        size: (0.18 + (i % 3) * 0.08) * tuning.size,
+      })),
     [count, tuning.size, tuning.speed, tuning.spread],
   );
 
@@ -6606,7 +8533,11 @@ function FireColumn({ position, tuning }: { position: Vec2; tuning: Tuning }) {
       const p = particles[i];
       if (!p) return;
       const t = (clock.elapsedTime * p.speed + p.offset) % 1;
-      child.position.set(Math.cos(p.angle) * p.radius * (1 + t), 0.25 + t * 1.7 * tuning.spread, Math.sin(p.angle) * p.radius * (1 + t));
+      child.position.set(
+        Math.cos(p.angle) * p.radius * (1 + t),
+        0.25 + t * 1.7 * tuning.spread,
+        Math.sin(p.angle) * p.radius * (1 + t),
+      );
       child.scale.setScalar(p.size * (1.4 - t * 0.45));
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.opacity = 0.9 * (1 - t) * tuning.intensity;
@@ -6619,11 +8550,22 @@ function FireColumn({ position, tuning }: { position: Vec2; tuning: Tuning }) {
         {particles.map((_, i) => (
           <mesh key={i} raycast={() => null}>
             <sphereGeometry args={[1, 10, 10]} />
-            <meshBasicMaterial color={i % 3 === 0 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            <meshBasicMaterial
+              color={i % 3 === 0 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
         ))}
       </group>
-      <pointLight color={tuning.color} intensity={3 * tuning.intensity} distance={6} />
+      <pointLight
+        color={tuning.color}
+        intensity={3 * tuning.intensity}
+        distance={6}
+      />
     </group>
   );
 }
@@ -6639,20 +8581,48 @@ function SmokeColumn({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   );
 }
 
-function AmbientFxStation({ station, tuning, selected, showLabel }: { station: AmbientStation; tuning: Tuning; selected: boolean; showLabel: boolean }) {
+function AmbientFxStation({
+  station,
+  tuning,
+  selected,
+  showLabel,
+}: {
+  station: AmbientStation;
+  tuning: Tuning;
+  selected: boolean;
+  showLabel: boolean;
+}) {
   const position = toVector3(station.position, 0.85);
   return (
     <group>
-      <EndpointMarker position={station.position} color={tuning.color} selected={selected} />
-      {station.effect === "fire" ? <FireColumn position={station.position} tuning={tuning} /> : null}
-      {station.effect === "smoke" ? <SmokeColumn position={station.position} tuning={tuning} /> : null}
-      {station.effect === "impact" ? <ImpactPulse position={position} tuning={tuning} /> : null}
-      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+      <EndpointMarker
+        position={station.position}
+        color={tuning.color}
+        selected={selected}
+      />
+      {station.effect === "fire" ? (
+        <FireColumn position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "smoke" ? (
+        <SmokeColumn position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "impact" ? (
+        <ImpactPulse position={position} tuning={tuning} />
+      ) : null}
+      {showLabel ? (
+        <StationLabel station={station} selected={selected} />
+      ) : null}
     </group>
   );
 }
 
-function ShieldRipple({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function ShieldRipple({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const shellRef = useRef<THREE.Mesh>(null);
   const ringRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -6660,30 +8630,58 @@ function ShieldRipple({ position, tuning }: { position: Vec2; tuning: Tuning }) 
 
   useFrame(({ clock }) => {
     const t = (clock.elapsedTime * tuning.speed) % 1;
-    if (shellRef.current) shellRef.current.scale.setScalar((1.15 + Math.sin(clock.elapsedTime * 3.2 * tuning.speed) * 0.05) * tuning.size);
+    if (shellRef.current)
+      shellRef.current.scale.setScalar(
+        (1.15 + Math.sin(clock.elapsedTime * 3.2 * tuning.speed) * 0.05) *
+          tuning.size,
+      );
     if (ringRef.current) {
       ringRef.current.scale.setScalar((0.35 + t * 2.4) * tuning.size);
       ringRef.current.rotation.y += 0.012 * tuning.speed;
     }
     if (matRef.current) matRef.current.opacity = 0.14 * tuning.intensity;
-    if (ringMatRef.current) ringMatRef.current.opacity = (1 - t) * 0.7 * tuning.intensity;
+    if (ringMatRef.current)
+      ringMatRef.current.opacity = (1 - t) * 0.7 * tuning.intensity;
   });
 
   return (
     <group position={[position[0], 1.0, position[1]]}>
       <mesh ref={shellRef} raycast={() => null}>
         <sphereGeometry args={[1.35, 32, 16]} />
-        <meshBasicMaterial ref={matRef} color={tuning.color} transparent opacity={0.14} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={matRef}
+          color={tuning.color}
+          transparent
+          opacity={0.14}
+          wireframe
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
         <torusGeometry args={[0.9, 0.018 * tuning.thickness, 8, 80]} />
-        <meshBasicMaterial ref={ringMatRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={ringMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
     </group>
   );
 }
 
-function InterceptorBurst({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function InterceptorBurst({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 4, 18);
 
@@ -6693,7 +8691,11 @@ function InterceptorBurst({ position, tuning }: { position: Vec2; tuning: Tuning
     groupRef.current.children.forEach((child, i) => {
       const angle = (i / count) * Math.PI * 2 + cycle * Math.PI * 2;
       const radius = (0.55 + cycle * 2.1) * tuning.spread;
-      child.position.set(Math.cos(angle) * radius, 0.7 + Math.sin(angle * 2) * 0.18, Math.sin(angle) * radius);
+      child.position.set(
+        Math.cos(angle) * radius,
+        0.7 + Math.sin(angle * 2) * 0.18,
+        Math.sin(angle) * radius,
+      );
       child.scale.setScalar((0.09 + cycle * 0.08) * tuning.size);
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.opacity = (1 - cycle) * tuning.intensity;
@@ -6705,7 +8707,14 @@ function InterceptorBurst({ position, tuning }: { position: Vec2; tuning: Tuning
       {Array.from({ length: count }).map((_, i) => (
         <mesh key={i} raycast={() => null}>
           <sphereGeometry args={[1, 10, 10]} />
-          <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
     </group>
@@ -6736,45 +8745,119 @@ function JumpPoint({ position, tuning }: { position: Vec2; tuning: Tuning }) {
         mat.opacity = (0.1 + pulse * 0.16) * tuning.intensity;
       });
     }
-    if (coreMatRef.current) coreMatRef.current.opacity = (0.18 + pulse * 0.35) * tuning.intensity;
+    if (coreMatRef.current)
+      coreMatRef.current.opacity = (0.18 + pulse * 0.35) * tuning.intensity;
   });
 
   const radius = tuning.size * tuning.spread;
   return (
     <group position={[position[0], 1.0, position[1]]}>
       <group ref={groupRef}>
-        <mesh rotation={[Math.PI / 2, 0, 0]} scale={[radius, radius, radius]} raycast={() => null}>
+        <mesh
+          rotation={[Math.PI / 2, 0, 0]}
+          scale={[radius, radius, radius]}
+          raycast={() => null}
+        >
           <torusGeometry args={[1.0, 0.095 * tuning.thickness, 16, 128]} />
-          <meshBasicMaterial color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
-        <mesh rotation={[Math.PI / 2, 0, Math.PI / 5]} scale={[radius * 1.42, radius * 1.42, radius * 1.42]} raycast={() => null}>
+        <mesh
+          rotation={[Math.PI / 2, 0, Math.PI / 5]}
+          scale={[radius * 1.42, radius * 1.42, radius * 1.42]}
+          raycast={() => null}
+        >
           <torusGeometry args={[1.0, 0.045 * tuning.thickness, 12, 128]} />
-          <meshBasicMaterial color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={tuning.secondaryColor}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
-        <mesh rotation={[Math.PI / 2, 0, -Math.PI / 7]} scale={[radius * 1.85, radius * 1.85, radius * 1.85]} raycast={() => null}>
+        <mesh
+          rotation={[Math.PI / 2, 0, -Math.PI / 7]}
+          scale={[radius * 1.85, radius * 1.85, radius * 1.85]}
+          raycast={() => null}
+        >
           <torusGeometry args={[1.0, 0.022 * tuning.thickness, 8, 128]} />
-          <meshBasicMaterial color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       </group>
-      <mesh rotation={[Math.PI / 2, 0, 0]} scale={[radius * 1.35, radius * 1.35, radius * 1.35]} raycast={() => null}>
+      <mesh
+        rotation={[Math.PI / 2, 0, 0]}
+        scale={[radius * 1.35, radius * 1.35, radius * 1.35]}
+        raycast={() => null}
+      >
         <circleGeometry args={[1, 96]} />
-        <meshBasicMaterial ref={coreMatRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
+        <meshBasicMaterial
+          ref={coreMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
       </mesh>
       <group ref={shearRef}>
         {Array.from({ length: 4 }).map((_, i) => (
-          <mesh key={i} rotation={[Math.PI / 2, 0, (i / 4) * Math.PI]} scale={[radius * 2.15, radius * 0.18 * tuning.thickness, 1]} raycast={() => null}>
+          <mesh
+            key={i}
+            rotation={[Math.PI / 2, 0, (i / 4) * Math.PI]}
+            scale={[radius * 2.15, radius * 0.18 * tuning.thickness, 1]}
+            raycast={() => null}
+          >
             <planeGeometry args={[1, 1]} />
-            <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
+            <meshBasicMaterial
+              color={i % 2 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+              toneMapped={false}
+            />
           </mesh>
         ))}
       </group>
-      <pointLight color={tuning.color} intensity={5.5 * tuning.intensity} distance={9} />
-      <pointLight color={tuning.secondaryColor} intensity={2.5 * tuning.intensity} distance={6} />
+      <pointLight
+        color={tuning.color}
+        intensity={5.5 * tuning.intensity}
+        distance={9}
+      />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={2.5 * tuning.intensity}
+        distance={6}
+      />
     </group>
   );
 }
 
-function EnergyMinePulse({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function EnergyMinePulse({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const ringRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const ringMatRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -6782,27 +8865,56 @@ function EnergyMinePulse({ position, tuning }: { position: Vec2; tuning: Tuning 
 
   useFrame(({ clock }) => {
     const t = (clock.elapsedTime * tuning.speed * 0.5) % 1;
-    if (ringRef.current) ringRef.current.scale.setScalar((0.6 + t * 5.0) * tuning.size);
-    if (coreRef.current) coreRef.current.scale.setScalar((0.35 + Math.sin(t * Math.PI) * 0.4) * tuning.size);
-    if (ringMatRef.current) ringMatRef.current.opacity = (1 - t) * 0.8 * tuning.intensity;
-    if (coreMatRef.current) coreMatRef.current.opacity = Math.sin(t * Math.PI) * 0.65 * tuning.intensity;
+    if (ringRef.current)
+      ringRef.current.scale.setScalar((0.6 + t * 5.0) * tuning.size);
+    if (coreRef.current)
+      coreRef.current.scale.setScalar(
+        (0.35 + Math.sin(t * Math.PI) * 0.4) * tuning.size,
+      );
+    if (ringMatRef.current)
+      ringMatRef.current.opacity = (1 - t) * 0.8 * tuning.intensity;
+    if (coreMatRef.current)
+      coreMatRef.current.opacity =
+        Math.sin(t * Math.PI) * 0.65 * tuning.intensity;
   });
 
   return (
     <group position={[position[0], 0.45, position[1]]}>
       <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
         <torusGeometry args={[0.55, 0.02 * tuning.thickness, 8, 96]} />
-        <meshBasicMaterial ref={ringMatRef} color={tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={ringMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh ref={coreRef} raycast={() => null}>
         <sphereGeometry args={[1, 16, 16]} />
-        <meshBasicMaterial ref={coreMatRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={coreMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
     </group>
   );
 }
 
-function StealthShimmer({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function StealthShimmer({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const shellRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
 
@@ -6812,16 +8924,30 @@ function StealthShimmer({ position, tuning }: { position: Vec2; tuning: Tuning }
       shellRef.current.rotation.y += 0.004 * tuning.speed;
       shellRef.current.scale.setScalar((1.15 + pulse * 0.08) * tuning.size);
     }
-    if (matRef.current) matRef.current.opacity = (0.08 + pulse * 0.16) * tuning.intensity;
+    if (matRef.current)
+      matRef.current.opacity = (0.08 + pulse * 0.16) * tuning.intensity;
   });
 
   return (
     <group position={[position[0], 0.95, position[1]]}>
       <mesh ref={shellRef} raycast={() => null}>
         <sphereGeometry args={[1.35, 28, 14]} />
-        <meshBasicMaterial ref={matRef} color={tuning.color} transparent opacity={0} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={matRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          wireframe
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight color={tuning.secondaryColor} intensity={1.5 * tuning.intensity} distance={5} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.5 * tuning.intensity}
+        distance={5}
+      />
     </group>
   );
 }
@@ -6857,10 +8983,24 @@ function makeRibbonGeometry({
       Math.sin(t * Math.PI * 4.7 + seed * 2.11) * 0.16 +
       Math.sin(t * Math.PI * 8.9 + seed * 1.31) * 0.08;
     const angle = phase + t * Math.PI * 2 * turns + wobble * randomness;
-    const radius = (bottomRadius + (topRadius - bottomRadius) * t) * Math.max(0.45, 1 + radiusNoise * randomness);
+    const radius =
+      (bottomRadius + (topRadius - bottomRadius) * t) *
+      Math.max(0.45, 1 + radiusNoise * randomness);
     const y = t * height;
-    const tangent = new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)).multiplyScalar(width * (0.65 + t * 0.45) * (1 + Math.sin(seed + t * Math.PI * 7.1) * 0.08 * randomness));
-    const center = new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+    const tangent = new THREE.Vector3(
+      -Math.sin(angle),
+      0,
+      Math.cos(angle),
+    ).multiplyScalar(
+      width *
+        (0.65 + t * 0.45) *
+        (1 + Math.sin(seed + t * Math.PI * 7.1) * 0.08 * randomness),
+    );
+    const center = new THREE.Vector3(
+      Math.cos(angle) * radius,
+      y,
+      Math.sin(angle) * radius,
+    );
     const left = center.clone().add(tangent);
     const right = center.clone().sub(tangent);
     vertices.push(left.x, left.y, left.z, right.x, right.y, right.z);
@@ -6870,7 +9010,10 @@ function makeRibbonGeometry({
     }
   }
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(vertices, 3),
+  );
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
@@ -6907,10 +9050,24 @@ function makeHorizontalRibbonGeometry({
       Math.sin(t * Math.PI * 4.2 + seed * 2.07) * 0.14 +
       Math.sin(t * Math.PI * 9.6 + seed * 1.23) * 0.08;
     const angle = phase + t * Math.PI * 2 * turns + wobble * randomness;
-    const radius = (bottomRadius + (topRadius - bottomRadius) * t) * Math.max(0.45, 1 + radiusNoise * randomness);
+    const radius =
+      (bottomRadius + (topRadius - bottomRadius) * t) *
+      Math.max(0.45, 1 + radiusNoise * randomness);
     const x = t * length;
-    const center = new THREE.Vector3(x, Math.cos(angle) * radius, Math.sin(angle) * radius);
-    const tangent = new THREE.Vector3(0, -Math.sin(angle), Math.cos(angle)).multiplyScalar(width * (0.72 + t * 0.34) * (1 + Math.sin(seed + t * Math.PI * 7.4) * 0.08 * randomness));
+    const center = new THREE.Vector3(
+      x,
+      Math.cos(angle) * radius,
+      Math.sin(angle) * radius,
+    );
+    const tangent = new THREE.Vector3(
+      0,
+      -Math.sin(angle),
+      Math.cos(angle),
+    ).multiplyScalar(
+      width *
+        (0.72 + t * 0.34) *
+        (1 + Math.sin(seed + t * Math.PI * 7.4) * 0.08 * randomness),
+    );
     const left = center.clone().add(tangent);
     const right = center.clone().sub(tangent);
     vertices.push(left.x, left.y, left.z, right.x, right.y, right.z);
@@ -6920,37 +9077,52 @@ function makeHorizontalRibbonGeometry({
     }
   }
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(vertices, 3),
+  );
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
 }
 
-function TwistingRibbonVortex({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function TwistingRibbonVortex({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 2, 24);
   const randomness = clamp(tuning.randomness ?? 0, 0, 1.5);
   const height = Math.max(1.8, tuning.arc) * tuning.size;
   const ribbons = useMemo(
-    () => Array.from({ length: count }, (_, i) => makeRibbonGeometry({
-      height,
-      bottomRadius: 0.34 * tuning.size,
-      topRadius: 1.35 * tuning.spread * tuning.size,
-      turns: 1.45 + tuning.thickness * 0.55,
-      phase: (i / count) * Math.PI * 2,
-      width: 0.07 * tuning.thickness * tuning.size,
-      randomness,
-      seed: i + 1,
-    })),
+    () =>
+      Array.from({ length: count }, (_, i) =>
+        makeRibbonGeometry({
+          height,
+          bottomRadius: 0.34 * tuning.size,
+          topRadius: 1.35 * tuning.spread * tuning.size,
+          turns: 1.45 + tuning.thickness * 0.55,
+          phase: (i / count) * Math.PI * 2,
+          width: 0.07 * tuning.thickness * tuning.size,
+          randomness,
+          seed: i + 1,
+        }),
+      ),
     [count, height, randomness, tuning.size, tuning.spread, tuning.thickness],
   );
 
   useFrame(({ clock }) => {
-    if (groupRef.current) groupRef.current.rotation.y = clock.elapsedTime * 0.8 * tuning.speed;
+    if (groupRef.current)
+      groupRef.current.rotation.y = clock.elapsedTime * 0.8 * tuning.speed;
     groupRef.current?.children.forEach((child, i) => {
       if (!("material" in child)) return;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = (0.18 + Math.sin(clock.elapsedTime * 2.2 * tuning.speed + i) * 0.05) * tuning.intensity;
+      mat.opacity =
+        (0.18 + Math.sin(clock.elapsedTime * 2.2 * tuning.speed + i) * 0.05) *
+        tuning.intensity;
     });
   });
 
@@ -6958,15 +9130,33 @@ function TwistingRibbonVortex({ position, tuning }: { position: Vec2; tuning: Tu
     <group ref={groupRef} position={[position[0], 0.12, position[1]]}>
       {ribbons.map((geometry, i) => (
         <mesh key={i} geometry={geometry} raycast={() => null}>
-          <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0.18} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0.18}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.color} intensity={2.5 * tuning.intensity} distance={7} />
+      <pointLight
+        color={tuning.color}
+        intensity={2.5 * tuning.intensity}
+        distance={7}
+      />
     </group>
   );
 }
 
-function HorizontalJumpVortex({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function HorizontalJumpVortex({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const originRingRef = useRef<THREE.MeshBasicMaterial>(null);
   const count = clamp(Math.round(tuning.count), 2, 24);
@@ -6976,17 +9166,28 @@ function HorizontalJumpVortex({ position, tuning }: { position: Vec2; tuning: Tu
   const topRadius = 0.62 * tuning.spread * tuning.size;
   const lift = topRadius + 0.28;
   const ribbons = useMemo(
-    () => Array.from({ length: count }, (_, i) => makeHorizontalRibbonGeometry({
-      length,
+    () =>
+      Array.from({ length: count }, (_, i) =>
+        makeHorizontalRibbonGeometry({
+          length,
+          bottomRadius,
+          topRadius,
+          turns: 1.45 + tuning.thickness * 0.55,
+          phase: (i / count) * Math.PI * 2,
+          width: 0.026 * tuning.thickness * tuning.size,
+          randomness,
+          seed: i + 1,
+        }),
+      ),
+    [
       bottomRadius,
-      topRadius,
-      turns: 1.45 + tuning.thickness * 0.55,
-      phase: (i / count) * Math.PI * 2,
-      width: 0.026 * tuning.thickness * tuning.size,
+      count,
+      length,
       randomness,
-      seed: i + 1,
-    })),
-    [bottomRadius, count, length, randomness, topRadius, tuning.size, tuning.thickness],
+      topRadius,
+      tuning.size,
+      tuning.thickness,
+    ],
   );
 
   useFrame(({ clock }) => {
@@ -7000,7 +9201,8 @@ function HorizontalJumpVortex({ position, tuning }: { position: Vec2; tuning: Tu
         mat.opacity = (0.1 + pulse * 0.09 + (i % 3) * 0.012) * tuning.intensity;
       });
     }
-    if (originRingRef.current) originRingRef.current.opacity = (0.2 + pulse * 0.18) * tuning.intensity;
+    if (originRingRef.current)
+      originRingRef.current.opacity = (0.2 + pulse * 0.18) * tuning.intensity;
   });
 
   return (
@@ -7008,45 +9210,109 @@ function HorizontalJumpVortex({ position, tuning }: { position: Vec2; tuning: Tu
       <group ref={groupRef}>
         {ribbons.map((geometry, i) => (
           <mesh key={i} geometry={geometry} raycast={() => null}>
-            <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0.18} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            <meshBasicMaterial
+              color={i % 2 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0.18}
+              side={THREE.DoubleSide}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
         ))}
-        <mesh position={[0, 0, 0]} rotation={[0, Math.PI / 2, 0]} raycast={() => null}>
-          <torusGeometry args={[Math.max(0.22, bottomRadius * 1.7), 0.018 * tuning.thickness, 8, 72]} />
-          <meshBasicMaterial ref={originRingRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <mesh
+          position={[0, 0, 0]}
+          rotation={[0, Math.PI / 2, 0]}
+          raycast={() => null}
+        >
+          <torusGeometry
+            args={[
+              Math.max(0.22, bottomRadius * 1.7),
+              0.018 * tuning.thickness,
+              8,
+              72,
+            ]}
+          />
+          <meshBasicMaterial
+            ref={originRingRef}
+            color={tuning.secondaryColor}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       </group>
-      <pointLight position={[0, 0, 0]} color={tuning.color} intensity={2.2 * tuning.intensity} distance={7} />
-      <pointLight position={[length, 0, 0]} color={tuning.secondaryColor} intensity={3.2 * tuning.intensity} distance={8} />
+      <pointLight
+        position={[0, 0, 0]}
+        color={tuning.color}
+        intensity={2.2 * tuning.intensity}
+        distance={7}
+      />
+      <pointLight
+        position={[length, 0, 0]}
+        color={tuning.secondaryColor}
+        intensity={3.2 * tuning.intensity}
+        distance={8}
+      />
     </group>
   );
 }
 
-function makeHelixCurve(height: number, radius: number, turns: number, phase: number) {
+function makeHelixCurve(
+  height: number,
+  radius: number,
+  turns: number,
+  phase: number,
+) {
   const points = Array.from({ length: 80 }, (_, i) => {
     const t = i / 79;
     const taper = 0.28 + t * 0.82;
     const angle = phase + t * Math.PI * 2 * turns;
-    return new THREE.Vector3(Math.cos(angle) * radius * taper, t * height, Math.sin(angle) * radius * taper);
+    return new THREE.Vector3(
+      Math.cos(angle) * radius * taper,
+      t * height,
+      Math.sin(angle) * radius * taper,
+    );
   });
   return new THREE.CatmullRomCurve3(points);
 }
 
-function HelicalLineVortex({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function HelicalLineVortex({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 2, 12);
   const height = Math.max(1.6, tuning.arc) * tuning.size;
   const curves = useMemo(
-    () => Array.from({ length: count }, (_, i) => makeHelixCurve(height, 1.05 * tuning.spread * tuning.size, 1.2 + tuning.thickness * 0.8, (i / count) * Math.PI * 2)),
+    () =>
+      Array.from({ length: count }, (_, i) =>
+        makeHelixCurve(
+          height,
+          1.05 * tuning.spread * tuning.size,
+          1.2 + tuning.thickness * 0.8,
+          (i / count) * Math.PI * 2,
+        ),
+      ),
     [count, height, tuning.spread, tuning.size, tuning.thickness],
   );
 
   useFrame(({ clock }) => {
-    if (groupRef.current) groupRef.current.rotation.y = -clock.elapsedTime * 0.9 * tuning.speed;
+    if (groupRef.current)
+      groupRef.current.rotation.y = -clock.elapsedTime * 0.9 * tuning.speed;
     groupRef.current?.children.forEach((child, i) => {
       if (!("material" in child)) return;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = (0.28 + Math.sin(clock.elapsedTime * 3 * tuning.speed + i * 0.7) * 0.11) * tuning.intensity;
+      mat.opacity =
+        (0.28 +
+          Math.sin(clock.elapsedTime * 3 * tuning.speed + i * 0.7) * 0.11) *
+        tuning.intensity;
     });
   });
 
@@ -7054,16 +9320,35 @@ function HelicalLineVortex({ position, tuning }: { position: Vec2; tuning: Tunin
     <group ref={groupRef} position={[position[0], 0.16, position[1]]}>
       {curves.map((curve, i) => (
         <mesh key={i} raycast={() => null}>
-          <tubeGeometry args={[curve, 72, 0.018 * tuning.thickness * tuning.size, 7, false]} />
-          <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <tubeGeometry
+            args={[curve, 72, 0.018 * tuning.thickness * tuning.size, 7, false]}
+          />
+          <meshBasicMaterial
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0.3}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.secondaryColor} intensity={2.2 * tuning.intensity} distance={7} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={2.2 * tuning.intensity}
+        distance={7}
+      />
     </group>
   );
 }
 
-function ConeShellVortex({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function ConeShellVortex({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const shellRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const shellMatRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -7071,22 +9356,54 @@ function ConeShellVortex({ position, tuning }: { position: Vec2; tuning: Tuning 
   const height = Math.max(1.7, tuning.arc) * tuning.size;
 
   useFrame(({ clock }) => {
-    if (shellRef.current) shellRef.current.rotation.y = clock.elapsedTime * 0.85 * tuning.speed;
-    if (wireRef.current) wireRef.current.rotation.y = -clock.elapsedTime * 0.55 * tuning.speed;
+    if (shellRef.current)
+      shellRef.current.rotation.y = clock.elapsedTime * 0.85 * tuning.speed;
+    if (wireRef.current)
+      wireRef.current.rotation.y = -clock.elapsedTime * 0.55 * tuning.speed;
     const pulse = Math.sin(clock.elapsedTime * 2.5 * tuning.speed) * 0.5 + 0.5;
-    if (shellMatRef.current) shellMatRef.current.opacity = (0.06 + pulse * 0.08) * tuning.intensity;
-    if (wireMatRef.current) wireMatRef.current.opacity = (0.18 + pulse * 0.14) * tuning.intensity;
+    if (shellMatRef.current)
+      shellMatRef.current.opacity = (0.06 + pulse * 0.08) * tuning.intensity;
+    if (wireMatRef.current)
+      wireMatRef.current.opacity = (0.18 + pulse * 0.14) * tuning.intensity;
   });
 
   return (
     <group position={[position[0], height * 0.5 + 0.1, position[1]]}>
       <mesh ref={shellRef} raycast={() => null}>
-        <coneGeometry args={[1.45 * tuning.spread * tuning.size, height, 72, 8, true]} />
-        <meshBasicMaterial ref={shellMatRef} color={tuning.color} transparent opacity={0.1} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <coneGeometry
+          args={[1.45 * tuning.spread * tuning.size, height, 72, 8, true]}
+        />
+        <meshBasicMaterial
+          ref={shellMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0.1}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh ref={wireRef} raycast={() => null}>
-        <coneGeometry args={[1.55 * tuning.spread * tuning.size, height * 0.96, 28, 8, true]} />
-        <meshBasicMaterial ref={wireMatRef} color={tuning.secondaryColor} transparent opacity={0.24} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <coneGeometry
+          args={[
+            1.55 * tuning.spread * tuning.size,
+            height * 0.96,
+            28,
+            8,
+            true,
+          ]}
+        />
+        <meshBasicMaterial
+          ref={wireMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0.24}
+          wireframe
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
     </group>
   );
@@ -7122,35 +9439,66 @@ function makeNoiseTexture(color: string, accent: string) {
   return texture;
 }
 
-function NoiseSheetVortex({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function NoiseSheetVortex({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 3, 10);
-  const texture = useMemo(() => makeNoiseTexture(tuning.color, tuning.secondaryColor), [tuning.color, tuning.secondaryColor]);
+  const texture = useMemo(
+    () => makeNoiseTexture(tuning.color, tuning.secondaryColor),
+    [tuning.color, tuning.secondaryColor],
+  );
   const height = Math.max(1.8, tuning.arc) * tuning.size;
 
   useFrame(({ clock }) => {
-    if (groupRef.current) groupRef.current.rotation.y = clock.elapsedTime * 0.5 * tuning.speed;
+    if (groupRef.current)
+      groupRef.current.rotation.y = clock.elapsedTime * 0.5 * tuning.speed;
     texture.offset.y = (clock.elapsedTime * 0.16 * tuning.speed) % 1;
     groupRef.current?.children.forEach((child, i) => {
-      child.rotation.y = (i / count) * Math.PI + clock.elapsedTime * 0.22 * tuning.speed;
+      child.rotation.y =
+        (i / count) * Math.PI + clock.elapsedTime * 0.22 * tuning.speed;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = (0.08 + Math.sin(clock.elapsedTime * 1.7 * tuning.speed + i) * 0.025) * tuning.intensity;
+      mat.opacity =
+        (0.08 + Math.sin(clock.elapsedTime * 1.7 * tuning.speed + i) * 0.025) *
+        tuning.intensity;
     });
   });
 
   return (
-    <group ref={groupRef} position={[position[0], height * 0.5 + 0.15, position[1]]}>
+    <group
+      ref={groupRef}
+      position={[position[0], height * 0.5 + 0.15, position[1]]}
+    >
       {Array.from({ length: count }).map((_, i) => (
         <mesh key={i} raycast={() => null}>
           <planeGeometry args={[2.2 * tuning.spread * tuning.size, height]} />
-          <meshBasicMaterial map={texture} color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0.08} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            map={texture}
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0.08}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
     </group>
   );
 }
 
-function RingCompressionVortex({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function RingCompressionVortex({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 3, 14);
   const height = Math.max(1.5, tuning.arc) * tuning.size;
@@ -7174,10 +9522,21 @@ function RingCompressionVortex({ position, tuning }: { position: Vec2; tuning: T
       {Array.from({ length: count }).map((_, i) => (
         <mesh key={i} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
           <torusGeometry args={[1, 0.018 * tuning.thickness, 8, 72]} />
-          <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.color} intensity={2 * tuning.intensity} distance={6} />
+      <pointLight
+        color={tuning.color}
+        intensity={2 * tuning.intensity}
+        distance={6}
+      />
     </group>
   );
 }
@@ -7195,7 +9554,11 @@ function TractorLock({ position, tuning }: { position: Vec2; tuning: Tuning }) {
         if (!("material" in child)) return;
         const phase = (i / count + clock.elapsedTime * 0.18 * tuning.speed) % 1;
         child.position.y = phase * height;
-        child.scale.setScalar((0.75 + Math.sin(phase * Math.PI) * 0.45) * tuning.spread * tuning.size);
+        child.scale.setScalar(
+          (0.75 + Math.sin(phase * Math.PI) * 0.45) *
+            tuning.spread *
+            tuning.size,
+        );
         const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
         mat.opacity = Math.sin(phase * Math.PI) * 0.55 * tuning.intensity;
       });
@@ -7209,18 +9572,47 @@ function TractorLock({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   return (
     <group position={[position[0], 0.18, position[1]]}>
       <mesh position={[0, height * 0.5, 0]} raycast={() => null}>
-        <cylinderGeometry args={[0.34 * tuning.thickness, 0.72 * tuning.thickness, height, 18, 1, true]} />
-        <meshBasicMaterial ref={beamMatRef} color={tuning.color} transparent opacity={0.08} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <cylinderGeometry
+          args={[
+            0.34 * tuning.thickness,
+            0.72 * tuning.thickness,
+            height,
+            18,
+            1,
+            true,
+          ]}
+        />
+        <meshBasicMaterial
+          ref={beamMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0.08}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <group ref={ringGroupRef}>
         {Array.from({ length: count }).map((_, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
             <torusGeometry args={[0.9, 0.02 * tuning.thickness, 8, 72]} />
-            <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            <meshBasicMaterial
+              color={i % 2 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
         ))}
       </group>
-      <pointLight color={tuning.color} intensity={2.2 * tuning.intensity} distance={7} />
+      <pointLight
+        color={tuning.color}
+        intensity={2.2 * tuning.intensity}
+        distance={7}
+      />
     </group>
   );
 }
@@ -7232,8 +9624,10 @@ function SensorSweep({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   const count = clamp(Math.round(tuning.count), 2, 8);
 
   useFrame(({ clock }) => {
-    if (sweepRef.current) sweepRef.current.rotation.y = clock.elapsedTime * 1.4 * tuning.speed;
-    if (sweepMatRef.current) sweepMatRef.current.opacity = 0.22 * tuning.intensity;
+    if (sweepRef.current)
+      sweepRef.current.rotation.y = clock.elapsedTime * 1.4 * tuning.speed;
+    if (sweepMatRef.current)
+      sweepMatRef.current.opacity = 0.22 * tuning.intensity;
     ringGroupRef.current?.children.forEach((child, i) => {
       const phase = (i / count + clock.elapsedTime * 0.28 * tuning.speed) % 1;
       child.scale.setScalar((0.35 + phase * 3.2) * tuning.spread * tuning.size);
@@ -7248,13 +9642,31 @@ function SensorSweep({ position, tuning }: { position: Vec2; tuning: Tuning }) {
         {Array.from({ length: count }).map((_, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
             <torusGeometry args={[1, 0.012 * tuning.thickness, 8, 96]} />
-            <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            <meshBasicMaterial
+              color={i % 2 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
         ))}
       </group>
       <mesh ref={sweepRef} position={[0, 0.08, 0]} raycast={() => null}>
-        <planeGeometry args={[5.0 * tuning.spread * tuning.size, 0.22 * tuning.thickness]} />
-        <meshBasicMaterial ref={sweepMatRef} color={tuning.color} transparent opacity={0.2} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
+        <planeGeometry
+          args={[5.0 * tuning.spread * tuning.size, 0.22 * tuning.thickness]}
+        />
+        <meshBasicMaterial
+          ref={sweepMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
       </mesh>
     </group>
   );
@@ -7269,38 +9681,63 @@ function PhaseCloak({ position, tuning }: { position: Vec2; tuning: Tuning }) {
     groupRef.current.rotation.y = clock.elapsedTime * 0.35 * tuning.speed;
     groupRef.current.children.forEach((child, i) => {
       if (!("material" in child)) return;
-      child.rotation.x = Math.sin(clock.elapsedTime * 0.8 * tuning.speed + i) * 0.18;
-      child.rotation.z = Math.cos(clock.elapsedTime * 0.7 * tuning.speed + i) * 0.18;
-      const pulse = Math.sin(clock.elapsedTime * 2.1 * tuning.speed + i) * 0.5 + 0.5;
+      child.rotation.x =
+        Math.sin(clock.elapsedTime * 0.8 * tuning.speed + i) * 0.18;
+      child.rotation.z =
+        Math.cos(clock.elapsedTime * 0.7 * tuning.speed + i) * 0.18;
+      const pulse =
+        Math.sin(clock.elapsedTime * 2.1 * tuning.speed + i) * 0.5 + 0.5;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.opacity = (0.08 + pulse * 0.16) * tuning.intensity;
     });
   });
 
   return (
-    <group ref={groupRef} position={[position[0], 1.15 * tuning.size, position[1]]}>
+    <group
+      ref={groupRef}
+      position={[position[0], 1.15 * tuning.size, position[1]]}
+    >
       {Array.from({ length: count }).map((_, i) => (
         <mesh key={i} scale={(1 + i * 0.09) * tuning.size} raycast={() => null}>
           <icosahedronGeometry args={[1.15, 1]} />
-          <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0}
+            wireframe
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.secondaryColor} intensity={1.4 * tuning.intensity} distance={6} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.4 * tuning.intensity}
+        distance={6}
+      />
     </group>
   );
 }
 
-function DebrisSparks({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function DebrisSparks({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 4, 30);
   const shards = useMemo(
-    () => Array.from({ length: count }, (_, i) => ({
-      angle: i * 2.399,
-      radius: 0.35 + (i % 7) * 0.13,
-      height: 0.12 + (i % 5) * 0.18,
-      speed: 0.5 + (i % 6) * 0.09,
-      spin: 0.02 + (i % 5) * 0.01,
-    })),
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        angle: i * 2.399,
+        radius: 0.35 + (i % 7) * 0.13,
+        height: 0.12 + (i % 5) * 0.18,
+        speed: 0.5 + (i % 6) * 0.09,
+        spin: 0.02 + (i % 5) * 0.01,
+      })),
     [count],
   );
 
@@ -7309,10 +9746,19 @@ function DebrisSparks({ position, tuning }: { position: Vec2; tuning: Tuning }) 
     groupRef.current.children.forEach((child, i) => {
       const shard = shards[i];
       if (!shard || !("material" in child)) return;
-      const t = (clock.elapsedTime * tuning.speed * shard.speed + i * 0.037) % 1;
+      const t =
+        (clock.elapsedTime * tuning.speed * shard.speed + i * 0.037) % 1;
       const radius = shard.radius * tuning.spread * (1 + t * 1.1);
-      child.position.set(Math.cos(shard.angle + t * 2.2) * radius, shard.height + Math.sin(t * Math.PI) * tuning.arc * 0.42, Math.sin(shard.angle + t * 2.2) * radius);
-      child.rotation.set(clock.elapsedTime * shard.spin * 18, clock.elapsedTime * shard.spin * 29 + i, clock.elapsedTime * shard.spin * 11);
+      child.position.set(
+        Math.cos(shard.angle + t * 2.2) * radius,
+        shard.height + Math.sin(t * Math.PI) * tuning.arc * 0.42,
+        Math.sin(shard.angle + t * 2.2) * radius,
+      );
+      child.rotation.set(
+        clock.elapsedTime * shard.spin * 18,
+        clock.elapsedTime * shard.spin * 29 + i,
+        clock.elapsedTime * shard.spin * 11,
+      );
       child.scale.setScalar((0.08 + (i % 4) * 0.025) * tuning.size);
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.opacity = Math.sin(t * Math.PI) * tuning.intensity;
@@ -7324,10 +9770,21 @@ function DebrisSparks({ position, tuning }: { position: Vec2; tuning: Tuning }) 
       {shards.map((_, i) => (
         <mesh key={i} raycast={() => null}>
           <tetrahedronGeometry args={[1, 0]} />
-          <meshBasicMaterial color={i % 3 === 0 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <meshBasicMaterial
+            color={i % 3 === 0 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.color} intensity={2 * tuning.intensity} distance={6} />
+      <pointLight
+        color={tuning.color}
+        intensity={2 * tuning.intensity}
+        distance={6}
+      />
     </group>
   );
 }
@@ -7345,7 +9802,10 @@ type ArcParticle = {
 
 function arcParticlePosition(particle: ArcParticle, t: number): THREE.Vector3 {
   const eased = 1 - Math.pow(1 - t, 1.7);
-  const sideWobble = Math.sin(t * Math.PI * 2 + particle.phase * Math.PI * 2) * particle.wobble * Math.sin(t * Math.PI);
+  const sideWobble =
+    Math.sin(t * Math.PI * 2 + particle.phase * Math.PI * 2) *
+    particle.wobble *
+    Math.sin(t * Math.PI);
   const yaw = particle.yaw + sideWobble;
   const radius = particle.distance * eased;
   return new THREE.Vector3(
@@ -7355,7 +9815,13 @@ function arcParticlePosition(particle: ArcParticle, t: number): THREE.Vector3 {
   );
 }
 
-function ArcParticleSpray({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function ArcParticleSpray({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const particleGroupRef = useRef<THREE.Group>(null);
   const ribbonGroupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 4, 96);
@@ -7365,30 +9831,40 @@ function ArcParticleSpray({ position, tuning }: { position: Vec2; tuning: Tuning
   const ribbonStride = Math.max(1, Math.ceil(count / 24));
 
   const particles = useMemo(
-    () => Array.from({ length: count }, (_, i): ArcParticle => {
-      const slot = count === 1 ? 0.5 : i / (count - 1);
-      const band = i % 5;
-      const jitter = Math.sin(i * 12.9898) * randomness * 0.18;
-      return {
-        yaw: (slot - 0.5) * fanAngle + jitter,
-        distance: (5.4 + (i % 9) * 0.36) * tuning.spread,
-        height: (0.8 + band * 0.24 + Math.abs(Math.sin(i * 2.31)) * 0.36) * tuning.size * (0.85 + fanAngle * 0.12),
-        rise: (0.15 + (i % 4) * 0.1) * tuning.spread,
-        speed: 0.5 + (i % 7) * 0.055,
-        phase: (i * 0.071) % 1,
-        size: (0.105 + (i % 4) * 0.018) * tuning.size,
-        wobble: randomness * (0.015 + (i % 4) * 0.012),
-      };
-    }),
+    () =>
+      Array.from({ length: count }, (_, i): ArcParticle => {
+        const slot = count === 1 ? 0.5 : i / (count - 1);
+        const band = i % 5;
+        const jitter = Math.sin(i * 12.9898) * randomness * 0.18;
+        return {
+          yaw: (slot - 0.5) * fanAngle + jitter,
+          distance: (5.4 + (i % 9) * 0.36) * tuning.spread,
+          height:
+            (0.8 + band * 0.24 + Math.abs(Math.sin(i * 2.31)) * 0.36) *
+            tuning.size *
+            (0.85 + fanAngle * 0.12),
+          rise: (0.15 + (i % 4) * 0.1) * tuning.spread,
+          speed: 0.5 + (i % 7) * 0.055,
+          phase: (i * 0.071) % 1,
+          size: (0.105 + (i % 4) * 0.018) * tuning.size,
+          wobble: randomness * (0.015 + (i % 4) * 0.012),
+        };
+      }),
     [count, fanAngle, randomness, tuning.size, tuning.spread],
   );
 
   const ribbonCurves = useMemo(
-    () => particles
-      .filter((_, i) => i % ribbonStride === 0)
-      .map(particle => new THREE.CatmullRomCurve3(
-        Array.from({ length: 18 }, (_, step) => arcParticlePosition(particle, step / 17)),
-      )),
+    () =>
+      particles
+        .filter((_, i) => i % ribbonStride === 0)
+        .map(
+          (particle) =>
+            new THREE.CatmullRomCurve3(
+              Array.from({ length: 18 }, (_, step) =>
+                arcParticlePosition(particle, step / 17),
+              ),
+            ),
+        ),
     [particles, ribbonStride],
   );
 
@@ -7396,11 +9872,20 @@ function ArcParticleSpray({ position, tuning }: { position: Vec2; tuning: Tuning
     particleGroupRef.current?.children.forEach((child, i) => {
       const particle = particles[i];
       if (!particle) return;
-      const t = (clock.elapsedTime * tuning.speed * particle.speed + particle.phase) % 1;
-      const opacity = Math.sin(t * Math.PI) * tuning.intensity * phaseAlpha(t, tuning.fade);
+      const t =
+        (clock.elapsedTime * tuning.speed * particle.speed + particle.phase) %
+        1;
+      const opacity =
+        Math.sin(t * Math.PI) * tuning.intensity * phaseAlpha(t, tuning.fade);
       child.position.copy(arcParticlePosition(particle, t));
-      child.rotation.set(clock.elapsedTime * 0.8 * particle.speed, clock.elapsedTime * 1.3 * particle.speed + i, 0);
-      child.scale.setScalar(particle.size * (0.82 + Math.sin(t * Math.PI) * 0.55));
+      child.rotation.set(
+        clock.elapsedTime * 0.8 * particle.speed,
+        clock.elapsedTime * 1.3 * particle.speed + i,
+        0,
+      );
+      child.scale.setScalar(
+        particle.size * (0.82 + Math.sin(t * Math.PI) * 0.55),
+      );
 
       const outline = child.children[0] as THREE.Mesh | undefined;
       const core = child.children[1] as THREE.Mesh | undefined;
@@ -7416,7 +9901,8 @@ function ArcParticleSpray({ position, tuning }: { position: Vec2; tuning: Tuning
 
     ribbonGroupRef.current?.children.forEach((child, i) => {
       if (!("material" in child)) return;
-      const pulse = Math.sin(clock.elapsedTime * 1.8 * tuning.speed + i * 0.47) * 0.5 + 0.5;
+      const pulse =
+        Math.sin(clock.elapsedTime * 1.8 * tuning.speed + i * 0.47) * 0.5 + 0.5;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.opacity = (0.05 + pulse * 0.13) * tuning.intensity * ribbonEffect;
     });
@@ -7427,8 +9913,23 @@ function ArcParticleSpray({ position, tuning }: { position: Vec2; tuning: Tuning
       <group ref={ribbonGroupRef}>
         {ribbonCurves.map((curve, i) => (
           <mesh key={i} raycast={() => null}>
-            <tubeGeometry args={[curve, 40, 0.018 * tuning.thickness * Math.max(0.15, ribbonEffect), 6, false]} />
-            <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            <tubeGeometry
+              args={[
+                curve,
+                40,
+                0.018 * tuning.thickness * Math.max(0.15, ribbonEffect),
+                6,
+                false,
+              ]}
+            />
+            <meshBasicMaterial
+              color={i % 2 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
         ))}
       </group>
@@ -7437,25 +9938,54 @@ function ArcParticleSpray({ position, tuning }: { position: Vec2; tuning: Tuning
           <group key={i}>
             <mesh raycast={() => null}>
               <sphereGeometry args={[1.25, 12, 12]} />
-              <meshBasicMaterial color={tuning.secondaryColor} transparent opacity={0} depthWrite={false} toneMapped={false} />
+              <meshBasicMaterial
+                color={tuning.secondaryColor}
+                transparent
+                opacity={0}
+                depthWrite={false}
+                toneMapped={false}
+              />
             </mesh>
             <mesh scale={0.72} raycast={() => null}>
               <sphereGeometry args={[1, 12, 12]} />
-              <meshBasicMaterial color={tuning.color} transparent opacity={0} depthWrite={false} toneMapped={false} />
+              <meshBasicMaterial
+                color={tuning.color}
+                transparent
+                opacity={0}
+                depthWrite={false}
+                toneMapped={false}
+              />
             </mesh>
           </group>
         ))}
       </group>
       <mesh raycast={() => null}>
         <sphereGeometry args={[0.22 * tuning.size, 16, 16]} />
-        <meshBasicMaterial color={tuning.secondaryColor} transparent opacity={0.85 * tuning.intensity} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0.85 * tuning.intensity}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight color={tuning.secondaryColor} intensity={1.3 * tuning.intensity} distance={7 * tuning.spread} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.3 * tuning.intensity}
+        distance={7 * tuning.spread}
+      />
     </group>
   );
 }
 
-function ShockwaveDome({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function ShockwaveDome({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const domeRef = useRef<THREE.Mesh>(null);
   const ringRef = useRef<THREE.Mesh>(null);
   const domeMatRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -7478,13 +10008,34 @@ function ShockwaveDome({ position, tuning }: { position: Vec2; tuning: Tuning })
     <group position={[position[0], 0.22, position[1]]}>
       <mesh ref={domeRef} raycast={() => null}>
         <sphereGeometry args={[1, 32, 12, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshBasicMaterial ref={domeMatRef} color={tuning.color} transparent opacity={0} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={domeMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          wireframe
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
         <torusGeometry args={[1, 0.018 * tuning.thickness, 8, 96]} />
-        <meshBasicMaterial ref={ringMatRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={ringMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight color={tuning.secondaryColor} intensity={2.5 * tuning.intensity} distance={8} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={2.5 * tuning.intensity}
+        distance={8}
+      />
     </group>
   );
 }
@@ -7500,7 +10051,10 @@ function PraxisShockwave({
   textureFilename: string;
   paused: boolean;
 }) {
-  const sourceTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const sourceTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  );
   const elapsedRef = useRef(0);
   const ringGroupRef = useRef<THREE.Group>(null);
   const repetitionCount = clamp(Math.round(tuning.count), 1, 8);
@@ -7528,7 +10082,9 @@ function PraxisShockwave({
     ringGroupRef.current.children.forEach((child, index) => {
       const mesh = child as THREE.Mesh;
       const material = mesh.material as THREE.MeshBasicMaterial;
-      const phase = ((elapsedRef.current / lifetime - index / repetitionCount) % 1 + 1) % 1;
+      const phase =
+        (((elapsedRef.current / lifetime - index / repetitionCount) % 1) + 1) %
+        1;
       const easedExpansion = 1 - Math.pow(1 - phase, 2.2);
       const diameter = Math.max(0.02, easedExpansion * endDiameter);
       const fadeIn = clamp(phase / 0.055, 0, 1);
@@ -7570,43 +10126,82 @@ function PraxisShockwave({
   );
 }
 
-function HyperspaceWake({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function HyperspaceWake({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 2, 9);
   const curves = useMemo(
-    () => Array.from({ length: count }, (_, i) => {
-      const side = i % 2 === 0 ? 1 : -1;
-      const offset = (i - (count - 1) / 2) * 0.22;
-      return new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-2.2 * tuning.spread, 0.15 + i * 0.03, offset),
-        new THREE.Vector3(-1.2 * tuning.spread, 0.55 + side * 0.12, offset + side * 0.45),
-        new THREE.Vector3(0.15 * tuning.spread, 1.05 + side * 0.22, offset - side * 0.25),
-        new THREE.Vector3(1.75 * tuning.spread, 1.55 + i * 0.02, offset + side * 0.12),
-      ]);
-    }),
+    () =>
+      Array.from({ length: count }, (_, i) => {
+        const side = i % 2 === 0 ? 1 : -1;
+        const offset = (i - (count - 1) / 2) * 0.22;
+        return new THREE.CatmullRomCurve3([
+          new THREE.Vector3(-2.2 * tuning.spread, 0.15 + i * 0.03, offset),
+          new THREE.Vector3(
+            -1.2 * tuning.spread,
+            0.55 + side * 0.12,
+            offset + side * 0.45,
+          ),
+          new THREE.Vector3(
+            0.15 * tuning.spread,
+            1.05 + side * 0.22,
+            offset - side * 0.25,
+          ),
+          new THREE.Vector3(
+            1.75 * tuning.spread,
+            1.55 + i * 0.02,
+            offset + side * 0.12,
+          ),
+        ]);
+      }),
     [count, tuning.spread],
   );
 
   useFrame(({ clock }) => {
     if (!groupRef.current) return;
-    groupRef.current.rotation.y = Math.sin(clock.elapsedTime * 0.45 * tuning.speed) * 0.18;
+    groupRef.current.rotation.y =
+      Math.sin(clock.elapsedTime * 0.45 * tuning.speed) * 0.18;
     groupRef.current.children.forEach((child, i) => {
       if (!("material" in child)) return;
       child.position.x = Math.sin(clock.elapsedTime * tuning.speed + i) * 0.08;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = (0.18 + Math.sin(clock.elapsedTime * 2.4 * tuning.speed + i) * 0.08) * tuning.intensity;
+      mat.opacity =
+        (0.18 + Math.sin(clock.elapsedTime * 2.4 * tuning.speed + i) * 0.08) *
+        tuning.intensity;
     });
   });
 
   return (
-    <group ref={groupRef} position={[position[0], 0.25, position[1]]} scale={tuning.size}>
+    <group
+      ref={groupRef}
+      position={[position[0], 0.25, position[1]]}
+      scale={tuning.size}
+    >
       {curves.map((curve, i) => (
         <mesh key={i} raycast={() => null}>
-          <tubeGeometry args={[curve, 48, 0.026 * tuning.thickness, 7, false]} />
-          <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0.2} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+          <tubeGeometry
+            args={[curve, 48, 0.026 * tuning.thickness, 7, false]}
+          />
+          <meshBasicMaterial
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0.2}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.secondaryColor} intensity={2.4 * tuning.intensity} distance={8} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={2.4 * tuning.intensity}
+        distance={8}
+      />
     </group>
   );
 }
@@ -7614,7 +10209,10 @@ function HyperspaceWake({ position, tuning }: { position: Vec2; tuning: Tuning }
 function RiftShear({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 3, 9);
-  const texture = useMemo(() => makeNoiseTexture(tuning.color, tuning.secondaryColor), [tuning.color, tuning.secondaryColor]);
+  const texture = useMemo(
+    () => makeNoiseTexture(tuning.color, tuning.secondaryColor),
+    [tuning.color, tuning.secondaryColor],
+  );
 
   useFrame(({ clock }) => {
     texture.offset.y = (clock.elapsedTime * 0.22 * tuning.speed) % 1;
@@ -7622,21 +10220,49 @@ function RiftShear({ position, tuning }: { position: Vec2; tuning: Tuning }) {
     groupRef.current.rotation.y = clock.elapsedTime * 0.28 * tuning.speed;
     groupRef.current.children.forEach((child, i) => {
       if (!("material" in child)) return;
-      child.rotation.z = Math.sin(clock.elapsedTime * 0.8 * tuning.speed + i) * 0.28;
+      child.rotation.z =
+        Math.sin(clock.elapsedTime * 0.8 * tuning.speed + i) * 0.28;
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = (0.09 + Math.sin(clock.elapsedTime * 2.2 * tuning.speed + i) * 0.04) * tuning.intensity;
+      mat.opacity =
+        (0.09 + Math.sin(clock.elapsedTime * 2.2 * tuning.speed + i) * 0.04) *
+        tuning.intensity;
     });
   });
 
   return (
-    <group ref={groupRef} position={[position[0], 1.45 * tuning.size, position[1]]}>
+    <group
+      ref={groupRef}
+      position={[position[0], 1.45 * tuning.size, position[1]]}
+    >
       {Array.from({ length: count }).map((_, i) => (
-        <mesh key={i} rotation={[0, (i / count) * Math.PI, (i % 2 ? -0.5 : 0.5)]} raycast={() => null}>
-          <planeGeometry args={[0.7 * tuning.thickness * tuning.size, Math.max(1.8, tuning.arc) * tuning.size]} />
-          <meshBasicMaterial map={texture} color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0.1} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <mesh
+          key={i}
+          rotation={[0, (i / count) * Math.PI, i % 2 ? -0.5 : 0.5]}
+          raycast={() => null}
+        >
+          <planeGeometry
+            args={[
+              0.7 * tuning.thickness * tuning.size,
+              Math.max(1.8, tuning.arc) * tuning.size,
+            ]}
+          />
+          <meshBasicMaterial
+            map={texture}
+            color={i % 2 ? tuning.secondaryColor : tuning.color}
+            transparent
+            opacity={0.1}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
         </mesh>
       ))}
-      <pointLight color={tuning.color} intensity={1.8 * tuning.intensity} distance={7} />
+      <pointLight
+        color={tuning.color}
+        intensity={1.8 * tuning.intensity}
+        distance={7}
+      />
     </group>
   );
 }
@@ -7649,12 +10275,15 @@ function BeaconPulse({ position, tuning }: { position: Vec2; tuning: Tuning }) {
 
   useFrame(({ clock }) => {
     const pulse = Math.sin(clock.elapsedTime * 2.3 * tuning.speed) * 0.5 + 0.5;
-    if (columnMatRef.current) columnMatRef.current.opacity = (0.07 + pulse * 0.12) * tuning.intensity;
+    if (columnMatRef.current)
+      columnMatRef.current.opacity = (0.07 + pulse * 0.12) * tuning.intensity;
     ringGroupRef.current?.children.forEach((child, i) => {
       if (!("material" in child)) return;
       const phase = (i / count + clock.elapsedTime * 0.22 * tuning.speed) % 1;
       child.position.y = phase * height;
-      child.scale.setScalar((0.35 + phase * 1.25) * tuning.spread * tuning.size);
+      child.scale.setScalar(
+        (0.35 + phase * 1.25) * tuning.spread * tuning.size,
+      );
       const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
       mat.opacity = Math.sin(phase * Math.PI) * 0.55 * tuning.intensity;
     });
@@ -7663,18 +10292,47 @@ function BeaconPulse({ position, tuning }: { position: Vec2; tuning: Tuning }) {
   return (
     <group position={[position[0], 0.12, position[1]]}>
       <mesh position={[0, height * 0.5, 0]} raycast={() => null}>
-        <cylinderGeometry args={[0.12 * tuning.thickness, 0.28 * tuning.thickness, height, 20, 1, true]} />
-        <meshBasicMaterial ref={columnMatRef} color={tuning.color} transparent opacity={0} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <cylinderGeometry
+          args={[
+            0.12 * tuning.thickness,
+            0.28 * tuning.thickness,
+            height,
+            20,
+            1,
+            true,
+          ]}
+        />
+        <meshBasicMaterial
+          ref={columnMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <group ref={ringGroupRef}>
         {Array.from({ length: count }).map((_, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
             <torusGeometry args={[1, 0.014 * tuning.thickness, 8, 80]} />
-            <meshBasicMaterial color={i % 2 ? tuning.secondaryColor : tuning.color} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+            <meshBasicMaterial
+              color={i % 2 ? tuning.secondaryColor : tuning.color}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
         ))}
       </group>
-      <pointLight color={tuning.color} intensity={2.8 * tuning.intensity} distance={8} />
+      <pointLight
+        color={tuning.color}
+        intensity={2.8 * tuning.intensity}
+        distance={8}
+      />
     </group>
   );
 }
@@ -7689,27 +10347,56 @@ function GravityLens({ position, tuning }: { position: Vec2; tuning: Tuning }) {
     const pulse = Math.sin(clock.elapsedTime * 1.6 * tuning.speed) * 0.5 + 0.5;
     if (lensRef.current) {
       lensRef.current.rotation.y = clock.elapsedTime * 0.38 * tuning.speed;
-      lensRef.current.scale.set(tuning.size * tuning.spread * (1.1 + pulse * 0.08), tuning.size * 0.24, tuning.size * tuning.spread * (1.1 + pulse * 0.08));
+      lensRef.current.scale.set(
+        tuning.size * tuning.spread * (1.1 + pulse * 0.08),
+        tuning.size * 0.24,
+        tuning.size * tuning.spread * (1.1 + pulse * 0.08),
+      );
     }
     if (ringRef.current) {
       ringRef.current.rotation.z = clock.elapsedTime * 0.42 * tuning.speed;
-      ringRef.current.scale.setScalar(tuning.size * tuning.spread * (1.25 + pulse * 0.1));
+      ringRef.current.scale.setScalar(
+        tuning.size * tuning.spread * (1.25 + pulse * 0.1),
+      );
     }
-    if (lensMatRef.current) lensMatRef.current.opacity = (0.07 + pulse * 0.12) * tuning.intensity;
-    if (ringMatRef.current) ringMatRef.current.opacity = (0.22 + pulse * 0.22) * tuning.intensity;
+    if (lensMatRef.current)
+      lensMatRef.current.opacity = (0.07 + pulse * 0.12) * tuning.intensity;
+    if (ringMatRef.current)
+      ringMatRef.current.opacity = (0.22 + pulse * 0.22) * tuning.intensity;
   });
 
   return (
     <group position={[position[0], 1.05 * tuning.size, position[1]]}>
       <mesh ref={lensRef} raycast={() => null}>
         <sphereGeometry args={[1.35, 32, 12]} />
-        <meshBasicMaterial ref={lensMatRef} color={tuning.color} transparent opacity={0} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={lensMatRef}
+          color={tuning.color}
+          transparent
+          opacity={0}
+          wireframe
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
       <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} raycast={() => null}>
         <torusGeometry args={[1.2, 0.026 * tuning.thickness, 8, 96]} />
-        <meshBasicMaterial ref={ringMatRef} color={tuning.secondaryColor} transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        <meshBasicMaterial
+          ref={ringMatRef}
+          color={tuning.secondaryColor}
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
       </mesh>
-      <pointLight color={tuning.secondaryColor} intensity={1.7 * tuning.intensity} distance={6} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={1.7 * tuning.intensity}
+        distance={6}
+      />
     </group>
   );
 }
@@ -7719,30 +10406,40 @@ function seededUnit(seed: number): number {
   return value - Math.floor(value);
 }
 
-function PersistentImpactFlashes({ position, tuning }: { position: Vec2; tuning: Tuning }) {
+function PersistentImpactFlashes({
+  position,
+  tuning,
+}: {
+  position: Vec2;
+  tuning: Tuning;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const count = clamp(Math.round(tuning.count), 2, 40);
   const randomness = clamp(tuning.randomness ?? 0.75, 0, 1.5);
   const flashes = useMemo(
-    () => Array.from({ length: count }, (_, i) => {
-      const radialSeed = seededUnit(i + 1.3);
-      const sizeSeed = seededUnit(i + 9.7);
-      const heightSeed = seededUnit(i + 17.1);
-      const angle = i * 2.399963 + seededUnit(i + 4.2) * randomness * 0.9;
-      const radius = (0.25 + radialSeed * 2.45) * tuning.spread;
-      const baseSize = (0.32 + sizeSeed * (0.85 + randomness * 0.45)) * tuning.size;
-      const height = (1.35 + tuning.arc * 0.32 + heightSeed * (0.8 + tuning.arc * 0.18)) * tuning.size;
-      return {
-        x: Math.cos(angle) * radius,
-        z: Math.sin(angle) * radius,
-        height,
-        baseSize,
-        phase: seededUnit(i + 29.4) * Math.PI * 2,
-        spin: (seededUnit(i + 37.8) - 0.5) * 0.018,
-        pulseSpeed: 0.7 + seededUnit(i + 44.6) * 0.9,
-        accent: seededUnit(i + 52.5) > 0.62,
-      };
-    }),
+    () =>
+      Array.from({ length: count }, (_, i) => {
+        const radialSeed = seededUnit(i + 1.3);
+        const sizeSeed = seededUnit(i + 9.7);
+        const heightSeed = seededUnit(i + 17.1);
+        const angle = i * 2.399963 + seededUnit(i + 4.2) * randomness * 0.9;
+        const radius = (0.25 + radialSeed * 2.45) * tuning.spread;
+        const baseSize =
+          (0.32 + sizeSeed * (0.85 + randomness * 0.45)) * tuning.size;
+        const height =
+          (1.35 + tuning.arc * 0.32 + heightSeed * (0.8 + tuning.arc * 0.18)) *
+          tuning.size;
+        return {
+          x: Math.cos(angle) * radius,
+          z: Math.sin(angle) * radius,
+          height,
+          baseSize,
+          phase: seededUnit(i + 29.4) * Math.PI * 2,
+          spin: (seededUnit(i + 37.8) - 0.5) * 0.018,
+          pulseSpeed: 0.7 + seededUnit(i + 44.6) * 0.9,
+          accent: seededUnit(i + 52.5) > 0.62,
+        };
+      }),
     [count, randomness, tuning.arc, tuning.size, tuning.spread],
   );
 
@@ -7751,16 +10448,29 @@ function PersistentImpactFlashes({ position, tuning }: { position: Vec2; tuning:
     groupRef.current.children.forEach((child, i) => {
       const flash = flashes[i];
       if (!flash) return;
-      const pulse = Math.sin(clock.elapsedTime * tuning.speed * flash.pulseSpeed + flash.phase) * 0.5 + 0.5;
-      child.position.set(flash.x, flash.height + Math.sin(clock.elapsedTime * tuning.speed * 0.42 + flash.phase) * 0.08 * tuning.spread, flash.z);
+      const pulse =
+        Math.sin(
+          clock.elapsedTime * tuning.speed * flash.pulseSpeed + flash.phase,
+        ) *
+          0.5 +
+        0.5;
+      child.position.set(
+        flash.x,
+        flash.height +
+          Math.sin(clock.elapsedTime * tuning.speed * 0.42 + flash.phase) *
+            0.08 *
+            tuning.spread,
+        flash.z,
+      );
       child.rotation.y += flash.spin * tuning.speed;
       child.scale.setScalar(flash.baseSize * (0.82 + pulse * 0.34));
       child.children.forEach((mesh, meshIndex) => {
         if (!("material" in mesh)) return;
         const mat = (mesh as THREE.Mesh).material as THREE.MeshBasicMaterial;
-        mat.opacity = meshIndex === 0
-          ? (0.14 + pulse * 0.28) * tuning.intensity
-          : (0.28 + pulse * 0.38) * tuning.intensity;
+        mat.opacity =
+          meshIndex === 0
+            ? (0.14 + pulse * 0.28) * tuning.intensity
+            : (0.28 + pulse * 0.38) * tuning.intensity;
       });
     });
   });
@@ -7772,16 +10482,36 @@ function PersistentImpactFlashes({ position, tuning }: { position: Vec2; tuning:
           <group key={i} position={[flash.x, flash.height, flash.z]}>
             <mesh raycast={() => null}>
               <sphereGeometry args={[1, 24, 24]} />
-              <meshBasicMaterial color={flash.accent ? tuning.secondaryColor : tuning.color} transparent opacity={0.24} blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+              <meshBasicMaterial
+                color={flash.accent ? tuning.secondaryColor : tuning.color}
+                transparent
+                opacity={0.24}
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
             </mesh>
             <mesh raycast={() => null} scale={[1.04, 1.04, 1.04]}>
               <sphereGeometry args={[1, 18, 18]} />
-              <meshBasicMaterial color={tuning.secondaryColor} transparent opacity={0.42} wireframe blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+              <meshBasicMaterial
+                color={tuning.secondaryColor}
+                transparent
+                opacity={0.42}
+                wireframe
+                blending={THREE.AdditiveBlending}
+                depthWrite={false}
+                toneMapped={false}
+              />
             </mesh>
           </group>
         ))}
       </group>
-      <pointLight color={tuning.secondaryColor} intensity={2.6 * tuning.intensity} distance={9 * tuning.spread} position={[0, 2.4 + tuning.arc * 0.2, 0]} />
+      <pointLight
+        color={tuning.secondaryColor}
+        intensity={2.6 * tuning.intensity}
+        distance={9 * tuning.spread}
+        position={[0, 2.4 + tuning.arc * 0.2, 0]}
+      />
     </group>
   );
 }
@@ -7800,7 +10530,10 @@ function GodotJumpPointShaderModel({
   renderOrder?: number;
 }) {
   const { scene } = useGLTF(showcaseModelUrl(filename));
-  const baseTexture = useLoader(THREE.TextureLoader, showcaseTextureUrl(textureFilename));
+  const baseTexture = useLoader(
+    THREE.TextureLoader,
+    showcaseTextureUrl(textureFilename),
+  );
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
 
   useMemo(() => {
@@ -7917,7 +10650,9 @@ function GodotJumpPointShaderModel({
     materialRef.current.uniforms.uTime.value = clock.elapsedTime * tuning.speed;
     materialRef.current.uniforms.uOpacity.value = clamp(tuning.intensity, 0, 4);
     materialRef.current.uniforms.uColor.value.set(tuning.color);
-    materialRef.current.uniforms.uSecondaryColor.value.set(tuning.secondaryColor);
+    materialRef.current.uniforms.uSecondaryColor.value.set(
+      tuning.secondaryColor,
+    );
   });
 
   const cloned = useMemo(() => {
@@ -7933,7 +10668,10 @@ function GodotJumpPointShaderModel({
     return c;
   }, [scene, material, renderOrder]);
 
-  const scale = useMemo(() => showcaseShipScale(cloned, 7.5 * tuning.size), [cloned, tuning.size]);
+  const scale = useMemo(
+    () => showcaseShipScale(cloned, 7.5 * tuning.size),
+    [cloned, tuning.size],
+  );
   return (
     <group
       rotation={[
@@ -7948,7 +10686,13 @@ function GodotJumpPointShaderModel({
   );
 }
 
-function GodotJumpPointMesh({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+function GodotJumpPointMesh({
+  station,
+  tuning,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+}) {
   const filename = station.modelFilename ?? "_jumppoint.glb";
   const portalOffset = tuning.portalOffset ?? 0;
   return (
@@ -7997,7 +10741,12 @@ function JumpGateForwardArc({
 
   return (
     <>
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.035, 0]} raycast={() => null} renderOrder={3}>
+      <mesh
+        rotation={[Math.PI / 2, 0, 0]}
+        position={[0, 0.035, 0]}
+        raycast={() => null}
+        renderOrder={3}
+      >
         <primitive object={geometry} attach="geometry" />
         <meshBasicMaterial
           color={color}
@@ -8035,7 +10784,13 @@ function JumpGateForwardArc({
   );
 }
 
-function JumpGateMeshShowcase({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+function JumpGateMeshShowcase({
+  station,
+  tuning,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+}) {
   const filename = station.modelFilename ?? "jump-gate-4strut.glb";
   const { scene } = useGLTF(showcaseModelUrl(filename));
   const { cloned, modelScale, floorOffsetY } = useMemo(() => {
@@ -8046,25 +10801,29 @@ function JumpGateMeshShowcase({ station, tuning }: { station: SpecialStation; tu
       child.castShadow = true;
       child.receiveShadow = true;
       child.raycast = () => null;
-      const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
-        const clonedMaterial = material?.clone
-          ? material.clone()
-          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        const adjustable = clonedMaterial as THREE.Material & {
-          color?: THREE.Color;
-          emissive?: THREE.Color;
-          emissiveIntensity?: number;
-        };
-        if (adjustable.color instanceof THREE.Color) {
-          adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
-        }
-        if (adjustable.emissive instanceof THREE.Color) {
-          adjustable.emissive = tint.clone();
-          adjustable.emissiveIntensity = 0.1 * tuning.intensity;
-        }
-        return clonedMaterial;
-      });
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map(
+        (material: THREE.Material | undefined) => {
+          const clonedMaterial = material?.clone
+            ? material.clone()
+            : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+          const adjustable = clonedMaterial as THREE.Material & {
+            color?: THREE.Color;
+            emissive?: THREE.Color;
+            emissiveIntensity?: number;
+          };
+          if (adjustable.color instanceof THREE.Color) {
+            adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
+          }
+          if (adjustable.emissive instanceof THREE.Color) {
+            adjustable.emissive = tint.clone();
+            adjustable.emissiveIntensity = 0.1 * tuning.intensity;
+          }
+          return clonedMaterial;
+        },
+      );
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
     const box = new THREE.Box3().setFromObject(clone);
@@ -8072,13 +10831,22 @@ function JumpGateMeshShowcase({ station, tuning }: { station: SpecialStation; tu
     box.getSize(size);
     const longest = Math.max(size.x, size.y, size.z, 1e-6);
     const scale = (6.5 * tuning.size) / longest;
-    return { cloned: clone, modelScale: scale, floorOffsetY: -box.min.y * scale + 0.05 };
+    return {
+      cloned: clone,
+      modelScale: scale,
+      floorOffsetY: -box.min.y * scale + 0.05,
+    };
   }, [scene, tuning.color, tuning.intensity, tuning.size]);
 
   return (
     <group position={[station.position[0], 0, station.position[1]]}>
       <JumpGateForwardArc radius={5.3} color={tuning.color} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]} raycast={() => null} renderOrder={4}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.045, 0]}
+        raycast={() => null}
+        renderOrder={4}
+      >
         <ringGeometry args={[1.46, 1.54, 96]} />
         <meshBasicMaterial
           color={tuning.secondaryColor}
@@ -8106,7 +10874,13 @@ function JumpGateMeshShowcase({ station, tuning }: { station: SpecialStation; tu
 
 const JUMP_GATE_PORTAL_REAR_OFFSET_INCHES = 2;
 
-function JumpGatePortalComboShowcase({ station, tuning }: { station: SpecialStation; tuning: Tuning }) {
+function JumpGatePortalComboShowcase({
+  station,
+  tuning,
+}: {
+  station: SpecialStation;
+  tuning: Tuning;
+}) {
   const filename = station.modelFilename ?? "jump-gate-4strut.glb";
   const { scene } = useGLTF(showcaseModelUrl(filename));
   const gateSize = tuning.gateSize ?? tuning.size;
@@ -8126,25 +10900,29 @@ function JumpGatePortalComboShowcase({ station, tuning }: { station: SpecialStat
       child.castShadow = true;
       child.receiveShadow = true;
       child.raycast = () => null;
-      const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
-      const materials = sourceMaterials.map((material: THREE.Material | undefined) => {
-        const clonedMaterial = material?.clone
-          ? material.clone()
-          : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
-        const adjustable = clonedMaterial as THREE.Material & {
-          color?: THREE.Color;
-          emissive?: THREE.Color;
-          emissiveIntensity?: number;
-        };
-        if (adjustable.color instanceof THREE.Color) {
-          adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
-        }
-        if (adjustable.emissive instanceof THREE.Color) {
-          adjustable.emissive = tint.clone();
-          adjustable.emissiveIntensity = 0.1 * tuning.intensity;
-        }
-        return clonedMaterial;
-      });
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material];
+      const materials = sourceMaterials.map(
+        (material: THREE.Material | undefined) => {
+          const clonedMaterial = material?.clone
+            ? material.clone()
+            : new THREE.MeshStandardMaterial({ color: "#d1d5db" });
+          const adjustable = clonedMaterial as THREE.Material & {
+            color?: THREE.Color;
+            emissive?: THREE.Color;
+            emissiveIntensity?: number;
+          };
+          if (adjustable.color instanceof THREE.Color) {
+            adjustable.color = adjustable.color.clone().lerp(tint, 0.08);
+          }
+          if (adjustable.emissive instanceof THREE.Color) {
+            adjustable.emissive = tint.clone();
+            adjustable.emissiveIntensity = 0.1 * tuning.intensity;
+          }
+          return clonedMaterial;
+        },
+      );
       child.material = Array.isArray(child.material) ? materials : materials[0];
     });
     const box = new THREE.Box3().setFromObject(clone);
@@ -8154,13 +10932,23 @@ function JumpGatePortalComboShowcase({ station, tuning }: { station: SpecialStat
     const scale = (6.5 * gateSize) / longest;
     const floorY = -box.min.y * scale + 0.05;
     const centerY = floorY + ((box.min.y + box.max.y) / 2) * scale;
-    return { cloned: clone, modelScale: scale, floorOffsetY: floorY, gateCenterY: centerY };
+    return {
+      cloned: clone,
+      modelScale: scale,
+      floorOffsetY: floorY,
+      gateCenterY: centerY,
+    };
   }, [scene, tuning.color, tuning.intensity, gateSize]);
 
   return (
     <group position={[station.position[0], 0, station.position[1]]}>
       <JumpGateForwardArc radius={5.3} color={tuning.color} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]} raycast={() => null} renderOrder={4}>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.045, 0]}
+        raycast={() => null}
+        renderOrder={4}
+      >
         <ringGeometry args={[1.46, 1.54, 96]} />
         <meshBasicMaterial
           color={tuning.secondaryColor}
@@ -8237,12 +11025,7 @@ function vorlonPhaseAlpha(
     startSeconds + 0.1,
   );
   const fadeOut =
-    1 -
-    THREE.MathUtils.smoothstep(
-      elapsed,
-      endSeconds - 0.14,
-      endSeconds,
-    );
+    1 - THREE.MathUtils.smoothstep(elapsed, endSeconds - 0.14, endSeconds);
   return fadeIn * fadeOut;
 }
 
@@ -8290,8 +11073,7 @@ function VorlonTimedBeam({
     );
     const pulse =
       0.86 +
-      Math.sin(timelineRef.current * (mode === "primary" ? 11.5 : 17.5)) *
-        0.14;
+      Math.sin(timelineRef.current * (mode === "primary" ? 11.5 : 17.5)) * 0.14;
     const brightness = clamp(tuning.intensity, 0.1, 4);
     if (texture && mode === "primary") {
       texture.offset.x = (timelineRef.current * -0.08) % 1;
@@ -8355,9 +11137,7 @@ function VorlonTimedBeam({
         />
       </mesh>
       <mesh raycast={() => null} renderOrder={5}>
-        <cylinderGeometry
-          args={[radius * 4.8, radius * 4.8, length, 18, 1]}
-        />
+        <cylinderGeometry args={[radius * 4.8, radius * 4.8, length, 18, 1]} />
         <meshBasicMaterial
           ref={haloRef}
           color={tuning.color}
@@ -8407,14 +11187,11 @@ function VorlonFeederParticles({
       particles.visible = alpha > 0.01;
       for (let index = 0; index < particleCount; index += 1) {
         const progress =
-          (timelineRef.current * 1.35 +
-            phaseOffset +
-            index / particleCount) %
+          (timelineRef.current * 1.35 + phaseOffset + index / particleCount) %
           1;
         const sizePulse =
           0.82 +
-          Math.sin(timelineRef.current * 20 + index * 1.7 + phaseOffset) *
-            0.18;
+          Math.sin(timelineRef.current * 20 + index * 1.7 + phaseOffset) * 0.18;
         particleTransform.position.set(
           from.x + direction.x * progress,
           from.y + direction.y * progress,
@@ -8512,32 +11289,26 @@ function VorlonEmitterRadialParticles({
   useFrame(() => {
     const elapsed = timelineRef.current % VORLON_BEAM_CYCLE_SECONDS;
     const alpha = vorlonPhaseAlpha(elapsed, 0, VORLON_ACTIVE_END_SECONDS);
-    const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
+    const positions = geometry.getAttribute(
+      "position",
+    ) as THREE.BufferAttribute;
     const scale = clamp(tuning.size, 0.5, 1.6);
     for (let index = 0; index < particleCount; index += 1) {
       const flight = particleFlights[index];
-      const age =
-        (timelineRef.current / flight.lifetime + flight.phase) % 1;
+      const age = (timelineRef.current / flight.lifetime + flight.phase) % 1;
       const distance = age * flight.distance * scale;
       const jitter =
         Math.sin(
-          timelineRef.current * flight.frequency +
-            flight.phase * Math.PI * 2,
+          timelineRef.current * flight.frequency + flight.phase * Math.PI * 2,
         ) *
         flight.wobble *
         Math.sin(Math.PI * age) *
         scale;
       positions.setXYZ(
         index,
-        origin.x +
-          flight.direction.x * distance +
-          flight.tangent.x * jitter,
-        origin.y +
-          flight.direction.y * distance +
-          flight.tangent.y * jitter,
-        origin.z +
-          flight.direction.z * distance +
-          flight.tangent.z * jitter,
+        origin.x + flight.direction.x * distance + flight.tangent.x * jitter,
+        origin.y + flight.direction.y * distance + flight.tangent.y * jitter,
+        origin.z + flight.direction.z * distance + flight.tangent.z * jitter,
       );
     }
     positions.needsUpdate = true;
@@ -8598,8 +11369,7 @@ function VorlonBeamNodeGlow({
       VORLON_ACTIVE_END_SECONDS,
     );
     const firingBoost =
-      elapsed >= VORLON_CHARGE_SECONDS &&
-      elapsed < VORLON_ACTIVE_END_SECONDS
+      elapsed >= VORLON_CHARGE_SECONDS && elapsed < VORLON_ACTIVE_END_SECONDS
         ? 1.35
         : 1;
     const pulse = 0.88 + Math.sin(timelineRef.current * 14) * 0.12;
@@ -8731,7 +11501,7 @@ function VorlonDreadnoughtBeamShowcase({
       const scale = showcaseShipScale(clone, 7.8 * tuning.size);
       const inverseRoot = clone.matrixWorld.clone().invert();
       const emitterPositions = new Map<string, THREE.Vector3>();
-      clone.traverse(child => {
+      clone.traverse((child) => {
         const name = normalizeVorlonEmitterName(String(child.name ?? ""));
         if (
           name === "main beam" ||
@@ -8752,13 +11522,10 @@ function VorlonDreadnoughtBeamShowcase({
         cloned: clone,
         modelScale: scale,
         localSmallEmitters: VORLON_SMALL_BEAM_NAMES.map(
-          name =>
-            emitterPositions.get(name) ??
-            new THREE.Vector3(0, 0, 3.72),
+          (name) => emitterPositions.get(name) ?? new THREE.Vector3(0, 0, 3.72),
         ),
         localMainEmitter:
-          emitterPositions.get("main beam") ??
-          new THREE.Vector3(0, 0, 4.25),
+          emitterPositions.get("main beam") ?? new THREE.Vector3(0, 0, 4.25),
       };
     }, [scene, tuning.size]);
 
@@ -8782,11 +11549,7 @@ function VorlonDreadnoughtBeamShowcase({
   });
 
   const smallRadius = 0.006 * clamp(tuning.thickness, 0.25, 4);
-  const primaryRadius = clamp(
-    tuning.beamCoreDiameter ?? 0.0325,
-    0.01,
-    0.8,
-  );
+  const primaryRadius = clamp(tuning.beamCoreDiameter ?? 0.0325, 0.01, 0.8);
 
   return (
     <group>
@@ -8880,7 +11643,8 @@ function ShowcaseArcDamageSector({
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
     for (let index = 0; index <= segments; index += 1) {
-      const angle = centerAngle - halfAngle + (2 * halfAngle * index) / segments;
+      const angle =
+        centerAngle - halfAngle + (2 * halfAngle * index) / segments;
       shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
     }
     shape.lineTo(0, 0);
@@ -8888,7 +11652,11 @@ function ShowcaseArcDamageSector({
   }, [centerAngle, halfAngle, radius]);
 
   return (
-    <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.04, 0]} geometry={geometry}>
+    <mesh
+      rotation={[Math.PI / 2, 0, 0]}
+      position={[0, 0.04, 0]}
+      geometry={geometry}
+    >
       <meshBasicMaterial
         ref={materialRef}
         color={color}
@@ -9010,7 +11778,8 @@ function WeaponArcDamageSample({
   useFrame((_, delta) => {
     pulse.current += delta * Math.max(0.2, tuning.speed);
     if (degradedRef.current) {
-      degradedRef.current.opacity = 0.12 + (Math.sin(pulse.current * 4) + 1) * 0.12;
+      degradedRef.current.opacity =
+        0.12 + (Math.sin(pulse.current * 4) + 1) * 0.12;
     }
   });
   const radius = 3.15 * tuning.size;
@@ -9029,9 +11798,27 @@ function WeaponArcDamageSample({
         <ringGeometry args={[0.92, 1.08, 48]} />
         <meshBasicMaterial color="#94a3b8" transparent opacity={0.72} />
       </mesh>
-      <ShowcaseArcDamageSector centerAngle={Math.PI / 2} halfAngle={Math.PI / 4} radius={radius} color={forwardColor} opacity={0.34} />
-      <ShowcaseArcDamageSector centerAngle={-Math.PI / 2} halfAngle={Math.PI / 4} radius={radius} color={aftColor} opacity={0.25} />
-      <ShowcaseArcDamageSector centerAngle={0} halfAngle={Math.PI / 4} radius={radius} color={offlineColor} opacity={0.2} />
+      <ShowcaseArcDamageSector
+        centerAngle={Math.PI / 2}
+        halfAngle={Math.PI / 4}
+        radius={radius}
+        color={forwardColor}
+        opacity={0.34}
+      />
+      <ShowcaseArcDamageSector
+        centerAngle={-Math.PI / 2}
+        halfAngle={Math.PI / 4}
+        radius={radius}
+        color={aftColor}
+        opacity={0.25}
+      />
+      <ShowcaseArcDamageSector
+        centerAngle={0}
+        halfAngle={Math.PI / 4}
+        radius={radius}
+        color={offlineColor}
+        opacity={0.2}
+      />
       <ShowcaseWeaponArcStatusPlate
         centerAngle={0}
         radius={radius}
@@ -9051,22 +11838,50 @@ function WeaponArcDamageSample({
         textureFilename="weapon-damage-arc.png"
       />
       <Billboard position={[0, 1.8, radius * 0.72]} follow>
-        <Text fontSize={0.34} color={forwardColor} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+        <Text
+          fontSize={0.34}
+          color={forwardColor}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.03}
+          outlineColor="#020617"
+        >
           FWD
         </Text>
       </Billboard>
       <Billboard position={[radius * 0.72, 1.8, 0]} follow>
-        <Text fontSize={0.3} color="#cbd5e1" anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+        <Text
+          fontSize={0.3}
+          color="#cbd5e1"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.03}
+          outlineColor="#020617"
+        >
           PORT OFF
         </Text>
       </Billboard>
       <Billboard position={[-radius * 0.72, 1.8, 0]} follow>
-        <Text fontSize={0.3} color="#fecaca" anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+        <Text
+          fontSize={0.3}
+          color="#fecaca"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.03}
+          outlineColor="#020617"
+        >
           STBD 1/3
         </Text>
       </Billboard>
       <Billboard position={[0, 1.8, -radius * 0.72]} follow>
-        <Text fontSize={0.3} color={aftColor} anchorX="center" anchorY="middle" outlineWidth={0.03} outlineColor="#020617">
+        <Text
+          fontSize={0.3}
+          color={aftColor}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.03}
+          outlineColor="#020617"
+        >
           AFT
         </Text>
       </Billboard>
@@ -9085,7 +11900,11 @@ const SHOWCASE_PROJECTION_ARCS: Record<
   | "Boresight Aft",
   { centerAngle: number; halfAngle: number; color: string }
 > = {
-  Forward: { centerAngle: Math.PI / 2, halfAngle: Math.PI / 4, color: "#34eb52" },
+  Forward: {
+    centerAngle: Math.PI / 2,
+    halfAngle: Math.PI / 4,
+    color: "#34eb52",
+  },
   Aft: { centerAngle: -Math.PI / 2, halfAngle: Math.PI / 4, color: "#0f9f4a" },
   Port: { centerAngle: 0, halfAngle: Math.PI / 4, color: "#00d46a" },
   Starboard: { centerAngle: Math.PI, halfAngle: Math.PI / 4, color: "#00f090" },
@@ -9131,7 +11950,8 @@ function ShowcaseProjectedArc({
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
     for (let index = 0; index <= segments; index += 1) {
-      const angle = centerAngle - halfAngle + (2 * halfAngle * index) / segments;
+      const angle =
+        centerAngle - halfAngle + (2 * halfAngle * index) / segments;
       shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
     }
     shape.lineTo(0, 0);
@@ -9142,7 +11962,8 @@ function ShowcaseProjectedArc({
     const segments = halfAngle < 0.3 ? 16 : 64;
     const points: [number, number, number][] = [[0, 0, 0]];
     for (let index = 0; index <= segments; index += 1) {
-      const angle = centerAngle - halfAngle + (2 * halfAngle * index) / segments;
+      const angle =
+        centerAngle - halfAngle + (2 * halfAngle * index) / segments;
       points.push([Math.cos(angle) * radius, 0, Math.sin(angle) * radius]);
     }
     points.push([0, 0, 0]);
@@ -9276,11 +12097,7 @@ function ShowcaseProjectionStatusPlate({
   return <mesh geometry={geometry} material={material} renderOrder={28} />;
 }
 
-function WeaponArcProjectionStateSample({
-  position,
-}: {
-  position: Vec2;
-}) {
+function WeaponArcProjectionStateSample({ position }: { position: Vec2 }) {
   const radius = 9.5;
   const projectionArcs: Array<{
     arc: keyof typeof SHOWCASE_PROJECTION_ARCS;
@@ -9348,7 +12165,11 @@ function WeaponArcProjectionStateSample({
         })}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]}>
           <circleGeometry args={[1.08, 48]} />
-          <meshStandardMaterial color="#020617" roughness={0.82} metalness={0.1} />
+          <meshStandardMaterial
+            color="#020617"
+            roughness={0.82}
+            metalness={0.1}
+          />
         </mesh>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.055, 0]}>
           <ringGeometry args={[1.08, 1.22, 64]} />
@@ -9365,14 +12186,16 @@ function WeaponArcProjectionStateSample({
             />
           </group>
         </Suspense>
-        {([
-          ["FWD ONLINE", 0, 1.4, radius * 0.82, "#86efac"],
-          ["BS-F DAMAGED", 0, 1.72, radius * 1.05, "#fecaca"],
-          ["PORT OFFLINE", radius * 0.82, 1.4, 0, "#bfdbfe"],
-          ["STARBOARD DAMAGED", -radius * 0.82, 1.4, 0, "#fecaca"],
-          ["AFT ONLINE", 0, 1.4, -radius * 0.82, "#86efac"],
-          ["BS-A OFFLINE", 0, 1.72, -radius * 1.05, "#bfdbfe"],
-        ] as const).map(([label, x, y, z, color]) => (
+        {(
+          [
+            ["FWD ONLINE", 0, 1.4, radius * 0.82, "#86efac"],
+            ["BS-F DAMAGED", 0, 1.72, radius * 1.05, "#fecaca"],
+            ["PORT OFFLINE", radius * 0.82, 1.4, 0, "#bfdbfe"],
+            ["STARBOARD DAMAGED", -radius * 0.82, 1.4, 0, "#fecaca"],
+            ["AFT ONLINE", 0, 1.4, -radius * 0.82, "#86efac"],
+            ["BS-A OFFLINE", 0, 1.72, -radius * 1.05, "#bfdbfe"],
+          ] as const
+        ).map(([label, x, y, z, color]) => (
           <Billboard key={label} position={[x, y, z]} follow>
             <Text
               fontSize={0.28}
@@ -9418,25 +12241,67 @@ function SpecialFxStation({
 }) {
   return (
     <group>
-      <EndpointMarker position={station.position} color={tuning.color} selected={selected} />
-      {station.effect === "shield-ripple" ? <ShieldRipple position={station.position} tuning={tuning} /> : null}
-      {station.effect === "interceptor-burst" ? <InterceptorBurst position={station.position} tuning={tuning} /> : null}
-      {station.effect === "jump-point" ? <HorizontalJumpVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "energy-mine" ? <EnergyMinePulse position={station.position} tuning={tuning} /> : null}
-      {station.effect === "stealth-shimmer" ? <StealthShimmer position={station.position} tuning={tuning} /> : null}
-      {station.effect === "vortex-ribbons" ? <TwistingRibbonVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "jump-vortex" ? <HorizontalJumpVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "vortex-helix-lines" ? <HelicalLineVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "vortex-cone-shell" ? <ConeShellVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "vortex-noise-sheets" ? <NoiseSheetVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "vortex-ring-compression" ? <RingCompressionVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "tractor-lock" ? <TractorLock position={station.position} tuning={tuning} /> : null}
-      {station.effect === "sensor-sweep" ? <SensorSweep position={station.position} tuning={tuning} /> : null}
-      {station.effect === "phase-cloak" ? <PhaseCloak position={station.position} tuning={tuning} /> : null}
-      {station.effect === "debris-sparks" ? <DebrisSparks position={station.position} tuning={tuning} /> : null}
-      {station.effect === "arc-particle-spray" ? <ArcParticleSpray position={station.position} tuning={tuning} /> : null}
-      {station.effect === "persistent-impact-flashes" ? <PersistentImpactFlashes position={station.position} tuning={tuning} /> : null}
-      {station.effect === "shockwave-dome" ? <ShockwaveDome position={station.position} tuning={tuning} /> : null}
+      {station.effect !== "cel-shaded-model" ? (
+        <EndpointMarker
+          position={station.position}
+          color={tuning.color}
+          selected={selected}
+        />
+      ) : null}
+      {station.effect === "shield-ripple" ? (
+        <ShieldRipple position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "interceptor-burst" ? (
+        <InterceptorBurst position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "jump-point" ? (
+        <HorizontalJumpVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "energy-mine" ? (
+        <EnergyMinePulse position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "stealth-shimmer" ? (
+        <StealthShimmer position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "vortex-ribbons" ? (
+        <TwistingRibbonVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "jump-vortex" ? (
+        <HorizontalJumpVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "vortex-helix-lines" ? (
+        <HelicalLineVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "vortex-cone-shell" ? (
+        <ConeShellVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "vortex-noise-sheets" ? (
+        <NoiseSheetVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "vortex-ring-compression" ? (
+        <RingCompressionVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "tractor-lock" ? (
+        <TractorLock position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "sensor-sweep" ? (
+        <SensorSweep position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "phase-cloak" ? (
+        <PhaseCloak position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "debris-sparks" ? (
+        <DebrisSparks position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "arc-particle-spray" ? (
+        <ArcParticleSpray position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "persistent-impact-flashes" ? (
+        <PersistentImpactFlashes position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "shockwave-dome" ? (
+        <ShockwaveDome position={station.position} tuning={tuning} />
+      ) : null}
       {station.effect === "praxis-shockwave" && station.textureFilename ? (
         <Suspense fallback={null}>
           <PraxisShockwave
@@ -9447,17 +12312,37 @@ function SpecialFxStation({
           />
         </Suspense>
       ) : null}
-      {station.effect === "jump-point-aperture" ? <HorizontalJumpVortex position={station.position} tuning={tuning} /> : null}
-      {station.effect === "hyperspace-wake" ? <HyperspaceWake position={station.position} tuning={tuning} /> : null}
-      {station.effect === "rift-shear" ? <RiftShear position={station.position} tuning={tuning} /> : null}
-      {station.effect === "beacon-pulse" ? <BeaconPulse position={station.position} tuning={tuning} /> : null}
-      {station.effect === "gravity-lens" ? <GravityLens position={station.position} tuning={tuning} /> : null}
-      {station.effect === "damage-glow-core" ? <DamageGlowCore position={station.position} tuning={tuning} /> : null}
+      {station.effect === "jump-point-aperture" ? (
+        <HorizontalJumpVortex position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "hyperspace-wake" ? (
+        <HyperspaceWake position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "rift-shear" ? (
+        <RiftShear position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "beacon-pulse" ? (
+        <BeaconPulse position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "gravity-lens" ? (
+        <GravityLens position={station.position} tuning={tuning} />
+      ) : null}
+      {station.effect === "damage-glow-core" ? (
+        <DamageGlowCore position={station.position} tuning={tuning} />
+      ) : null}
       {station.effect === "dead-hulk-point-sparks" ? (
-        <DeadHulkPointSparks station={station} tuning={tuning} paused={animationPaused} />
+        <DeadHulkPointSparks
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
       ) : null}
       {station.effect === "battlecrab-damage-particle-spray" ? (
-        <BattlecrabDamageParticleSpray station={station} tuning={tuning} paused={animationPaused} />
+        <BattlecrabDamageParticleSpray
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
       ) : null}
       {station.effect === "weapon-arc-damage-sample" ? (
         <WeaponArcDamageSample position={station.position} tuning={tuning} />
@@ -9467,10 +12352,16 @@ function SpecialFxStation({
       ) : null}
       {station.effect === "shield-token-hover" ? (
         <Suspense fallback={null}>
-          <ShieldTokenHoverShowcase station={station} tuning={tuning} paused={animationPaused} />
+          <ShieldTokenHoverShowcase
+            station={station}
+            tuning={tuning}
+            paused={animationPaused}
+          />
         </Suspense>
       ) : null}
-      {station.effect === "godot-jump-point-mesh" ? <GodotJumpPointMesh station={station} tuning={tuning} /> : null}
+      {station.effect === "godot-jump-point-mesh" ? (
+        <GodotJumpPointMesh station={station} tuning={tuning} />
+      ) : null}
       {station.effect === "jump-gate-mesh" ? (
         <Suspense fallback={null}>
           <JumpGateMeshShowcase station={station} tuning={tuning} />
@@ -9483,20 +12374,34 @@ function SpecialFxStation({
       ) : null}
       {station.effect === "gas-cloud-terrain" ? (
         <Suspense fallback={null}>
-          <GasCloudTerrainEffect station={station} tuning={tuning} paused={animationPaused} />
+          <GasCloudTerrainEffect
+            station={station}
+            tuning={tuning}
+            paused={animationPaused}
+          />
         </Suspense>
       ) : null}
       {station.effect === "test-cloud-mesh" ? (
         <Suspense fallback={null}>
-          <TestCloudTexturedMesh station={station} tuning={tuning} paused={animationPaused} />
+          <TestCloudTexturedMesh
+            station={station}
+            tuning={tuning}
+            paused={animationPaused}
+          />
         </Suspense>
       ) : null}
       {station.effect === "cloud-flipbook-damage" && station.textureFilename ? (
         <Suspense fallback={null}>
-          <CloudFlipbookDamageEmitter position={station.position} tuning={tuning} textureFilename={station.textureFilename} paused={animationPaused} />
+          <CloudFlipbookDamageEmitter
+            position={station.position}
+            tuning={tuning}
+            textureFilename={station.textureFilename}
+            paused={animationPaused}
+          />
         </Suspense>
       ) : null}
-      {station.effect === "standalone-flipbook-preview" && station.textureFilename ? (
+      {station.effect === "standalone-flipbook-preview" &&
+      station.textureFilename ? (
         <Suspense fallback={null}>
           <StandaloneFlipbookPreview
             position={station.position}
@@ -9508,11 +12413,41 @@ function SpecialFxStation({
           />
         </Suspense>
       ) : null}
-      {station.effect === "missile-impact-flipbook-test" ? <MissileImpactFlipbookTest station={station} tuning={tuning} paused={animationPaused} /> : null}
-      {station.effect === "mesh-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
-      {station.effect === "mesh-projectile-salvo" ? <MeshProjectileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
-      {station.effect === "railgun-projectile-test" ? <RailgunProjectileTest station={station} tuning={tuning} paused={animationPaused} /> : null}
-      {station.effect === "texture-missile-salvo" ? <MeshMissileSalvo station={station} tuning={tuning} paused={animationPaused} /> : null}
+      {station.effect === "missile-impact-flipbook-test" ? (
+        <MissileImpactFlipbookTest
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
+      ) : null}
+      {station.effect === "mesh-missile-salvo" ? (
+        <MeshMissileSalvo
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
+      ) : null}
+      {station.effect === "mesh-projectile-salvo" ? (
+        <MeshProjectileSalvo
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
+      ) : null}
+      {station.effect === "railgun-projectile-test" ? (
+        <RailgunProjectileTest
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
+      ) : null}
+      {station.effect === "texture-missile-salvo" ? (
+        <MeshMissileSalvo
+          station={station}
+          tuning={tuning}
+          paused={animationPaused}
+        />
+      ) : null}
       {station.effect === "emissive-material-alternator" ? (
         <Suspense fallback={null}>
           <EmissiveMaterialAlternatorShowcase
@@ -9522,9 +12457,18 @@ function SpecialFxStation({
           />
         </Suspense>
       ) : null}
+      {station.effect === "cel-shaded-model" ? (
+        <Suspense fallback={null}>
+          <CelShadedModelShowcase station={station} tuning={tuning} />
+        </Suspense>
+      ) : null}
       {station.effect === "kirishiac-beam-test" ? (
         <Suspense fallback={null}>
-          <KirishiacBeamFiringShowcase station={station} tuning={tuning} paused={animationPaused} />
+          <KirishiacBeamFiringShowcase
+            station={station}
+            tuning={tuning}
+            paused={animationPaused}
+          />
         </Suspense>
       ) : null}
       {station.effect === "vorlon-dreadnought-beam-test" ? (
@@ -9541,7 +12485,9 @@ function SpecialFxStation({
           <TexturedExplodingSphereStation station={station} tuning={tuning} />
         </Suspense>
       ) : null}
-      {showLabel ? <StationLabel station={station} selected={selected} /> : null}
+      {showLabel ? (
+        <StationLabel station={station} selected={selected} />
+      ) : null}
     </group>
   );
 }
@@ -9573,6 +12519,15 @@ function ShowcaseCameraRig({ boardId }: { boardId: string }) {
         8.8 * framingScale,
       );
       camera.lookAt(0, 2.1, 0);
+    } else if (boardId === "material-studies") {
+      const canvasAspect = size.width / Math.max(size.height, 1);
+      const framingScale = Math.max(1, 0.95 / canvasAspect);
+      camera.position.set(
+        7.4 * framingScale,
+        5.8 * framingScale,
+        9.2 * framingScale,
+      );
+      camera.lookAt(0, 1.4, 0);
     } else {
       camera.position.set(0, 39, 48);
       camera.lookAt(0, 0, 0);
@@ -9594,36 +12549,145 @@ function ShowcaseScene({
   selectedStationId: string;
   animationPaused: boolean;
 }) {
-  const orbitTarget = board.id === "special-action-tokens"
-    ? ([0, 2.1, 0] as [number, number, number])
-    : ([0, 0, 0] as [number, number, number]);
+  const orbitTarget =
+    board.id === "special-action-tokens"
+      ? ([0, 2.1, 0] as [number, number, number])
+      : board.id === "material-studies"
+        ? ([0, 1.4, 0] as [number, number, number])
+        : ([0, 0, 0] as [number, number, number]);
+  const selectedStation =
+    board.stations.find((station) => station.id === selectedStationId) ??
+    board.stations[0];
+  const materialTuning =
+    board.id === "material-studies" && selectedStation
+      ? effectiveTuning(selectedStation, overrides)
+      : null;
+  const ambientIntensity =
+    materialTuning?.celAmbientLight ??
+    (board.id === "material-studies" ? 0.2 : 0.55);
+  const directionalIntensity =
+    materialTuning?.celDirectionalLight ??
+    (board.id === "material-studies" ? 2.1 : 1.4);
+  const lightAzimuth = THREE.MathUtils.degToRad(
+    materialTuning?.celLightAzimuth ?? 36,
+  );
+  const lightElevation = THREE.MathUtils.degToRad(
+    materialTuning?.celLightElevation ?? 54,
+  );
+  const lightRadius = 30;
+  const lightHorizontalRadius = Math.cos(lightElevation) * lightRadius;
+  const directionalPosition: [number, number, number] = materialTuning
+    ? [
+        Math.sin(lightAzimuth) * lightHorizontalRadius,
+        Math.sin(lightElevation) * lightRadius,
+        Math.cos(lightAzimuth) * lightHorizontalRadius,
+      ]
+    : [10, 24, 14];
+  const bloomEnabled =
+    board.id !== "material-studies" || Boolean(materialTuning?.celBloomEnabled);
+  const bloomIntensity = materialTuning?.celBloomStrength ?? 1.35;
 
   return (
     <>
       <color attach="background" args={["#03060a"]} />
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[10, 24, 14]} intensity={1.4} castShadow />
+      <ambientLight intensity={ambientIntensity} />
+      <directionalLight
+        position={directionalPosition}
+        intensity={directionalIntensity}
+        castShadow
+      />
       <BoardPlane />
       <ShowcaseCameraRig boardId={board.id} />
-      {board.stations.map(station => {
+      {board.stations.map((station) => {
         const tuning = effectiveTuning(station, overrides);
         const selected = station.id === selectedStationId;
         const showLabel =
           board.id !== "orb-texture-tests" &&
           board.id !== "organic-skin-tests" &&
           board.id !== "vorlon-beam-tests" &&
+          board.id !== "material-studies" &&
           !isShieldTokenStation(station);
-        if (station.kind === "weapon") return <TunableWeaponStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
-        if (station.kind === "ambient") return <AmbientFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
-        if (station.kind === "hull-state") return <HullStateFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
-        if (station.kind === "animated-model") return <AnimatedModelFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} />;
-        if (station.kind === "organic-skin") return <OrganicSkinFxStation key={station.id} station={station} tuning={tuning} selected={selected} showLabel={showLabel} paused={animationPaused} />;
-        return <SpecialFxStation key={station.id} station={station} tuning={tuning} selected={selected} animationPaused={animationPaused} showLabel={showLabel} />;
+        if (station.kind === "weapon")
+          return (
+            <TunableWeaponStation
+              key={station.id}
+              station={station}
+              tuning={tuning}
+              selected={selected}
+              showLabel={showLabel}
+              paused={animationPaused}
+            />
+          );
+        if (station.kind === "ambient")
+          return (
+            <AmbientFxStation
+              key={station.id}
+              station={station}
+              tuning={tuning}
+              selected={selected}
+              showLabel={showLabel}
+            />
+          );
+        if (station.kind === "hull-state")
+          return (
+            <HullStateFxStation
+              key={station.id}
+              station={station}
+              tuning={tuning}
+              selected={selected}
+              showLabel={showLabel}
+            />
+          );
+        if (station.kind === "animated-model")
+          return (
+            <AnimatedModelFxStation
+              key={station.id}
+              station={station}
+              tuning={tuning}
+              selected={selected}
+              showLabel={showLabel}
+            />
+          );
+        if (station.kind === "organic-skin")
+          return (
+            <OrganicSkinFxStation
+              key={station.id}
+              station={station}
+              tuning={tuning}
+              selected={selected}
+              showLabel={showLabel}
+              paused={animationPaused}
+            />
+          );
+        return (
+          <SpecialFxStation
+            key={station.id}
+            station={station}
+            tuning={tuning}
+            selected={selected}
+            animationPaused={animationPaused}
+            showLabel={showLabel}
+          />
+        );
       })}
-      <OrbitControls makeDefault enableDamping dampingFactor={0.06} minDistance={4} maxDistance={72} maxPolarAngle={Math.PI * 0.49} target={orbitTarget} />
-      <EffectComposer>
-        <Bloom intensity={1.35} luminanceThreshold={0.08} luminanceSmoothing={0.24} />
-      </EffectComposer>
+      <OrbitControls
+        makeDefault
+        enableDamping
+        dampingFactor={0.06}
+        minDistance={4}
+        maxDistance={72}
+        maxPolarAngle={Math.PI * 0.49}
+        target={orbitTarget}
+      />
+      {bloomEnabled ? (
+        <EffectComposer>
+          <Bloom
+            intensity={bloomIntensity}
+            luminanceThreshold={0.08}
+            luminanceSmoothing={0.24}
+          />
+        </EffectComposer>
+      ) : null}
     </>
   );
 }
@@ -9646,10 +12710,20 @@ function SliderControl({
   return (
     <label className="grid gap-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
-        <span className="font-mono text-xs text-primary">{value.toFixed(step < 1 ? 2 : 0)}</span>
+        <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+          {label}
+        </span>
+        <span className="font-mono text-xs text-primary">
+          {value.toFixed(step < 1 ? 2 : 0)}
+        </span>
       </div>
-      <Slider value={[value]} min={min} max={max} step={step} onValueChange={values => onChange(values[0] ?? value)} />
+      <Slider
+        value={[value]}
+        min={min}
+        max={max}
+        step={step}
+        onValueChange={(values) => onChange(values[0] ?? value)}
+      />
     </label>
   );
 }
@@ -9667,7 +12741,10 @@ function ToggleControl({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <label htmlFor={id} className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+      <label
+        htmlFor={id}
+        className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground"
+      >
         {label}
       </label>
       <Switch id={id} checked={checked} onCheckedChange={onChange} />
@@ -9682,10 +12759,16 @@ function TextureOptionControl({
   value: number;
   onChange: (value: number) => void;
 }) {
-  const selectedIndex = clamp(Math.round(value) - 1, 0, KIRISHIAC_BEAM_TEXTURE_OPTIONS.length - 1);
+  const selectedIndex = clamp(
+    Math.round(value) - 1,
+    0,
+    KIRISHIAC_BEAM_TEXTURE_OPTIONS.length - 1,
+  );
   return (
     <div className="grid gap-2">
-      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Beam Texture</span>
+      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        Beam Texture
+      </span>
       <div className="grid grid-cols-2 gap-2">
         {KIRISHIAC_BEAM_TEXTURE_OPTIONS.map((option, index) => (
           <button
@@ -9715,10 +12798,16 @@ function ShieldTokenTextureControl({
   value: number | undefined;
   onChange: (value: number) => void;
 }) {
-  const selectedIndex = clamp(Math.round(value ?? 1) - 1, 0, SHIELD_TOKEN_TEXTURE_OPTIONS.length - 1);
+  const selectedIndex = clamp(
+    Math.round(value ?? 1) - 1,
+    0,
+    SHIELD_TOKEN_TEXTURE_OPTIONS.length - 1,
+  );
   return (
     <div className="grid gap-2">
-      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </span>
       <div className="grid grid-cols-2 gap-2">
         {SHIELD_TOKEN_TEXTURE_OPTIONS.map((option, index) => (
           <button
@@ -9739,20 +12828,30 @@ function ShieldTokenTextureControl({
   );
 }
 
-function ColorControl({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ColorControl({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <label className="grid gap-2">
-      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</span>
+      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </span>
       <div className="flex items-center gap-2">
         <input
           type="color"
           value={value}
-          onChange={event => onChange(event.target.value)}
+          onChange={(event) => onChange(event.target.value)}
           className="h-9 w-12 cursor-pointer rounded border border-border bg-transparent p-1"
         />
         <input
           value={value}
-          onChange={event => onChange(event.target.value)}
+          onChange={(event) => onChange(event.target.value)}
           className="h-9 min-w-0 flex-1 rounded border border-input bg-background px-2 font-mono text-xs text-foreground"
         />
       </div>
@@ -9769,14 +12868,18 @@ function ProjectileShapeControl({
 }) {
   return (
     <div className="grid gap-2">
-      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Projectile Shape</span>
+      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        Projectile Shape
+      </span>
       <div className="grid grid-cols-2 overflow-hidden rounded border border-border">
-        {(["sphere", "cylinder"] as const).map(shape => (
+        {(["sphere", "cylinder"] as const).map((shape) => (
           <button
             key={shape}
             type="button"
             className={`h-9 border-r border-border px-3 font-mono text-xs font-bold uppercase tracking-widest transition-colors last:border-r-0 ${
-              value === shape ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-secondary"
+              value === shape
+                ? "bg-primary text-primary-foreground"
+                : "bg-background text-muted-foreground hover:bg-secondary"
             }`}
             onClick={() => onChange(shape)}
           >
@@ -9794,15 +12897,16 @@ function exportPresetFor(station: ShowcaseStation, tuning: Tuning): string {
       stationId: station.id,
       label: station.label,
       source: "vfx-showcase-preview-only",
-      effect: station.kind === "weapon"
-        ? classifyWeapon(station.weapon)
-        : station.kind === "hull-state"
-          ? station.mode
-          : station.kind === "animated-model"
-            ? "bone-animation"
-            : station.kind === "organic-skin"
-              ? station.variant
-              : station.effect,
+      effect:
+        station.kind === "weapon"
+          ? classifyWeapon(station.weapon)
+          : station.kind === "hull-state"
+            ? station.mode
+            : station.kind === "animated-model"
+              ? "bone-animation"
+              : station.kind === "organic-skin"
+                ? station.variant
+                : station.effect,
       tuning,
     },
     null,
@@ -9822,9 +12926,15 @@ function isVorlonBeamStation(station: ShowcaseStation): boolean {
 }
 
 export default function VfxShowcase() {
-  const [activeBoardId, setActiveBoardId] = useState(SHOWCASE_BOARDS[0]?.id ?? "");
-  const activeBoard = SHOWCASE_BOARDS.find(board => board.id === activeBoardId) ?? SHOWCASE_BOARDS[0];
-  const [selectedStationId, setSelectedStationId] = useState(activeBoard.stations[0]?.id ?? "");
+  const [activeBoardId, setActiveBoardId] = useState(
+    SHOWCASE_BOARDS[0]?.id ?? "",
+  );
+  const activeBoard =
+    SHOWCASE_BOARDS.find((board) => board.id === activeBoardId) ??
+    SHOWCASE_BOARDS[0];
+  const [selectedStationId, setSelectedStationId] = useState(
+    activeBoard.stations[0]?.id ?? "",
+  );
   const [overrides, setOverrides] = useState<TuningOverrides>({});
   const [animationPaused, setAnimationPaused] = useState(false);
 
@@ -9832,24 +12942,53 @@ export default function VfxShowcase() {
     setSelectedStationId(activeBoard.stations[0]?.id ?? "");
   }, [activeBoard.id]);
 
-  const selectedStation = activeBoard.stations.find(station => station.id === selectedStationId) ?? activeBoard.stations[0];
-  const selectedTuning = selectedStation ? effectiveTuning(selectedStation, overrides) : DEFAULT_TUNING;
-  const selectedIsArcParticleSpray = selectedStation ? isArcParticleSpray(selectedStation) : false;
-  const selectedIsPersistentImpactFlashes = selectedStation ? isPersistentImpactFlashes(selectedStation) : false;
-  const selectedIsTexturedSphere = selectedStation ? isTexturedExplodingSphere(selectedStation) : false;
-  const selectedIsTexturedSphereSampleOne = selectedStation ? isTexturedSphereSampleOne(selectedStation) : false;
-  const selectedIsPointSparkTrail = selectedStation ? isPointSparkTrail(selectedStation) : false;
-  const selectedIsPraxisShockwave = selectedStation?.kind === "special" && selectedStation.effect === "praxis-shockwave";
+  const selectedStation =
+    activeBoard.stations.find((station) => station.id === selectedStationId) ??
+    activeBoard.stations[0];
+  const selectedTuning = selectedStation
+    ? effectiveTuning(selectedStation, overrides)
+    : DEFAULT_TUNING;
+  const selectedIsArcParticleSpray = selectedStation
+    ? isArcParticleSpray(selectedStation)
+    : false;
+  const selectedIsPersistentImpactFlashes = selectedStation
+    ? isPersistentImpactFlashes(selectedStation)
+    : false;
+  const selectedIsTexturedSphere = selectedStation
+    ? isTexturedExplodingSphere(selectedStation)
+    : false;
+  const selectedIsTexturedSphereSampleOne = selectedStation
+    ? isTexturedSphereSampleOne(selectedStation)
+    : false;
+  const selectedIsPointSparkTrail = selectedStation
+    ? isPointSparkTrail(selectedStation)
+    : false;
+  const selectedIsPraxisShockwave =
+    selectedStation?.kind === "special" &&
+    selectedStation.effect === "praxis-shockwave";
   const selectedIsOrganicSkin = selectedStation?.kind === "organic-skin";
-  const selectedIsKirishiacBeam = selectedStation ? isKirishiacBeamStation(selectedStation) : false;
-  const selectedIsVorlonBeam = selectedStation ? isVorlonBeamStation(selectedStation) : false;
-  const selectedIsShieldToken = selectedStation ? isShieldTokenStation(selectedStation) : false;
-  const selectedIsJumpGatePortalCombo = selectedStation?.kind === "special" && selectedStation.effect === "jump-gate-portal-combo";
-  const exportText = selectedStation ? exportPresetFor(selectedStation, selectedTuning) : "";
+  const selectedIsCelShaded =
+    selectedStation?.kind === "special" &&
+    selectedStation.effect === "cel-shaded-model";
+  const selectedIsKirishiacBeam = selectedStation
+    ? isKirishiacBeamStation(selectedStation)
+    : false;
+  const selectedIsVorlonBeam = selectedStation
+    ? isVorlonBeamStation(selectedStation)
+    : false;
+  const selectedIsShieldToken = selectedStation
+    ? isShieldTokenStation(selectedStation)
+    : false;
+  const selectedIsJumpGatePortalCombo =
+    selectedStation?.kind === "special" &&
+    selectedStation.effect === "jump-gate-portal-combo";
+  const exportText = selectedStation
+    ? exportPresetFor(selectedStation, selectedTuning)
+    : "";
 
   const updateSelected = (patch: Partial<Tuning>) => {
     if (!selectedStation) return;
-    setOverrides(prev => ({
+    setOverrides((prev) => ({
       ...prev,
       [selectedStation.id]: { ...(prev[selectedStation.id] ?? {}), ...patch },
     }));
@@ -9857,7 +12996,7 @@ export default function VfxShowcase() {
 
   const resetSelected = () => {
     if (!selectedStation) return;
-    setOverrides(prev => {
+    setOverrides((prev) => {
       const next = { ...prev };
       delete next[selectedStation.id];
       return next;
@@ -9876,8 +13015,12 @@ export default function VfxShowcase() {
             <div className="flex min-w-0 items-center gap-3">
               <Sparkles className="h-5 w-5 shrink-0 text-primary" />
               <div className="min-w-0">
-                <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">Effect Test Range</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{activeBoard.summary}</p>
+                <h2 className="text-sm font-bold uppercase tracking-[0.22em] text-primary">
+                  Effect Test Range
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {activeBoard.summary}
+                </p>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -9886,11 +13029,11 @@ export default function VfxShowcase() {
                 size="sm"
                 variant={animationPaused ? "default" : "outline"}
                 className="gap-2 uppercase tracking-widest text-xs"
-                onClick={() => setAnimationPaused(prev => !prev)}
+                onClick={() => setAnimationPaused((prev) => !prev)}
               >
                 {animationPaused ? "Resume Animation" : "Pause Animation"}
               </Button>
-              {SHOWCASE_BOARDS.map(board => (
+              {SHOWCASE_BOARDS.map((board) => (
                 <Button
                   key={board.id}
                   type="button"
@@ -9926,12 +13069,14 @@ export default function VfxShowcase() {
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Target className="h-4 w-4 text-primary" />
-                <span className="font-mono text-xs font-bold uppercase tracking-widest">Stations</span>
+                <span className="font-mono text-xs font-bold uppercase tracking-widest">
+                  Stations
+                </span>
               </div>
               <Badge variant="outline">{activeBoard.stations.length}</Badge>
             </div>
             <div className="grid gap-2 p-3">
-              {activeBoard.stations.map(station => (
+              {activeBoard.stations.map((station) => (
                 <button
                   key={station.id}
                   type="button"
@@ -9943,10 +13088,16 @@ export default function VfxShowcase() {
                   onClick={() => setSelectedStationId(station.id)}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-xs font-bold uppercase tracking-widest text-foreground">{station.label}</span>
-                    <Badge variant="secondary">{stationTypeLabel(station)}</Badge>
+                    <span className="font-mono text-xs font-bold uppercase tracking-widest text-foreground">
+                      {station.label}
+                    </span>
+                    <Badge variant="secondary">
+                      {stationTypeLabel(station)}
+                    </Badge>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground">{station.note}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {station.note}
+                  </p>
                 </button>
               ))}
             </div>
@@ -9956,55 +13107,421 @@ export default function VfxShowcase() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal className="h-4 w-4 text-primary" />
-                    <span className="font-mono text-xs font-bold uppercase tracking-widest">Tune Preview</span>
+                    <span className="font-mono text-xs font-bold uppercase tracking-widest">
+                      Tune Preview
+                    </span>
                   </div>
-                  <Button type="button" variant="outline" size="sm" className="gap-2 text-xs uppercase tracking-widest" onClick={resetSelected}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 text-xs uppercase tracking-widest"
+                    onClick={resetSelected}
+                  >
                     <RotateCcw className="h-3.5 w-3.5" />
                     Reset
                   </Button>
                 </div>
 
                 <div className="grid gap-4">
-                  {!selectedIsOrganicSkin ? (
+                  {!selectedIsOrganicSkin && !selectedIsCelShaded ? (
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                      <ColorControl label={selectedIsPraxisShockwave ? "Ring Color" : "Primary Color"} value={selectedTuning.color} onChange={color => updateSelected({ color })} />
+                      <ColorControl
+                        label={
+                          selectedIsPraxisShockwave
+                            ? "Ring Color"
+                            : "Primary Color"
+                        }
+                        value={selectedTuning.color}
+                        onChange={(color) => updateSelected({ color })}
+                      />
                       {!selectedIsPraxisShockwave ? (
-                        <ColorControl label={selectedIsArcParticleSpray ? "Outline Color" : "Accent Color"} value={selectedTuning.secondaryColor} onChange={secondaryColor => updateSelected({ secondaryColor })} />
+                        <ColorControl
+                          label={
+                            selectedIsArcParticleSpray
+                              ? "Outline Color"
+                              : "Accent Color"
+                          }
+                          value={selectedTuning.secondaryColor}
+                          onChange={(secondaryColor) =>
+                            updateSelected({ secondaryColor })
+                          }
+                        />
                       ) : null}
                     </div>
                   ) : null}
-                  {selectedIsVorlonBeam ? (
+                  {selectedIsCelShaded ? (
+                    <Accordion
+                      type="multiple"
+                      defaultValue={[
+                        "cel-surface",
+                        "cel-lighting",
+                        "cel-outline",
+                      ]}
+                      className="w-full border-t border-border"
+                    >
+                      <AccordionItem value="cel-surface">
+                        <AccordionTrigger className="font-mono text-xs font-bold uppercase tracking-widest">
+                          Surface
+                        </AccordionTrigger>
+                        <AccordionContent className="grid gap-4 px-1">
+                          <ColorControl
+                            label="Material Tint"
+                            value={selectedTuning.color}
+                            onChange={(color) => updateSelected({ color })}
+                          />
+                          <SliderControl
+                            label="Model Size"
+                            value={selectedTuning.size}
+                            min={0.5}
+                            max={1.6}
+                            step={0.05}
+                            onChange={(size) => updateSelected({ size })}
+                          />
+                          <SliderControl
+                            label="Surface Brightness"
+                            value={selectedTuning.intensity}
+                            min={0.35}
+                            max={1.75}
+                            step={0.05}
+                            onChange={(intensity) =>
+                              updateSelected({ intensity })
+                            }
+                          />
+                          <ToggleControl
+                            id="cel-source-texture"
+                            label="Use Source Texture"
+                            checked={selectedTuning.celTextureEnabled ?? true}
+                            onChange={(celTextureEnabled) =>
+                              updateSelected({ celTextureEnabled })
+                            }
+                          />
+                          {(selectedTuning.celTextureEnabled ?? true) ? (
+                            <SliderControl
+                              label="Texture Strength"
+                              value={selectedTuning.celTextureStrength ?? 1}
+                              min={0}
+                              max={1}
+                              step={0.02}
+                              onChange={(celTextureStrength) =>
+                                updateSelected({ celTextureStrength })
+                              }
+                            />
+                          ) : null}
+                          <ToggleControl
+                            id="cel-emissive-maps"
+                            label="Use Emissive Maps"
+                            checked={selectedTuning.celEmissiveEnabled ?? true}
+                            onChange={(celEmissiveEnabled) =>
+                              updateSelected({ celEmissiveEnabled })
+                            }
+                          />
+                          {(selectedTuning.celEmissiveEnabled ?? true) ? (
+                            <SliderControl
+                              label="Emissive Strength"
+                              value={selectedTuning.celEmissiveStrength ?? 1}
+                              min={0}
+                              max={4}
+                              step={0.05}
+                              onChange={(celEmissiveStrength) =>
+                                updateSelected({ celEmissiveStrength })
+                              }
+                            />
+                          ) : null}
+                          <SliderControl
+                            label="Normal Detail Strength"
+                            value={selectedTuning.celNormalStrength ?? 1}
+                            min={0}
+                            max={2}
+                            step={0.05}
+                            onChange={(celNormalStrength) =>
+                              updateSelected({ celNormalStrength })
+                            }
+                          />
+                          <ToggleControl
+                            id="cel-transparency"
+                            label="Preserve Transparency"
+                            checked={
+                              selectedTuning.celTransparencyEnabled ?? true
+                            }
+                            onChange={(celTransparencyEnabled) =>
+                              updateSelected({ celTransparencyEnabled })
+                            }
+                          />
+                        </AccordionContent>
+                      </AccordionItem>
+
+                      <AccordionItem value="cel-lighting">
+                        <AccordionTrigger className="font-mono text-xs font-bold uppercase tracking-widest">
+                          Lighting
+                        </AccordionTrigger>
+                        <AccordionContent className="grid gap-4 px-1">
+                          <ToggleControl
+                            id="cel-toon-shading"
+                            label="Toon Shading"
+                            checked={selectedTuning.celToonEnabled ?? true}
+                            onChange={(celToonEnabled) =>
+                              updateSelected({ celToonEnabled })
+                            }
+                          />
+                          {(selectedTuning.celToonEnabled ?? true) ? (
+                            <>
+                              <SliderControl
+                                label="Lighting Bands"
+                                value={selectedTuning.count}
+                                min={2}
+                                max={8}
+                                step={1}
+                                onChange={(count) => updateSelected({ count })}
+                              />
+                              <SliderControl
+                                label="Shadow Depth"
+                                value={selectedTuning.celShadowDepth ?? 0.76}
+                                min={0}
+                                max={1}
+                                step={0.02}
+                                onChange={(celShadowDepth) =>
+                                  updateSelected({ celShadowDepth })
+                                }
+                              />
+                              <SliderControl
+                                label="Band Contrast"
+                                value={selectedTuning.celBandContrast ?? 1}
+                                min={0}
+                                max={2}
+                                step={0.05}
+                                onChange={(celBandContrast) =>
+                                  updateSelected({ celBandContrast })
+                                }
+                              />
+                            </>
+                          ) : null}
+                          <SliderControl
+                            label="Ambient Light"
+                            value={selectedTuning.celAmbientLight ?? 0.2}
+                            min={0}
+                            max={2}
+                            step={0.05}
+                            onChange={(celAmbientLight) =>
+                              updateSelected({ celAmbientLight })
+                            }
+                          />
+                          <SliderControl
+                            label="Directional Light"
+                            value={selectedTuning.celDirectionalLight ?? 2.1}
+                            min={0}
+                            max={5}
+                            step={0.05}
+                            onChange={(celDirectionalLight) =>
+                              updateSelected({ celDirectionalLight })
+                            }
+                          />
+                          <SliderControl
+                            label="Light Azimuth"
+                            value={selectedTuning.celLightAzimuth ?? 36}
+                            min={-180}
+                            max={180}
+                            step={1}
+                            onChange={(celLightAzimuth) =>
+                              updateSelected({ celLightAzimuth })
+                            }
+                          />
+                          <SliderControl
+                            label="Light Elevation"
+                            value={selectedTuning.celLightElevation ?? 54}
+                            min={5}
+                            max={90}
+                            step={1}
+                            onChange={(celLightElevation) =>
+                              updateSelected({ celLightElevation })
+                            }
+                          />
+                          <ToggleControl
+                            id="cel-bloom"
+                            label="Bloom"
+                            checked={selectedTuning.celBloomEnabled ?? false}
+                            onChange={(celBloomEnabled) =>
+                              updateSelected({ celBloomEnabled })
+                            }
+                          />
+                          {selectedTuning.celBloomEnabled ? (
+                            <SliderControl
+                              label="Bloom Strength"
+                              value={selectedTuning.celBloomStrength ?? 1}
+                              min={0}
+                              max={3}
+                              step={0.05}
+                              onChange={(celBloomStrength) =>
+                                updateSelected({ celBloomStrength })
+                              }
+                            />
+                          ) : null}
+                        </AccordionContent>
+                      </AccordionItem>
+
+                      <AccordionItem value="cel-outline">
+                        <AccordionTrigger className="font-mono text-xs font-bold uppercase tracking-widest">
+                          Outline
+                        </AccordionTrigger>
+                        <AccordionContent className="grid gap-4 px-1">
+                          <ToggleControl
+                            id="cel-silhouette-outline"
+                            label="Silhouette Outline"
+                            checked={selectedTuning.celOutlineEnabled ?? true}
+                            onChange={(celOutlineEnabled) =>
+                              updateSelected({ celOutlineEnabled })
+                            }
+                          />
+                          {(selectedTuning.celOutlineEnabled ?? true) ? (
+                            <>
+                              <ColorControl
+                                label="Outline Color"
+                                value={selectedTuning.secondaryColor}
+                                onChange={(secondaryColor) =>
+                                  updateSelected({ secondaryColor })
+                                }
+                              />
+                              <SliderControl
+                                label="Outline Expansion"
+                                value={selectedTuning.thickness}
+                                min={0}
+                                max={8}
+                                step={0.05}
+                                onChange={(thickness) =>
+                                  updateSelected({ thickness })
+                                }
+                              />
+                              <SliderControl
+                                label="Outline Opacity"
+                                value={selectedTuning.fade}
+                                min={0}
+                                max={1}
+                                step={0.02}
+                                onChange={(fade) => updateSelected({ fade })}
+                              />
+                            </>
+                          ) : null}
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  ) : selectedIsVorlonBeam ? (
                     <>
-                      <SliderControl label="Playback Speed" value={selectedTuning.speed} min={0.25} max={2} step={0.05} onChange={speed => updateSelected({ speed })} />
-                      <SliderControl label="Model Size" value={selectedTuning.size} min={0.5} max={1.6} step={0.05} onChange={size => updateSelected({ size })} />
-                      <SliderControl label="Small Beam Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
+                      <SliderControl
+                        label="Playback Speed"
+                        value={selectedTuning.speed}
+                        min={0.25}
+                        max={2}
+                        step={0.05}
+                        onChange={(speed) => updateSelected({ speed })}
+                      />
+                      <SliderControl
+                        label="Model Size"
+                        value={selectedTuning.size}
+                        min={0.5}
+                        max={1.6}
+                        step={0.05}
+                        onChange={(size) => updateSelected({ size })}
+                      />
+                      <SliderControl
+                        label="Small Beam Thickness"
+                        value={selectedTuning.thickness}
+                        min={0.25}
+                        max={4}
+                        step={0.05}
+                        onChange={(thickness) => updateSelected({ thickness })}
+                      />
                       <SliderControl
                         label="Primary Beam Diameter"
                         value={selectedTuning.beamCoreDiameter ?? 0.0325}
                         min={0.01}
                         max={0.8}
                         step={0.0025}
-                        onChange={beamCoreDiameter => updateSelected({ beamCoreDiameter })}
+                        onChange={(beamCoreDiameter) =>
+                          updateSelected({ beamCoreDiameter })
+                        }
                       />
-                      <SliderControl label="Brightness" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
+                      <SliderControl
+                        label="Brightness"
+                        value={selectedTuning.intensity}
+                        min={0.1}
+                        max={4}
+                        step={0.05}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
                     </>
                   ) : selectedIsKirishiacBeam ? (
                     <>
-                      <TextureOptionControl value={selectedTuning.count} onChange={count => updateSelected({ count })} />
-                      <SliderControl label="Texture Speed" value={selectedTuning.speed} min={0.05} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
-                      <SliderControl label="Outer Diameter" value={selectedTuning.thickness} min={0.15} max={3.5} step={0.05} onChange={thickness => updateSelected({ thickness })} />
-                      <SliderControl label="Outer Length" value={selectedTuning.cylinderLength ?? 1} min={0.25} max={6} step={0.05} onChange={cylinderLength => updateSelected({ cylinderLength })} />
-                      <SliderControl label="Outer Opacity" value={selectedTuning.fade} min={0} max={2} step={0.05} onChange={fade => updateSelected({ fade })} />
-                      <SliderControl label="Outer Brightness" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Outer Pulse" value={selectedTuning.arc} min={0} max={1.25} step={0.05} onChange={arc => updateSelected({ arc })} />
-                      <SliderControl label="Model Size" value={selectedTuning.size} min={0.5} max={1.8} step={0.05} onChange={size => updateSelected({ size })} />
+                      <TextureOptionControl
+                        value={selectedTuning.count}
+                        onChange={(count) => updateSelected({ count })}
+                      />
+                      <SliderControl
+                        label="Texture Speed"
+                        value={selectedTuning.speed}
+                        min={0.05}
+                        max={3}
+                        step={0.05}
+                        onChange={(speed) => updateSelected({ speed })}
+                      />
+                      <SliderControl
+                        label="Outer Diameter"
+                        value={selectedTuning.thickness}
+                        min={0.15}
+                        max={3.5}
+                        step={0.05}
+                        onChange={(thickness) => updateSelected({ thickness })}
+                      />
+                      <SliderControl
+                        label="Outer Length"
+                        value={selectedTuning.cylinderLength ?? 1}
+                        min={0.25}
+                        max={6}
+                        step={0.05}
+                        onChange={(cylinderLength) =>
+                          updateSelected({ cylinderLength })
+                        }
+                      />
+                      <SliderControl
+                        label="Outer Opacity"
+                        value={selectedTuning.fade}
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        onChange={(fade) => updateSelected({ fade })}
+                      />
+                      <SliderControl
+                        label="Outer Brightness"
+                        value={selectedTuning.intensity}
+                        min={0.1}
+                        max={4}
+                        step={0.05}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
+                      <SliderControl
+                        label="Outer Pulse"
+                        value={selectedTuning.arc}
+                        min={0}
+                        max={1.25}
+                        step={0.05}
+                        onChange={(arc) => updateSelected({ arc })}
+                      />
+                      <SliderControl
+                        label="Model Size"
+                        value={selectedTuning.size}
+                        min={0.5}
+                        max={1.8}
+                        step={0.05}
+                        onChange={(size) => updateSelected({ size })}
+                      />
                       <SliderControl
                         label="Inner Diameter"
                         value={selectedTuning.beamCoreDiameter ?? 0.18}
                         min={0.02}
                         max={1.4}
                         step={0.01}
-                        onChange={beamCoreDiameter => updateSelected({ beamCoreDiameter })}
+                        onChange={(beamCoreDiameter) =>
+                          updateSelected({ beamCoreDiameter })
+                        }
                       />
                       <SliderControl
                         label="Inner Brightness"
@@ -10012,7 +13529,9 @@ export default function VfxShowcase() {
                         min={0}
                         max={4}
                         step={0.05}
-                        onChange={beamCoreBrightness => updateSelected({ beamCoreBrightness })}
+                        onChange={(beamCoreBrightness) =>
+                          updateSelected({ beamCoreBrightness })
+                        }
                       />
                       <SliderControl
                         label="Inner Opacity"
@@ -10020,7 +13539,9 @@ export default function VfxShowcase() {
                         min={0}
                         max={2}
                         step={0.05}
-                        onChange={beamCoreOpacity => updateSelected({ beamCoreOpacity })}
+                        onChange={(beamCoreOpacity) =>
+                          updateSelected({ beamCoreOpacity })
+                        }
                       />
                       <SliderControl
                         label="Inner Pulse"
@@ -10028,78 +13549,343 @@ export default function VfxShowcase() {
                         min={0}
                         max={1.25}
                         step={0.05}
-                        onChange={beamCorePulse => updateSelected({ beamCorePulse })}
+                        onChange={(beamCorePulse) =>
+                          updateSelected({ beamCorePulse })
+                        }
                       />
                       <ToggleControl
                         id="kirishiac-normal-beam-toggle"
                         label="Normal Beam Core"
                         checked={(selectedTuning.randomness ?? 1) >= 0.5}
-                        onChange={enabled => updateSelected({ randomness: enabled ? 1 : 0 })}
+                        onChange={(enabled) =>
+                          updateSelected({ randomness: enabled ? 1 : 0 })
+                        }
                       />
                       <ToggleControl
                         id="kirishiac-outer-shell-toggle"
                         label="Outer Beam Shell"
                         checked={(selectedTuning.ribbonEffect ?? 1) >= 0.5}
-                        onChange={enabled => updateSelected({ ribbonEffect: enabled ? 1 : 0 })}
+                        onChange={(enabled) =>
+                          updateSelected({ ribbonEffect: enabled ? 1 : 0 })
+                        }
                       />
                     </>
                   ) : selectedIsOrganicSkin ? (
                     <>
-                      <SliderControl label="Motion Speed" value={selectedTuning.speed} min={0} max={2} step={0.01} onChange={speed => updateSelected({ speed })} />
-                      <SliderControl label="Pattern Scale" value={selectedTuning.spread} min={0.5} max={5} step={0.05} onChange={spread => updateSelected({ spread })} />
-                      <SliderControl label="Motion Amount" value={selectedTuning.intensity} min={0} max={1.5} step={0.01} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Flow Distortion" value={selectedTuning.arc} min={0} max={0.15} step={0.005} onChange={arc => updateSelected({ arc })} />
-                      <SliderControl label="Normal Strength" value={selectedTuning.thickness} min={0} max={2} step={0.05} onChange={thickness => updateSelected({ thickness })} />
-                      <SliderControl label="Model Size" value={selectedTuning.size} min={0.5} max={1.5} step={0.05} onChange={size => updateSelected({ size })} />
+                      <SliderControl
+                        label="Motion Speed"
+                        value={selectedTuning.speed}
+                        min={0}
+                        max={2}
+                        step={0.01}
+                        onChange={(speed) => updateSelected({ speed })}
+                      />
+                      <SliderControl
+                        label="Pattern Scale"
+                        value={selectedTuning.spread}
+                        min={0.5}
+                        max={5}
+                        step={0.05}
+                        onChange={(spread) => updateSelected({ spread })}
+                      />
+                      <SliderControl
+                        label="Motion Amount"
+                        value={selectedTuning.intensity}
+                        min={0}
+                        max={1.5}
+                        step={0.01}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
+                      <SliderControl
+                        label="Flow Distortion"
+                        value={selectedTuning.arc}
+                        min={0}
+                        max={0.15}
+                        step={0.005}
+                        onChange={(arc) => updateSelected({ arc })}
+                      />
+                      <SliderControl
+                        label="Normal Strength"
+                        value={selectedTuning.thickness}
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        onChange={(thickness) => updateSelected({ thickness })}
+                      />
+                      <SliderControl
+                        label="Model Size"
+                        value={selectedTuning.size}
+                        min={0.5}
+                        max={1.5}
+                        step={0.05}
+                        onChange={(size) => updateSelected({ size })}
+                      />
                     </>
                   ) : selectedIsPraxisShockwave ? (
                     <>
-                      <SliderControl label="Repetitions" value={selectedTuning.count} min={1} max={8} step={1} onChange={count => updateSelected({ count })} />
-                      <SliderControl label="End Size" value={selectedTuning.size} min={1} max={30} step={0.5} onChange={size => updateSelected({ size })} />
-                      <SliderControl label="Ring Lifetime" value={selectedTuning.fade} min={0.25} max={8} step={0.05} onChange={fade => updateSelected({ fade })} />
-                      <SliderControl label="Emissive" value={selectedTuning.intensity} min={0.1} max={5} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Rotation X" value={selectedTuning.rotationX ?? -90} min={-180} max={180} step={1} onChange={rotationX => updateSelected({ rotationX })} />
-                      <SliderControl label="Rotation Y" value={selectedTuning.rotationY ?? 0} min={-180} max={180} step={1} onChange={rotationY => updateSelected({ rotationY })} />
-                      <SliderControl label="Rotation Z" value={selectedTuning.rotationZ ?? 0} min={-180} max={180} step={1} onChange={rotationZ => updateSelected({ rotationZ })} />
+                      <SliderControl
+                        label="Repetitions"
+                        value={selectedTuning.count}
+                        min={1}
+                        max={8}
+                        step={1}
+                        onChange={(count) => updateSelected({ count })}
+                      />
+                      <SliderControl
+                        label="End Size"
+                        value={selectedTuning.size}
+                        min={1}
+                        max={30}
+                        step={0.5}
+                        onChange={(size) => updateSelected({ size })}
+                      />
+                      <SliderControl
+                        label="Ring Lifetime"
+                        value={selectedTuning.fade}
+                        min={0.25}
+                        max={8}
+                        step={0.05}
+                        onChange={(fade) => updateSelected({ fade })}
+                      />
+                      <SliderControl
+                        label="Emissive"
+                        value={selectedTuning.intensity}
+                        min={0.1}
+                        max={5}
+                        step={0.05}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
+                      <SliderControl
+                        label="Rotation X"
+                        value={selectedTuning.rotationX ?? -90}
+                        min={-180}
+                        max={180}
+                        step={1}
+                        onChange={(rotationX) => updateSelected({ rotationX })}
+                      />
+                      <SliderControl
+                        label="Rotation Y"
+                        value={selectedTuning.rotationY ?? 0}
+                        min={-180}
+                        max={180}
+                        step={1}
+                        onChange={(rotationY) => updateSelected({ rotationY })}
+                      />
+                      <SliderControl
+                        label="Rotation Z"
+                        value={selectedTuning.rotationZ ?? 0}
+                        min={-180}
+                        max={180}
+                        step={1}
+                        onChange={(rotationZ) => updateSelected({ rotationZ })}
+                      />
                     </>
                   ) : selectedIsShieldToken ? (
                     <>
-                      <ShieldTokenTextureControl label="Diffuse Texture" value={selectedTuning.diffuseTextureIndex} onChange={diffuseTextureIndex => updateSelected({ diffuseTextureIndex })} />
-                      <ShieldTokenTextureControl label="Alpha Texture" value={selectedTuning.alphaTextureIndex} onChange={alphaTextureIndex => updateSelected({ alphaTextureIndex })} />
-                      <SliderControl label="Rotation Speed" value={selectedTuning.speed} min={0} max={2.5} step={0.05} onChange={speed => updateSelected({ speed })} />
-                      <SliderControl label="Token Size" value={selectedTuning.size} min={0.2} max={2.5} step={0.05} onChange={size => updateSelected({ size })} />
-                      <SliderControl label="Height Above Ship" value={selectedTuning.arc} min={0.25} max={5} step={0.05} onChange={arc => updateSelected({ arc })} />
-                      <SliderControl label="Alpha / Opacity" value={selectedTuning.fade} min={0} max={1} step={0.02} onChange={fade => updateSelected({ fade })} />
-                      <SliderControl label="Diffuse Strength" value={selectedTuning.intensity} min={0.1} max={4} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Tilt X" value={selectedTuning.rotationX ?? 0} min={-90} max={90} step={1} onChange={rotationX => updateSelected({ rotationX })} />
-                      <SliderControl label="Tilt Z" value={selectedTuning.rotationZ ?? 0} min={-90} max={90} step={1} onChange={rotationZ => updateSelected({ rotationZ })} />
+                      <ShieldTokenTextureControl
+                        label="Diffuse Texture"
+                        value={selectedTuning.diffuseTextureIndex}
+                        onChange={(diffuseTextureIndex) =>
+                          updateSelected({ diffuseTextureIndex })
+                        }
+                      />
+                      <ShieldTokenTextureControl
+                        label="Alpha Texture"
+                        value={selectedTuning.alphaTextureIndex}
+                        onChange={(alphaTextureIndex) =>
+                          updateSelected({ alphaTextureIndex })
+                        }
+                      />
+                      <SliderControl
+                        label="Rotation Speed"
+                        value={selectedTuning.speed}
+                        min={0}
+                        max={2.5}
+                        step={0.05}
+                        onChange={(speed) => updateSelected({ speed })}
+                      />
+                      <SliderControl
+                        label="Token Size"
+                        value={selectedTuning.size}
+                        min={0.2}
+                        max={2.5}
+                        step={0.05}
+                        onChange={(size) => updateSelected({ size })}
+                      />
+                      <SliderControl
+                        label="Height Above Ship"
+                        value={selectedTuning.arc}
+                        min={0.25}
+                        max={5}
+                        step={0.05}
+                        onChange={(arc) => updateSelected({ arc })}
+                      />
+                      <SliderControl
+                        label="Alpha / Opacity"
+                        value={selectedTuning.fade}
+                        min={0}
+                        max={1}
+                        step={0.02}
+                        onChange={(fade) => updateSelected({ fade })}
+                      />
+                      <SliderControl
+                        label="Diffuse Strength"
+                        value={selectedTuning.intensity}
+                        min={0.1}
+                        max={4}
+                        step={0.05}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
+                      <SliderControl
+                        label="Tilt X"
+                        value={selectedTuning.rotationX ?? 0}
+                        min={-90}
+                        max={90}
+                        step={1}
+                        onChange={(rotationX) => updateSelected({ rotationX })}
+                      />
+                      <SliderControl
+                        label="Tilt Z"
+                        value={selectedTuning.rotationZ ?? 0}
+                        min={-90}
+                        max={90}
+                        step={1}
+                        onChange={(rotationZ) => updateSelected({ rotationZ })}
+                      />
                     </>
                   ) : selectedIsJumpGatePortalCombo ? (
                     <>
-                      <SliderControl label="Portal Speed" value={selectedTuning.speed} min={0.25} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
-                      <SliderControl label="Gate Mesh Size" value={selectedTuning.gateSize ?? selectedTuning.size} min={0.35} max={2.5} step={0.05} onChange={gateSize => updateSelected({ gateSize })} />
-                      <SliderControl label="Portal Mesh Size" value={selectedTuning.portalSize ?? 0.4} min={0.1} max={1.5} step={0.05} onChange={portalSize => updateSelected({ portalSize })} />
-                      <SliderControl label="Portal Front/Back" value={selectedTuning.portalOffset ?? 0} min={-3} max={3} step={0.05} onChange={portalOffset => updateSelected({ portalOffset })} />
-                      <SliderControl label="Portal Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Light Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
+                      <SliderControl
+                        label="Portal Speed"
+                        value={selectedTuning.speed}
+                        min={0.25}
+                        max={3}
+                        step={0.05}
+                        onChange={(speed) => updateSelected({ speed })}
+                      />
+                      <SliderControl
+                        label="Gate Mesh Size"
+                        value={selectedTuning.gateSize ?? selectedTuning.size}
+                        min={0.35}
+                        max={2.5}
+                        step={0.05}
+                        onChange={(gateSize) => updateSelected({ gateSize })}
+                      />
+                      <SliderControl
+                        label="Portal Mesh Size"
+                        value={selectedTuning.portalSize ?? 0.4}
+                        min={0.1}
+                        max={1.5}
+                        step={0.05}
+                        onChange={(portalSize) =>
+                          updateSelected({ portalSize })
+                        }
+                      />
+                      <SliderControl
+                        label="Portal Front/Back"
+                        value={selectedTuning.portalOffset ?? 0}
+                        min={-3}
+                        max={3}
+                        step={0.05}
+                        onChange={(portalOffset) =>
+                          updateSelected({ portalOffset })
+                        }
+                      />
+                      <SliderControl
+                        label="Portal Intensity"
+                        value={selectedTuning.intensity}
+                        min={0.1}
+                        max={3}
+                        step={0.05}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
+                      <SliderControl
+                        label="Light Spread"
+                        value={selectedTuning.spread}
+                        min={0.2}
+                        max={3}
+                        step={0.05}
+                        onChange={(spread) => updateSelected({ spread })}
+                      />
                     </>
                   ) : (
                     <>
-                      <SliderControl label="Speed" value={selectedTuning.speed} min={0.25} max={3} step={0.05} onChange={speed => updateSelected({ speed })} />
+                      <SliderControl
+                        label="Speed"
+                        value={selectedTuning.speed}
+                        min={0.25}
+                        max={3}
+                        step={0.05}
+                        onChange={(speed) => updateSelected({ speed })}
+                      />
                       <SliderControl
                         label="Size"
                         value={selectedTuning.size}
                         min={selectedIsTexturedSphere ? 0.01 : 0.25}
                         max={3}
                         step={selectedIsTexturedSphere ? 0.01 : 0.05}
-                        onChange={size => updateSelected({ size })}
+                        onChange={(size) => updateSelected({ size })}
                       />
-                      <SliderControl label="Fade" value={selectedTuning.fade} min={0.25} max={3} step={0.05} onChange={fade => updateSelected({ fade })} />
-                      <SliderControl label="Intensity" value={selectedTuning.intensity} min={0.1} max={3} step={0.05} onChange={intensity => updateSelected({ intensity })} />
-                      <SliderControl label="Spread" value={selectedTuning.spread} min={0.2} max={3} step={0.05} onChange={spread => updateSelected({ spread })} />
-                      <SliderControl label="Count" value={selectedTuning.count} min={1} max={selectedIsPointSparkTrail ? 160 : selectedIsArcParticleSpray ? 96 : selectedIsPersistentImpactFlashes ? 40 : 16} step={1} onChange={count => updateSelected({ count })} />
-                      <SliderControl label={selectedIsArcParticleSpray ? "Arc Angle" : "Arc Height"} value={selectedTuning.arc} min={0} max={6} step={0.05} onChange={arc => updateSelected({ arc })} />
-                      <SliderControl label="Thickness" value={selectedTuning.thickness} min={0.25} max={4} step={0.05} onChange={thickness => updateSelected({ thickness })} />
+                      <SliderControl
+                        label="Fade"
+                        value={selectedTuning.fade}
+                        min={0.25}
+                        max={3}
+                        step={0.05}
+                        onChange={(fade) => updateSelected({ fade })}
+                      />
+                      <SliderControl
+                        label="Intensity"
+                        value={selectedTuning.intensity}
+                        min={0.1}
+                        max={3}
+                        step={0.05}
+                        onChange={(intensity) => updateSelected({ intensity })}
+                      />
+                      <SliderControl
+                        label="Spread"
+                        value={selectedTuning.spread}
+                        min={0.2}
+                        max={3}
+                        step={0.05}
+                        onChange={(spread) => updateSelected({ spread })}
+                      />
+                      <SliderControl
+                        label="Count"
+                        value={selectedTuning.count}
+                        min={1}
+                        max={
+                          selectedIsPointSparkTrail
+                            ? 160
+                            : selectedIsArcParticleSpray
+                              ? 96
+                              : selectedIsPersistentImpactFlashes
+                                ? 40
+                                : 16
+                        }
+                        step={1}
+                        onChange={(count) => updateSelected({ count })}
+                      />
+                      <SliderControl
+                        label={
+                          selectedIsArcParticleSpray
+                            ? "Arc Angle"
+                            : "Arc Height"
+                        }
+                        value={selectedTuning.arc}
+                        min={0}
+                        max={6}
+                        step={0.05}
+                        onChange={(arc) => updateSelected({ arc })}
+                      />
+                      <SliderControl
+                        label="Thickness"
+                        value={selectedTuning.thickness}
+                        min={0.25}
+                        max={4}
+                        step={0.05}
+                        onChange={(thickness) => updateSelected({ thickness })}
+                      />
                     </>
                   )}
                   {selectedIsTexturedSphere ? (
@@ -10107,7 +13893,9 @@ export default function VfxShowcase() {
                       id="vfx-random-sphere-placement"
                       label="Random Placement"
                       checked={(selectedTuning.randomness ?? 0) >= 0.5}
-                      onChange={enabled => updateSelected({ randomness: enabled ? 1 : 0 })}
+                      onChange={(enabled) =>
+                        updateSelected({ randomness: enabled ? 1 : 0 })
+                      }
                     />
                   ) : null}
                   {selectedIsTexturedSphereSampleOne ? (
@@ -10117,7 +13905,9 @@ export default function VfxShowcase() {
                       min={0}
                       max={8}
                       step={0.1}
-                      onChange={expansionCycle => updateSelected({ expansionCycle })}
+                      onChange={(expansionCycle) =>
+                        updateSelected({ expansionCycle })
+                      }
                     />
                   ) : null}
                   {supportsRibbonRandomness(selectedStation) ? (
@@ -10127,7 +13917,7 @@ export default function VfxShowcase() {
                       min={0}
                       max={1.5}
                       step={0.05}
-                      onChange={randomness => updateSelected({ randomness })}
+                      onChange={(randomness) => updateSelected({ randomness })}
                     />
                   ) : null}
                   {selectedIsArcParticleSpray ? (
@@ -10137,20 +13927,34 @@ export default function VfxShowcase() {
                       min={0}
                       max={2}
                       step={0.05}
-                      onChange={ribbonEffect => updateSelected({ ribbonEffect })}
+                      onChange={(ribbonEffect) =>
+                        updateSelected({ ribbonEffect })
+                      }
                     />
                   ) : null}
                 </div>
 
                 <div className="mt-4 border-t border-border pt-4">
                   <div className="mb-2 flex items-center justify-between gap-3">
-                    <span className="font-mono text-xs font-bold uppercase tracking-widest text-primary">Export Preset</span>
-                    <Button type="button" variant="outline" size="sm" className="gap-2 text-xs uppercase tracking-widest" onClick={copyPreset}>
+                    <span className="font-mono text-xs font-bold uppercase tracking-widest text-primary">
+                      Export Preset
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-xs uppercase tracking-widest"
+                      onClick={copyPreset}
+                    >
                       <Copy className="h-3.5 w-3.5" />
                       Copy
                     </Button>
                   </div>
-                  <Textarea value={exportText} readOnly className="min-h-48 font-mono text-xs" />
+                  <Textarea
+                    value={exportText}
+                    readOnly
+                    className="min-h-48 font-mono text-xs"
+                  />
                 </div>
               </div>
             ) : null}

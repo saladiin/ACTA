@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
 import { desc, eq, or, and, ne, isNull } from "drizzle-orm";
 import { db, gamesTable, lobbyChatMessagesTable, playersTable } from "@workspace/db";
-import { requireAuth, getUserId } from "../lib/auth";
+import { requireAuth, getUserId, isAdminUser } from "../lib/auth";
 import { GetLobbyResponse } from "@workspace/api-zod";
 import { AI_OPPONENT_ID } from "../lib/ai-opponent";
+import { gameAppearsInObserverList } from "../lib/game-observer-access";
 
 // Mirror of artifacts/api-server/src/routes/games.ts:toGameDto — strips the
 // server-only passwordHash field and surfaces a boolean hasPassword so the
@@ -63,6 +64,7 @@ function parseLobbyChatBody(body: unknown): { success: true; message: string } |
 
 router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
   const userId = getUserId(req);
+  const isAdmin = await isAdminUser(userId);
 
   const myGames = (await db
     .select()
@@ -100,15 +102,19 @@ router.get("/lobby", requireAuth, async (req, res): Promise<void> => {
     .map(toLobbyGameDto);
 
   const myGameIds = new Set(myGames.map(game => game.id));
+  const observableStatus = or(eq(gamesTable.status, "active"), eq(gamesTable.status, "completed"));
   const observableGames = (await db
     .select()
     .from(gamesTable)
-    .where(and(
-      eq(gamesTable.allowObservers, true),
-      or(eq(gamesTable.status, "active"), eq(gamesTable.status, "completed")),
-    ))
+    .where(isAdmin
+      ? observableStatus
+      : and(eq(gamesTable.allowObservers, true), observableStatus))
     .orderBy(desc(gamesTable.updatedAt)))
-    .filter(game => !myGameIds.has(game.id) && !isTemporarilyArchived(game))
+    .filter(game => (
+      gameAppearsInObserverList(game, isAdmin) &&
+      !myGameIds.has(game.id) &&
+      !isTemporarilyArchived(game)
+    ))
     .slice(0, 20)
     .map(toLobbyGameDto);
 

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser } from "@clerk/react";
@@ -22,6 +23,9 @@ import { Swords, Clock, Trophy, Plus, ChevronRight, Target, Pencil, Check, X, Me
 import { normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
 import { setDevUserId, useDevUserId } from "@/lib/dev-user";
 import { getTemporaryUserId, temporaryUsernameAuthEnabled, useTemporaryUsername } from "@/lib/temporary-user";
+import { APP_BUILD_SHA } from "@/lib/build-version";
+
+type LobbyAppearance = "standard" | "shadow-organic";
 
 type LobbyChatMessage = {
   id: number;
@@ -124,7 +128,13 @@ function ChallengeFeatureBadges({ game }: { game: { hasTerrain?: boolean; hasSta
   );
 }
 
-function LobbyChatPanel({ myUserId }: { myUserId: string }) {
+function LobbyChatPanel({
+  myUserId,
+  appearance = "standard",
+}: {
+  myUserId: string;
+  appearance?: LobbyAppearance;
+}) {
   const qc = useQueryClient();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(true);
@@ -169,6 +179,13 @@ function LobbyChatPanel({ myUserId }: { myUserId: string }) {
   });
   const trimmed = draft.trim();
   const canSend = trimmed.length > 0 && trimmed.length <= 500 && !sendMessage.isPending;
+  const shadowOrganic = appearance === "shadow-organic";
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const chatStyle = shadowOrganic
+    ? ({
+        "--shadow-organic-texture": `url("${basePath}/api/textures/shadow_flesh_base_tile.png?v=${APP_BUILD_SHA}")`,
+      } as CSSProperties)
+    : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -190,13 +207,14 @@ function LobbyChatPanel({ myUserId }: { myUserId: string }) {
     sendMessage.mutate(trimmed);
   };
 
-  return (
+  return createPortal(
     <aside
       className={
         open
-          ? "fixed inset-x-0 bottom-0 z-50 border-t border-amber-500/30 bg-background/95 shadow-2xl shadow-black/60 backdrop-blur"
-          : "fixed bottom-8 right-5 z-50 rounded-t-md border border-amber-500/60 bg-black/90 shadow-2xl shadow-black/60 backdrop-blur"
+          ? `lobby-chat-viewport-anchor fixed inset-x-0 z-[60] border-t border-amber-500/30 bg-background/95 shadow-2xl shadow-black/60 backdrop-blur ${shadowOrganic ? "shadow-organic-chat" : ""}`
+          : `lobby-chat-viewport-anchor fixed right-5 z-[60] rounded-t-md border border-amber-500/60 bg-black/90 shadow-2xl shadow-black/60 backdrop-blur ${shadowOrganic ? "shadow-organic-chat" : ""}`
       }
+      style={chatStyle}
       data-testid="lobby-chat-panel"
     >
       <button
@@ -312,11 +330,12 @@ function LobbyChatPanel({ myUserId }: { myUserId: string }) {
           </div>
         </div>
       )}
-    </aside>
+    </aside>,
+    document.body,
   );
 }
 
-export default function Lobby() {
+export default function Lobby({ appearance = "standard" }: { appearance?: LobbyAppearance }) {
   const { data: lobby, isLoading } = useGetLobby();
   const { data: profile } = useGetMyProfile();
   const user = temporaryUsernameAuthEnabled ? null : useUser().user;
@@ -329,7 +348,7 @@ export default function Lobby() {
   const acceptGame = useAcceptGame();
   const observeGame = useMutation({
     mutationFn: ({ gameId, data }: { gameId: number; data?: { password?: string | null } }) =>
-      customFetch<{ viewerRole: "observer" }>(`/api/games/${gameId}/observe`, {
+      customFetch<{ viewerRole: "observer" | "admin-observer" }>(`/api/games/${gameId}/observe`, {
         method: "POST",
         body: JSON.stringify(data ?? {}),
         responseType: "json",
@@ -338,6 +357,7 @@ export default function Lobby() {
   const myUserId = temporaryUsernameAuthEnabled
     ? getTemporaryUserId() ?? ""
     : import.meta.env.DEV ? devUserId : (user?.id ?? "");
+  const shadowOrganic = appearance === "shadow-organic";
 
   const [editing, setEditing] = useState(false);
   const [callsign, setCallsign] = useState("");
@@ -418,8 +438,8 @@ export default function Lobby() {
   };
 
   return (
-    <Layout title="Command Lobby">
-      <div className="p-6 pb-80 max-w-5xl mx-auto space-y-8">
+    <Layout title={shadowOrganic ? "Shadow Command Lobby" : "Command Lobby"} appearance={appearance}>
+      <div className={`p-6 pb-80 max-w-5xl mx-auto space-y-8 ${shadowOrganic ? "shadow-organic-lobby" : ""}`}>
         {/* Profile bar */}
         {profile && (
           <div data-testid="profile-bar" className="flex items-center justify-between border border-border bg-card rounded-md px-5 py-3">
@@ -700,7 +720,11 @@ export default function Lobby() {
           )}
         </section>
       </div>
-      <LobbyChatPanel myUserId={myUserId} />
+      <LobbyChatPanel myUserId={myUserId} appearance={appearance} />
     </Layout>
   );
+}
+
+export function ShadowLobby() {
+  return <Lobby appearance="shadow-organic" />;
 }

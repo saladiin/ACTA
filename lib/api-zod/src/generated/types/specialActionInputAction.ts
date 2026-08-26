@@ -22,6 +22,8 @@ export const SpecialActionInputAction = {
   'track-that-target': 'track-that-target',
   'maneuver-to-shield': 'maneuver-to-shield',
   'cause-confusion': 'cause-confusion',
+  'stand-down-and-prepare-to-be-boarded': 'stand-down-and-prepare-to-be-boarded',
+  'initiate-jump-point': 'initiate-jump-point',
   'all-hands-on-deck': 'all-hands-on-deck',
   scramble: 'scramble',
   regenerate: 'regenerate',
