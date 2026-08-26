@@ -13,8 +13,6 @@ import Home from "@/pages/home";
 import SignInPage from "@/pages/sign-in";
 import SignUpPage from "@/pages/sign-up";
 import Lobby, { ShadowLobby } from "@/pages/lobby";
-import Campaign from "@/pages/campaign";
-import CampaignBattle from "@/pages/campaign-battle";
 import Fleets from "@/pages/fleets";
 import NewGame from "@/pages/new-game";
 import GameFleetSelection from "@/pages/game-fleet-selection";
@@ -42,6 +40,12 @@ const queryClient = new QueryClient({
 
 const localToolingRoutesEnabled = import.meta.env.DEV || isLocalToolingHost(window.location.hostname);
 
+const Campaign = localToolingRoutesEnabled
+  ? lazy(() => import("@/pages/campaign"))
+  : null;
+const CampaignBattle = localToolingRoutesEnabled
+  ? lazy(() => import("@/pages/campaign-battle"))
+  : null;
 const VfxShowcase = localToolingRoutesEnabled
   ? lazy(() => import("@/pages/vfx-showcase"))
   : null;
@@ -234,8 +238,20 @@ function AppRoutes({ clerkEnabled }: { clerkEnabled: boolean }) {
           </Route>
           <Route path="/lobby"><ProtectedRoute component={Lobby} /></Route>
           <Route path="/shadow-lobby"><ProtectedRoute component={ShadowLobby} /></Route>
-          <Route path="/campaign/:campaignId/battles/:battleId"><ProtectedRoute component={CampaignBattle} /></Route>
-          <Route path="/campaign"><ProtectedRoute component={Campaign} /></Route>
+          {localToolingRoutesEnabled && CampaignBattle && (
+            <Route path="/campaign/:campaignId/battles/:battleId">
+              <Suspense fallback={null}>
+                <ProtectedRoute component={CampaignBattle} />
+              </Suspense>
+            </Route>
+          )}
+          {localToolingRoutesEnabled && Campaign && (
+            <Route path="/campaign">
+              <Suspense fallback={null}>
+                <ProtectedRoute component={Campaign} />
+              </Suspense>
+            </Route>
+          )}
           <Route path="/fleets"><ProtectedRoute component={Fleets} /></Route>
           <Route path="/games/new"><ProtectedRoute component={NewGame} /></Route>
           <Route path="/games/:id/fleet-selection"><ProtectedRoute component={GameFleetSelection} /></Route>

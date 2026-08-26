@@ -17,7 +17,9 @@ router.use(playersRouter);
 router.use(fleetsRouter);
 router.use(gamesRouter);
 router.use(lobbyRouter);
-router.use(campaignsRouter);
+if (process.env.NODE_ENV !== "production") {
+  router.use(campaignsRouter);
+}
 router.use(presenceRouter);
 router.use(adminRouter);
 

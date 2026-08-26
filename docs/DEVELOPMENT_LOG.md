@@ -20,6 +20,8 @@
   reinforcements, High Command repair, carrier replenishment, Self-Repair, and
   advances the campaign into the next initiative turn once every commander is
   ready.
+- Campaign routes and navigation are development-only until the campaign flow is
+  ready for public testing; production does not mount the campaign API or pages.
 - Remaining campaign automation includes target exploration, the Hidden Outpost
   payment choice, XP tactical rerolls, Refit and Other Duties tables, Avoiding
   Battle, player elimination, and optional campaign modules.
