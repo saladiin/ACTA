@@ -21,8 +21,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Trash2, Plus, ChevronRight, ChevronDown, Ship, Crosshair } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { PRIORITY_LEVELS, normalizePriorityLevel, priorityLabel } from "@/lib/fleet-allocation";
+import { useInputProfile } from "@/hooks/use-input-profile";
 
 function FleetDetail({ fleetId }: { fleetId: number }) {
+  const inputProfile = useInputProfile();
   const qc = useQueryClient();
   const { data: ships, isLoading } = useListFleetShips(fleetId, { query: { queryKey: getListFleetShipsQueryKey(fleetId) } });
   const { data: models } = useListShipModels();
@@ -31,6 +33,7 @@ function FleetDetail({ fleetId }: { fleetId: number }) {
   const [addOpen, setAddOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [shipName, setShipName] = useState("");
+  const useNativeShipPicker = inputProfile.input === "touch" || inputProfile.layout === "compact";
 
   const handleAddShip = () => {
     if (!selectedModel || !shipName) return;
@@ -86,18 +89,35 @@ function FleetDetail({ fleetId }: { fleetId: number }) {
             <DialogTitle className="text-sm uppercase tracking-widest text-primary">Assign Ship</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger data-testid="select-ship-model" className="bg-background">
-                <SelectValue placeholder="Select ship class..." />
-              </SelectTrigger>
-              <SelectContent className="bg-card border-border">
+            {useNativeShipPicker ? (
+              <select
+                aria-label="Ship class"
+                data-testid="select-ship-model"
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                className="flex h-10 w-full touch-manipulation appearance-auto rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="" disabled>Select ship class...</option>
                 {models?.map(m => (
-                  <SelectItem key={m.id} value={String(m.id)}>
+                  <option key={m.id} value={String(m.id)}>
                     {m.name} ({m.faction}) - {priorityLabel(normalizePriorityLevel(m.priorityLevel))}
-                  </SelectItem>
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </select>
+            ) : (
+              <Select value={selectedModel} onValueChange={setSelectedModel}>
+                <SelectTrigger data-testid="select-ship-model" className="bg-background">
+                  <SelectValue placeholder="Select ship class..." />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border">
+                  {models?.map(m => (
+                    <SelectItem key={m.id} value={String(m.id)}>
+                      {m.name} ({m.faction}) - {priorityLabel(normalizePriorityLevel(m.priorityLevel))}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Input
               data-testid="input-ship-name"
               placeholder="Ship name (e.g. EAS Agamemnon)"
